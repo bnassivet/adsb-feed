@@ -1,0 +1,29 @@
+# Use a base image with the Java runtime
+FROM openjdk:14
+
+# Set the working directory
+WORKDIR /app
+
+# Copy the jar file to the container
+COPY target/scala-tcp-pulsar-forwarder.jar /app/
+
+# Set the environment variable for the Pulsar broker URL
+ENV PULSAR_BROKER=pulsar://localhost:6650
+
+# Set the environment variable for the TCP socket host
+ENV FIRST_SOCKET_HOST=localhost
+
+# Set the environment variable for the TCP socket port
+ENV FIRST_SOCKET_PORT=5555
+
+# Set the environment variable for the Pulsar topic
+ENV PULSAR_TOPIC=test-topic
+
+# Expose the desired ports
+EXPOSE 9000
+
+# Run the jar file with the specified environment variables
+CMD ["java", "-jar", "scala-tcp-pulsar-forwarder.jar", "--first_socket_host", "$FIRST_SOCKET_HOST", "--first_socket_port", "$FIRST_SOCKET_PORT", "--pulsar_broker", "$PULSAR_BROKER", "--pulsar_topic", "$PULSAR_TOPIC"]
+
+
+# docker run -p <host_port>:<container_port> <image_name>

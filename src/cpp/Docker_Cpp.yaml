@@ -1,0 +1,33 @@
+# Use the official Debian-based C++ image as the base image
+FROM g++:10
+
+# Set the working directory
+WORKDIR /app
+
+# Copy the C++ source code and the Makefile to the working directory
+COPY forwarder.cpp .
+COPY Makefile .
+
+# Install the required dependencies
+RUN apt-get update && apt-get install -y libpulsar-dev libboost-system-dev libssl-dev libcrypto++-dev
+
+# Build the C++ program
+RUN make
+
+# Define the command to run the C++ program
+CMD ["./forwarder"]
+
+
+
+#In this Dockerfile, we use the official Debian-based C++ image as the base image and set the working directory to /app. The C++ source code forwarder.cpp and the Makefile are copied to the working directory.
+
+#The required dependencies, including the Pulsar C++ client library (libpulsar-dev), the Boost System library (libboost-system-dev), the SSL library (libssl-dev), and the Crypto++ library (libcrypto++-dev), are installed using apt-get.
+
+#The C++ program is built using the Makefile with the make command. The final step is to define the command to run the C++ program as ./forwarder.
+
+#To build the Docker image, you can use the following command:
+#docker build -t forwarder .
+
+#And to run the Docker container, you can use the following command:
+
+#docker run forwarder

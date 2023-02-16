@@ -1,0 +1,187 @@
+# Here is a sample Docker Compose file that starts a PySpark application with Delta:
+
+version: '3'
+services:
+  spark:
+    image: "johnr/spark:2.4.6-hadoop2.7"
+    volumes:
+      - "./spark-jobs:/spark-jobs"
+    ports:
+      - "4040:4040"
+      - "8080:8080"
+    environment:
+      - "SPARK_APP_NAME=pyspark-delta"
+      - "SPARK_MASTER=spark://spark:7077"
+    command: "/spark-2.4.6-bin-hadoop2.7/bin/spark-submit --master spark://spark:7077 --py-files /spark-jobs/pyspark_delta.py /spark-jobs/pyspark_delta.py"
+
+# In this example, the Docker Compose file starts a Spark container using the johnr/spark image, with version 2.4.6-hadoop2.7. The ./spark-jobs directory on the host is mapped to the /spark-jobs directory in the container, where the PySpark application pyspark_delta.py is located. The Spark web UI is exposed on the host at port 4040, and the Spark application is exposed at port 8080.
+#
+#The environment variables SPARK_APP_NAME and SPARK_MASTER are set, and the command to run the PySpark application is passed to the spark-submit script. The PySpark application uses Delta to store and manage its data
+
+
+version: '3'
+services:
+  spark-master:
+    image: spark-master:2.4.7
+    container_name: spark-master
+    hostname: spark-master
+    ports:
+      - "8080:8080"
+    environment:
+      SPARK_MASTER_PORT: 7070
+      SPARK_MASTER_WEBUI_PORT: 8080
+
+  spark-worker-1:
+    image: spark-worker:2.4.7
+    container_name: spark-worker-1
+    hostname: spark-worker-1
+    environment:
+      SPARK_MASTER: spark://spark-master:7070
+
+  spark-worker-2:
+    image: spark-worker:2.4.7
+    container_name: spark-worker-2
+    hostname: spark-worker-2
+    environment:
+      SPARK_MASTER: spark://spark-master:7070
+
+#Here's an example of a Docker Compose file that starts a Spark cluster with one master and two workers:
+
+version: '3'
+services:
+  spark-master:
+    image: spark-master:2.4.7
+    container_name: spark-master
+    hostname: spark-master
+    ports:
+      - "8080:8080"
+    environment:
+      SPARK_MASTER_PORT: 7070
+      SPARK_MASTER_WEBUI_PORT: 8080
+
+  spark-worker-1:
+    image: spark-worker:2.4.7
+    container_name: spark-worker-1
+    hostname: spark-worker-1
+    environment:
+      SPARK_MASTER: spark://spark-master:7070
+
+  spark-worker-2:
+    image: spark-worker:2.4.7
+    container_name: spark-worker-2
+    hostname: spark-worker-2
+    environment:
+      SPARK_MASTER: spark://spark-master:7070
+
+
+## Here's a basic Dockerfile that sets up a PySpark environment with Delta:
+
+# Use base image with pre-installed Spark and PySpark
+FROM jupyter/pyspark-notebook
+
+# Set environment variables for Spark
+ENV SPARK_MASTER_PORT 7077
+ENV SPARK_MASTER_WEBUI_PORT 8080
+
+# Install Delta dependencies
+RUN conda install -y pandas==1.0.3 \
+    && conda install -y pyarrow==0.17.0 \
+    && conda install -y snappy==1.1.7
+
+# Copy local delta files to Docker image
+COPY delta-core_2.12-0.7.0.jar /usr/local/spark/jars/delta-core_2.12-0.7.0.jar
+
+# Launch Spark Master and Workers
+CMD /usr/local/spark/sbin/start-master.sh \
+    && /usr/local/spark/sbin/start-worker.sh spark://spark-master:7077
+
+
+
+### Here is an example of a Docker Compose file that sets up a PySpark environment with Delta support:
+
+version: '3'
+services:
+  master:
+    image: spark-base
+    environment:
+      SPARK_ROLE: master
+      SPARK_MASTER_HOST: master
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+  worker1:
+    image: spark-base
+    environment:
+      SPARK_ROLE: worker
+      SPARK_MASTER_HOST: master
+  worker2:
+    image: spark-base
+    environment:
+      SPARK_ROLE: worker
+      SPARK_MASTER_HOST: master
+
+
+#In this example, we are using the gettyimages/spark Docker image version 2.4.5 with Hadoop 2.7. We have one Spark master node and two Spark worker nodes. Each node is defined as a separate service in the Docker Compose file. The environment variables are used to configure the Spark worker nodes, such as specifying the number of cores, memory, and port numbers. The ports are also exposed to allow access to the Spark web UI. The Spark worker nodes depend on the Spark master node, so that they can connect to it.
+
+
+
+### WITH Minio server
+
+
+version: '3'
+services:
+  master:
+    image: spark
+    command: /spark/sbin/start-master.sh
+    ports:
+      - "7077:7077"
+    environment:
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 2g
+      SPARK_WORKER_INSTANCES: 2
+      SPARK_WORKER_WEBUI_PORT: 8080
+
+  worker1:
+    image: spark
+    command: /spark/sbin/start-worker.sh spark://master:7077
+    depends_on:
+      - master
+
+  worker2:
+    image: spark
+    command: /spark/sbin/start-worker.sh spark://master:7077
+    depends_on:
+      - master
+
+  mini-server:
+    image: minio/minio
+    command: server /data
+    ports:
+      - "9000:9000"
+    environment:
+      MINIO_ACCESS_KEY: myaccesskey
+      MINIO_SECRET_KEY: mysecretkey
+    volumes:
+      - data:/data
+
+volumes:
+  data:
+    external: true
+    driver: local
+    name: data
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/data
+
+
+
+# In this file, the master and worker1 and worker2 nodes use the official Spark image and start the Spark master and worker processes, respectively. The mini-server node uses the Minio image and starts a mini S3-compatible server. The volumes section maps a local directory to the Minio container's data volume, which Minio will use to store the objects.
+
+# The environment section of the master service sets some Spark configuration options, such as the number of cores and memory to use for each worker, and the number of worker instances to run. The Spark master and worker nodes communicate with each other using the default 7077 port, which is exposed as a host port in the ports section.
+
+#Finally, the mini-server node exposes its default 9000 port, which Spark can use to connect to the mini-server and access the S3 storage. To connect Spark to the mini-server, you will need to set the spark.hadoop.fs.s3a.endpoint and spark.hadoop.fs.s3a.access.key and spark.hadoop.fs.s3a.secret.key configuration options to the appropriate values in your Spark code or configuration file.
+
+# The "data" field under the "volumes" section in the Dockerfile refers to a named data volume that is created for persistent storage. This volume allows the data to persist even if the container is deleted, recreated, or moved to another host. The "data" volume maps a host directory to a directory in the container file system, and it can be used to store data that needs to persist even when the container is recreated.
+
+# In this case, the purpose of the "data" volume is to store data that is used by the Spark and Delta services, and to persist it even if the container is recreated. By mapping a host directory to the named data volume, it is possible to store the data on a host file system, which provides a higher level of durability and performance compared to storing the data within the container file system.

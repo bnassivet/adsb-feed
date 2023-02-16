@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+enum CA {
+  CA_0 = 0;
+  CA_1 = 1;
+  CA_2 = 2;
+  CA_3 = 3;
+  CA_4 = 4;
+  CA_5 = 5;
+  CA_6 = 6;
+  CA_7 = 7;
+}
+
+enum TypeCode {
+  Aircraft_Identification = 1;
+  Surface_Position = 5;
+  Airborne_Position_with_Baro_Altitude = 9;
+  Airborne_Velocities = 19;
+  Airborne_Position_w_GNSS = 20;
+  Aircraft_Status = 28;
+  Target_State_And_Status_Information = 29;
+  Aircraft_Operation_Status = 31;
+}
+
+message DF17 {
+  required int32 DF = 1;
+  required CA CA = 2;
+  required int32 ICAO_Code = 3;
+  required TypeCode Type_code = 4;
+  required int32 PI = 5;
+}
