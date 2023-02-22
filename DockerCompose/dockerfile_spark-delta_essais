@@ -14,9 +14,12 @@ services:
       - "SPARK_MASTER=spark://spark:7077"
     command: "/spark-2.4.6-bin-hadoop2.7/bin/spark-submit --master spark://spark:7077 --py-files /spark-jobs/pyspark_delta.py /spark-jobs/pyspark_delta.py"
 
-# In this example, the Docker Compose file starts a Spark container using the johnr/spark image, with version 2.4.6-hadoop2.7. The ./spark-jobs directory on the host is mapped to the /spark-jobs directory in the container, where the PySpark application pyspark_delta.py is located. The Spark web UI is exposed on the host at port 4040, and the Spark application is exposed at port 8080.
+# In this example, the Docker Compose file starts a Spark container using the johnr/spark image, with version 2.4.6-hadoop2.7. 
+# The ./spark-jobs directory on the host is mapped to the /spark-jobs directory in the container, where the PySpark application pyspark_delta.py is located. 
+#The Spark web UI is exposed on the host at port 4040, and the Spark application is exposed at port 8080.
 #
-#The environment variables SPARK_APP_NAME and SPARK_MASTER are set, and the command to run the PySpark application is passed to the spark-submit script. The PySpark application uses Delta to store and manage its data
+#The environment variables SPARK_APP_NAME and SPARK_MASTER are set, and the command to run the PySpark application is passed to
+# the spark-submit script. The PySpark application uses Delta to store and manage its data
 
 
 version: '3'

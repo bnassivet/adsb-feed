@@ -1,7 +1,9 @@
 import argparse
 import socket
+from xmlrpc.client import DateTime
 from pulsar import Client, Producer
 import asyncio
+from datetime import datetime
 
 # Parse the command-line arguments
 parser = argparse.ArgumentParser(description='Connect to a TCP socket in client mode and forward the received messages to a Pulsar broker.')
@@ -21,6 +23,9 @@ PORT1 = args.first_socket_port
 PULSAR_BROKER = args.pulsar_broker
 TOPIC = args.pulsar_topic
 
+# Other Constants
+SOURCE_ID="kraspberryPi"
+
 # Create the first socket
 s1 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 if not SOURCE_CNX_MODE:
@@ -34,7 +39,8 @@ client = Client(PULSAR_BROKER)
 producer = client.create_producer(TOPIC)
 
 def send_to_pulsar(data):
-    producer.send(data)
+    producer.send(data, properties={"src_id": SOURCE_ID, "event_timestamp" : str(datetime.now().timestamp() * 1000)})
+    
 
 # Continuously receive data from the first socket, display it in the console,
 # and forward it to the Pulsar broker
