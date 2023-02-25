@@ -7,6 +7,7 @@ from datetime import datetime
 
 # Parse the command-line arguments
 parser = argparse.ArgumentParser(description='Connect to a TCP socket in client mode and forward the received messages to a Pulsar broker.')
+parser.add_argument('--source_id', dest='source_id', type=str, nargs='?', default="kraspberryPi", help='The dump1090 source id e.g. hostname')
 parser.add_argument('--first_socket_host', dest='first_socket_host', type=str, nargs='?', default="10.0.0.200", help='The host of the first socket')
 parser.add_argument('--first_socket_port', dest='first_socket_port', type=int, nargs='?', default=30003, help='The port of the first socket')
 parser.add_argument('--pulsar_broker', dest='pulsar_broker', type=str, nargs='?', default="pulsar://localhost:6650", help='The URL of the Apache Pulsar broker')
@@ -15,6 +16,7 @@ args = parser.parse_args()
 
 SOURCE_CNX_MODE = 0 # 0 - Client / 1 - Server
 
+SOURCE_ID=args.source_id
 # First socket to connect to
 HOST1 = args.first_socket_host
 PORT1 = args.first_socket_port
@@ -24,7 +26,7 @@ PULSAR_BROKER = args.pulsar_broker
 TOPIC = args.pulsar_topic
 
 # Other Constants
-SOURCE_ID="kraspberryPi"
+
 
 # Create the first socket
 s1 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
