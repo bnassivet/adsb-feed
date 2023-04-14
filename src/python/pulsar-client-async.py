@@ -4,6 +4,9 @@ from xmlrpc.client import DateTime
 from pulsar import Client, Producer
 import asyncio
 from datetime import datetime
+from enum import Enum
+from time import sleep
+
 
 # Parse the command-line arguments
 parser = argparse.ArgumentParser(description='Connect to a TCP socket in client mode and forward the received messages to a Pulsar broker.')
@@ -14,7 +17,11 @@ parser.add_argument('--pulsar_broker', dest='pulsar_broker', type=str, nargs='?'
 parser.add_argument('--pulsar_topic', dest='pulsar_topic', type=str, nargs='?', default="persistent://kradsb/adsb/sbs-topic", help='The name of the topic to publish messages to')
 args = parser.parse_args()
 
-SOURCE_CNX_MODE = 0 # 0 - Client / 1 - Server
+class SourceCnxMode(Enum):
+    CLIENT_MODE = 0
+    SERVER_MODE = 1
+
+SOURCE_CNX_MODE = SourceCnxMode.CLIENT_MODE # 0 - Client / 1 - Server
 
 SOURCE_ID=args.source_id
 # First socket to connect to
@@ -30,7 +37,7 @@ TOPIC = args.pulsar_topic
 
 # Create the first socket
 s1 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-if not SOURCE_CNX_MODE:
+if SOURCE_CNX_MODE == SourceCnxMode.CLIENT_MODE:
     s1.connect((HOST1, PORT1))
 else:
     s1.bind((HOST1, PORT1))
@@ -48,21 +55,47 @@ def send_to_pulsar(data):
 # and forward it to the Pulsar broker
 try:
     while True:
-        if SOURCE_CNX_MODE:
-            conn, info = s1.accept()
-        else: 
-            conn = s1
-        data = conn.recv(1024)
-
-#       print(f"data received {data.decode()}")
-#      send_to_pulsar(data)
-        while data:           
-            print(f"data received - forwarding: {data.decode()}")
-            send_to_pulsar(data)
+        try:
+            if SOURCE_CNX_MODE == SourceCnxMode.SERVER_MODE:
+                conn, info = s1.accept()
+            else: 
+                conn = s1
             data = conn.recv(1024)
+            
+            while data:           
+                print(f"data received - forwarding: {data.decode()}")
+                decoded_data = data.decode()
+                msg_list = decoded_data.split("\n")
+                msg_count = 0
+                for msg in msg_list:
+                    if msg != "":
+                        send_to_pulsar(msg.encode())
+                        print(f"msg sent: {msg}")
+                        msg_count += 1
+                print(f"{msg_count} messages sent to Pulsar")
+                data = conn.recv(1024)
+        except socket.error as e:
+            print(f"Error receiving data from socket: {e}")
+            if SOURCE_CNX_MODE == SourceCnxMode.CLIENT_MODE:
+                print("connection lost -> reconnecting...")
+                connected = False
+                s1.close()
+                s1 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                conn = s1
+                while not connected:
+                    try:
+                        conn.connect((HOST1, PORT1))
+                        connected = True
+                    except socket.error as e:
+                        print(f"Error connecting to socket: {e} ... retrying in 1s")
+                        sleep(1)
+        except Exception as e:
+            raise(e)
             
 except KeyboardInterrupt:
 # Close the sockets when finished
+    print(f"KeyboardInterrupt -> closing connection to {HOST1}:{PORT1}")
     s1.close()
-    client.close()
+
+
 

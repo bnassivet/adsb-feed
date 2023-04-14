@@ -11,7 +11,7 @@ COPY pulsar-client-async.py .
 RUN pip install pulsar-client
 
 # Define the command to run the Python script
-CMD ["python", "-m", "pulsar-client-async.py"]
+CMD ["python", "pulsar-client-async.py"]
 
 #In this Dockerfile, we use the official Python 3.10 image as the base image and set the working directory to /app. The Python script pulsar-client-async.py is copied to the working directory, and the required dependency pulsar-client is installed using pip.
 #Finally, the command to run the Python script is defined as python pulsar-client-async.py. To build the Docker image, you can use the following command:
