@@ -357,3 +357,6 @@ hs_err_pid*
 # End of https://www.toptal.com/developers/gitignore/api/python,scala,c++,pycharm+all,intellij+iml
 
 .DS_Store
+**/.DS_Store
+.vscode/
+.claude/
