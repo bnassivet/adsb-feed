@@ -361,6 +361,6 @@ hs_err_pid*
 .vscode/
 .claude/
 
-src/notebooks/figures/
+#src/notebooks/figures/
 src/notebooks/figures_copy/
 src/notebooks/data_cache/
