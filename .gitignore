@@ -362,3 +362,4 @@ hs_err_pid*
 .claude/
 
 src/notebooks/figures/
+src/notebooks/data_cache/
