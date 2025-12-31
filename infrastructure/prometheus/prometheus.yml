@@ -1,0 +1,114 @@
+# =============================================================================
+# Prometheus Configuration for ADS-B Pulsar Monitoring
+# =============================================================================
+#
+# This configuration file defines how Prometheus scrapes metrics from
+# the Apache Pulsar standalone broker.
+#
+# Pulsar exposes metrics on the /metrics endpoint of its admin port (8080).
+# In standalone mode, all components (ZooKeeper, BookKeeper, Broker) expose
+# their metrics through this single endpoint.
+#
+# =============================================================================
+
+global:
+  # How often to scrape targets
+  scrape_interval: 15s
+  # How often to evaluate alerting rules
+  evaluation_interval: 15s
+  # Timeout for scraping a target
+  scrape_timeout: 10s
+  # Labels attached to any time series or alert
+  external_labels:
+    cluster: 'pulsar_standalone'
+    environment: 'development'
+
+# =============================================================================
+# Scrape Configurations
+# =============================================================================
+# Defines the targets and parameters for collecting metrics.
+# =============================================================================
+
+scrape_configs:
+
+  # ---------------------------------------------------------------------------
+  # Prometheus Self-Monitoring
+  # ---------------------------------------------------------------------------
+  # Prometheus scrapes its own metrics for monitoring the monitoring system.
+  # ---------------------------------------------------------------------------
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          component: 'prometheus'
+
+  # ---------------------------------------------------------------------------
+  # Pulsar Broker Metrics
+  # ---------------------------------------------------------------------------
+  # The broker handles message routing, topic management, and client connections.
+  # Metrics include: message rates, throughput, latencies, connection counts.
+  # ---------------------------------------------------------------------------
+  - job_name: 'pulsar-broker'
+    honor_labels: true
+    static_configs:
+      - targets: ['pulsar:8080']
+        labels:
+          component: 'broker'
+    metrics_path: /metrics
+
+  # ---------------------------------------------------------------------------
+  # Pulsar Proxy Metrics (Standalone Mode)
+  # ---------------------------------------------------------------------------
+  # In standalone mode, the proxy metrics are available on the same endpoint.
+  # Metrics include: proxy connection counts, message routing stats.
+  # ---------------------------------------------------------------------------
+  - job_name: 'pulsar-proxy'
+    honor_labels: true
+    static_configs:
+      - targets: ['pulsar:8080']
+        labels:
+          component: 'proxy'
+    metrics_path: /metrics
+
+  # ---------------------------------------------------------------------------
+  # BookKeeper Metrics (Standalone Mode)
+  # ---------------------------------------------------------------------------
+  # BookKeeper handles persistent storage of messages.
+  # Metrics include: write/read latencies, ledger operations, disk usage.
+  # ---------------------------------------------------------------------------
+  - job_name: 'pulsar-bookie'
+    honor_labels: true
+    static_configs:
+      - targets: ['pulsar:8080']
+        labels:
+          component: 'bookie'
+    metrics_path: /metrics
+
+  # ---------------------------------------------------------------------------
+  # ZooKeeper Metrics (Standalone Mode)
+  # ---------------------------------------------------------------------------
+  # ZooKeeper handles cluster coordination and metadata storage.
+  # Metrics include: session counts, latencies, ZNode operations.
+  # ---------------------------------------------------------------------------
+  - job_name: 'pulsar-zookeeper'
+    honor_labels: true
+    static_configs:
+      - targets: ['pulsar:8080']
+        labels:
+          component: 'zookeeper'
+    metrics_path: /metrics
+
+# =============================================================================
+# Alerting Configuration (Optional)
+# =============================================================================
+# Uncomment and configure to enable alerting through Alertmanager.
+# =============================================================================
+#
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - 'alertmanager:9093'
+#
+# rule_files:
+#   - '/etc/prometheus/alerts/*.yml'

@@ -1,0 +1,1 @@
+docker exec -it pulsar_stdalone /pulsar/bin/pulsar-client consume persistent://kradsb/adsb/sbs-topic --num-messages 0 --rate 0 --subscription-name test-adsb-consumer --subscription-type Exclusive

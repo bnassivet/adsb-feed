@@ -1,0 +1,209 @@
+# =============================================================================
+# ADS-B Project - Consolidated Docker Compose Configuration
+# =============================================================================
+#
+# This Docker Compose file sets up the complete ADS-B data streaming
+# infrastructure including:
+#   - Apache Pulsar (standalone mode) - Message broker for ADS-B data
+#   - Prometheus - Metrics collection and storage
+#   - Grafana - Visualization and dashboards
+#
+# Usage:
+#   Start all services:    docker compose up -d
+#   Stop all services:     docker compose down
+#   View logs:             docker compose logs -f [service_name]
+#   Pulsar setup:          docker compose exec pulsar /pulsar/bin/pulsar-admin tenants create kradsb
+#
+# Service URLs:
+#   - Pulsar Broker:       pulsar://localhost:6650
+#   - Pulsar Admin API:    http://localhost:8080
+#   - Prometheus:          http://localhost:9090
+#   - Grafana:             http://localhost:3000 (admin/admin)
+#
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # Apache Pulsar - Message Broker (Standalone Mode)
+  # ===========================================================================
+  # Pulsar is the central message broker that receives ADS-B data from
+  # edge devices (Raspberry Pi) and delivers it to the Spark processing layer.
+  # In standalone mode, it includes ZooKeeper, BookKeeper, and the Broker.
+  # ---------------------------------------------------------------------------
+  pulsar:
+    image: apachepulsar/pulsar:3.2.0
+    container_name: pulsar_standalone
+    hostname: pulsar
+    restart: unless-stopped
+    ports:
+      # Pulsar broker port - used by producers and consumers
+      - "6650:6650"
+      # Pulsar admin API and metrics endpoint
+      - "8080:8080"
+    environment:
+      # Enable Prometheus metrics endpoint on the admin port
+      - PULSAR_PREFIX_webServicePort=8080
+      - PULSAR_PREFIX_brokerServicePort=6650
+      # Enable metrics for monitoring
+      - PULSAR_PREFIX_exposeTopicLevelMetricsInPrometheus=true
+      - PULSAR_PREFIX_exposeBundlesMetricsInPrometheus=true
+      - PULSAR_PREFIX_exposeConsumerLevelMetricsInPrometheus=true
+      - PULSAR_PREFIX_exposeProducerLevelMetricsInPrometheus=true
+    command: bin/pulsar standalone
+    volumes:
+      # Persist Pulsar data (BookKeeper ledgers, ZooKeeper data, etc.)
+      - pulsar_data:/pulsar/data
+      # Persist Pulsar configuration
+      - pulsar_conf:/pulsar/conf
+    networks:
+      - adsb-network
+    healthcheck:
+      # Check if Pulsar admin API is responsive
+      test: ["CMD", "curl", "-f", "http://localhost:8080/admin/v2/brokers/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ===========================================================================
+  # Pulsar Initialization - One-time Setup Container
+  # ===========================================================================
+  # This container runs once to create the required tenant, namespace, and topic
+  # for the ADS-B data pipeline. It waits for Pulsar to be healthy before running.
+  # ---------------------------------------------------------------------------
+  pulsar-init:
+    image: apachepulsar/pulsar:3.2.0
+    container_name: pulsar_init
+    depends_on:
+      pulsar:
+        condition: service_healthy
+    networks:
+      - adsb-network
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "Waiting for Pulsar to be fully ready..."
+        sleep 10
+        echo "Creating tenant 'kradsb'..."
+        /pulsar/bin/pulsar-admin --admin-url http://pulsar:8080 tenants create kradsb || echo "Tenant may already exist"
+        echo "Creating namespace 'kradsb/adsb'..."
+        /pulsar/bin/pulsar-admin --admin-url http://pulsar:8080 namespaces create kradsb/adsb || echo "Namespace may already exist"
+        echo "Creating topic 'persistent://kradsb/adsb/sbs-topic'..."
+        /pulsar/bin/pulsar-admin --admin-url http://pulsar:8080 topics create persistent://kradsb/adsb/sbs-topic || echo "Topic may already exist"
+        echo "Creating topic 'persistent://kradsb/adsb/sbs-binary-topic'..."
+        /pulsar/bin/pulsar-admin --admin-url http://pulsar:8080 topics create persistent://kradsb/adsb/sbs-binary-topic || echo "Topic may already exist"
+        echo "Pulsar initialization complete!"
+        echo "Verifying configuration..."
+        /pulsar/bin/pulsar-admin --admin-url http://pulsar:8080 tenants list
+        /pulsar/bin/pulsar-admin --admin-url http://pulsar:8080 namespaces list kradsb
+        /pulsar/bin/pulsar-admin --admin-url http://pulsar:8080 topics list kradsb/adsb
+    restart: "no"
+
+  # ===========================================================================
+  # Prometheus - Metrics Collection and Storage
+  # ===========================================================================
+  # Prometheus scrapes metrics from Pulsar's /metrics endpoint and stores
+  # them for querying and visualization in Grafana.
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: prometheus
+    hostname: prometheus
+    restart: unless-stopped
+    ports:
+      # Prometheus web UI and API
+      - "9090:9090"
+    volumes:
+      # Mount Prometheus configuration file
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Persist Prometheus data (metrics database)
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - adsb-network
+    depends_on:
+      pulsar:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ===========================================================================
+  # Grafana - Visualization and Dashboards
+  # ===========================================================================
+  # Grafana provides visualization for Pulsar metrics. Uses StreamNative's
+  # pre-built Pulsar dashboard for comprehensive monitoring.
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: streamnative/apache-pulsar-grafana-dashboard:latest
+    container_name: grafana
+    hostname: grafana
+    restart: unless-stopped
+    ports:
+      # Grafana web UI
+      - "3000:3000"
+    environment:
+      # Prometheus data source URL (using Docker network hostname)
+      - PULSAR_PROMETHEUS_URL=http://prometheus:9090
+      # Pulsar cluster name for dashboard labels
+      - PULSAR_CLUSTER=pulsar_standalone
+      # Grafana admin credentials (change in production!)
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      # Allow anonymous access for dashboards (optional, disable in production)
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      # Install additional plugins if needed
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      # Persist Grafana data (dashboards, users, etc.)
+      - grafana_data:/var/lib/grafana
+    networks:
+      - adsb-network
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+# =============================================================================
+# Networks
+# =============================================================================
+# All services communicate over a dedicated bridge network.
+# This provides DNS resolution between containers using their service names.
+# -----------------------------------------------------------------------------
+networks:
+  adsb-network:
+    name: adsb-network
+    driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+# Named volumes for data persistence across container restarts.
+# -----------------------------------------------------------------------------
+volumes:
+  # Pulsar data volume (ledgers, journals, ZooKeeper data)
+  pulsar_data:
+    name: adsb_pulsar_data
+  # Pulsar configuration volume
+  pulsar_conf:
+    name: adsb_pulsar_conf
+  # Prometheus time-series database
+  prometheus_data:
+    name: adsb_prometheus_data
+  # Grafana dashboards and settings
+  grafana_data:
+    name: adsb_grafana_data
