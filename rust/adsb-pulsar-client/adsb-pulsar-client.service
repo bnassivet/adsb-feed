@@ -1,0 +1,53 @@
+[Unit]
+Description=ADS-B Pulsar Feed Client (Rust)
+Documentation=https://github.com/your-org/ads-b-project
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi
+
+# Main service command
+ExecStart=/usr/local/bin/adsb-pulsar-client \
+  --source-id raspberry-pi-01 \
+  --socket-host localhost \
+  --socket-port 30003 \
+  --pulsar-broker pulsar://your-pulsar-server.com:6650 \
+  --pulsar-topic persistent://kradsb/adsb/sbs-topic \
+  --log-level info \
+  --log-sample-rate 100
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Resource limits (optional, adjust as needed)
+# Limit to 100MB memory
+MemoryMax=100M
+# Limit CPU to 50%
+CPUQuota=50%
+
+# Security hardening (optional)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+# Environment variables (alternative to command-line args)
+#Environment="ADSB_SOURCE_ID=raspberry-pi-01"
+#Environment="ADSB_SOCKET_HOST=localhost"
+#Environment="ADSB_SOCKET_PORT=30003"
+#Environment="PULSAR_BROKER=pulsar://your-pulsar-server.com:6650"
+#Environment="PULSAR_TOPIC=persistent://kradsb/adsb/sbs-topic"
+#Environment="RUST_LOG=info"
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=adsb-pulsar-client
+
+[Install]
+WantedBy=multi-user.target

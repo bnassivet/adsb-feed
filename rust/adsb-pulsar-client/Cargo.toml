@@ -1,0 +1,59 @@
+[package]
+name = "adsb-pulsar-client"
+version = "0.1.0"
+edition = "2021"
+authors = ["ADS-B Project Contributors"]
+description = "High-performance ADS-B feed client for Apache Pulsar written in Rust"
+license = "MIT OR Apache-2.0"
+rust-version = "1.75"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.39", features = ["full"] }
+
+# Pulsar client
+pulsar = { version = "6.3", default-features = false, features = ["tokio-runtime", "compression"] }
+
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+
+# Time utilities
+chrono = "0.4"
+
+# Metrics
+prometheus = { version = "0.13", optional = true }
+
+# Memory utilities
+bytes = "1.7"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[features]
+default = []
+metrics = ["prometheus"]
+
+[lib]
+name = "adsb_pulsar_client"
+path = "src/lib.rs"
+
+[[bin]]
+name = "adsb-pulsar-client"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
