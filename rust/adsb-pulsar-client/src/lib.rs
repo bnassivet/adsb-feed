@@ -18,46 +18,16 @@
 //! - **Lock-Free Metrics**: Atomic operations for thread-safe tracking
 //! - **Production Ready**: Graceful shutdown, structured logging, systemd support
 //!
-//! # Architecture
-//!
-//! ```text
-//! ┌─────────────┐
-//! │  dump1090   │  SBS-1 format messages over TCP
-//! └──────┬──────┘
-//!        │
-//!        ▼
-//! ┌─────────────┐
-//! │   Client    │  Line buffering, connection management
-//! │   (Tokio)   │
-//! └──────┬──────┘
-//!        │
-//!        ▼
-//! ┌─────────────┐
-//! │Retry Queue  │  VecDeque for failed messages
-//! └──────┬──────┘
-//!        │
-//!        ▼
-//! ┌─────────────┐
-//! │   Pulsar    │  Batched async producer
-//! │  Producer   │
-//! └─────────────┘
-//! ```
-//!
 //! # Quick Start
 //!
 //! ```no_run
 //! use adsb_pulsar_client::{ADSBFeedClient, Config};
-//! use clap::Parser;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Parse configuration from command-line or env vars
-//!     let config = Config::parse();
-//!
-//!     // Create and run client
+//!     let config = Config::default();
 //!     let mut client = ADSBFeedClient::new(config)?;
 //!     client.run().await?;
-//!
 //!     Ok(())
 //! }
 //! ```
@@ -65,62 +35,12 @@
 //! # Configuration
 //!
 //! Configuration can be provided via:
-//! - Command-line arguments
+//! - Command-line arguments (with `cli` feature)
 //! - Environment variables
-//! - Default values
+//! - Programmatic construction with `Default`
+//! - Deserialization from JSON/TOML (via serde)
 //!
 //! See [`Config`] for all available options.
-//!
-//! # Error Handling
-//!
-//! All operations return [`Result<T>`](error::Result) which uses
-//! [`ClientError`] for error cases.
-//!
-//! Most errors are recoverable and handled automatically through retry logic.
-//!
-//! # Examples
-//!
-//! ## Basic Client
-//!
-//! ```no_run
-//! # use adsb_pulsar_client::{ADSBFeedClient, Config};
-//! # use clap::Parser;
-//! # #[tokio::main]
-//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let config = Config::parse();
-//! let mut client = ADSBFeedClient::new(config)?;
-//! client.run().await?;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! ## Test Mode
-//!
-//! ```no_run
-//! # use adsb_pulsar_client::{ADSBFeedClient, Config};
-//! # use clap::Parser;
-//! # #[tokio::main]
-//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut config = Config::parse();
-//! config.test_mode = true;  // No Pulsar, just log messages
-//! let mut client = ADSBFeedClient::new(config)?;
-//! client.run().await?;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! ## Custom Metrics
-//!
-//! ```rust
-//! use adsb_pulsar_client::metrics::Metrics;
-//!
-//! let metrics = Metrics::new();
-//! metrics.inc_messages_sent();
-//! metrics.add_bytes_sent(1024);
-//!
-//! let snapshot = metrics.snapshot();
-//! println!("Throughput: {:.1} msg/s", snapshot.throughput_msg_per_sec);
-//! ```
 //!
 //! # Performance
 //!
@@ -129,21 +49,6 @@
 //! - **Latency**: <1ms per message
 //! - **Memory**: ~15 MB
 //! - **CPU**: 10-15% utilization
-//!
-//! # Safety
-//!
-//! This crate is built with safety in mind:
-//! - No unsafe code
-//! - Compile-time memory safety
-//! - Thread-safe atomic operations
-//! - Graceful error handling
-//!
-//! # See Also
-//!
-//! - [`client`] - Core client implementation
-//! - [`config`] - Configuration and CLI arguments
-//! - [`error`] - Error types and handling
-//! - [`metrics`] - Performance metrics tracking
 
 pub mod client;
 pub mod config;

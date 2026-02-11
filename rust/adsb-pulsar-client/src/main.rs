@@ -2,34 +2,6 @@
 //!
 //! High-performance Rust implementation that connects to dump1090 TCP socket
 //! and forwards SBS-1 messages to Apache Pulsar.
-//!
-//! # Features
-//!
-//! - Async/await with Tokio runtime
-//! - Automatic reconnection with exponential backoff
-//! - Message retry queue for reliability
-//! - Line buffering to prevent message fragmentation
-//! - Graceful shutdown on SIGINT/SIGTERM
-//! - Comprehensive metrics and logging
-//! - Test mode for development
-//! - Zero-copy optimizations where possible
-//!
-//! # Example
-//!
-//! ```bash
-//! # Connect to local dump1090 and forward to Pulsar
-//! adsb-pulsar-client \
-//!   --source-id my-raspberry-pi \
-//!   --socket-host 192.168.1.100 \
-//!   --socket-port 30003 \
-//!   --pulsar-broker pulsar://pulsar.example.com:6650 \
-//!   --pulsar-topic persistent://kradsb/adsb/sbs-topic
-//!
-//! # Test mode (no Pulsar, just display messages)
-//! adsb-pulsar-client \
-//!   --socket-host 192.168.1.100 \
-//!   --test-mode
-//! ```
 
 mod client;
 mod config;
@@ -68,20 +40,7 @@ async fn main() {
 }
 
 /// Runs the client with graceful shutdown handling.
-///
-/// Creates the client and sets up shutdown signal handlers.
-/// Runs until completion or shutdown signal received.
-///
-/// # Arguments
-///
-/// * `config` - Validated configuration
-///
-/// # Returns
-///
-/// * `Ok(())` - Normal shutdown
-/// * `Err(ClientError)` - Fatal error
 async fn run_client(config: Config) -> error::Result<()> {
-    // Create client
     let mut client = ADSBFeedClient::new(config)?;
 
     // Setup graceful shutdown handler
@@ -101,13 +60,6 @@ async fn run_client(config: Config) -> error::Result<()> {
 }
 
 /// Initializes the tracing/logging subsystem.
-///
-/// Sets up the tracing subscriber with the specified log level.
-/// Can be overridden with the `RUST_LOG` environment variable.
-///
-/// # Arguments
-///
-/// * `log_level` - Default log level (trace, debug, info, warn, error)
 fn init_tracing(log_level: &str) {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(log_level));
@@ -121,12 +73,6 @@ fn init_tracing(log_level: &str) {
 }
 
 /// Sets up graceful shutdown handler for SIGINT/SIGTERM.
-///
-/// Listens for:
-/// - SIGINT (Ctrl+C)
-/// - SIGTERM (systemd shutdown)
-///
-/// Returns when either signal is received, allowing graceful cleanup.
 async fn setup_shutdown_handler() {
     use tokio::signal;
 
@@ -154,8 +100,6 @@ async fn setup_shutdown_handler() {
 }
 
 /// Prints the startup banner to logs.
-///
-/// Displays application name and version information.
 fn print_banner() {
     info!("╔═══════════════════════════════════════════════════════╗");
     info!("║   ADS-B Feed Client for Apache Pulsar (Rust)         ║");

@@ -7,38 +7,23 @@
 //! - Message retry queue for reliability
 //! - Line buffering to prevent message fragmentation
 //! - Metrics tracking and periodic statistics logging
-//!
-//! # Architecture
-//!
-//! The client operates in two modes:
-//! - **Client mode**: Connects to a remote dump1090 instance
-//! - **Server mode**: Listens for incoming connections from dump1090
-//!
-//! Messages flow through these stages:
-//! 1. TCP socket receives raw bytes
-//! 2. Line buffer accumulates until complete newline-terminated messages
-//! 3. Messages sent to Pulsar (or added to retry queue on failure)
-//! 4. Metrics updated and periodic stats logged
 
 use crate::config::{Config, ConnectionMode};
 use crate::error::{ClientError, Result};
 use crate::metrics::Metrics;
 use bytes::{Buf, BytesMut};
 use pulsar::{
-    producer, Authentication, Producer, Pulsar, TokioExecutor,
+    producer, Producer, Pulsar, TokioExecutor,
 };
 use std::collections::VecDeque;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
-use tokio::time::{interval, sleep, Instant};
+use tokio::sync::{broadcast, mpsc, watch};
+use tokio::time::{interval, sleep};
 use tracing::{debug, error, info, warn};
 
 /// Maximum timestamp update interval (messages).
-///
-/// Timestamp is cached and updated every N messages to reduce
-/// system call overhead from getting current time.
 const TIMESTAMP_UPDATE_INTERVAL: u64 = 10;
 
 /// Maximum number of queued messages to try draining per housekeeping tick.
@@ -47,22 +32,7 @@ const MAX_RETRY_DRAIN_PER_TICK: usize = 500;
 /// Main ADS-B Feed Client.
 ///
 /// Manages the complete lifecycle of receiving ADS-B messages from dump1090
-/// and forwarding them to Apache Pulsar. Handles connection management,
-/// message buffering, error recovery, and metrics tracking.
-///
-/// # Examples
-///
-/// ```no_run
-/// use adsb_pulsar_client::{ADSBFeedClient, Config};
-///
-/// #[tokio::main]
-/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let config = Config::parse();
-///     let mut client = ADSBFeedClient::new(config)?;
-///     client.run().await?;
-///     Ok(())
-/// }
-/// ```
+/// and forwarding them to Apache Pulsar.
 pub struct ADSBFeedClient {
     /// Client configuration
     config: Config,
@@ -85,33 +55,22 @@ pub struct ADSBFeedClient {
     pulsar_reconnect_rx: mpsc::UnboundedReceiver<(Pulsar<TokioExecutor>, Producer<TokioExecutor>)>,
     pulsar_reconnect_tx: mpsc::UnboundedSender<(Pulsar<TokioExecutor>, Producer<TokioExecutor>)>,
     pulsar_reconnect_task_running: bool,
+
+    /// Optional broadcast channel for tapping into raw messages
+    message_tx: Option<broadcast::Sender<Vec<u8>>>,
+
+    /// Programmatic shutdown signal
+    shutdown_tx: watch::Sender<bool>,
+    shutdown_rx: watch::Receiver<bool>,
 }
 
 impl ADSBFeedClient {
     /// Creates a new ADS-B feed client with the given configuration.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Client configuration including socket and Pulsar settings
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(ADSBFeedClient)` - Successfully created client
-    /// * `Err(ClientError::Config)` - Configuration validation failed
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use adsb_pulsar_client::{ADSBFeedClient, Config};
-    ///
-    /// let config = Config::parse();
-    /// let client = ADSBFeedClient::new(config)?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
     pub fn new(config: Config) -> Result<Self> {
         config.validate()?;
 
         let (pulsar_reconnect_tx, pulsar_reconnect_rx) = mpsc::unbounded_channel();
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         Ok(Self {
             config,
@@ -125,7 +84,50 @@ impl ADSBFeedClient {
             pulsar_reconnect_rx,
             pulsar_reconnect_tx,
             pulsar_reconnect_task_running: false,
+            message_tx: None,
+            shutdown_tx,
+            shutdown_rx,
         })
+    }
+
+    /// Attaches a message tap that receives copies of all processed messages.
+    ///
+    /// Returns a `broadcast::Receiver` that receives each raw message as `Vec<u8>`.
+    /// Multiple taps can be created by calling this multiple times (they share
+    /// the same broadcast channel). If no tap is needed, don't call this.
+    ///
+    /// # Arguments
+    ///
+    /// * `capacity` - Buffer capacity for the broadcast channel
+    pub fn with_message_tap(&mut self, capacity: usize) -> broadcast::Receiver<Vec<u8>> {
+        if let Some(ref tx) = self.message_tx {
+            tx.subscribe()
+        } else {
+            let (tx, rx) = broadcast::channel(capacity);
+            self.message_tx = Some(tx);
+            rx
+        }
+    }
+
+    /// Triggers a graceful shutdown of the client.
+    ///
+    /// The client will finish processing the current message and exit
+    /// its main loop. Safe to call from any thread.
+    pub fn shutdown(&self) {
+        let _ = self.shutdown_tx.send(true);
+    }
+
+    /// Returns a clone of the metrics handle.
+    ///
+    /// The returned `Metrics` is backed by the same atomic counters,
+    /// so reads always reflect the latest values.
+    pub fn metrics(&self) -> Metrics {
+        self.metrics.clone()
+    }
+
+    /// Returns a reference to the current configuration.
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 
     /// Runs the client main loop.
@@ -135,24 +137,8 @@ impl ADSBFeedClient {
     /// 2. Starts the appropriate connection mode (client or server)
     /// 3. Begins receiving and forwarding messages
     ///
-    /// This function runs until an unrecoverable error occurs or shutdown is requested.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` - Graceful shutdown
-    /// * `Err(ClientError)` - Unrecoverable error occurred
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use adsb_pulsar_client::{ADSBFeedClient, Config};
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut client = ADSBFeedClient::new(Config::parse())?;
-    /// client.run().await?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Runs until an unrecoverable error occurs, shutdown is requested,
+    /// or the process receives a termination signal.
     pub async fn run(&mut self) -> Result<()> {
         info!("Starting ADS-B Pulsar Client");
         info!("Configuration: source_id={}, socket={}:{}, pulsar={}, topic={}, test_mode={}",
@@ -164,15 +150,12 @@ impl ADSBFeedClient {
             self.config.test_mode
         );
 
-        // Pulsar connection is best-effort and must not block dump1090 processing.
-        // When not in test mode, we reconnect in the background and queue messages while down.
         if self.config.test_mode {
             info!("Running in TEST MODE - Pulsar connection disabled");
         } else {
             self.start_pulsar_reconnect_task();
         }
 
-        // Start message forwarding based on connection mode
         match self.config.get_connection_mode() {
             ConnectionMode::Client => self.run_client_mode().await,
             ConnectionMode::Server => self.run_server_mode().await,
@@ -180,30 +163,32 @@ impl ADSBFeedClient {
     }
 
     /// Runs in client mode (actively connects to dump1090).
-    ///
-    /// In this mode, the client initiates TCP connections to dump1090.
-    /// Automatically reconnects with exponential backoff on connection failure.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` - Graceful shutdown requested
-    /// * `Err(ClientError)` - Unrecoverable error
     async fn run_client_mode(&mut self) -> Result<()> {
         loop {
+            // Check for shutdown before attempting connection
+            if *self.shutdown_rx.borrow() {
+                info!("Shutdown requested, exiting client mode");
+                return Ok(());
+            }
+
             match self.connect_socket().await {
                 Ok(mut stream) => {
                     info!("Connected to dump1090 at {}:{}", self.config.socket_host, self.config.socket_port);
 
-                    // Start receiving and forwarding messages
-                    if let Err(e) = self.receive_and_forward(&mut stream).await {
-                        error!("Error in receive loop: {}", e);
-
-                        // Clear line buffer on reconnect
-                        self.line_buffer.clear();
-
-                        if !e.is_recoverable() {
-                            return Err(e);
+                    match self.receive_and_forward(&mut stream).await {
+                        Err(ClientError::Shutdown) => {
+                            info!("Shutdown requested, exiting client mode");
+                            return Ok(());
                         }
+                        Err(e) => {
+                            error!("Error in receive loop: {}", e);
+                            self.line_buffer.clear();
+
+                            if !e.is_recoverable() {
+                                return Err(e);
+                            }
+                        }
+                        Ok(()) => {}
                     }
                 }
                 Err(e) => {
@@ -214,56 +199,58 @@ impl ADSBFeedClient {
                 }
             }
 
-            // Wait before retry
-            sleep(self.config.initial_retry_delay()).await;
+            // Wait before retry, but check for shutdown
+            tokio::select! {
+                _ = sleep(self.config.initial_retry_delay()) => {}
+                _ = self.shutdown_rx.changed() => {
+                    info!("Shutdown requested during retry delay");
+                    return Ok(());
+                }
+            }
         }
     }
 
     /// Runs in server mode (listens for incoming dump1090 connections).
-    ///
-    /// In this mode, the client binds to a TCP port and waits for dump1090
-    /// to connect to it. Useful for scenarios where dump1090 pushes data.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` - Graceful shutdown requested
-    /// * `Err(ClientError)` - Unrecoverable error (e.g., cannot bind to port)
     async fn run_server_mode(&mut self) -> Result<()> {
         let addr = format!("{}:{}", self.config.socket_host, self.config.socket_port);
         let listener = TcpListener::bind(&addr).await?;
         info!("Listening for connections on {}", addr);
 
         loop {
-            match listener.accept().await {
-                Ok((mut stream, peer_addr)) => {
-                    info!("Client connected from {}", peer_addr);
+            tokio::select! {
+                accept_result = listener.accept() => {
+                    match accept_result {
+                        Ok((mut stream, peer_addr)) => {
+                            info!("Client connected from {}", peer_addr);
 
-                    // Handle this connection
-                    if let Err(e) = self.receive_and_forward(&mut stream).await {
-                        warn!("Connection from {} closed: {}", peer_addr, e);
+                            match self.receive_and_forward(&mut stream).await {
+                                Err(ClientError::Shutdown) => {
+                                    info!("Shutdown requested, exiting server mode");
+                                    return Ok(());
+                                }
+                                Err(e) => {
+                                    warn!("Connection from {} closed: {}", peer_addr, e);
+                                }
+                                Ok(()) => {}
+                            }
+
+                            self.line_buffer.clear();
+                        }
+                        Err(e) => {
+                            error!("Error accepting connection: {}", e);
+                            sleep(Duration::from_secs(1)).await;
+                        }
                     }
-
-                    // Clear line buffer for next connection
-                    self.line_buffer.clear();
                 }
-                Err(e) => {
-                    error!("Error accepting connection: {}", e);
-                    sleep(Duration::from_secs(1)).await;
+                _ = self.shutdown_rx.changed() => {
+                    info!("Shutdown requested, exiting server mode");
+                    return Ok(());
                 }
             }
         }
     }
 
     /// Connects to dump1090 socket with exponential backoff retry.
-    ///
-    /// Attempts to establish TCP connection with configurable retry logic.
-    /// Initial delay starts at `initial_retry_delay` and doubles on each
-    /// failure up to `max_retry_delay`.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(TcpStream)` - Successfully connected socket
-    /// * Never returns `Err` - loops indefinitely with retries
     async fn connect_socket(&self) -> Result<TcpStream> {
         let mut retry_delay = self.config.initial_retry_delay();
         let max_delay = self.config.max_retry_delay();
@@ -296,14 +283,6 @@ impl ADSBFeedClient {
     }
 
     /// Connects to Pulsar broker and creates producer with retry logic.
-    ///
-    /// Establishes connection to Apache Pulsar and creates a producer
-    /// for the configured topic. Uses exponential backoff retry on failure.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` - Successfully connected and producer created
-    /// * Never returns `Err` - loops indefinitely with retries
     async fn connect_pulsar(&mut self) -> Result<()> {
         let mut retry_delay = self.config.initial_retry_delay();
         let max_delay = self.config.max_retry_delay();
@@ -354,7 +333,6 @@ impl ADSBFeedClient {
                 );
 
                 let connect_result = Pulsar::builder(&config.pulsar_broker, TokioExecutor)
-                    //.with_auth(Authentication::None)
                     .build()
                     .await;
 
@@ -403,17 +381,8 @@ impl ADSBFeedClient {
     }
 
     /// Attempts a single Pulsar connection (no retry).
-    ///
-    /// Helper method for [`connect_pulsar`](Self::connect_pulsar) that
-    /// makes a single connection attempt without retry logic.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok((Pulsar, Producer))` - Successfully connected
-    /// * `Err(ClientError::Pulsar)` - Connection failed
     async fn try_connect_pulsar(&self) -> Result<(Pulsar<TokioExecutor>, Producer<TokioExecutor>)> {
         let pulsar = Pulsar::builder(&self.config.pulsar_broker, TokioExecutor)
-            //.with_auth(Authentication::None)
             .build()
             .await?;
 
@@ -432,21 +401,6 @@ impl ADSBFeedClient {
     }
 
     /// Receives data from socket and forwards to Pulsar.
-    ///
-    /// Main message processing loop that:
-    /// 1. Reads data from TCP stream
-    /// 2. Buffers and splits into complete lines
-    /// 3. Forwards each complete message to Pulsar
-    /// 4. Logs periodic statistics
-    ///
-    /// # Arguments
-    ///
-    /// * `stream` - Active TCP connection to dump1090
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` - Should never return Ok in normal operation
-    /// * `Err(ClientError)` - Connection closed or unrecoverable error
     async fn receive_and_forward(&mut self, stream: &mut TcpStream) -> Result<()> {
         let mut buffer = vec![0u8; self.config.recv_buffer_size];
         let mut stats_interval = interval(Duration::from_secs(10));
@@ -455,16 +409,22 @@ impl ADSBFeedClient {
 
         loop {
             tokio::select! {
+                // Check for shutdown signal
+                _ = self.shutdown_rx.changed() => {
+                    if *self.shutdown_rx.borrow() {
+                        info!("Shutdown signal received in receive loop");
+                        return Err(ClientError::Shutdown);
+                    }
+                }
+
                 // Receive reconnection results without blocking dump1090 processing
                 maybe_connected = self.pulsar_reconnect_rx.recv() => {
                     if let Some((client, producer)) = maybe_connected {
                         self.pulsar_client = Some(client);
                         self.pulsar_producer = Some(producer);
                         self.pulsar_reconnect_task_running = false;
-                        // Try to drain a small batch immediately after reconnect.
                         self.drain_retry_queue_limited(MAX_RETRY_DRAIN_PER_TICK).await;
                     } else {
-                        // Sender dropped; allow a new reconnect task to start on demand.
                         self.pulsar_reconnect_task_running = false;
                     }
                 }
@@ -494,10 +454,8 @@ impl ADSBFeedClient {
                         Ok(n) => {
                             self.metrics.add_bytes_received(n as u64);
 
-                            // Process received data
                             let messages = self.process_buffer(&buffer[..n])?;
 
-                            // Forward each complete message
                             for message in messages {
                                 self.send_to_pulsar(message).await?;
                             }
@@ -523,7 +481,7 @@ impl ADSBFeedClient {
                     info!("Statistics: {}", snapshot);
                 }
 
-                // Pulsar housekeeping (non-blocking for dump1090): reconnect + drain queue in small chunks
+                // Pulsar housekeeping
                 _ = pulsar_housekeeping_interval.tick() => {
                     if !self.config.test_mode {
                         if self.pulsar_producer.is_some() {
@@ -538,28 +496,9 @@ impl ADSBFeedClient {
     }
 
     /// Processes incoming data with line buffering.
-    ///
-    /// Accumulates incoming bytes in an internal buffer and extracts
-    /// complete newline-terminated messages. Implements buffer overflow
-    /// protection to prevent memory exhaustion.
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - Raw bytes received from TCP socket
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(Vec<Vec<u8>>)` - List of complete messages (empty lines filtered)
-    /// * `Err(ClientError::BufferOverflow)` - Buffer exceeded max size
-    ///
-    /// # Note
-    ///
-    /// Incomplete lines remain in buffer for next call.
     fn process_buffer(&mut self, data: &[u8]) -> Result<Vec<Vec<u8>>> {
-        // Append new data to buffer
         self.line_buffer.extend_from_slice(data);
 
-        // Check for buffer overflow
         if self.line_buffer.len() > self.config.max_line_buffer_size {
             warn!("Line buffer overflow ({} bytes), clearing buffer", self.line_buffer.len());
             self.line_buffer.clear();
@@ -572,13 +511,10 @@ impl ADSBFeedClient {
 
         let mut messages = Vec::new();
 
-        // Split on newlines
         while let Some(newline_pos) = self.line_buffer.iter().position(|&b| b == b'\n') {
-            // Extract line (without newline)
             let line = self.line_buffer.split_to(newline_pos);
-            self.line_buffer.advance(1); // Skip the newline
+            self.line_buffer.advance(1);
 
-            // Skip empty lines
             if !line.is_empty() && line.iter().any(|&b| !b.is_ascii_whitespace()) {
                 messages.push(line.to_vec());
             }
@@ -588,31 +524,21 @@ impl ADSBFeedClient {
     }
 
     /// Sends message to Pulsar with retry queue fallback.
-    ///
-    /// Attempts to send message to Pulsar. On failure, adds message to
-    /// retry queue and attempts to reconnect. In test mode, just logs
-    /// the message without sending to Pulsar.
-    ///
-    /// # Arguments
-    ///
-    /// * `message` - Complete SBS-1 message bytes
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` - Message sent or queued successfully
-    /// * `Err(ClientError)` - Fatal error (should not happen in normal operation)
     async fn send_to_pulsar(&mut self, message: Vec<u8>) -> Result<()> {
+        // Emit to message tap if attached
+        if let Some(ref tx) = self.message_tx {
+            let _ = tx.send(message.clone());
+        }
+
         // Test mode: just log the message
         if self.config.test_mode {
             self.metrics.inc_messages_sent();
 
-            // Log message content
             match String::from_utf8(message.clone()) {
                 Ok(s) => info!("[TEST MODE] Message {}: {}", self.metrics.messages_sent(), s.trim()),
                 Err(_) => warn!("[TEST MODE] Could not decode message {}", self.metrics.messages_sent()),
             }
 
-            // Log statistics at sample rate
             if self.metrics.messages_sent() % self.config.log_sample_rate == 0 {
                 let snapshot = self.metrics.snapshot();
                 info!("[TEST MODE] Statistics: {}", snapshot);
@@ -622,9 +548,6 @@ impl ADSBFeedClient {
         }
 
         // Normal mode: send to Pulsar
-
-        // If Pulsar is currently down/disconnected, do not block processing.
-        // Display the message and enqueue for later retry.
         if self.pulsar_producer.is_none() {
             self.metrics.inc_errors();
             match String::from_utf8(message.clone()) {
@@ -659,7 +582,6 @@ impl ADSBFeedClient {
                 self.metrics.inc_messages_sent();
                 self.metrics.add_bytes_sent(message.len() as u64);
 
-                // Sample logging
                 if self.metrics.messages_sent() % self.config.log_sample_rate == 0 {
                     let snapshot = self.metrics.snapshot();
                     debug!("{}", snapshot);
@@ -671,7 +593,6 @@ impl ADSBFeedClient {
                 self.metrics.inc_errors();
                 error!("Failed to send message to Pulsar: {}", e);
 
-                // Add to retry queue
                 if self.retry_queue.len() < self.config.max_retry_queue_size {
                     self.retry_queue.push_back(message);
                     self.metrics.set_retry_queue_size(self.retry_queue.len() as u64);
@@ -682,38 +603,20 @@ impl ADSBFeedClient {
                     self.retry_queue.push_back(message);
                 }
 
-                // Mark Pulsar disconnected and reattempt reconnect in background.
                 self.pulsar_producer = None;
                 self.pulsar_client = None;
                 self.start_pulsar_reconnect_task();
 
-                // Do not block dump1090 processing.
                 Ok(())
             }
         }
     }
 
     /// Attempts to send a single message to Pulsar (no retry).
-    ///
-    /// Helper method that makes a single send attempt without retry logic.
-    ///
-    /// # Arguments
-    ///
-    /// * `message` - Message bytes to send
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` - Message sent successfully
-    /// * `Err(ClientError::Pulsar)` - Send failed
-    /// * `Err(ClientError::Other)` - Producer not initialized
     async fn try_send_message(&mut self, message: &[u8]) -> Result<()> {
         if let Some(producer) = &mut self.pulsar_producer {
             producer
                 .send_non_blocking(message)
-                // .with_properties([
-                //     ("src_id", self.config.source_id.as_str()),
-                //     ("event_timestamp", &self.last_timestamp_ms.to_string()),
-                // ])
                 .await
                 .map_err(|e: pulsar::error::Error| ClientError::Pulsar(e.into()))?;
             Ok(())
@@ -722,15 +625,7 @@ impl ADSBFeedClient {
         }
     }
 
-    /// Drains the retry queue by attempting to resend failed messages.
-    ///
-    /// Called periodically when new messages arrive. Attempts to send
-    /// all queued messages in order. Stops on first failure and re-queues
-    /// remaining messages.
-    ///
-    /// # Note
-    ///
-    /// Updates metrics with retry queue size after drain attempt.
+    /// Drains the retry queue by attempting to resend failed messages (limited batch).
     async fn drain_retry_queue_limited(&mut self, max_messages: usize) {
         if self.retry_queue.is_empty() || self.pulsar_producer.is_none() {
             return;
@@ -751,12 +646,11 @@ impl ADSBFeedClient {
                 Err(e) => {
                     debug!("Failed to send queued message: {}", e);
                     failed_messages.push(message);
-                    break; // Stop trying on first failure
+                    break;
                 }
             }
         }
 
-        // Put failed messages back
         for msg in failed_messages.into_iter().rev() {
             self.retry_queue.push_front(msg);
         }
@@ -769,26 +663,12 @@ impl ADSBFeedClient {
     }
 
     /// Gets a final statistics snapshot as a formatted string.
-    ///
-    /// Returns a human-readable summary of metrics including:
-    /// - Total messages sent
-    /// - Error count
-    /// - Throughput (messages/second)
-    /// - Total bytes sent and received
-    ///
-    /// # Returns
-    ///
-    /// Formatted statistics string for logging
     pub fn final_stats(&self) -> String {
         let snapshot = self.metrics.snapshot();
         format!("Final statistics: {}", snapshot)
     }
 }
 
-/// Cleanup implementation that logs final statistics on drop.
-///
-/// Ensures that final metrics are logged when the client is destroyed,
-/// whether due to normal shutdown or panic.
 impl Drop for ADSBFeedClient {
     fn drop(&mut self) {
         info!("Cleaning up ADS-B Pulsar Client");

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
+  "identifier": "com.adsb.aircraft-tracker",
+  "productName": "ADS-B Aircraft Tracker",
+  "version": "0.1.0",
+  "build": {
+    "devUrl": "http://localhost:3000",
+    "frontendDist": "../out",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "ADS-B Aircraft Tracker",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' https://*.tile.openstreetmap.org https://*.openstreetmap.org data:; style-src 'self' 'unsafe-inline' https://unpkg.com; script-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https://*.tile.openstreetmap.org"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "icon": [
+      "icons/icon.png"
+    ],
+    "targets": "all"
+  },
+  "plugins": {}
+}

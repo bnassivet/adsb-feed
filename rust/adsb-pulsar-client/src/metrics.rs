@@ -219,7 +219,7 @@ impl Default for Metrics {
 /// let snapshot = metrics.snapshot();
 /// println!("Stats: {}", snapshot);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct MetricsSnapshot {
     pub messages_sent: u64,
     pub errors: u64,

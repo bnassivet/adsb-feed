@@ -9,27 +9,28 @@ rust-version = "1.75"
 
 [dependencies]
 # Async runtime
-tokio = { version = "1.39", features = ["full"] }
+tokio = { workspace = true }
 
 # Pulsar client
 pulsar = { version = "6.3", default-features = false, features = ["tokio-runtime", "compression"] }
 
-# CLI argument parsing
-clap = { version = "4.5", features = ["derive", "env"] }
+# CLI argument parsing (optional, for CLI binary)
+clap = { version = "4.5", features = ["derive", "env"], optional = true }
 
 # Logging and tracing
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 # Error handling
-anyhow = "1.0"
-thiserror = "1.0"
+anyhow = { workspace = true }
+thiserror = { workspace = true }
 
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # Time utilities
-chrono = "0.4"
+chrono = { workspace = true }
 
 # Metrics
 prometheus = { version = "0.13", optional = true }
@@ -41,7 +42,8 @@ bytes = "1.7"
 tokio-test = "0.4"
 
 [features]
-default = []
+default = ["cli"]
+cli = ["clap"]
 metrics = ["prometheus"]
 
 [lib]
@@ -51,13 +53,4 @@ path = "src/lib.rs"
 [[bin]]
 name = "adsb-pulsar-client"
 path = "src/main.rs"
-
-[profile.release]
-opt-level = 3
-lto = "thin"
-codegen-units = 1
-strip = true
-
-[target.armv7-unknown-linux-gnueabihf]
-linker = "arm-linux-gnueabihf-gcc"
-
+required-features = ["cli"]

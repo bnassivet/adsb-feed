@@ -61,6 +61,12 @@ pub enum ClientError {
     Other(String),
 }
 
+impl serde::Serialize for ClientError {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
 impl ClientError {
     /// Checks if the error is recoverable.
     ///
