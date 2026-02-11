@@ -1,23 +1,30 @@
 "use client";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Map } from "@/components/Map";
 import { AircraftTable } from "@/components/AircraftTable";
 import { MetricsBar } from "@/components/MetricsBar";
 import { ConnectionStatusIndicator } from "@/components/ConnectionStatus";
 import { FiltersPanel } from "@/components/Filters";
+import { ResizeHandle } from "@/components/ResizeHandle";
 import { useAircraftTracks } from "@/hooks/useAircraftTracks";
 import { useMetrics } from "@/hooks/useMetrics";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
+import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { startFeed, stopFeed } from "@/lib/commands";
 import { DEFAULT_FILTERS } from "@/lib/types";
 import type { Filters } from "@/lib/types";
 import Link from "next/link";
 
+const MIN_TABLE_HEIGHT = 150;
+const MAX_TABLE_HEIGHT_VH = 0.5; // 50vh
+
 export default function Dashboard() {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [error, setError] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [mapTheme, setMapTheme] = useLocalStorage<"light" | "dark">("adsb-map-theme", "dark");
+  const [tableHeight, setTableHeight] = useLocalStorage<number>("adsb-table-height", 256);
 
   const tracks = useAircraftTracks(filters);
   const metrics = useMetrics();
@@ -25,6 +32,24 @@ export default function Dashboard() {
 
   // Listen for stopped event to sync local state
   useTauriEvent("adsb:stopped", () => setIsRunning(false));
+
+  function handleToggleTheme() {
+    setMapTheme(mapTheme === "dark" ? "light" : "dark");
+  }
+
+  const handleResize = useCallback(
+    (deltaY: number) => {
+      setTableHeight((prev: number) => {
+        const maxH = typeof window !== "undefined" ? window.innerHeight * MAX_TABLE_HEIGHT_VH : 500;
+        return Math.max(MIN_TABLE_HEIGHT, Math.min(maxH, prev - deltaY));
+      });
+    },
+    [setTableHeight],
+  );
+
+  const handleResizeEnd = useCallback(() => {
+    // Value already persisted via useLocalStorage setter
+  }, []);
 
   async function handleStart() {
     try {
@@ -106,13 +131,19 @@ export default function Dashboard() {
 
         {/* Map + Table */}
         <main className="flex-1 flex flex-col overflow-hidden">
-          {/* Map */}
+          {/* Map — takes remaining space */}
           <div className="flex-1 min-h-0">
-            <Map tracks={tracks} />
+            <Map tracks={tracks} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} />
           </div>
 
-          {/* Table */}
-          <div className="border-t border-slate-700 bg-slate-900">
+          {/* Resize handle */}
+          <ResizeHandle onResize={handleResize} onResizeEnd={handleResizeEnd} />
+
+          {/* Table — explicit height, resizable */}
+          <div
+            className="bg-slate-900 overflow-hidden flex-shrink-0"
+            style={{ height: tableHeight }}
+          >
             <AircraftTable tracks={tracks} />
           </div>
         </main>

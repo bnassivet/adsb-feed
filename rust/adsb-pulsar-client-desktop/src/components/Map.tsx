@@ -17,8 +17,10 @@ const MapInner = dynamic(
 
 interface Props {
   tracks: AircraftTrack[];
+  mapTheme: "light" | "dark";
+  onToggleTheme: () => void;
 }
 
-export function Map({ tracks }: Props) {
-  return <MapInner tracks={tracks} />;
+export function Map({ tracks, mapTheme, onToggleTheme }: Props) {
+  return <MapInner tracks={tracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} />;
 }

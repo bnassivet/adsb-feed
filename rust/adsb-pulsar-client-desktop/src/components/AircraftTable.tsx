@@ -52,7 +52,7 @@ export function AircraftTable({ tracks }: Props) {
   }
 
   return (
-    <div className="overflow-auto max-h-64">
+    <div className="overflow-auto h-full">
       <table className="w-full text-xs">
         <thead className="bg-slate-800 text-slate-400 sticky top-0">
           <tr>
