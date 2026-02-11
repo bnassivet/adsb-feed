@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADS-B Desktop App - Event-Driven IPC Architecture</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            font-size: 2rem;
+            color: #60a5fa;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: #94a3b8;
+            font-size: 1rem;
+        }
+
+        .architecture-container {
+            position: relative;
+            width: 100%;
+            max-width: 1400px;
+            height: 800px;
+            background: #1e293b;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            padding: 2rem;
+        }
+
+        /* Component boxes */
+        .component {
+            position: absolute;
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border: 2px solid transparent;
+        }
+
+        .component:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+            border-color: #60a5fa;
+        }
+
+        .component-title {
+            font-weight: 600;
+            font-size: 0.95rem;
+            margin-bottom: 0.25rem;
+            color: #f1f5f9;
+        }
+
+        .component-subtitle {
+            font-size: 0.75rem;
+            color: #cbd5e1;
+            opacity: 0.8;
+        }
+
+        /* Frontend components */
+        .frontend-group {
+            position: absolute;
+            top: 80px;
+            left: 50px;
+            width: 350px;
+            height: 320px;
+            border: 2px dashed #81C784;
+            border-radius: 12px;
+            padding: 2rem;
+        }
+
+        .group-label {
+            position: absolute;
+            top: -12px;
+            left: 20px;
+            background: #1e293b;
+            padding: 0 0.5rem;
+            color: #81C784;
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+
+        .ui-component {
+            background: #81C784;
+            top: 40px;
+            left: 20px;
+            width: 140px;
+        }
+
+        .hooks-component {
+            background: #81C784;
+            top: 140px;
+            left: 20px;
+            width: 140px;
+        }
+
+        .events-component {
+            background: #81C784;
+            top: 240px;
+            left: 20px;
+            width: 140px;
+        }
+
+        /* Backend components */
+        .backend-group {
+            position: absolute;
+            top: 80px;
+            right: 50px;
+            width: 380px;
+            height: 420px;
+            border: 2px dashed #64B5F6;
+            border-radius: 12px;
+            padding: 2rem;
+        }
+
+        .commands-component {
+            background: #64B5F6;
+            top: 40px;
+            right: 20px;
+            width: 150px;
+        }
+
+        .state-component {
+            background: #64B5F6;
+            top: 140px;
+            right: 20px;
+            width: 150px;
+        }
+
+        .bridge-component {
+            background: #FFD54F;
+            top: 240px;
+            right: 20px;
+            width: 150px;
+        }
+
+        .client-component {
+            background: #E57373;
+            top: 340px;
+            right: 20px;
+            width: 150px;
+        }
+
+        /* External systems */
+        .external-group {
+            position: absolute;
+            bottom: 80px;
+            right: 50px;
+            width: 300px;
+            height: 180px;
+            border: 2px dashed #BA68C8;
+            border-radius: 12px;
+            padding: 2rem;
+        }
+
+        .socket-component {
+            background: #BA68C8;
+            top: 40px;
+            left: 20px;
+            width: 120px;
+        }
+
+        .pulsar-component {
+            background: #BA68C8;
+            top: 40px;
+            right: 20px;
+            width: 120px;
+        }
+
+        /* Animated connection lines */
+        .connection-line {
+            position: absolute;
+            background: #60a5fa;
+            height: 2px;
+            transform-origin: left center;
+            opacity: 0.6;
+        }
+
+        .connection-dot {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: #60a5fa;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #60a5fa;
+            animation: moveDot 3s ease-in-out infinite;
+        }
+
+        @keyframes moveDot {
+            0%, 100% { opacity: 0; }
+            10%, 90% { opacity: 1; }
+        }
+
+        /* Pulse effect for active components */
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); }
+            50% { box-shadow: 0 4px 20px rgba(96, 165, 250, 0.6); }
+        }
+
+        .active {
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        /* Arrow labels */
+        .arrow-label {
+            position: absolute;
+            font-size: 0.7rem;
+            color: #94a3b8;
+            background: #1e293b;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            white-space: nowrap;
+        }
+
+        /* Legend */
+        .legend {
+            position: absolute;
+            bottom: 20px;
+            left: 50px;
+            background: rgba(30, 41, 59, 0.95);
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1px solid #334155;
+        }
+
+        .legend-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #60a5fa;
+            font-size: 0.85rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.25rem;
+            font-size: 0.75rem;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+        }
+
+        /* Control panel */
+        .controls {
+            margin-top: 1.5rem;
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+        }
+
+        .control-btn {
+            padding: 0.75rem 1.5rem;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+        }
+
+        .control-btn:hover {
+            background: #2563eb;
+            transform: translateY(-2px);
+        }
+
+        .control-btn.active {
+            background: #10b981;
+        }
+
+        /* SVG for curved arrows */
+        svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        .arrow-path {
+            fill: none;
+            stroke: #60a5fa;
+            stroke-width: 2;
+            opacity: 0.6;
+        }
+
+        .arrow-head {
+            fill: #60a5fa;
+        }
+
+        /* Animated dashes */
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -20;
+            }
+        }
+
+        .animated-arrow {
+            stroke-dasharray: 5, 5;
+            animation: dash 1s linear infinite;
+        }
+
+        /* Data flow particles */
+        .particle {
+            position: absolute;
+            width: 6px;
+            height: 6px;
+            background: #60a5fa;
+            border-radius: 50%;
+            box-shadow: 0 0 8px #60a5fa;
+            animation: moveParticle 3s linear infinite;
+            opacity: 0;
+        }
+
+        @keyframes moveParticle {
+            0% { opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>ADS-B Aircraft Tracker Desktop Application</h1>
+        <p class="subtitle">Architecture Pattern: Event-Driven IPC (Inter-Process Communication)</p>
+    </header>
+
+    <div class="architecture-container">
+        <!-- SVG for curved arrows -->
+        <svg>
+            <defs>
+                <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                    <polygon points="0 0, 10 3.5, 0 7" class="arrow-head" />
+                </marker>
+            </defs>
+
+            <!-- UI to Commands -->
+            <path d="M 200 150 Q 500 150 850 150" class="arrow-path animated-arrow" marker-end="url(#arrowhead)" />
+
+            <!-- Commands to State -->
+            <path d="M 1000 180 L 1000 240" class="arrow-path animated-arrow" marker-end="url(#arrowhead)" />
+
+            <!-- Commands to Bridge -->
+            <path d="M 1000 210 L 1000 340" class="arrow-path animated-arrow" marker-end="url(#arrowhead)" />
+
+            <!-- Bridge to Events -->
+            <path d="M 850 380 Q 500 380 200 380" class="arrow-path animated-arrow" marker-end="url(#arrowhead)" />
+
+            <!-- Events to Hooks -->
+            <path d="M 110 350 L 110 270" class="arrow-path animated-arrow" marker-end="url(#arrowhead)" />
+
+            <!-- Hooks to UI -->
+            <path d="M 110 220 L 110 150" class="arrow-path animated-arrow" marker-end="url(#arrowhead)" />
+
+            <!-- Bridge to Client -->
+            <path d="M 1000 390 L 1000 460" class="arrow-path animated-arrow" marker-end="url(#arrowhead)" />
+
+            <!-- Client to Socket -->
+            <path d="M 1050 540 Q 1100 600 1100 650" class="arrow-path animated-arrow" marker-end="url(#arrowhead)" />
+
+            <!-- Client to Pulsar -->
+            <path d="M 1000 540 Q 950 600 1250 680" class="arrow-path animated-arrow" marker-end="url(#arrowhead)" />
+        </svg>
+
+        <!-- Frontend Group -->
+        <div class="frontend-group">
+            <span class="group-label">Frontend (Next.js + React)</span>
+
+            <div class="component ui-component active">
+                <div class="component-title">UI Components</div>
+                <div class="component-subtitle">TypeScript/React</div>
+            </div>
+
+            <div class="component hooks-component">
+                <div class="component-title">Custom Hooks</div>
+                <div class="component-subtitle">State Management</div>
+            </div>
+
+            <div class="component events-component">
+                <div class="component-title">Event Listeners</div>
+                <div class="component-subtitle">IPC Receiver</div>
+            </div>
+        </div>
+
+        <!-- Backend Group -->
+        <div class="backend-group">
+            <span class="group-label">Backend (Rust)</span>
+
+            <div class="component commands-component">
+                <div class="component-title">Tauri Commands</div>
+                <div class="component-subtitle">IPC Handlers</div>
+            </div>
+
+            <div class="component state-component">
+                <div class="component-title">AppState</div>
+                <div class="component-subtitle">Shared State</div>
+            </div>
+
+            <div class="component bridge-component active">
+                <div class="component-title">Bridge Layer</div>
+                <div class="component-subtitle">Message Relay</div>
+            </div>
+
+            <div class="component client-component active">
+                <div class="component-title">ADSBFeedClient</div>
+                <div class="component-subtitle">Core Library</div>
+            </div>
+        </div>
+
+        <!-- External Systems Group -->
+        <div class="external-group">
+            <span class="group-label">External Systems</span>
+
+            <div class="component socket-component active">
+                <div class="component-title">dump1090</div>
+                <div class="component-subtitle">TCP Socket</div>
+            </div>
+
+            <div class="component pulsar-component active">
+                <div class="component-title">Apache Pulsar</div>
+                <div class="component-subtitle">Message Broker</div>
+            </div>
+        </div>
+
+        <!-- Arrow Labels -->
+        <div class="arrow-label" style="top: 135px; left: 420px;">invoke</div>
+        <div class="arrow-label" style="top: 210px; right: 340px;">Mutex Config</div>
+        <div class="arrow-label" style="top: 270px; right: 310px;">start/stop</div>
+        <div class="arrow-label" style="top: 365px; left: 420px;">Tauri Events</div>
+        <div class="arrow-label" style="top: 305px; left: 60px;">Update State</div>
+        <div class="arrow-label" style="top: 170px; left: 50px;">Re-render</div>
+        <div class="arrow-label" style="top: 420px; right: 330px;">spawn</div>
+        <div class="arrow-label" style="bottom: 175px; right: 140px;">TCP</div>
+        <div class="arrow-label" style="bottom: 130px; right: 80px;">pulsar-client</div>
+
+        <!-- Legend -->
+        <div class="legend">
+            <div class="legend-title">Component Legend</div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #81C784;"></div>
+                <span>Frontend (React)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #64B5F6;"></div>
+                <span>Backend Commands</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #FFD54F;"></div>
+                <span>Bridge Layer</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #E57373;"></div>
+                <span>Core Client</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #BA68C8;"></div>
+                <span>External Systems</span>
+            </div>
+        </div>
+
+        <!-- Data flow particles (will be created dynamically) -->
+        <div id="particles"></div>
+    </div>
+
+    <div class="controls">
+        <button class="control-btn active" id="playBtn">▶ Playing</button>
+        <button class="control-btn" id="resetBtn">↺ Reset</button>
+    </div>
+
+    <script>
+        // Animation state
+        let isPlaying = true;
+        let particleInterval;
+
+        // Component hover effects
+        document.querySelectorAll('.component').forEach(component => {
+            component.addEventListener('mouseenter', function() {
+                this.style.transform = 'translateY(-4px) scale(1.05)';
+            });
+
+            component.addEventListener('mouseleave', function() {
+                this.style.transform = 'translateY(0) scale(1)';
+            });
+
+            // Click to highlight data flow
+            component.addEventListener('click', function() {
+                document.querySelectorAll('.component').forEach(c => {
+                    c.style.border = '2px solid transparent';
+                });
+                this.style.border = '2px solid #60a5fa';
+                this.style.boxShadow = '0 8px 24px rgba(96, 165, 250, 0.5)';
+            });
+        });
+
+        // Create flowing data particles
+        function createParticle(path) {
+            const particle = document.createElement('div');
+            particle.className = 'particle';
+
+            // Get path coordinates
+            const pathEl = document.querySelector(`path[d="${path}"]`);
+            if (!pathEl) return;
+
+            const length = pathEl.getTotalLength();
+
+            document.getElementById('particles').appendChild(particle);
+
+            // Animate along path
+            let progress = 0;
+            const duration = 3000; // 3 seconds
+            const startTime = Date.now();
+
+            function animate() {
+                if (!isPlaying) {
+                    particle.remove();
+                    return;
+                }
+
+                const elapsed = Date.now() - startTime;
+                progress = (elapsed % duration) / duration;
+
+                const point = pathEl.getPointAtLength(progress * length);
+                particle.style.left = point.x + 'px';
+                particle.style.top = point.y + 'px';
+                particle.style.opacity = Math.sin(progress * Math.PI);
+
+                if (elapsed < duration + 1000) {
+                    requestAnimationFrame(animate);
+                } else {
+                    particle.remove();
+                }
+            }
+
+            animate();
+        }
+
+        // Start particle flow
+        function startParticleFlow() {
+            const paths = [
+                'M 200 150 Q 500 150 850 150',
+                'M 850 380 Q 500 380 200 380',
+                'M 1000 540 Q 950 600 1250 680'
+            ];
+
+            particleInterval = setInterval(() => {
+                if (isPlaying) {
+                    paths.forEach(path => {
+                        createParticle(path);
+                    });
+                }
+            }, 1000);
+        }
+
+        // Play/Pause control
+        document.getElementById('playBtn').addEventListener('click', function() {
+            isPlaying = !isPlaying;
+
+            if (isPlaying) {
+                this.textContent = '▶ Playing';
+                this.classList.add('active');
+                document.querySelectorAll('.animated-arrow').forEach(arrow => {
+                    arrow.style.animationPlayState = 'running';
+                });
+                startParticleFlow();
+            } else {
+                this.textContent = '⏸ Paused';
+                this.classList.remove('active');
+                document.querySelectorAll('.animated-arrow').forEach(arrow => {
+                    arrow.style.animationPlayState = 'paused';
+                });
+                clearInterval(particleInterval);
+            }
+        });
+
+        // Reset button
+        document.getElementById('resetBtn').addEventListener('click', function() {
+            document.getElementById('particles').innerHTML = '';
+            document.querySelectorAll('.component').forEach(c => {
+                c.style.border = '2px solid transparent';
+                c.style.transform = 'translateY(0) scale(1)';
+            });
+
+            if (!isPlaying) {
+                document.getElementById('playBtn').click();
+            }
+        });
+
+        // Start animation
+        startParticleFlow();
+
+        // Add hover tooltips
+        const tooltips = {
+            'UI Components': 'React components that render the user interface',
+            'Custom Hooks': 'React hooks for state management (useAircraftTracks, useMetrics, etc.)',
+            'Event Listeners': 'Tauri event listeners that receive messages from Rust backend',
+            'Tauri Commands': 'Rust functions invoked from frontend via invoke() API',
+            'AppState': 'Shared application state managed with Mutex for thread safety',
+            'Bridge Layer': 'Relays messages from adsb-pulsar-client to frontend with throttling',
+            'ADSBFeedClient': 'Core Rust library that handles TCP socket and Pulsar communication',
+            'dump1090': 'SDR decoder that provides ADS-B messages via TCP socket',
+            'Apache Pulsar': 'Message broker for distributed streaming'
+        };
+
+        document.querySelectorAll('.component').forEach(component => {
+            const title = component.querySelector('.component-title').textContent;
+            if (tooltips[title]) {
+                component.title = tooltips[title];
+            }
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                document.getElementById('playBtn').click();
+            } else if (e.code === 'KeyR') {
+                document.getElementById('resetBtn').click();
+            }
+        });
+    </script>
+</body>
+</html>
