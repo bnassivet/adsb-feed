@@ -323,10 +323,12 @@ graph TD
 - Display status text and error messages
 
 **Status Colors**:
-- `Disconnected`: Gray (`bg-slate-700`)
-- `Connecting`: Yellow (`bg-yellow-600`)
-- `Connected`: Green (`bg-green-600`)
-- `Error`: Red (`bg-red-600`)
+- `Disconnected`: Gray (`bg-gray-500`) — not running / intentionally off
+- `Connecting`: Yellow pulsing (`bg-yellow-500 animate-pulse`) — establishing connection
+- `Connected`: Green (`bg-green-500`) — receiving messages normally
+- `Degraded`: Orange pulsing (`bg-orange-500 animate-pulse`) — no messages for `read_timeout + 10s`
+- `ConnectionLost`: Red (`bg-red-500`) — no messages for `read_timeout + 30s`
+- `Error`: Red (`bg-red-500`) — unexpected error
 
 **File**: `src/components/ConnectionStatus.tsx`
 
@@ -638,9 +640,9 @@ export async function startFeed(): Promise<void> {
 - `AircraftPosition`: Single SBS-1 message (from backend)
 - `AircraftTrack`: Accumulated track state (frontend only)
 - `MetricsSnapshot`: Performance metrics
-- `ConnectionStatus`: Connection state enum
-- `StatusResponse`: Combined status response
-- `Config`: Client configuration
+- `ConnectionStatus`: Connection state union (`Disconnected | Connecting | Connected | Degraded | ConnectionLost | Error`)
+- `StatusResponse`: Combined status response (socket + pulsar)
+- `Config`: Client configuration (includes `socket_read_timeout_secs` used for watchdog thresholds)
 - `Filters`: UI filter state
 
 **Type Safety**: These types match Rust structs via `serde` serialization
@@ -785,10 +787,12 @@ graph TD
 ##### `ConnectionStatus` (enum)
 ```rust
 pub enum ConnectionStatus {
-    Disconnected,
-    Connecting,
-    Connected,
-    Error(String),
+    Disconnected,       // Not running / intentionally off (grey)
+    Connecting,         // Attempting to establish connection (yellow, pulsing)
+    Connected,          // Receiving messages normally (green)
+    Degraded,           // No messages for read_timeout + 10s (orange)
+    ConnectionLost,     // No messages for read_timeout + 30s (red)
+    Error(String),      // Unexpected error (red)
 }
 ```
 
@@ -832,16 +836,44 @@ pub struct AppState {
 **Responsibilities**:
 1. Create `ADSBFeedClient` with configuration
 2. Attach message tap (broadcast channel with 4096 buffer)
-3. Spawn 3 background tasks:
+3. Spawn 4 background tasks:
    - **Client Task**: Runs the feed client, listens for shutdown signal
-   - **Message Relay Task**: Parses and batches messages, emits `adsb:message` events
+   - **Message Relay Task**: Parses and batches messages, emits `adsb:message` events; updates shared `last_message_time` on every received message
    - **Metrics Relay Task**: Emits `adsb:metrics` events every 1 second
+   - **Socket Watchdog Task**: Monitors message activity and emits `adsb:status` events (see below)
 4. Return `FeedHandle` for shutdown and metrics access
 
 **Message Relay Strategy** (Throttling):
 - Buffer messages in `HashMap<hex_ident, AircraftPosition>` (latest per aircraft)
 - Flush batch every 500ms to frontend
 - Prevents overwhelming the webview with high-frequency updates
+- Each received message updates `Arc<RwLock<Instant>>` shared with the watchdog
+
+**Socket Watchdog** (`socket_watchdog`):
+
+Monitors socket health by tracking elapsed time since the last received message.
+Thresholds are derived from the configured `socket_read_timeout_secs` (default 75s):
+
+| Condition | Status | Color |
+|-----------|--------|-------|
+| Message received within `read_timeout + 10s` | **Connected** | Green |
+| No message for `read_timeout + 10s` | **Degraded** | Orange (pulsing) |
+| No message for `read_timeout + 30s` | **ConnectionLost** | Red |
+| Message received again | **Connected** | Green (auto-recovery) |
+
+```
+[Start] → Connecting (2s wait)
+            ↓ (first message)
+          Connected ◄─────────────────────────────┐
+            ↓ (silence > read_timeout + 10s)      │
+          Degraded                                 │ (message received)
+            ↓ (silence > read_timeout + 30s)      │
+          Connection Lost ────────────────────────►┘
+```
+
+- **Check interval**: Every 5 seconds (fast transition detection)
+- **Heartbeat**: Emits current status to frontend every 60 seconds regardless of change
+- **Pulsar status**: Always `Disconnected` when `test_mode = true`
 
 **Shutdown Mechanism**:
 - Uses `tokio::sync::oneshot` channel to signal shutdown
@@ -894,21 +926,31 @@ sequenceDiagram
     Frontend->>Commands: invoke("start_feed")
     Commands->>Bridge: start_feed(app, config)
     Bridge->>Client: ADSBFeedClient::new(config)
-    Bridge->>Bridge: spawn 3 background tasks
+    Bridge->>Bridge: spawn 4 background tasks
     Bridge-->>Commands: FeedHandle
     Commands-->>Frontend: Ok()
 
     Client->>Socket: TCP connect (dump1090)
     Client->>Pulsar: pulsar-client connect
-    Client->>Bridge: emit "adsb:status" (Connecting)
+    Bridge->>Frontend: emit "adsb:status" (Connecting / Pulsar=Disconnected if test_mode)
 
     loop Every 500ms
         Bridge->>Bridge: Parse & batch messages
+        Bridge->>Bridge: Update last_message_time
         Bridge->>Frontend: emit "adsb:message" (batch)
     end
 
     loop Every 1s
         Bridge->>Frontend: emit "adsb:metrics"
+    end
+
+    loop Every 5s (watchdog check)
+        Bridge->>Bridge: Evaluate socket health vs thresholds
+        Bridge-->>Frontend: emit "adsb:status" (on transition)
+    end
+
+    loop Every 60s (heartbeat)
+        Bridge->>Frontend: emit "adsb:status" (current status)
     end
 ```
 
@@ -919,16 +961,23 @@ graph LR
     A[dump1090<br/>TCP Socket] -->|SBS-1 lines| B[ADSBFeedClient]
     B -->|broadcast::Receiver| C[Bridge: Message Relay]
     C -->|parse_sbs_message| D[AircraftPosition]
+    C -->|update| LMT[last_message_time]
     D -->|buffer in HashMap| E[Batch]
     E -->|every 500ms| F[Tauri Event<br/>adsb:message]
     F -->|listen| G[useAircraftTracks]
-    G -->|merge & filter| H[tracks: AircraftTrack[]]
+    G -->|merge & filter| H[tracks: AircraftTrack list]
     H -->|props| I[Map + Table Components]
+
+    LMT -->|read every 5s| W[Socket Watchdog]
+    W -->|on transition + 60s heartbeat| S[Tauri Event<br/>adsb:status]
+    S -->|listen| SI[Status Indicators]
 
     style B fill:#E57373
     style C fill:#FFD54F
     style G fill:#81C784
     style I fill:#64B5F6
+    style W fill:#FF9800
+    style LMT fill:#CE93D8
 ```
 
 ### Shutdown Flow
@@ -994,8 +1043,8 @@ let config = state.config.lock().map_err(|e| e.to_string())?;
 
 **Event-Driven Updates**:
 - `adsb:message` → `useAircraftTracks` → Re-render map/table
-- `adsb:metrics` → `useMetrics` → Re-render footer
-- `adsb:status` → `useConnectionStatus` → Re-render status badges
+- `adsb:metrics` → `useMetrics` → Re-render footer (every 1s)
+- `adsb:status` → `useConnectionStatus` → Re-render status badges (on transition + heartbeat every 60s)
 - `adsb:stopped` → Dashboard → `setIsRunning(false)`
 
 ---
@@ -1008,6 +1057,7 @@ let config = state.config.lock().map_err(|e| e.to_string())?;
 2. **Lock-Free Metrics**: `adsb-pulsar-client::Metrics` uses `Arc<AtomicU64>` for concurrent reads
 3. **Buffered Parsing**: SBS-1 messages parsed in batches (500ms intervals)
 4. **Broadcast Channel**: 4096-message buffer prevents blocking on slow consumers
+5. **Socket Watchdog**: `Arc<RwLock<Instant>>` shared between message relay (writer) and watchdog (reader) for minimal contention; dual-timer (`tokio::select!`) handles both 5s health checks and 60s heartbeat in a single task
 
 ### Frontend Optimizations
 

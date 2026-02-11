@@ -9,6 +9,10 @@ function statusColor(s: CS): string {
       return "bg-yellow-500 animate-pulse";
     case "Disconnected":
       return "bg-gray-500";
+    case "Degraded":
+      return "bg-orange-500 animate-pulse";
+    case "ConnectionLost":
+      return "bg-red-500";
     case "Error":
       return "bg-red-500";
   }
@@ -16,6 +20,8 @@ function statusColor(s: CS): string {
 
 function statusLabel(s: CS): string {
   switch (s.status) {
+    case "ConnectionLost":
+      return "Connection Lost";
     case "Error":
       return `Error: ${s.message}`;
     default:

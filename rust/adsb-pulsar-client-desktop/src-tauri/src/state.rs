@@ -11,9 +11,17 @@ use tokio::task::JoinHandle;
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "status", content = "message")]
 pub enum ConnectionStatus {
+    /// Not running / intentionally off (grey)
     Disconnected,
+    /// Attempting to establish connection (yellow, pulsing)
     Connecting,
+    /// Receiving messages normally (green)
     Connected,
+    /// No messages for read_timeout + 10s — feed may be stalling (orange)
+    Degraded,
+    /// No messages for read_timeout + 30s — connection likely lost (red)
+    ConnectionLost,
+    /// Unexpected error (red)
     Error(String),
 }
 
