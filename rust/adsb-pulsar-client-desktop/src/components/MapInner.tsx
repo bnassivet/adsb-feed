@@ -1,6 +1,6 @@
 "use client";
 import { useEffect } from "react";
-import { MapContainer, TileLayer, Marker, Polyline, Tooltip, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Polyline, CircleMarker, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import type { AircraftTrack } from "@/lib/types";
 import { altitudeToColor } from "@/lib/colors";
@@ -57,9 +57,10 @@ interface Props {
   tracks: AircraftTrack[];
   mapTheme: "light" | "dark";
   onToggleTheme: () => void;
+  trajectoryStyle: "line" | "dots";
 }
 
-export function MapInner({ tracks, mapTheme, onToggleTheme }: Props) {
+export function MapInner({ tracks, mapTheme, onToggleTheme, trajectoryStyle }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
 
   return (
@@ -105,8 +106,8 @@ export function MapInner({ tracks, mapTheme, onToggleTheme }: Props) {
                 </Tooltip>
               </Marker>
 
-              {/* Trajectory line */}
-              {t.positions.length > 1 && (
+              {/* Trajectory */}
+              {t.positions.length > 1 && trajectoryStyle === "line" && (
                 <Polyline
                   positions={t.positions as [number, number][]}
                   pathOptions={{
@@ -116,6 +117,21 @@ export function MapInner({ tracks, mapTheme, onToggleTheme }: Props) {
                   }}
                 />
               )}
+              {t.positions.length > 1 && trajectoryStyle === "dots" &&
+                (t.positions as [number, number][]).map((pos, i) => (
+                  <CircleMarker
+                    key={i}
+                    center={pos}
+                    radius={3}
+                    pathOptions={{
+                      color,
+                      fillColor: color,
+                      fillOpacity: 0.6,
+                      weight: 0,
+                    }}
+                  />
+                ))
+              }
             </div>
           );
         })}

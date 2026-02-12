@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { getConfig, saveConfig, validateConfig } from "@/lib/commands";
+import { useLocalStorage } from "@/hooks/useLocalStorage";
 import type { Config } from "@/lib/types";
 import Link from "next/link";
 
@@ -11,6 +12,7 @@ export default function SettingsPage() {
     text: string;
   } | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [trajectoryStyle, setTrajectoryStyle] = useLocalStorage<"line" | "dots">("adsb-trajectory-style", "line");
 
   useEffect(() => {
     getConfig()
@@ -110,6 +112,41 @@ export default function SettingsPage() {
               <label htmlFor="test_mode" className="text-sm text-slate-300">
                 Test mode (no Pulsar connection)
               </label>
+            </div>
+          </section>
+
+          {/* Display settings (UI-only, stored in localStorage) */}
+          <section className="bg-slate-900 rounded-lg p-4 border border-slate-800">
+            <h2 className="text-sm font-semibold text-slate-300 mb-4">
+              Display
+            </h2>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Trajectory Style</label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setTrajectoryStyle("line")}
+                  className={`px-3 py-1.5 text-sm rounded transition ${
+                    trajectoryStyle === "line"
+                      ? "bg-blue-600 text-white"
+                      : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  }`}
+                >
+                  Lines
+                </button>
+                <button
+                  onClick={() => setTrajectoryStyle("dots")}
+                  className={`px-3 py-1.5 text-sm rounded transition ${
+                    trajectoryStyle === "dots"
+                      ? "bg-blue-600 text-white"
+                      : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  }`}
+                >
+                  Dots
+                </button>
+              </div>
+              <p className="text-xs text-slate-500 mt-2">
+                How aircraft trajectories are drawn on the map. Saved automatically.
+              </p>
             </div>
           </section>
 

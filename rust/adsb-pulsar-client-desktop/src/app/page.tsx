@@ -9,7 +9,6 @@ import { ResizeHandle } from "@/components/ResizeHandle";
 import { useAircraftTracks } from "@/hooks/useAircraftTracks";
 import { useMetrics } from "@/hooks/useMetrics";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
-import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { startFeed, stopFeed } from "@/lib/commands";
 import { DEFAULT_FILTERS } from "@/lib/types";
@@ -22,16 +21,15 @@ const MAX_TABLE_HEIGHT_VH = 0.5; // 50vh
 export default function Dashboard() {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [error, setError] = useState<string | null>(null);
-  const [isRunning, setIsRunning] = useState(false);
   const [mapTheme, setMapTheme] = useLocalStorage<"light" | "dark">("adsb-map-theme", "dark");
   const [tableHeight, setTableHeight] = useLocalStorage<number>("adsb-table-height", 256);
+  const [sidebarOpen, setSidebarOpen] = useLocalStorage<boolean>("adsb-sidebar-open", true);
+  const [trajectoryStyle] = useLocalStorage<"line" | "dots">("adsb-trajectory-style", "line");
 
   const tracks = useAircraftTracks(filters);
   const metrics = useMetrics();
   const status = useConnectionStatus();
-
-  // Listen for stopped event to sync local state
-  useTauriEvent("adsb:stopped", () => setIsRunning(false));
+  const isRunning = status.is_running;
 
   function handleToggleTheme() {
     setMapTheme(mapTheme === "dark" ? "light" : "dark");
@@ -55,7 +53,6 @@ export default function Dashboard() {
     try {
       setError(null);
       await startFeed();
-      setIsRunning(true);
     } catch (e) {
       setError(String(e));
     }
@@ -65,7 +62,6 @@ export default function Dashboard() {
     try {
       setError(null);
       await stopFeed();
-      setIsRunning(false);
     } catch (e) {
       setError(String(e));
     }
@@ -87,6 +83,16 @@ export default function Dashboard() {
             label="Pulsar"
             status={status.pulsar_status}
           />
+          <button
+            onClick={() => setSidebarOpen((prev: boolean) => !prev)}
+            className="p-1 rounded hover:bg-slate-700 transition text-slate-400 hover:text-slate-200"
+            title={sidebarOpen ? "Hide filters panel" : "Show filters panel"}
+          >
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="1" y="2" width="16" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <line x1="6" y1="2" x2="6" y2="16" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+          </button>
         </div>
         <div className="flex items-center gap-3">
           {error && (
@@ -121,19 +127,21 @@ export default function Dashboard() {
       {/* Main content */}
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
-        <aside className="w-56 bg-slate-900 border-r border-slate-700 overflow-y-auto flex-shrink-0">
-          <FiltersPanel
-            filters={filters}
-            onChange={setFilters}
-            trackCount={tracks.length}
-          />
-        </aside>
+        {sidebarOpen && (
+          <aside className="w-56 bg-slate-900 border-r border-slate-700 overflow-y-auto flex-shrink-0">
+            <FiltersPanel
+              filters={filters}
+              onChange={setFilters}
+              trackCount={tracks.length}
+            />
+          </aside>
+        )}
 
         {/* Map + Table */}
         <main className="flex-1 flex flex-col overflow-hidden">
           {/* Map — takes remaining space */}
           <div className="flex-1 min-h-0">
-            <Map tracks={tracks} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} />
+            <Map tracks={tracks} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} />
           </div>
 
           {/* Resize handle */}

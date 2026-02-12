@@ -19,8 +19,9 @@ interface Props {
   tracks: AircraftTrack[];
   mapTheme: "light" | "dark";
   onToggleTheme: () => void;
+  trajectoryStyle: "line" | "dots";
 }
 
-export function Map({ tracks, mapTheme, onToggleTheme }: Props) {
-  return <MapInner tracks={tracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} />;
+export function Map({ tracks, mapTheme, onToggleTheme, trajectoryStyle }: Props) {
+  return <MapInner tracks={tracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} />;
 }
