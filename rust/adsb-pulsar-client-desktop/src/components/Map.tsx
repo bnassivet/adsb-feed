@@ -1,6 +1,6 @@
 "use client";
 import dynamic from "next/dynamic";
-import type { AircraftTrack } from "@/lib/types";
+import type { AircraftTrack, DensityMetric } from "@/lib/types";
 
 // Dynamic import to prevent SSR (Leaflet requires window/document)
 const MapInner = dynamic(
@@ -21,8 +21,11 @@ interface Props {
   mapTheme: "light" | "dark";
   onToggleTheme: () => void;
   trajectoryStyle: "line" | "dots";
+  showDensity: boolean;
+  densityMetric: DensityMetric;
+  densityTracks: AircraftTrack[];
 }
 
-export function Map({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle }: Props) {
-  return <MapInner tracks={tracks} historyTracks={historyTracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} />;
+export function Map({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks }: Props) {
+  return <MapInner tracks={tracks} historyTracks={historyTracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} showDensity={showDensity} densityMetric={densityMetric} densityTracks={densityTracks} />;
 }

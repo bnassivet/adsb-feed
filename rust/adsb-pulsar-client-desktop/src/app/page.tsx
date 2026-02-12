@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { Map } from "@/components/Map";
 import { AircraftTable } from "@/components/AircraftTable";
 import { MetricsBar } from "@/components/MetricsBar";
@@ -12,7 +12,7 @@ import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { startFeed, stopFeed } from "@/lib/commands";
 import { DEFAULT_FILTERS } from "@/lib/types";
-import type { Filters } from "@/lib/types";
+import type { Filters, DensityMetric } from "@/lib/types";
 import Link from "next/link";
 
 const MIN_TABLE_HEIGHT = 150;
@@ -26,6 +26,8 @@ export default function Dashboard() {
   const [sidebarOpen, setSidebarOpen] = useLocalStorage<boolean>("adsb-sidebar-open", true);
   const [trajectoryStyle] = useLocalStorage<"line" | "dots">("adsb-trajectory-style", "line");
   const [showHistory, setShowHistory] = useLocalStorage<boolean>("adsb-show-history", false);
+  const [showDensity, setShowDensity] = useLocalStorage<boolean>("adsb-show-density", false);
+  const [densityMetric, setDensityMetric] = useLocalStorage<DensityMetric>("adsb-density-metric", "positions");
 
   const { tracks, history } = useAircraftTracks(filters);
   const metrics = useMetrics();
@@ -33,6 +35,10 @@ export default function Dashboard() {
   const isRunning = status.is_running;
 
   const visibleHistory = showHistory ? history : [];
+  const densityTracks = useMemo(
+    () => (showDensity ? [...tracks, ...history] : []),
+    [showDensity, tracks, history],
+  );
 
   function handleToggleTheme() {
     setMapTheme(mapTheme === "dark" ? "light" : "dark");
@@ -40,6 +46,10 @@ export default function Dashboard() {
 
   function handleToggleHistory() {
     setShowHistory((prev: boolean) => !prev);
+  }
+
+  function handleToggleDensity() {
+    setShowDensity((prev: boolean) => !prev);
   }
 
   const handleResize = useCallback(
@@ -143,6 +153,10 @@ export default function Dashboard() {
               showHistory={showHistory}
               onToggleHistory={handleToggleHistory}
               historyCount={history.length}
+              showDensity={showDensity}
+              onToggleDensity={handleToggleDensity}
+              densityMetric={densityMetric}
+              onDensityMetricChange={setDensityMetric}
             />
           </aside>
         )}
@@ -151,7 +165,7 @@ export default function Dashboard() {
         <main className="flex-1 flex flex-col overflow-hidden">
           {/* Map — takes remaining space */}
           <div className="flex-1 min-h-0">
-            <Map tracks={tracks} historyTracks={visibleHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} />
+            <Map tracks={tracks} historyTracks={visibleHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} />
           </div>
 
           {/* Resize handle */}

@@ -1,5 +1,5 @@
 "use client";
-import type { Filters } from "@/lib/types";
+import type { Filters, DensityMetric } from "@/lib/types";
 
 interface Props {
   filters: Filters;
@@ -8,9 +8,13 @@ interface Props {
   showHistory: boolean;
   onToggleHistory: () => void;
   historyCount: number;
+  showDensity: boolean;
+  onToggleDensity: () => void;
+  densityMetric: DensityMetric;
+  onDensityMetricChange: (metric: DensityMetric) => void;
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange }: Props) {
   return (
     <div className="flex flex-col gap-4 p-4">
       <div>
@@ -117,6 +121,53 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
             <span className="text-slate-500 font-mono">({historyCount} past)</span>
           </span>
         </label>
+      </div>
+
+      {/* Density overlay */}
+      <div>
+        <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={showDensity}
+            onChange={onToggleDensity}
+            className="accent-purple-500"
+          />
+          <span>H3 density heatmap</span>
+        </label>
+        {showDensity && (
+          <div className="ml-5 mt-1 flex flex-col gap-1">
+            <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer">
+              <input
+                type="radio"
+                name="density-metric"
+                checked={densityMetric === "positions"}
+                onChange={() => onDensityMetricChange("positions")}
+                className="accent-purple-500"
+              />
+              Position count
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer">
+              <input
+                type="radio"
+                name="density-metric"
+                checked={densityMetric === "aircraft"}
+                onChange={() => onDensityMetricChange("aircraft")}
+                className="accent-purple-500"
+              />
+              Unique aircraft
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer">
+              <input
+                type="radio"
+                name="density-metric"
+                checked={densityMetric === "altitude"}
+                onChange={() => onDensityMetricChange("altitude")}
+                className="accent-purple-500"
+              />
+              Mean altitude
+            </label>
+          </div>
+        )}
       </div>
     </div>
   );

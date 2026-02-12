@@ -1,9 +1,11 @@
 "use client";
-import { useEffect } from "react";
-import { MapContainer, TileLayer, Marker, Polyline, CircleMarker, Tooltip, useMap } from "react-leaflet";
+import { useEffect, useMemo } from "react";
+import { MapContainer, TileLayer, Marker, Polyline, CircleMarker, Tooltip, GeoJSON, useMap } from "react-leaflet";
 import L from "leaflet";
-import type { AircraftTrack } from "@/lib/types";
-import { altitudeToColor } from "@/lib/colors";
+import type { AircraftTrack, DensityMetric } from "@/lib/types";
+import { altitudeToColor, densityColor } from "@/lib/colors";
+import { computeH3Density } from "@/lib/h3-density";
+import type { DensityProperties } from "@/lib/h3-density";
 import { MapTileToggle } from "./MapTileToggle";
 
 // Default center: Montreal
@@ -70,10 +72,23 @@ interface Props {
   mapTheme: "light" | "dark";
   onToggleTheme: () => void;
   trajectoryStyle: "line" | "dots";
+  showDensity: boolean;
+  densityMetric: DensityMetric;
+  densityTracks: AircraftTrack[];
 }
 
-export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle }: Props) {
+export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
+
+  const densityGeoJson = useMemo(
+    () => (showDensity ? computeH3Density(densityTracks, densityMetric) : null),
+    [showDensity, densityTracks, densityMetric],
+  );
+
+  // react-leaflet's GeoJSON doesn't re-render on data change — use key to force remount
+  const densityKey = densityGeoJson
+    ? `density-${densityMetric}-${densityGeoJson.features.length}-${densityTracks.length}`
+    : "density-off";
 
   return (
     <div className="h-full w-full relative">
@@ -89,6 +104,34 @@ export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, traje
           attribution={tile.attribution}
           url={tile.url}
         />
+
+        {/* Density hexagons — bottom overlay */}
+        {densityGeoJson && densityGeoJson.features.length > 0 && (
+          <GeoJSON
+            key={densityKey}
+            data={densityGeoJson}
+            style={(feature) => {
+              const props = (feature?.properties ?? { normalized: 0, value: 0 }) as DensityProperties;
+              if (densityMetric === "altitude") {
+                const c = altitudeToColor(props.value);
+                return { color: c, fillColor: c, fillOpacity: 0.55, weight: 1, opacity: 0.4 };
+              }
+              const { color, fillOpacity } = densityColor(props.normalized);
+              return { color, fillColor: color, fillOpacity, weight: 1, opacity: 0.4 };
+            }}
+            onEachFeature={(feature, layer) => {
+              const props = feature.properties as DensityProperties;
+              let text: string;
+              if (densityMetric === "altitude") {
+                text = `Mean alt: ${Math.round(props.value).toLocaleString()} ft`;
+              } else {
+                const label = densityMetric === "positions" ? "Positions" : "Aircraft";
+                text = `${label}: ${props.value}`;
+              }
+              layer.bindTooltip(text, { sticky: true });
+            }}
+          />
+        )}
 
         {/* History tracks — rendered first so active tracks layer on top */}
         {historyTracks.map((t) => {
