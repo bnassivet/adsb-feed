@@ -2,8 +2,6 @@ import { latLngToCell, cellToBoundary } from "h3-js";
 import type { Feature, FeatureCollection, Polygon } from "geojson";
 import type { AircraftTrack, DensityMetric } from "@/lib/types";
 
-const H3_RESOLUTION = 7;
-
 interface CellAgg {
   count: number;
   aircraft: Set<string>;
@@ -26,13 +24,14 @@ export interface DensityProperties {
 export function computeH3Density(
   tracks: AircraftTrack[],
   metric: DensityMetric,
+  resolution: number,
 ): FeatureCollection<Polygon, DensityProperties> {
   // Aggregate positions into H3 cells
   const cells = new Map<string, CellAgg>();
 
   for (const track of tracks) {
     for (const [lat, lng] of track.positions) {
-      const cell = latLngToCell(lat, lng, H3_RESOLUTION);
+      const cell = latLngToCell(lat, lng, resolution);
       let agg = cells.get(cell);
       if (!agg) {
         agg = { count: 0, aircraft: new Set(), altitudeSum: 0, altitudeCount: 0 };

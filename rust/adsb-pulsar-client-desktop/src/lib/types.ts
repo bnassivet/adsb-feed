@@ -93,6 +93,17 @@ export interface Filters {
 /** Which metric the H3 density overlay displays. */
 export type DensityMetric = "positions" | "aircraft" | "altitude";
 
+/** Maps a Leaflet zoom level to the appropriate H3 resolution. */
+export function zoomToH3Resolution(zoom: number): number {
+  if (zoom <= 5) return 3;
+  if (zoom === 6) return 4;
+  if (zoom === 7) return 5;
+  if (zoom <= 9) return 6;
+  if (zoom <= 11) return 7;
+  if (zoom <= 13) return 8;
+  return 7;
+}
+
 export const DEFAULT_FILTERS: Filters = {
   callsign: "",
   altitudeMin: 0,

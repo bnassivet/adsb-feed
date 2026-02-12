@@ -3,9 +3,11 @@ import { useEffect, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Polyline, CircleMarker, Tooltip, GeoJSON, useMap } from "react-leaflet";
 import L from "leaflet";
 import type { AircraftTrack, DensityMetric } from "@/lib/types";
+import { zoomToH3Resolution } from "@/lib/types";
 import { altitudeToColor, densityColor } from "@/lib/colors";
 import { computeH3Density } from "@/lib/h3-density";
 import type { DensityProperties } from "@/lib/h3-density";
+import { useMapZoom } from "@/hooks/useMapZoom";
 import { MapTileToggle } from "./MapTileToggle";
 
 // Default center: Montreal
@@ -77,18 +79,61 @@ interface Props {
   densityTracks: AircraftTrack[];
 }
 
-export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks }: Props) {
-  const tile = TILE_CONFIGS[mapTheme];
+/** Renders H3 density hexagons with zoom-adaptive resolution. */
+function DensityLayer({
+  showDensity,
+  densityTracks,
+  densityMetric,
+}: {
+  showDensity: boolean;
+  densityTracks: AircraftTrack[];
+  densityMetric: DensityMetric;
+}) {
+  const zoom = useMapZoom(300);
+  const resolution = zoomToH3Resolution(zoom);
 
   const densityGeoJson = useMemo(
-    () => (showDensity ? computeH3Density(densityTracks, densityMetric) : null),
-    [showDensity, densityTracks, densityMetric],
+    () => (showDensity ? computeH3Density(densityTracks, densityMetric, resolution) : null),
+    [showDensity, densityTracks, densityMetric, resolution],
   );
 
   // react-leaflet's GeoJSON doesn't re-render on data change — use key to force remount
   const densityKey = densityGeoJson
-    ? `density-${densityMetric}-${densityGeoJson.features.length}-${densityTracks.length}`
+    ? `density-${densityMetric}-${resolution}-${densityGeoJson.features.length}-${densityTracks.length}`
     : "density-off";
+
+  if (!densityGeoJson || densityGeoJson.features.length === 0) return null;
+
+  return (
+    <GeoJSON
+      key={densityKey}
+      data={densityGeoJson}
+      style={(feature) => {
+        const props = (feature?.properties ?? { normalized: 0, value: 0 }) as DensityProperties;
+        if (densityMetric === "altitude") {
+          const c = altitudeToColor(props.value);
+          return { color: c, fillColor: c, fillOpacity: 0.55, weight: 1, opacity: 0.4 };
+        }
+        const { color, fillOpacity } = densityColor(props.normalized);
+        return { color, fillColor: color, fillOpacity, weight: 1, opacity: 0.4 };
+      }}
+      onEachFeature={(feature, layer) => {
+        const props = feature.properties as DensityProperties;
+        let text: string;
+        if (densityMetric === "altitude") {
+          text = `Mean alt: ${Math.round(props.value).toLocaleString()} ft`;
+        } else {
+          const label = densityMetric === "positions" ? "Positions" : "Aircraft";
+          text = `${label}: ${props.value}`;
+        }
+        layer.bindTooltip(text, { sticky: true });
+      }}
+    />
+  );
+}
+
+export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks }: Props) {
+  const tile = TILE_CONFIGS[mapTheme];
 
   return (
     <div className="h-full w-full relative">
@@ -105,33 +150,8 @@ export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, traje
           url={tile.url}
         />
 
-        {/* Density hexagons — bottom overlay */}
-        {densityGeoJson && densityGeoJson.features.length > 0 && (
-          <GeoJSON
-            key={densityKey}
-            data={densityGeoJson}
-            style={(feature) => {
-              const props = (feature?.properties ?? { normalized: 0, value: 0 }) as DensityProperties;
-              if (densityMetric === "altitude") {
-                const c = altitudeToColor(props.value);
-                return { color: c, fillColor: c, fillOpacity: 0.55, weight: 1, opacity: 0.4 };
-              }
-              const { color, fillOpacity } = densityColor(props.normalized);
-              return { color, fillColor: color, fillOpacity, weight: 1, opacity: 0.4 };
-            }}
-            onEachFeature={(feature, layer) => {
-              const props = feature.properties as DensityProperties;
-              let text: string;
-              if (densityMetric === "altitude") {
-                text = `Mean alt: ${Math.round(props.value).toLocaleString()} ft`;
-              } else {
-                const label = densityMetric === "positions" ? "Positions" : "Aircraft";
-                text = `${label}: ${props.value}`;
-              }
-              layer.bindTooltip(text, { sticky: true });
-            }}
-          />
-        )}
+        {/* Density hexagons — zoom-adaptive H3 resolution */}
+        <DensityLayer showDensity={showDensity} densityTracks={densityTracks} densityMetric={densityMetric} />
 
         {/* History tracks — rendered first so active tracks layer on top */}
         {historyTracks.map((t) => {
