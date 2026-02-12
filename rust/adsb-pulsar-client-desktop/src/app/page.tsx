@@ -7,6 +7,7 @@ import { ConnectionStatusIndicator } from "@/components/ConnectionStatus";
 import { FiltersPanel } from "@/components/Filters";
 import { ResizeHandle } from "@/components/ResizeHandle";
 import { useAircraftTracks } from "@/hooks/useAircraftTracks";
+import { useSimulatedTracks } from "@/hooks/useSimulatedTracks";
 import { useMetrics } from "@/hooks/useMetrics";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
@@ -28,16 +29,19 @@ export default function Dashboard() {
   const [showHistory, setShowHistory] = useLocalStorage<boolean>("adsb-show-history", false);
   const [showDensity, setShowDensity] = useLocalStorage<boolean>("adsb-show-density", false);
   const [densityMetric, setDensityMetric] = useLocalStorage<DensityMetric>("adsb-density-metric", "positions");
+  const [showSimulation, setShowSimulation] = useLocalStorage<boolean>("adsb-show-simulation", false);
 
   const { tracks, history } = useAircraftTracks(filters);
+  const simulatedTracks = useSimulatedTracks(showSimulation);
+  const allTracks = useMemo(() => [...tracks, ...simulatedTracks], [tracks, simulatedTracks]);
   const metrics = useMetrics();
   const status = useConnectionStatus();
   const isRunning = status.is_running;
 
   const visibleHistory = showHistory ? history : [];
   const densityTracks = useMemo(
-    () => (showDensity ? [...tracks, ...history] : []),
-    [showDensity, tracks, history],
+    () => (showDensity ? [...allTracks, ...history] : []),
+    [showDensity, allTracks, history],
   );
 
   function handleToggleTheme() {
@@ -50,6 +54,10 @@ export default function Dashboard() {
 
   function handleToggleDensity() {
     setShowDensity((prev: boolean) => !prev);
+  }
+
+  function handleToggleSimulation() {
+    setShowSimulation((prev: boolean) => !prev);
   }
 
   const handleResize = useCallback(
@@ -149,7 +157,7 @@ export default function Dashboard() {
             <FiltersPanel
               filters={filters}
               onChange={setFilters}
-              trackCount={tracks.length}
+              trackCount={allTracks.length}
               showHistory={showHistory}
               onToggleHistory={handleToggleHistory}
               historyCount={history.length}
@@ -157,6 +165,9 @@ export default function Dashboard() {
               onToggleDensity={handleToggleDensity}
               densityMetric={densityMetric}
               onDensityMetricChange={setDensityMetric}
+              showSimulation={showSimulation}
+              onToggleSimulation={handleToggleSimulation}
+              simulationCount={simulatedTracks.length}
             />
           </aside>
         )}
@@ -165,7 +176,7 @@ export default function Dashboard() {
         <main className="flex-1 flex flex-col overflow-hidden">
           {/* Map — takes remaining space */}
           <div className="flex-1 min-h-0">
-            <Map tracks={tracks} historyTracks={visibleHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} />
+            <Map tracks={allTracks} historyTracks={visibleHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} />
           </div>
 
           {/* Resize handle */}
@@ -176,7 +187,7 @@ export default function Dashboard() {
             className="bg-slate-900 overflow-hidden flex-shrink-0"
             style={{ height: tableHeight }}
           >
-            <AircraftTable tracks={tracks} historyTracks={visibleHistory} />
+            <AircraftTable tracks={allTracks} historyTracks={visibleHistory} />
           </div>
         </main>
       </div>

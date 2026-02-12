@@ -90,6 +90,11 @@ export function AircraftTable({ tracks, historyTracks = [] }: Props) {
               className="border-b border-slate-800 hover:bg-slate-800/50"
             >
               <td className="px-3 py-1.5 font-mono font-semibold">
+                {t.hex_ident.startsWith("SIM-") && (
+                  <span className="inline-block mr-1.5 px-1 py-0.5 text-[9px] font-bold rounded bg-emerald-600/30 text-emerald-400 leading-none">
+                    SIM
+                  </span>
+                )}
                 {t.callsign ?? "—"}
               </td>
               <td className="px-3 py-1.5 font-mono text-slate-400">

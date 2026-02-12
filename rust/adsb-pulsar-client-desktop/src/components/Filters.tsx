@@ -12,9 +12,12 @@ interface Props {
   onToggleDensity: () => void;
   densityMetric: DensityMetric;
   onDensityMetricChange: (metric: DensityMetric) => void;
+  showSimulation: boolean;
+  onToggleSimulation: () => void;
+  simulationCount: number;
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, showSimulation, onToggleSimulation, simulationCount }: Props) {
   return (
     <div className="flex flex-col gap-4 p-4">
       <div>
@@ -168,6 +171,24 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
             </label>
           </div>
         )}
+      </div>
+
+      {/* Simulation toggle */}
+      <div>
+        <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={showSimulation}
+            onChange={onToggleSimulation}
+            className="accent-emerald-500"
+          />
+          <span>
+            Demo flights{" "}
+            {showSimulation && (
+              <span className="text-slate-500 font-mono">({simulationCount} sim)</span>
+            )}
+          </span>
+        </label>
       </div>
     </div>
   );
