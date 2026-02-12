@@ -17,11 +17,12 @@ const MapInner = dynamic(
 
 interface Props {
   tracks: AircraftTrack[];
+  historyTracks: AircraftTrack[];
   mapTheme: "light" | "dark";
   onToggleTheme: () => void;
   trajectoryStyle: "line" | "dots";
 }
 
-export function Map({ tracks, mapTheme, onToggleTheme, trajectoryStyle }: Props) {
-  return <MapInner tracks={tracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} />;
+export function Map({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle }: Props) {
+  return <MapInner tracks={tracks} historyTracks={historyTracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} />;
 }

@@ -5,9 +5,12 @@ interface Props {
   filters: Filters;
   onChange: (filters: Filters) => void;
   trackCount: number;
+  showHistory: boolean;
+  onToggleHistory: () => void;
+  historyCount: number;
 }
 
-export function FiltersPanel({ filters, onChange, trackCount }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount }: Props) {
   return (
     <div className="flex flex-col gap-4 p-4">
       <div>
@@ -98,6 +101,22 @@ export function FiltersPanel({ filters, onChange, trackCount }: Props) {
           <span className="text-slate-200 font-mono">{trackCount}</span>{" "}
           aircraft
         </div>
+      </div>
+
+      {/* History toggle */}
+      <div>
+        <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={showHistory}
+            onChange={onToggleHistory}
+            className="accent-blue-500"
+          />
+          <span>
+            Show history{" "}
+            <span className="text-slate-500 font-mono">({historyCount} past)</span>
+          </span>
+        </label>
       </div>
     </div>
   );

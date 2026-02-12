@@ -25,14 +25,21 @@ export default function Dashboard() {
   const [tableHeight, setTableHeight] = useLocalStorage<number>("adsb-table-height", 256);
   const [sidebarOpen, setSidebarOpen] = useLocalStorage<boolean>("adsb-sidebar-open", true);
   const [trajectoryStyle] = useLocalStorage<"line" | "dots">("adsb-trajectory-style", "line");
+  const [showHistory, setShowHistory] = useLocalStorage<boolean>("adsb-show-history", false);
 
-  const tracks = useAircraftTracks(filters);
+  const { tracks, history } = useAircraftTracks(filters);
   const metrics = useMetrics();
   const status = useConnectionStatus();
   const isRunning = status.is_running;
 
+  const visibleHistory = showHistory ? history : [];
+
   function handleToggleTheme() {
     setMapTheme(mapTheme === "dark" ? "light" : "dark");
+  }
+
+  function handleToggleHistory() {
+    setShowHistory((prev: boolean) => !prev);
   }
 
   const handleResize = useCallback(
@@ -133,6 +140,9 @@ export default function Dashboard() {
               filters={filters}
               onChange={setFilters}
               trackCount={tracks.length}
+              showHistory={showHistory}
+              onToggleHistory={handleToggleHistory}
+              historyCount={history.length}
             />
           </aside>
         )}
@@ -141,7 +151,7 @@ export default function Dashboard() {
         <main className="flex-1 flex flex-col overflow-hidden">
           {/* Map — takes remaining space */}
           <div className="flex-1 min-h-0">
-            <Map tracks={tracks} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} />
+            <Map tracks={tracks} historyTracks={visibleHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} />
           </div>
 
           {/* Resize handle */}
@@ -152,7 +162,7 @@ export default function Dashboard() {
             className="bg-slate-900 overflow-hidden flex-shrink-0"
             style={{ height: tableHeight }}
           >
-            <AircraftTable tracks={tracks} />
+            <AircraftTable tracks={tracks} historyTracks={visibleHistory} />
           </div>
         </main>
       </div>

@@ -37,6 +37,17 @@ function aircraftIcon(heading: number, color: string): L.DivIcon {
   });
 }
 
+/** Formats a relative time string from a timestamp. */
+function timeAgo(lastSeen: number): string {
+  const seconds = Math.floor((Date.now() - lastSeen) / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  const remainMin = minutes % 60;
+  return `${hours}h ${remainMin}m ago`;
+}
+
 /** Watches container size changes and tells Leaflet to recalculate. */
 function MapResizeHandler() {
   const map = useMap();
@@ -55,12 +66,13 @@ function MapResizeHandler() {
 
 interface Props {
   tracks: AircraftTrack[];
+  historyTracks: AircraftTrack[];
   mapTheme: "light" | "dark";
   onToggleTheme: () => void;
   trajectoryStyle: "line" | "dots";
 }
 
-export function MapInner({ tracks, mapTheme, onToggleTheme, trajectoryStyle }: Props) {
+export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
 
   return (
@@ -78,6 +90,65 @@ export function MapInner({ tracks, mapTheme, onToggleTheme, trajectoryStyle }: P
           url={tile.url}
         />
 
+        {/* History tracks — rendered first so active tracks layer on top */}
+        {historyTracks.map((t) => {
+          if (t.positions.length < 2) return null;
+          const color = altitudeToColor(t.altitude);
+
+          return (
+            <div key={`hist-${t.hex_ident}`}>
+              {trajectoryStyle === "line" && (
+                <Polyline
+                  positions={t.positions as [number, number][]}
+                  pathOptions={{
+                    color,
+                    weight: 1,
+                    opacity: 0.25,
+                  }}
+                >
+                  <Tooltip sticky>
+                    <div className="text-xs">
+                      <div className="font-bold">
+                        {t.callsign ?? t.hex_ident}
+                      </div>
+                      <div>Hex: {t.hex_ident}</div>
+                      <div>Last seen: {timeAgo(t.last_seen)}</div>
+                    </div>
+                  </Tooltip>
+                </Polyline>
+              )}
+              {trajectoryStyle === "dots" &&
+                (t.positions as [number, number][]).map((pos, i) => (
+                  <CircleMarker
+                    key={i}
+                    center={pos}
+                    radius={2}
+                    pathOptions={{
+                      color,
+                      fillColor: color,
+                      fillOpacity: 0.2,
+                      weight: 0,
+                    }}
+                  >
+                    {i === t.positions.length - 1 && (
+                      <Tooltip>
+                        <div className="text-xs">
+                          <div className="font-bold">
+                            {t.callsign ?? t.hex_ident}
+                          </div>
+                          <div>Hex: {t.hex_ident}</div>
+                          <div>Last seen: {timeAgo(t.last_seen)}</div>
+                        </div>
+                      </Tooltip>
+                    )}
+                  </CircleMarker>
+                ))
+              }
+            </div>
+          );
+        })}
+
+        {/* Active tracks */}
         {tracks.map((t) => {
           if (t.latitude === null || t.longitude === null) return null;
           const color = altitudeToColor(t.altitude);

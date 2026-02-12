@@ -7,6 +7,7 @@
 4. [Backend Architecture (Tauri Rust)](#backend-architecture-tauri-rust)
 5. [Data Flow](#data-flow)
 6. [State Management](#state-management)
+7. [In-Memory Aircraft History](#in-memory-aircraft-history)
 
 ---
 
@@ -237,12 +238,13 @@ graph TD
 - Persist UI preferences (map theme, table height) to localStorage
 
 **Custom Hooks Used**:
-- `useAircraftTracks(filters)`: Track state with filtering
+- `useAircraftTracks(filters)`: Track state with filtering (returns `{ tracks, history }`)
 - `useMetrics()`: Performance metrics polling
 - `useConnectionStatus()`: Connection status polling
 - `useTauriEvent("adsb:stopped")`: Listen for stop events
 - `useLocalStorage("adsb-map-theme")`: Persist map theme
 - `useLocalStorage("adsb-table-height")`: Persist table height
+- `useLocalStorage("adsb-show-history")`: Persist history toggle
 
 **State Management**:
 - `filters: Filters`: Altitude/speed/callsign filters
@@ -250,6 +252,10 @@ graph TD
 - `error: string | null`: Error messages
 - `mapTheme: "light" | "dark"`: Map tile style
 - `tableHeight: number`: Resizable table height in pixels
+- `showHistory: boolean`: Whether to display expired aircraft (persisted to localStorage)
+
+**Derived State**:
+- `visibleHistory`: Computed as `showHistory ? history : []` — avoids passing full history arrays to child components when the toggle is off, reducing unnecessary rendering work
 
 **Layout Structure**:
 ```tsx
@@ -291,20 +297,26 @@ graph TD
 
 #### 4. **AircraftTable** (`src/components/AircraftTable.tsx`)
 
-**Purpose**: Tabular display of aircraft data
+**Purpose**: Tabular display of active and historical aircraft data
 
-**Props**: `tracks: AircraftTrack[]`
+**Props**:
+- `tracks: AircraftTrack[]`: Active aircraft tracks
+- `historyTracks?: AircraftTrack[]`: Optional expired aircraft tracks (defaults to `[]`)
 
 **Responsibilities**:
 - Render scrollable table with fixed header
 - Display columns: Hex ID, Callsign, Altitude, Speed, Track, Lat/Lon, Squawk
 - Handle null values gracefully (display "—")
-- Apply zebra striping for readability
+- Render history rows below active rows, separated by a labeled divider row
+- History rows display with `opacity-40` for visual distinction
+- History rows show relative "last seen" time (e.g., "23m ago") in place of heading/vertical rate
 
 **Styling**:
 - Dark background (`bg-slate-900`)
 - Fixed header with `sticky top-0`
 - Overflow scrolling for table body
+- History divider: uppercase label with count (e.g., "HISTORY (12)")
+- History rows: dimmed via `opacity-40` class
 
 **File**: `src/components/AircraftTable.tsx`
 
@@ -341,13 +353,21 @@ graph TD
 **Props**:
 - `filters: Filters`: Current filter state
 - `onChange: (filters: Filters) => void`: Update callback
-- `trackCount: number`: Number of tracks matching filters
+- `trackCount: number`: Number of active tracks matching filters
+- `showHistory: boolean`: Whether history display is enabled
+- `onToggleHistory: () => void`: Toggle history visibility
+- `historyCount: number`: Total number of history tracks matching filters
 
 **Responsibilities**:
 - Callsign search input
 - Altitude range sliders (0-50,000 ft)
 - Speed range sliders (0-600 kts)
-- Reset filters button
+- Active track count display
+- History toggle checkbox with count (e.g., "Show history (12 past)")
+
+**Design Note**: The `historyCount` always reflects filtered history size regardless of
+the `showHistory` toggle state. This lets users see how many past tracks are available
+before deciding to enable the display.
 
 **Styling**:
 - Dark sidebar (`bg-slate-900`)
@@ -363,14 +383,16 @@ graph TD
 **Purpose**: Wrapper for Leaflet map with SSR bypass
 
 **Props**:
-- `tracks: AircraftTrack[]`: Aircraft to display
+- `tracks: AircraftTrack[]`: Active aircraft to display
+- `historyTracks: AircraftTrack[]`: Expired aircraft trajectories to display
 - `mapTheme: "light" | "dark"`: Tile style
 - `onToggleTheme: () => void`: Theme toggle callback
+- `trajectoryStyle: "line" | "dots"`: How to render position trails
 
 **Responsibilities**:
 - Use Next.js `dynamic()` to disable SSR (Leaflet requires browser)
 - Display loading state while map initializes
-- Forward props to `MapInner`
+- Forward all props to `MapInner`
 
 **Technical Note**: Leaflet requires `window` and `document`, so it must be loaded client-side only.
 
@@ -380,7 +402,7 @@ graph TD
 
 #### 8. **MapInner** (`src/components/MapInner.tsx`)
 
-**Purpose**: Actual Leaflet map with markers and trajectories
+**Purpose**: Actual Leaflet map with markers, trajectories, and history trails
 
 **Props**: Same as `Map`
 
@@ -388,17 +410,38 @@ graph TD
 - Initialize Leaflet map with `MapContainer`
 - Render OpenStreetMap tile layers (light/dark)
 - Display aircraft markers (color-coded by altitude)
-- Draw trajectory polylines for each aircraft
+- Draw trajectory polylines/dots for each active aircraft
+- Render history track trajectories with dimmed styling
 - Provide map controls (zoom, theme toggle)
 
-**Marker Behavior**:
-- **Color**: Based on altitude (see `src/lib/colors.ts`)
-- **Popup**: Display callsign, altitude, speed on click
-- **Trajectory**: Polyline connecting recent positions
+**Rendering Order (Z-Ordering)**:
+
+History tracks are rendered **before** active tracks in the JSX tree. In Leaflet/react-leaflet,
+elements rendered later appear on top. This ensures active aircraft markers always overlay
+faded history trajectories without needing explicit z-index management.
+
+```
+[TileLayer]  ← base map
+  ↑
+[History trajectories]  ← rendered first (bottom layer)
+  ↑
+[Active markers + trajectories]  ← rendered last (top layer)
+```
+
+**Active Marker Behavior**:
+- **Icon**: Rotated triangle SVG, color-coded by altitude
+- **Tooltip**: Callsign, hex, altitude, speed, squawk
+- **Trajectory**: Polyline or dots connecting recent positions
+
+**History Track Behavior**:
+- **No marker icon**: The aircraft is no longer present
+- **Trajectory only**: Polyline (`weight: 1`, `opacity: 0.25`) or dots (`radius: 2`, `fillOpacity: 0.2`)
+- **Tooltip**: Callsign, hex, and relative "last seen" time (e.g., "23m ago")
+- **Color**: Altitude-based, same scale as active but at reduced opacity
 
 **Map Layers**:
 - Light theme: `https://tile.openstreetmap.org/{z}/{x}/{y}.png`
-- Dark theme: Custom dark tiles or inverted colors
+- Dark theme: `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png` (CARTO)
 
 **File**: `src/components/MapInner.tsx`
 
@@ -467,30 +510,71 @@ graph TD
 
 #### 1. **useAircraftTracks** (`src/hooks/useAircraftTracks.ts`)
 
-**Purpose**: Maintain aircraft track state from `adsb:message` events
+**Purpose**: Maintain aircraft track state from `adsb:message` events, with tiered active/history storage
 
 **Parameters**: `filters: Filters`
 
-**Returns**: `AircraftTrack[]`
+**Returns**: `{ tracks: AircraftTrack[], history: AircraftTrack[] }`
 
 **Responsibilities**:
 - Listen for `adsb:message` events (batches of positions)
 - Merge new positions into existing tracks (latest values win)
 - Build position history array for trajectory rendering
-- Apply TTL expiry (5 minutes since last update)
-- Filter tracks by callsign, altitude, speed
+- Apply TTL expiry (5 minutes since last update) — expired tracks move to history
+- Evict history entries older than 6 hours (`HISTORY_TTL_MS`)
+- Promote history tracks back to active when new messages arrive for their `hex_ident`
+- Apply callsign/altitude/speed filters to both active and history tracks
 
 **Internal State**:
-- `tracksRef: Map<string, AircraftTrack>`: Keyed by `hex_ident`
-- `tracks: AircraftTrack[]`: Filtered array for rendering
+- `tracksRef: Map<string, AircraftTrack>`: Active tracks keyed by `hex_ident`
+- `historyRef: Map<string, AircraftTrack>`: Expired tracks keyed by `hex_ident` (up to 6h)
+- `tracks: AircraftTrack[]`: Filtered active array for rendering
+- `history: AircraftTrack[]`: Filtered history array for rendering
+
+**Design: Tiered Cache Pattern**:
+
+The hook uses a **dual-map architecture** (active + history) that acts as a tiered cache:
+
+| Tier | Ref | TTL | Mutations | Purpose |
+|------|-----|-----|-----------|---------|
+| **Active (hot)** | `tracksRef` | 5 min | Frequent (every batch) | Live aircraft positions |
+| **History (cold)** | `historyRef` | 6 hours | Append-mostly (on expiry) | Past trajectory review |
+
+This separation keeps the per-batch update loop `O(active)` rather than `O(active + history)`.
+Both refs are `useRef` to avoid re-renders on mutation — React state is only synced once
+per batch via `setTracks()` and `setHistory()`.
+
+**Track lifecycle**:
+```
+[New message] → Active map (tracksRef)
+                    │
+                    ├──→ If hex_ident in history: also append position to history entry
+                    │
+                    ↓ (no update for 5 min)
+                History map (historyRef)  ← only created if not already present
+                    ↓ (no update for 6 hours)
+                Evicted (garbage collected)
+```
+
+History entries are **append-only trajectory logs** that span multiple active/inactive
+cycles. An aircraft that appears, disappears, and reappears accumulates one continuous
+history trajectory covering all periods.
+
+**Filter extraction**: The `matchesFilters()` function is extracted as a module-level
+pure function to avoid duplication between active and history filtering and to keep
+the `useCallback` closure clean.
 
 **Event Handling**:
 ```typescript
 useTauriEvent<AircraftPosition[]>("adsb:message", (batch) => {
-  // Merge batch into tracksRef
-  // Expire old tracks
-  // Apply filters
-  // Update state
+  // For each position:
+  //   - Merge into active tracksRef
+  //   - If hex_ident in historyRef: sync positions + metadata to history entry
+  // Expire active tracks (5 min TTL):
+  //   - If not already in history: move to historyRef
+  //   - If already in history: just delete from active (history is up-to-date)
+  // Evict old history entries (>6h)
+  // Apply filters to both, update state
 });
 ```
 
@@ -1033,11 +1117,13 @@ let config = state.config.lock().map_err(|e| e.to_string())?;
 
 | State | Location | Persistence |
 |-------|----------|-------------|
-| `tracks: AircraftTrack[]` | `useAircraftTracks` hook | In-memory (TTL expiry) |
+| `tracks: AircraftTrack[]` | `useAircraftTracks` hook | In-memory (5 min active TTL) |
+| `history: AircraftTrack[]` | `useAircraftTracks` hook | In-memory (6 hour history TTL) |
 | `filters: Filters` | `Dashboard` component | None |
 | `isRunning: boolean` | `Dashboard` component | None |
 | `mapTheme: "light" \| "dark"` | `Dashboard` + `useLocalStorage` | localStorage |
 | `tableHeight: number` | `Dashboard` + `useLocalStorage` | localStorage |
+| `showHistory: boolean` | `Dashboard` + `useLocalStorage` | localStorage |
 | `metrics: MetricsSnapshot` | `useMetrics` hook | Polled from backend |
 | `status: StatusResponse` | `useConnectionStatus` hook | Polled from backend |
 
@@ -1069,9 +1155,14 @@ let config = state.config.lock().map_err(|e| e.to_string())?;
 
 ### Memory Management
 
-1. **Track TTL**: Expire tracks after 5 minutes of inactivity
-2. **Position History Limit**: Max 100 positions per track (prevent unbounded growth)
-3. **HashMap Cleanup**: Periodic cleanup of expired tracks in `useAircraftTracks`
+1. **Active Track TTL**: Expire tracks after 5 minutes of inactivity (moved to history, not deleted)
+2. **History TTL**: Evict history entries after 6 hours of inactivity (permanently deleted)
+3. **Position History Limit**: Max 100 positions per track (prevent unbounded growth)
+4. **HashMap Cleanup**: On every batch, expired active tracks move to history; stale history entries are evicted
+5. **Dual-Ref Architecture**: Both `tracksRef` and `historyRef` are `useRef` (not `useState`), so mutations during the batch loop don't trigger intermediate re-renders. React state is synced once at the end of each batch via `setTracks()` and `setHistory()`
+
+**Memory Budget Estimate**: With ~200 aircraft over 6 hours, each track holding 100 positions
+(~800 bytes per position pair + metadata), history consumes approximately 200 x (100 x 16 + 500) ≈ 420 KB — negligible for desktop apps.
 
 ---
 
@@ -1144,7 +1235,7 @@ Tauri supports cross-compilation for different platforms. See:
 
 ### Planned Features
 
-1. **Historical Replay**: Load and replay past tracks from Delta Lake
+1. **Historical Replay**: Load and replay past tracks from Delta Lake (note: in-memory history up to 6 hours is now available for session-scoped review)
 2. **Export Functionality**: Export tracks to KML/GeoJSON
 3. **Alerts**: Configurable alerts for specific aircraft (e.g., "notify when AAL123 appears")
 4. **Performance Dashboard**: More detailed metrics visualization (charts)
@@ -1156,9 +1247,123 @@ Tauri supports cross-compilation for different platforms. See:
 1. **Virtual Scrolling**: Handle 1000+ aircraft efficiently in table
 2. **WebGL Rendering**: Use WebGL-based map library for better performance
 3. **Worker Threads**: Move heavy parsing to Web Workers
-4. **Persistent Storage**: Cache tracks locally for offline analysis
+4. **Persistent Storage**: Cache tracks locally for offline analysis (currently in-memory only; could use IndexedDB or tauri-plugin-store to survive app restarts)
 5. **E2E Testing**: Add Playwright tests for UI flows
 6. **CI/CD**: Automate builds for macOS, Windows, Linux
+
+---
+
+## In-Memory Aircraft History
+
+### Overview
+
+When a tracked aircraft stops transmitting and its 5-minute active TTL expires, the track is
+**moved to a history collection** rather than being deleted. History tracks are retained for up
+to 6 hours, allowing users to review past trajectories while the app is running. No disk
+persistence is used — history exists only in the current session.
+
+### Design Decisions and Rationale
+
+#### 1. Separate Collections (Active vs History)
+
+**Decision**: Use two separate `Map` instances (`tracksRef` and `historyRef`) instead of a
+single map with a status field.
+
+**Rationale**: The active map receives frequent mutations on every 500ms batch. Mixing active
+and expired tracks in one collection would require filtering on every iteration of the update
+loop and introduce conditional logic throughout. Separate collections keep the hot path clean
+and make the code easier to reason about.
+
+#### 2. `useRef` for Both Maps
+
+**Decision**: Both `tracksRef` and `historyRef` are `useRef`, not `useState`.
+
+**Rationale**: During a single `handleBatch` call, multiple mutations happen (merge positions,
+expire tracks, evict old history). Using `useState` would trigger intermediate re-renders or
+require complex batching. `useRef` allows all mutations to complete, then a single
+`setTracks()` + `setHistory()` call at the end triggers exactly one render cycle.
+
+#### 3. Filters Applied to History
+
+**Decision**: The same callsign/altitude/speed filters are applied to history tracks.
+
+**Rationale**: When a user searches for a specific callsign, they expect to see both the
+live track and any historical appearances. Applying filters uniformly avoids confusion
+where history tracks don't match the active filter state.
+
+#### 4. History Toggle Persisted to localStorage
+
+**Decision**: The `showHistory` boolean is stored via `useLocalStorage("adsb-show-history")`.
+
+**Rationale**: Users who prefer to see history shouldn't have to re-enable it every session.
+The toggle state is lightweight (single boolean) and has no privacy implications.
+
+#### 5. Dimmed Rendering (No Marker Icons for History)
+
+**Decision**: History tracks render as faded trajectories only — no aircraft marker icon.
+
+**Rationale**: The aircraft is no longer present at the last-known position. Showing a marker
+icon would be misleading. The trajectory-only rendering clearly communicates "this aircraft
+was here" without implying it still is. Reduced opacity (`0.25` for lines, `0.2` for dots)
+provides further visual distinction from active tracks.
+
+#### 6. Z-Order via JSX Rendering Order
+
+**Decision**: History is rendered before active tracks in the JSX tree (not via z-index CSS).
+
+**Rationale**: In Leaflet/react-leaflet, later-rendered elements appear on top. This is more
+reliable than CSS z-index for SVG/Canvas layers and doesn't require Leaflet pane configuration.
+
+#### 7. History Continuity (Append-Only Trajectory Log)
+
+**Decision**: When a new message arrives for a `hex_ident` that exists in history, the history
+entry is **kept and completed** — new positions and metadata are appended to the existing
+history entry alongside the active track.
+
+**Rationale**: An aircraft that disappears for 20 minutes and reappears is the same flight.
+Deleting its history on reappearance would lose the earlier trajectory segment. By keeping
+the history entry and continuously appending new positions, the history builds a **complete
+trajectory spanning all active/inactive cycles** within the 6-hour window. This is more
+useful for reviewing flight paths and understanding an aircraft's full route.
+
+**Implementation detail**: On each incoming position, if a history entry exists for that
+`hex_ident`, its metadata (callsign, altitude, etc.) and positions array are updated in
+sync with the active track. When the active track later expires, it is only moved to history
+if no history entry already exists — the existing entry is already up-to-date and preserves
+the full position chain across cycles.
+
+### Visual Summary
+
+```mermaid
+graph TD
+    Batch[adsb:message batch] --> Active[Active Map<br/>tracksRef]
+    Batch -->|hex_ident in history| Sync[Sync positions + metadata<br/>to history entry]
+    Active -->|5 min TTL expired<br/>not already in history| History[History Map<br/>historyRef]
+    Active -->|5 min TTL expired<br/>already in history| Delete[Delete from active only<br/>history already up-to-date]
+    History -->|6 hour TTL expired| Evicted[Garbage Collected]
+
+    Active -->|matchesFilters| FilteredActive[tracks state]
+    History -->|matchesFilters| FilteredHistory[history state]
+
+    FilteredActive --> MapActive[Map: markers + trajectories]
+    FilteredHistory -->|if showHistory| MapHistory[Map: dimmed trajectories only]
+    FilteredActive --> TableActive[Table: active rows]
+    FilteredHistory -->|if showHistory| TableHistory[Table: dimmed rows + last seen]
+
+    style Active fill:#81C784
+    style History fill:#FFD54F
+    style Evicted fill:#E57373
+    style Sync fill:#CE93D8
+    style Delete fill:#90A4AE
+    style MapHistory fill:#FFD54F,stroke-dasharray: 5 5
+    style TableHistory fill:#FFD54F,stroke-dasharray: 5 5
+```
+
+### localStorage Keys
+
+| Key | Type | Default | Purpose |
+|-----|------|---------|---------|
+| `adsb-show-history` | `boolean` | `false` | Toggle visibility of history tracks |
 
 ---
 

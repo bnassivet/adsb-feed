@@ -4,21 +4,49 @@ import { useTauriEvent } from "./useTauriEvent";
 import type { AircraftPosition, AircraftTrack, Filters } from "@/lib/types";
 
 const TRACK_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const HISTORY_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const MAX_POSITIONS = 100; // Max position history per track
+
+function matchesFilters(t: AircraftTrack, filters: Filters): boolean {
+  if (
+    filters.callsign &&
+    !(t.callsign ?? "")
+      .toLowerCase()
+      .includes(filters.callsign.toLowerCase()) &&
+    !t.hex_ident.toLowerCase().includes(filters.callsign.toLowerCase())
+  ) {
+    return false;
+  }
+  if (t.altitude !== null) {
+    if (t.altitude < filters.altitudeMin || t.altitude > filters.altitudeMax) {
+      return false;
+    }
+  }
+  if (t.ground_speed !== null) {
+    if (t.ground_speed < filters.speedMin || t.ground_speed > filters.speedMax) {
+      return false;
+    }
+  }
+  return true;
+}
 
 /**
  * Maintains aircraft track state from `adsb:message` batch events.
  *
  * Merges incoming position updates into accumulated tracks,
- * applies TTL expiry, and filters by user criteria.
+ * applies TTL expiry, moves expired tracks to history (up to 6h),
+ * and filters by user criteria.
  */
 export function useAircraftTracks(filters: Filters) {
   const tracksRef = useRef<Map<string, AircraftTrack>>(new Map());
+  const historyRef = useRef<Map<string, AircraftTrack>>(new Map());
   const [tracks, setTracks] = useState<AircraftTrack[]>([]);
+  const [history, setHistory] = useState<AircraftTrack[]>([]);
 
   const handleBatch = useCallback((batch: AircraftPosition[]) => {
     const now = Date.now();
     const map = tracksRef.current;
+    const histMap = historyRef.current;
 
     for (const pos of batch) {
       const existing = map.get(pos.hex_ident);
@@ -48,43 +76,53 @@ export function useAircraftTracks(filters: Filters) {
       }
 
       map.set(pos.hex_ident, track);
+
+      // Keep history entry in sync — append position and refresh metadata
+      const histEntry = histMap.get(pos.hex_ident);
+      if (histEntry) {
+        histEntry.callsign = track.callsign;
+        histEntry.altitude = track.altitude;
+        histEntry.ground_speed = track.ground_speed;
+        histEntry.track = track.track;
+        histEntry.latitude = track.latitude;
+        histEntry.longitude = track.longitude;
+        histEntry.vertical_rate = track.vertical_rate;
+        histEntry.squawk = track.squawk;
+        histEntry.is_on_ground = track.is_on_ground;
+        histEntry.last_seen = now;
+        if (pos.latitude !== null && pos.longitude !== null) {
+          histEntry.positions = [
+            ...histEntry.positions.slice(-(MAX_POSITIONS - 1)),
+            [pos.latitude, pos.longitude],
+          ];
+        }
+      }
     }
 
-    // Expire old tracks
+    // Expire old tracks — move to history instead of deleting
     for (const [key, track] of map) {
       if (now - track.last_seen > TRACK_TTL_MS) {
+        if (!histMap.has(key)) {
+          histMap.set(key, track);
+        }
+        // If already in history, the entry is already up-to-date
         map.delete(key);
       }
     }
 
-    // Apply filters and update state
-    const filtered = Array.from(map.values()).filter((t) => {
-      if (
-        filters.callsign &&
-        !(t.callsign ?? "")
-          .toLowerCase()
-          .includes(filters.callsign.toLowerCase()) &&
-        !t.hex_ident.toLowerCase().includes(filters.callsign.toLowerCase())
-      ) {
-        return false;
+    // Clean history entries older than 6 hours
+    for (const [key, track] of histMap) {
+      if (now - track.last_seen > HISTORY_TTL_MS) {
+        histMap.delete(key);
       }
-      if (t.altitude !== null) {
-        if (t.altitude < filters.altitudeMin || t.altitude > filters.altitudeMax) {
-          return false;
-        }
-      }
-      if (t.ground_speed !== null) {
-        if (t.ground_speed < filters.speedMin || t.ground_speed > filters.speedMax) {
-          return false;
-        }
-      }
-      return true;
-    });
+    }
 
-    setTracks(filtered);
+    // Apply filters and update state
+    setTracks(Array.from(map.values()).filter((t) => matchesFilters(t, filters)));
+    setHistory(Array.from(histMap.values()).filter((t) => matchesFilters(t, filters)));
   }, [filters]);
 
   useTauriEvent<AircraftPosition[]>("adsb:message", handleBatch);
 
-  return tracks;
+  return { tracks, history };
 }
