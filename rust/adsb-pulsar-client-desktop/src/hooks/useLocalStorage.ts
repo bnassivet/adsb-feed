@@ -4,12 +4,22 @@ import { useState, useEffect, useCallback, useRef } from "react";
 type SetValue<T> = (value: T | ((prev: T) => T)) => void;
 
 export function useLocalStorage<T>(key: string, defaultValue: T): [T, SetValue<T>] {
-  const [value, setValue] = useState<T>(defaultValue);
+  // Lazy initialization: read from localStorage synchronously before first render (SSR-safe)
+  const [value, setValue] = useState<T>(() => {
+    if (typeof window === "undefined") return defaultValue;
+    try {
+      const stored = localStorage.getItem(key);
+      return stored !== null ? (JSON.parse(stored) as T) : defaultValue;
+    } catch {
+      return defaultValue;
+    }
+  });
   const valueRef = useRef(value);
   valueRef.current = value;
 
-  // Read from localStorage after mount (SSR-safe)
+  // Keep in sync if key changes (rare, but defensive)
   useEffect(() => {
+    if (typeof window === "undefined") return;
     try {
       const stored = localStorage.getItem(key);
       if (stored !== null) {
@@ -18,7 +28,7 @@ export function useLocalStorage<T>(key: string, defaultValue: T): [T, SetValue<T
         valueRef.current = parsed;
       }
     } catch {
-      // Ignore parse errors, keep default
+      // Ignore parse errors, keep current value
     }
   }, [key]);
 

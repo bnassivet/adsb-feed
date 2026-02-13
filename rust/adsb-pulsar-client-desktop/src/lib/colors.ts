@@ -42,7 +42,8 @@ export function densityColor(normalized: number): { color: string; fillOpacity: 
     color = interpolateColor([255, 255, 0], [255, 0, 0], s);
   }
 
-  const fillOpacity = 0.15 + 0.65 * t;
+  // Reduced max opacity from 0.8 to 0.3 for better transparency at high densities
+  const fillOpacity = 0.08 + 0.22 * t;
   return { color, fillOpacity };
 }
 

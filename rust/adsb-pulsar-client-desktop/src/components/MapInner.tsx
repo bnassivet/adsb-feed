@@ -112,7 +112,7 @@ function DensityLayer({
         const props = (feature?.properties ?? { normalized: 0, value: 0 }) as DensityProperties;
         if (densityMetric === "altitude") {
           const c = altitudeToColor(props.value);
-          return { color: c, fillColor: c, fillOpacity: 0.55, weight: 1, opacity: 0.4 };
+          return { color: c, fillColor: c, fillOpacity: 0.08, weight: 1, opacity: 0.2 };
         }
         const { color, fillOpacity } = densityColor(props.normalized);
         return { color, fillColor: color, fillOpacity, weight: 1, opacity: 0.4 };
