@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AircraftTrackingProvider } from "@/contexts/AircraftTrackingContext";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -14,7 +15,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="bg-slate-950 text-slate-100 antialiased">
-        {children}
+        <AircraftTrackingProvider>
+          {children}
+        </AircraftTrackingProvider>
       </body>
     </html>
   );
