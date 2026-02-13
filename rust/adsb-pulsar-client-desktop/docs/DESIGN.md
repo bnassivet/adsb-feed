@@ -7,7 +7,8 @@
 4. [Backend Architecture (Tauri Rust)](#backend-architecture-tauri-rust)
 5. [Data Flow](#data-flow)
 6. [State Management](#state-management)
-7. [In-Memory Aircraft History](#in-memory-aircraft-history)
+7. [Global Context Manager Pattern](#global-context-manager-pattern)
+8. [In-Memory Aircraft History](#in-memory-aircraft-history)
 
 ---
 
@@ -128,7 +129,7 @@ The frontend uses **Next.js App Router** with:
 ```
 src/
 ├── app/                      # Next.js App Router pages
-│   ├── layout.tsx           # Root layout (metadata, global styles)
+│   ├── layout.tsx           # Root layout (wraps children in AircraftTrackingProvider)
 │   ├── page.tsx             # Main dashboard page
 │   ├── settings/
 │   │   └── page.tsx         # Settings page
@@ -142,15 +143,20 @@ src/
 │   ├── MapTileToggle.tsx    # Dark/light map theme toggle
 │   ├── MetricsBar.tsx       # Footer metrics display
 │   └── ResizeHandle.tsx     # Resizable panel divider
+├── contexts/                # React Context providers
+│   └── AircraftTrackingContext.tsx # Global aircraft tracking provider
 ├── hooks/                   # Custom React hooks
-│   ├── useAircraftTracks.ts # Track state management
+│   ├── useAircraftTracks.ts # Filtered track consumer (reads from context)
 │   ├── useConnectionStatus.ts # Status polling
 │   ├── useLocalStorage.ts   # Persistent UI preferences
 │   ├── useMetrics.ts        # Metrics polling
+│   ├── useSimulatedTracks.ts # Simulated demo flight tracks
 │   └── useTauriEvent.ts     # Event listener abstraction
 ├── lib/                     # Utilities and types
 │   ├── colors.ts            # Altitude-based color mapping
 │   ├── commands.ts          # Tauri command wrappers
+│   ├── h3-density.ts        # H3 hexagonal density computation
+│   ├── simulation-data.ts   # Simulated flight definitions
 │   └── types.ts             # TypeScript type definitions
 ```
 
@@ -214,16 +220,38 @@ graph TD
 
 #### 1. **RootLayout** (`src/app/layout.tsx`)
 
-**Purpose**: Root HTML structure and global metadata
+**Purpose**: Root HTML structure, global metadata, and global providers
 
 **Responsibilities**:
 - Set application title and description
 - Apply global dark theme (`bg-slate-950 text-slate-100`)
 - Include Tailwind CSS globals
+- Wrap all pages in `AircraftTrackingProvider` for persistent state
 
 **Props**: `children: React.ReactNode`
 
-**Rendering**: Wraps all pages in `<html>` and `<body>` tags
+**Rendering**: Wraps all pages in `<html>` and `<body>` tags, with `AircraftTrackingProvider`
+
+**Implementation**:
+```typescript
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body className="bg-slate-950 text-slate-100 antialiased">
+        <AircraftTrackingProvider>
+          {children}
+        </AircraftTrackingProvider>
+      </body>
+    </html>
+  );
+}
+```
+
+**Design Note**: The provider at this level ensures it stays mounted during all client-side
+navigation (Next.js App Router preserves layouts). This enables continuous aircraft data
+accumulation even when users navigate to Settings or other pages.
+
+**See Also**: [Global Context Manager Pattern](#global-context-manager-pattern)
 
 ---
 
@@ -510,73 +538,52 @@ faded history trajectories without needing explicit z-index management.
 
 #### 1. **useAircraftTracks** (`src/hooks/useAircraftTracks.ts`)
 
-**Purpose**: Maintain aircraft track state from `adsb:message` events, with tiered active/history storage
+**Purpose**: Consume filtered aircraft data from the global `AircraftTrackingProvider`
 
 **Parameters**: `filters: Filters`
 
 **Returns**: `{ tracks: AircraftTrack[], history: AircraftTrack[] }`
 
 **Responsibilities**:
-- Listen for `adsb:message` events (batches of positions)
-- Merge new positions into existing tracks (latest values win)
-- Build position history array for trajectory rendering
-- Apply TTL expiry (5 minutes since last update) — expired tracks move to history
-- Evict history entries older than 6 hours (`HISTORY_TTL_MS`)
-- Promote history tracks back to active when new messages arrive for their `hex_ident`
-- Apply callsign/altitude/speed filters to both active and history tracks
+- Read raw track and history Maps from `AircraftTrackingContext`
+- Apply callsign/altitude/speed filters to both active and history
+- Return filtered arrays for rendering
 
-**Internal State**:
-- `tracksRef: Map<string, AircraftTrack>`: Active tracks keyed by `hex_ident`
-- `historyRef: Map<string, AircraftTrack>`: Expired tracks keyed by `hex_ident` (up to 6h)
-- `tracks: AircraftTrack[]`: Filtered active array for rendering
-- `history: AircraftTrack[]`: Filtered history array for rendering
+**Implementation**:
+```typescript
+export function useAircraftTracks(filters: Filters) {
+  const { tracks: tracksMap, history: historyMap } = useAircraftTrackingContext();
 
-**Design: Tiered Cache Pattern**:
+  const tracks = useMemo(
+    () => Array.from(tracksMap.values()).filter(t => matchesFilters(t, filters)),
+    [tracksMap, filters]
+  );
 
-The hook uses a **dual-map architecture** (active + history) that acts as a tiered cache:
+  const history = useMemo(
+    () => Array.from(historyMap.values()).filter(t => matchesFilters(t, filters)),
+    [historyMap, filters]
+  );
 
-| Tier | Ref | TTL | Mutations | Purpose |
-|------|-----|-----|-----------|---------|
-| **Active (hot)** | `tracksRef` | 5 min | Frequent (every batch) | Live aircraft positions |
-| **History (cold)** | `historyRef` | 6 hours | Append-mostly (on expiry) | Past trajectory review |
-
-This separation keeps the per-batch update loop `O(active)` rather than `O(active + history)`.
-Both refs are `useRef` to avoid re-renders on mutation — React state is only synced once
-per batch via `setTracks()` and `setHistory()`.
-
-**Track lifecycle**:
-```
-[New message] → Active map (tracksRef)
-                    │
-                    ├──→ If hex_ident in history: also append position to history entry
-                    │
-                    ↓ (no update for 5 min)
-                History map (historyRef)  ← only created if not already present
-                    ↓ (no update for 6 hours)
-                Evicted (garbage collected)
+  return { tracks, history };
+}
 ```
 
-History entries are **append-only trajectory logs** that span multiple active/inactive
-cycles. An aircraft that appears, disappears, and reappears accumulates one continuous
-history trajectory covering all periods.
+**Design Change (v2)**: This hook was refactored from managing its own state to consuming
+the global `AircraftTrackingProvider`. The provider handles all event listening, TTL expiry,
+and data accumulation. This hook is now a **pure filter layer** that derives view-specific
+arrays from global state.
+
+**Benefits**:
+- ✅ Data persists across page navigation (provider stays mounted in layout)
+- ✅ No duplicate event listeners (single global listener vs. one per page mount)
+- ✅ Continuous accumulation (data collection runs even when dashboard is not visible)
+- ✅ Simpler hook logic (no event handling, just filtering)
 
 **Filter extraction**: The `matchesFilters()` function is extracted as a module-level
-pure function to avoid duplication between active and history filtering and to keep
-the `useCallback` closure clean.
+pure function to keep the filtering logic testable and avoid duplication.
 
-**Event Handling**:
-```typescript
-useTauriEvent<AircraftPosition[]>("adsb:message", (batch) => {
-  // For each position:
-  //   - Merge into active tracksRef
-  //   - If hex_ident in historyRef: sync positions + metadata to history entry
-  // Expire active tracks (5 min TTL):
-  //   - If not already in history: move to historyRef
-  //   - If already in history: just delete from active (history is up-to-date)
-  // Evict old history entries (>6h)
-  // Apply filters to both, update state
-});
-```
+**See Also**: [Global Context Manager Pattern](#global-context-manager-pattern) for
+detailed provider implementation and architecture.
 
 **File**: `src/hooks/useAircraftTracks.ts`
 
@@ -1117,8 +1124,10 @@ let config = state.config.lock().map_err(|e| e.to_string())?;
 
 | State | Location | Persistence |
 |-------|----------|-------------|
-| `tracks: AircraftTrack[]` | `useAircraftTracks` hook | In-memory (5 min active TTL) |
-| `history: AircraftTrack[]` | `useAircraftTracks` hook | In-memory (6 hour history TTL) |
+| `tracks: Map<string, AircraftTrack>` | `AircraftTrackingProvider` (global context) | In-memory (5 min active TTL) |
+| `history: Map<string, AircraftTrack>` | `AircraftTrackingProvider` (global context) | In-memory (6 hour history TTL) |
+| `tracks: AircraftTrack[]` (filtered) | `useAircraftTracks` hook (derived from context) | Computed on each render |
+| `history: AircraftTrack[]` (filtered) | `useAircraftTracks` hook (derived from context) | Computed on each render |
 | `filters: Filters` | `Dashboard` component | None |
 | `isRunning: boolean` | `Dashboard` component | None |
 | `mapTheme: "light" \| "dark"` | `Dashboard` + `useLocalStorage` | localStorage |
@@ -1132,6 +1141,292 @@ let config = state.config.lock().map_err(|e| e.to_string())?;
 - `adsb:metrics` → `useMetrics` → Re-render footer (every 1s)
 - `adsb:status` → `useConnectionStatus` → Re-render status badges (on transition + heartbeat every 60s)
 - `adsb:stopped` → Dashboard → `setIsRunning(false)`
+
+---
+
+## Global Context Manager Pattern
+
+### Overview
+
+The application uses a **Global Context Manager** pattern to maintain aircraft tracking state across all pages and route navigation. This ensures that aircraft data (active tracks and 6-hour history) accumulates continuously, even when the user navigates away from the dashboard to settings or other pages.
+
+### Architecture
+
+**File**: `src/contexts/AircraftTrackingContext.tsx`
+
+```mermaid
+graph TD
+    Layout[RootLayout<br/>app/layout.tsx] -->|wraps| Provider[AircraftTrackingProvider<br/>Global Context]
+    Provider -->|listens| Events[Tauri Events<br/>adsb:message]
+    Provider -->|maintains| State[In-Memory State<br/>tracks + history Maps]
+
+    Dashboard[Dashboard Page] -->|consumes| Hook[useAircraftTracks<br/>with filters]
+    Settings[Settings Page] -.->|doesn't consume| Hook
+
+    Hook -->|reads from| State
+    Events -->|updates| State
+
+    style Provider fill:#81C784
+    style State fill:#FFD54F
+    style Events fill:#64B5F6
+    style Settings fill:#E0E0E0,stroke-dasharray: 5 5
+```
+
+### Key Components
+
+#### 1. **AircraftTrackingProvider** (`src/contexts/AircraftTrackingContext.tsx`)
+
+**Purpose**: Global state provider that stays mounted across all pages
+
+**Responsibilities**:
+- Listen to `adsb:message` events continuously
+- Maintain `tracksRef: Map<string, AircraftTrack>` (active tracks, 5min TTL)
+- Maintain `historyRef: Map<string, AircraftTrack>` (history, 6h TTL)
+- Apply TTL expiry logic (active → history → eviction)
+- Trigger React re-renders via state update counter
+
+**Lifecycle**: Mounted once in `app/layout.tsx`, persists across all client-side navigation
+
+**Implementation Details**:
+```typescript
+export function AircraftTrackingProvider({ children }: { children: ReactNode }) {
+  const tracksRef = useRef<Map<string, AircraftTrack>>(new Map());
+  const historyRef = useRef<Map<string, AircraftTrack>>(new Map());
+  const [, setUpdateCounter] = useState(0);  // Force re-renders
+
+  const handleBatch = useCallback((batch: AircraftPosition[]) => {
+    // Merge positions into tracks
+    // Apply TTL expiry (active → history)
+    // Clean stale history (>6h)
+    setUpdateCounter(c => c + 1);  // Trigger context consumers to re-render
+  }, []);
+
+  useTauriEvent<AircraftPosition[]>("adsb:message", handleBatch);
+
+  return (
+    <AircraftTrackingContext.Provider value={{ tracks: tracksRef.current, history: historyRef.current }}>
+      {children}
+    </AircraftTrackingContext.Provider>
+  );
+}
+```
+
+#### 2. **useAircraftTrackingContext** Hook
+
+**Purpose**: Access raw aircraft tracking data from global context
+
+**Returns**: `{ tracks: Map<string, AircraftTrack>, history: Map<string, AircraftTrack> }`
+
+**Usage**: Internal hook called by `useAircraftTracks`
+
+#### 3. **useAircraftTracks** Hook (Refactored)
+
+**Purpose**: Provide filtered aircraft data to components
+
+**Before** (component-local state):
+```typescript
+// Old implementation - data lost on unmount
+export function useAircraftTracks(filters: Filters) {
+  const tracksRef = useRef<Map<...>>(new Map());
+  useTauriEvent("adsb:message", handleBatch);  // Stops when component unmounts
+  return { tracks, history };
+}
+```
+
+**After** (global context consumer):
+```typescript
+// New implementation - data persists across navigation
+export function useAircraftTracks(filters: Filters) {
+  const { tracks: tracksMap, history: historyMap } = useAircraftTrackingContext();
+
+  const tracks = useMemo(
+    () => Array.from(tracksMap.values()).filter(t => matchesFilters(t, filters)),
+    [tracksMap, filters]
+  );
+
+  const history = useMemo(
+    () => Array.from(historyMap.values()).filter(t => matchesFilters(t, filters)),
+    [historyMap, filters]
+  );
+
+  return { tracks, history };
+}
+```
+
+**Key Change**: No event listeners, no local state — just reads from global context and applies filters
+
+### Design Principles
+
+#### 1. **Separation of Data Collection and Presentation**
+
+**Data Collection** (Provider):
+- Lives in `app/layout.tsx` (always mounted)
+- Listens to Tauri events continuously
+- Accumulates data in `useRef` Maps (mutable, no re-renders)
+
+**Data Presentation** (Hook):
+- Lives in page components (can mount/unmount)
+- Reads from context (immutable reference to mutable Maps)
+- Applies filters and returns filtered arrays
+
+**Benefit**: Data collection continues even when no component is consuming it
+
+#### 2. **In-Memory, Not Persistent**
+
+**Decision**: Use in-memory Maps instead of localStorage or IndexedDB
+
+**Rationale**:
+- **Performance**: No serialization/deserialization overhead
+- **Simplicity**: No schema versioning or migration logic
+- **Freshness**: Data is always current-session only
+- **Privacy**: No tracking data persists after app closes
+
+**Trade-off**: History is lost on app restart, but this is acceptable for a real-time monitoring tool
+
+#### 3. **React Context Provider Lifecycle**
+
+**Key Insight**: Next.js App Router preserves `layout.tsx` during client-side navigation
+
+**Navigation Flow**:
+```
+User on Dashboard → Click "Settings"
+  ├─ Dashboard page unmounts (useAircraftTracks hook cleanup)
+  ├─ Settings page mounts
+  └─ layout.tsx STAYS MOUNTED (AircraftTrackingProvider keeps running)
+
+User on Settings → Tauri emits adsb:message
+  └─ AircraftTrackingProvider receives event, updates Maps
+      (no components consuming, but data still accumulates)
+
+User clicks "Back to Dashboard"
+  ├─ Settings page unmounts
+  ├─ Dashboard page remounts
+  ├─ useAircraftTracks hook reads from context
+  └─ All accumulated history instantly available
+```
+
+**Benefit**: Seamless persistence without localStorage complexity
+
+#### 4. **Update Counter Pattern**
+
+**Problem**: React Context `value` is an object reference `{ tracks, history }`. Even when Maps mutate, the reference stays the same, so consumers don't re-render.
+
+**Solution**: Add a state counter that increments on each batch:
+```typescript
+const [, setUpdateCounter] = useState(0);
+// ...
+setUpdateCounter(c => c + 1);  // Triggers context re-render
+```
+
+**How It Works**:
+1. Maps are mutated in-place (fast, no copying)
+2. State counter increments → Context Provider re-renders
+3. Consumer hooks re-run → `useMemo` dependencies check Map reference (same)
+4. But because Provider re-rendered, React knows to re-run the component
+5. `Array.from(tracksMap.values())` creates fresh array
+6. Filter applied to fresh array → new result
+
+**Alternative Considered**: Clone Maps on every update (`new Map(tracksRef.current)`)
+
+**Why Rejected**: Cloning 200+ tracks every 500ms is expensive; state counter is O(1)
+
+### File Structure
+
+```
+src/
+├── contexts/
+│   └── AircraftTrackingContext.tsx  # NEW: Global provider
+├── hooks/
+│   └── useAircraftTracks.ts         # REFACTORED: Now consumes context
+└── app/
+    └── layout.tsx                   # UPDATED: Wraps children in provider
+```
+
+### Integration Points
+
+#### Layout.tsx Wrapper
+```typescript
+// src/app/layout.tsx
+import { AircraftTrackingProvider } from "@/contexts/AircraftTrackingContext";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <AircraftTrackingProvider>
+          {children}
+        </AircraftTrackingProvider>
+      </body>
+    </html>
+  );
+}
+```
+
+#### Dashboard Consumption (Unchanged)
+```typescript
+// src/app/page.tsx
+const { tracks, history } = useAircraftTracks(filters);
+// No changes needed - API is identical
+```
+
+### Performance Characteristics
+
+| Aspect | Measurement | Notes |
+|--------|-------------|-------|
+| **Memory footprint** | ~420 KB for 200 aircraft @ 6h | 100 positions × 16 bytes + metadata |
+| **Update frequency** | Every 500ms (batch interval) | Throttled by bridge.rs |
+| **Re-render cost** | O(filtered tracks) | Only filtered arrays passed to components |
+| **Event listener overhead** | 1 global listener | vs. N listeners (one per page mount) |
+
+### Testing Considerations
+
+**To Verify Global Context Behavior**:
+
+1. **Start feed** → Enable history → Observe 5-10 tracks
+2. **Navigate to Settings** → Wait 1 minute
+3. **Return to Dashboard** → History should contain all tracks from step 2 + new tracks received during settings view
+4. **Check track count** in table — should be cumulative, not reset to zero
+
+**Edge Cases**:
+
+- **Empty state on first mount**: Provider initializes with empty Maps
+- **Multiple consumers**: Dashboard + future pages can all read from same context
+- **Race conditions**: Single event listener serializes all updates (no concurrent writes)
+
+### Future Enhancements
+
+1. **Persistent History** (Optional):
+   - Add localStorage/IndexedDB backup
+   - Load on mount, save periodically
+   - Trade-off: Complexity vs. session persistence
+
+2. **Context Segmentation**:
+   - Separate contexts for metrics, status, tracks
+   - Reduce re-renders (only metrics consumers re-render on metric updates)
+
+3. **Selectors**:
+   - Use selector pattern (like Recoil/Zustand) for granular subscriptions
+   - e.g., `useTrackCount()` re-renders only on count change, not position updates
+
+### Design Guideline: When to Use Global Context Managers
+
+**Use Global Context When**:
+- Data must persist across page navigation
+- Multiple pages need the same data source
+- Background data collection should continue when UI is inactive
+- Event-driven updates come from outside React (Tauri, WebSocket)
+
+**Avoid Global Context When**:
+- Data is page-specific (doesn't need to survive navigation)
+- Frequent updates that don't affect all consumers (use local state)
+- Simple prop passing (1-2 levels deep) is sufficient
+
+**This Pattern Applies To**:
+- ✅ Aircraft tracking (current use case)
+- ✅ Real-time metrics streaming
+- ✅ Global notification queue
+- ❌ Form state (page-local)
+- ❌ Modal visibility (UI-specific)
 
 ---
 
