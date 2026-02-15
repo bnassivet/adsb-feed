@@ -23,18 +23,29 @@ For comprehensive architectural documentation, see [DESIGN.md](./DESIGN.md).
 // src/contexts/YourDataContext.tsx
 export function YourDataProvider({ children }: { children: ReactNode }) {
   const dataRef = useRef<Map<string, YourData>>(new Map());
-  const [, setUpdateCounter] = useState(0);
+  const [updateCounter, setUpdateCounter] = useState(0);
 
   const handleUpdate = useCallback((update: Update) => {
-    // Mutate dataRef in-place
-    // ...
+    // Mutate dataRef in-place (no new object allocation for existing entries)
+    const existing = dataRef.current.get(update.id);
+    if (existing) {
+      Object.assign(existing, update.data);  // In-place mutation
+    } else {
+      dataRef.current.set(update.id, update.data);
+    }
     setUpdateCounter(c => c + 1);  // Trigger re-renders
   }, []);
 
   useTauriEvent<Update>("your:event", handleUpdate);
 
+  // Memoize context value — only allocates new object when counter changes
+  const value = useMemo(
+    () => ({ data: dataRef.current, version: updateCounter }),
+    [updateCounter]
+  );
+
   return (
-    <YourDataContext.Provider value={{ data: dataRef.current }}>
+    <YourDataContext.Provider value={value}>
       {children}
     </YourDataContext.Provider>
   );
@@ -57,11 +68,11 @@ export default function RootLayout({ children }) {
 // 3. Consume in components
 // src/hooks/useYourData.ts
 export function useYourData(filters: Filters) {
-  const { data: dataMap } = useYourDataContext();
+  const { data: dataMap, version } = useYourDataContext();
 
   const filtered = useMemo(
     () => Array.from(dataMap.values()).filter(applyFilters),
-    [dataMap, filters]
+    [version, filters]  // version (not Map ref) triggers recomputation
   );
 
   return filtered;
@@ -80,14 +91,26 @@ export function useYourData(filters: Filters) {
    - Fresher: Data is always current-session
    - Add persistence only when needed (see "When to Add Persistence" below)
 
-3. **Update Counter Pattern**:
+3. **Version Counter Pattern**:
    ```typescript
-   const [, setUpdateCounter] = useState(0);
+   const [updateCounter, setUpdateCounter] = useState(0);
    // After mutating ref:
-   setUpdateCounter(c => c + 1);  // Forces context re-render
+   setUpdateCounter(c => c + 1);
+
+   // Expose version in memoized context value
+   const value = useMemo(
+     () => ({ data: dataRef.current, version: updateCounter }),
+     [updateCounter]
+   );
+
+   // Consumer hooks use version as useMemo dependency
+   const { data, version } = useContext(...);
+   const filtered = useMemo(() => filter(data), [version, filters]);
    ```
    - Avoids cloning large Maps/Sets
-   - Consumers re-run and derive fresh arrays
+   - `version` in consumer `useMemo` deps ensures recomputation when data changes
+   - Memoized context value prevents unnecessary consumer re-renders
+   - **Critical**: Do NOT use the Map ref as a `useMemo` dep — it never changes
 
 4. **Lifecycle Guarantee**:
    - Next.js App Router preserves `layout.tsx` during client-side navigation
@@ -282,11 +305,11 @@ graph TD
 ```typescript
 // Hook implementation
 export function useFilteredData(filters: Filters) {
-  const { data: rawData } = useDataContext();
+  const { data: rawData, version } = useDataContext();
 
   return useMemo(
     () => Array.from(rawData.values()).filter(item => matchesFilters(item, filters)),
-    [rawData, filters]
+    [version, filters]  // version triggers recomputation, not the stable Map ref
   );
 }
 
@@ -328,27 +351,36 @@ export function useComputedMetrics() {
 ```typescript
 export function DataProvider({ children }: { children: ReactNode }) {
   const dataRef = useRef<Map<string, Data>>(new Map());
-  const [, forceUpdate] = useState(0);
+  const [updateCounter, setUpdateCounter] = useState(0);
 
   const handleEvent = useCallback((payload: Payload) => {
-    // Update dataRef
-    dataRef.current.set(payload.id, payload.data);
-
-    // Trigger re-render
-    forceUpdate(c => c + 1);
+    // Mutate in-place for existing entries
+    const existing = dataRef.current.get(payload.id);
+    if (existing) {
+      Object.assign(existing, payload.data);
+    } else {
+      dataRef.current.set(payload.id, payload.data);
+    }
+    setUpdateCounter(c => c + 1);
   }, []);
 
   useTauriEvent<Payload>("your:event", handleEvent);
 
+  // Memoize context value to avoid new object on every render
+  const value = useMemo(
+    () => ({ data: dataRef.current, version: updateCounter }),
+    [updateCounter]
+  );
+
   return (
-    <DataContext.Provider value={{ data: dataRef.current }}>
+    <DataContext.Provider value={value}>
       {children}
     </DataContext.Provider>
   );
 }
 ```
 
-**Why**: Provider stays mounted, listener never unregisters unnecessarily
+**Why**: Provider stays mounted, listener never unregisters unnecessarily. Memoized value prevents spurious consumer re-renders.
 
 ---
 
@@ -390,7 +422,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
 ### Don'ts ❌
 
-1. **Don't clone large objects unnecessarily**:
+1. **Don't use Map refs as `useMemo` dependencies**:
+   ```typescript
+   // Bad: Map ref never changes → useMemo never recomputes → stale data
+   const { data: dataMap } = useContext(DataContext);
+   const filtered = useMemo(() => filter(dataMap), [dataMap, filters]);
+
+   // Good: Use version counter from context
+   const { data: dataMap, version } = useContext(DataContext);
+   const filtered = useMemo(() => filter(dataMap), [version, filters]);
+   ```
+
+2. **Don't clone large objects unnecessarily**:
    ```typescript
    // Bad: Clones entire map every update
    setData(new Map(dataRef.current));
@@ -399,20 +442,42 @@ export function DataProvider({ children }: { children: ReactNode }) {
    setUpdateCounter(c => c + 1);
    ```
 
-2. **Don't use context for high-frequency updates**:
+3. **Don't use spread for capped arrays in hot paths**:
+   ```typescript
+   // Bad: ~800 array allocations/sec with 40 aircraft
+   track.positions = [...track.positions.slice(-(MAX - 1)), newPos];
+
+   // Good: In-place mutation
+   track.positions.push(newPos);
+   if (track.positions.length > MAX) track.positions.shift();
+   ```
+
+4. **Don't create inline context values**:
+   ```typescript
+   // Bad: New object every render → all consumers re-render
+   <Context.Provider value={{ data: ref.current }}>
+
+   // Good: Memoized value
+   const value = useMemo(() => ({ data: ref.current, version }), [version]);
+   <Context.Provider value={value}>
+   ```
+
+5. **Don't use context for high-frequency updates**:
    ```typescript
    // Bad: Mouse position in global context (60 FPS re-renders)
    // Good: Mouse position in component state
    ```
 
-3. **Don't create inline objects/functions in render**:
+6. **Don't run cleanup scans on every data batch**:
    ```typescript
-   // Bad: New object every render
-   <Child config={{ option: true }} />
+   // Bad: TTL scan on every 500ms batch (most entries aren't expired)
+   const handleBatch = () => { process(batch); scanForExpired(); };
 
-   // Good: Memoized object
-   const config = useMemo(() => ({ option: true }), []);
-   <Child config={config} />
+   // Good: Separate interval for cleanup
+   useEffect(() => {
+     const id = setInterval(scanForExpired, 15_000);
+     return () => clearInterval(id);
+   }, []);
    ```
 
 ---
@@ -444,8 +509,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
    ```typescript
    // src/hooks/useYourData.ts
    export function useYourData(filters: Filters) {
-     const { data } = useYourDataContext();
-     return useMemo(() => filter(data, filters), [data, filters]);
+     const { data, version } = useYourDataContext();
+     return useMemo(() => filter(data, filters), [version, filters]);
    }
    ```
 
@@ -462,8 +527,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
 The Global Context Manager pattern is the recommended approach for state that must persist across navigation and continue updating in the background. Follow these guidelines to maintain consistent, performant state management across the application.
 
 **Key Takeaways**:
-- ✅ Use Global Context for cross-page, event-driven state
-- ✅ Keep providers in `layout.tsx` for persistence
-- ✅ Use update counter pattern instead of cloning
-- ✅ Default to in-memory, add persistence only when needed
-- ✅ Apply filters in consumer hooks, not in provider
+- Use Global Context for cross-page, event-driven state
+- Keep providers in `layout.tsx` for persistence
+- Expose `version` counter in context value; use it (not Map refs) in consumer `useMemo` deps
+- Memoize context value with `useMemo([updateCounter])` to avoid inline object allocation
+- Mutate existing objects in-place; use `push()`/`shift()` instead of spread for capped arrays
+- Decouple TTL cleanup to a separate interval (not every data batch)
+- Default to in-memory, add persistence only when needed
+- Apply filters in consumer hooks, not in provider

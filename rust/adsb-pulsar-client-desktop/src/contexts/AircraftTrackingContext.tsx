@@ -1,28 +1,56 @@
 "use client";
-import { createContext, useContext, useCallback, useRef, useState, ReactNode } from "react";
+import { createContext, useContext, useCallback, useRef, useState, useMemo, useEffect, ReactNode } from "react";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import type { AircraftPosition, AircraftTrack } from "@/lib/types";
 
 const TRACK_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const HISTORY_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const HISTORY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_POSITIONS = 100; // Max position history per track
+const CLEANUP_INTERVAL_MS = 15_000; // TTL cleanup every 15 seconds
 
 interface AircraftTrackingContextValue {
   tracks: Map<string, AircraftTrack>;
   history: Map<string, AircraftTrack>;
+  version: number;
 }
 
 const AircraftTrackingContext = createContext<AircraftTrackingContextValue | null>(null);
 
+/** Append a position to a track's positions array, capping at MAX_POSITIONS. Mutates in place. */
+function appendPosition(track: AircraftTrack, lat: number, lng: number) {
+  track.positions.push([lat, lng]);
+  if (track.positions.length > MAX_POSITIONS) {
+    track.positions.shift();
+  }
+}
+
+/** Apply position fields from an incoming message onto an existing track. Mutates in place. */
+function mergePositionInto(track: AircraftTrack, pos: AircraftPosition, now: number) {
+  track.callsign = pos.callsign ?? track.callsign;
+  track.altitude = pos.altitude ?? track.altitude;
+  track.ground_speed = pos.ground_speed ?? track.ground_speed;
+  track.track = pos.track ?? track.track;
+  track.latitude = pos.latitude ?? track.latitude;
+  track.longitude = pos.longitude ?? track.longitude;
+  track.vertical_rate = pos.vertical_rate ?? track.vertical_rate;
+  track.squawk = pos.squawk ?? track.squawk;
+  track.is_on_ground = pos.is_on_ground ?? track.is_on_ground;
+  track.timestamp = pos.timestamp;
+  track.last_seen = now;
+
+  if (pos.latitude !== null && pos.longitude !== null) {
+    appendPosition(track, pos.latitude, pos.longitude);
+  }
+}
+
 /**
  * Global aircraft tracking provider that keeps running across page navigation.
- * Maintains active tracks and 6-hour history in memory.
+ * Maintains active tracks and 24-hour history in memory.
  */
 export function AircraftTrackingProvider({ children }: { children: ReactNode }) {
   const tracksRef = useRef<Map<string, AircraftTrack>>(new Map());
   const historyRef = useRef<Map<string, AircraftTrack>>(new Map());
-  // Force re-render when maps change (for context consumers)
-  const [, setUpdateCounter] = useState(0);
+  const [updateCounter, setUpdateCounter] = useState(0);
 
   const handleBatch = useCallback((batch: AircraftPosition[]) => {
     const now = Date.now();
@@ -32,79 +60,85 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
     for (const pos of batch) {
       const existing = map.get(pos.hex_ident);
 
-      const track: AircraftTrack = {
-        hex_ident: pos.hex_ident,
-        callsign: pos.callsign ?? existing?.callsign ?? null,
-        altitude: pos.altitude ?? existing?.altitude ?? null,
-        ground_speed: pos.ground_speed ?? existing?.ground_speed ?? null,
-        track: pos.track ?? existing?.track ?? null,
-        latitude: pos.latitude ?? existing?.latitude ?? null,
-        longitude: pos.longitude ?? existing?.longitude ?? null,
-        vertical_rate: pos.vertical_rate ?? existing?.vertical_rate ?? null,
-        squawk: pos.squawk ?? existing?.squawk ?? null,
-        is_on_ground: pos.is_on_ground ?? existing?.is_on_ground ?? null,
-        timestamp: pos.timestamp,
-        positions: existing?.positions ?? [],
-        last_seen: now,
-      };
-
-      // Add position to history if we have coordinates
-      if (pos.latitude !== null && pos.longitude !== null) {
-        track.positions = [
-          ...track.positions.slice(-(MAX_POSITIONS - 1)),
-          [pos.latitude, pos.longitude],
-        ];
+      if (existing) {
+        // Fix 3: mutate in-place instead of allocating a new object
+        mergePositionInto(existing, pos, now);
+      } else {
+        // First sighting — create new track
+        const track: AircraftTrack = {
+          hex_ident: pos.hex_ident,
+          callsign: pos.callsign ?? null,
+          altitude: pos.altitude ?? null,
+          ground_speed: pos.ground_speed ?? null,
+          track: pos.track ?? null,
+          latitude: pos.latitude ?? null,
+          longitude: pos.longitude ?? null,
+          vertical_rate: pos.vertical_rate ?? null,
+          squawk: pos.squawk ?? null,
+          is_on_ground: pos.is_on_ground ?? null,
+          timestamp: pos.timestamp,
+          positions: [],
+          last_seen: now,
+        };
+        if (pos.latitude !== null && pos.longitude !== null) {
+          track.positions.push([pos.latitude, pos.longitude]);
+        }
+        map.set(pos.hex_ident, track);
       }
 
-      map.set(pos.hex_ident, track);
-
-      // Keep history entry in sync — append position and refresh metadata
+      // Fix 5: consolidated history sync using same helper
       const histEntry = histMap.get(pos.hex_ident);
       if (histEntry) {
-        histEntry.callsign = track.callsign;
-        histEntry.altitude = track.altitude;
-        histEntry.ground_speed = track.ground_speed;
-        histEntry.track = track.track;
-        histEntry.latitude = track.latitude;
-        histEntry.longitude = track.longitude;
-        histEntry.vertical_rate = track.vertical_rate;
-        histEntry.squawk = track.squawk;
-        histEntry.is_on_ground = track.is_on_ground;
-        histEntry.last_seen = now;
-        if (pos.latitude !== null && pos.longitude !== null) {
-          histEntry.positions = [
-            ...histEntry.positions.slice(-(MAX_POSITIONS - 1)),
-            [pos.latitude, pos.longitude],
-          ];
-        }
+        mergePositionInto(histEntry, pos, now);
       }
     }
 
-    // Expire old tracks — move to history instead of deleting
-    for (const [key, track] of map) {
-      if (now - track.last_seen > TRACK_TTL_MS) {
-        if (!histMap.has(key)) {
-          histMap.set(key, track);
-        }
-        map.delete(key);
-      }
-    }
-
-    // Clean history entries older than 6 hours
-    for (const [key, track] of histMap) {
-      if (now - track.last_seen > HISTORY_TTL_MS) {
-        histMap.delete(key);
-      }
-    }
-
-    // Trigger re-render for context consumers
     setUpdateCounter((c) => c + 1);
+  }, []);
+
+  // Fix 6: TTL cleanup on a separate interval instead of every batch
+  useEffect(() => {
+    const id = setInterval(() => {
+      const now = Date.now();
+      const map = tracksRef.current;
+      const histMap = historyRef.current;
+      let changed = false;
+
+      for (const [key, track] of map) {
+        if (now - track.last_seen > TRACK_TTL_MS) {
+          if (!histMap.has(key)) {
+            histMap.set(key, track);
+          }
+          map.delete(key);
+          changed = true;
+        }
+      }
+
+      for (const [key, track] of histMap) {
+        if (now - track.last_seen > HISTORY_TTL_MS) {
+          histMap.delete(key);
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        setUpdateCounter((c) => c + 1);
+      }
+    }, CLEANUP_INTERVAL_MS);
+
+    return () => clearInterval(id);
   }, []);
 
   useTauriEvent<AircraftPosition[]>("adsb:message", handleBatch);
 
+  // Fix 4: memoize context value — only creates new object when updateCounter changes
+  const value = useMemo<AircraftTrackingContextValue>(
+    () => ({ tracks: tracksRef.current, history: historyRef.current, version: updateCounter }),
+    [updateCounter],
+  );
+
   return (
-    <AircraftTrackingContext.Provider value={{ tracks: tracksRef.current, history: historyRef.current }}>
+    <AircraftTrackingContext.Provider value={value}>
       {children}
     </AircraftTrackingContext.Provider>
   );

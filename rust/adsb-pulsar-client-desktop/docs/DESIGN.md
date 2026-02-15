@@ -1192,19 +1192,31 @@ graph TD
 export function AircraftTrackingProvider({ children }: { children: ReactNode }) {
   const tracksRef = useRef<Map<string, AircraftTrack>>(new Map());
   const historyRef = useRef<Map<string, AircraftTrack>>(new Map());
-  const [, setUpdateCounter] = useState(0);  // Force re-renders
+  const [updateCounter, setUpdateCounter] = useState(0);
 
   const handleBatch = useCallback((batch: AircraftPosition[]) => {
-    // Merge positions into tracks
-    // Apply TTL expiry (active → history)
-    // Clean stale history (>6h)
-    setUpdateCounter(c => c + 1);  // Trigger context consumers to re-render
+    // Mutate existing tracks in-place via mergePositionInto()
+    // Use push()+shift() for position arrays (no spread allocation)
+    // Consolidated history sync via same mergePositionInto() helper
+    setUpdateCounter(c => c + 1);
+  }, []);
+
+  // TTL cleanup runs on a separate 15s interval (not every batch)
+  useEffect(() => {
+    const id = setInterval(() => { /* expire active→history, evict stale history */ }, 15_000);
+    return () => clearInterval(id);
   }, []);
 
   useTauriEvent<AircraftPosition[]>("adsb:message", handleBatch);
 
+  // Memoized context value — new object only when updateCounter changes
+  const value = useMemo(
+    () => ({ tracks: tracksRef.current, history: historyRef.current, version: updateCounter }),
+    [updateCounter]
+  );
+
   return (
-    <AircraftTrackingContext.Provider value={{ tracks: tracksRef.current, history: historyRef.current }}>
+    <AircraftTrackingContext.Provider value={value}>
       {children}
     </AircraftTrackingContext.Provider>
   );
@@ -1215,9 +1227,9 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
 
 **Purpose**: Access raw aircraft tracking data from global context
 
-**Returns**: `{ tracks: Map<string, AircraftTrack>, history: Map<string, AircraftTrack> }`
+**Returns**: `{ tracks: Map<string, AircraftTrack>, history: Map<string, AircraftTrack>, version: number }`
 
-**Usage**: Internal hook called by `useAircraftTracks`
+**Usage**: Internal hook called by `useAircraftTracks`. The `version` field is a monotonically increasing counter that changes on every batch, enabling `useMemo` to detect data changes even though the Map references are stable.
 
 #### 3. **useAircraftTracks** Hook (Refactored)
 
@@ -1237,23 +1249,25 @@ export function useAircraftTracks(filters: Filters) {
 ```typescript
 // New implementation - data persists across navigation
 export function useAircraftTracks(filters: Filters) {
-  const { tracks: tracksMap, history: historyMap } = useAircraftTrackingContext();
+  const { tracks: tracksMap, history: historyMap, version } = useAircraftTrackingContext();
 
   const tracks = useMemo(
     () => Array.from(tracksMap.values()).filter(t => matchesFilters(t, filters)),
-    [tracksMap, filters]
+    [version, filters]  // version (not Map ref) triggers recomputation
   );
 
   const history = useMemo(
     () => Array.from(historyMap.values()).filter(t => matchesFilters(t, filters)),
-    [historyMap, filters]
+    [version, filters]
   );
 
   return { tracks, history };
 }
 ```
 
-**Key Change**: No event listeners, no local state — just reads from global context and applies filters
+**Key Changes**:
+- No event listeners, no local state — just reads from global context and applies filters
+- `version` counter (not Map ref) in `useMemo` deps ensures recomputation on each batch
 
 ### Design Principles
 
@@ -1307,28 +1321,39 @@ User clicks "Back to Dashboard"
 
 **Benefit**: Seamless persistence without localStorage complexity
 
-#### 4. **Update Counter Pattern**
+#### 4. **Version Counter Pattern**
 
-**Problem**: React Context `value` is an object reference `{ tracks, history }`. Even when Maps mutate, the reference stays the same, so consumers don't re-render.
+**Problem**: React's `useMemo` compares dependencies by reference. Since Maps are mutated in-place via `useRef`, the Map reference never changes, so `useMemo` would never recompute filtered arrays.
 
-**Solution**: Add a state counter that increments on each batch:
+**Solution**: Expose a `version` counter in the context value and use it as the `useMemo` dependency in consumer hooks:
 ```typescript
-const [, setUpdateCounter] = useState(0);
-// ...
-setUpdateCounter(c => c + 1);  // Triggers context re-render
+// Provider: include version in memoized context value
+const [updateCounter, setUpdateCounter] = useState(0);
+const value = useMemo(
+  () => ({ tracks: tracksRef.current, history: historyRef.current, version: updateCounter }),
+  [updateCounter]
+);
+
+// Consumer hook: use version (not Map ref) as dependency
+const { tracks: tracksMap, version } = useAircraftTrackingContext();
+const filtered = useMemo(
+  () => Array.from(tracksMap.values()).filter(matchesFilters),
+  [version, filters]  // version changes on every batch
+);
 ```
 
 **How It Works**:
 1. Maps are mutated in-place (fast, no copying)
-2. State counter increments → Context Provider re-renders
-3. Consumer hooks re-run → `useMemo` dependencies check Map reference (same)
-4. But because Provider re-rendered, React knows to re-run the component
-5. `Array.from(tracksMap.values())` creates fresh array
-6. Filter applied to fresh array → new result
+2. State counter increments → `useMemo` creates new context value object
+3. Consumer hooks receive new `version` → `useMemo` deps change → recomputation
+4. `Array.from(tracksMap.values())` creates fresh array from mutated Map
+5. Filter applied to fresh array → new result
+
+**Why `version` instead of Map ref**: The Map reference from `useRef` is stable across renders. Without `version`, `useMemo([tracksMap, filters])` would only recompute when `filters` change — not when new aircraft data arrives. This was a critical stale-data bug in the initial implementation.
 
 **Alternative Considered**: Clone Maps on every update (`new Map(tracksRef.current)`)
 
-**Why Rejected**: Cloning 200+ tracks every 500ms is expensive; state counter is O(1)
+**Why Rejected**: Cloning 200+ tracks every 500ms is expensive; version counter is O(1)
 
 ### File Structure
 
@@ -1377,6 +1402,9 @@ const { tracks, history } = useAircraftTracks(filters);
 | **Update frequency** | Every 500ms (batch interval) | Throttled by bridge.rs |
 | **Re-render cost** | O(filtered tracks) | Only filtered arrays passed to components |
 | **Event listener overhead** | 1 global listener | vs. N listeners (one per page mount) |
+| **GC pressure** | Minimal | In-place mutation via `push()`/`shift()`, no array spread |
+| **Context value allocation** | 1 object per batch | Memoized via `useMemo([updateCounter])` |
+| **TTL cleanup frequency** | Every 15 seconds | Separate interval, not on every batch |
 
 ### Testing Considerations
 
@@ -1447,14 +1475,19 @@ const { tracks, history } = useAircraftTracks(filters);
 3. **Virtual Scrolling**: (Future) Table uses virtual scrolling for 1000+ aircraft
 4. **Lazy Loading**: Map component loaded dynamically (no SSR overhead)
 5. **Memoization**: (Future) Use `React.memo()` for expensive components
+6. **In-Place Track Mutation**: Existing tracks are mutated via `mergePositionInto()` instead of allocating new objects per position update
+7. **Zero-Allocation Position Append**: `push()`+`shift()` replaces `[...spread, newItem]` for position arrays — eliminates ~800 array allocations/sec with 40 aircraft
+8. **Memoized Context Value**: Provider value is wrapped in `useMemo([updateCounter])` to prevent unnecessary consumer re-renders
+9. **Version Counter in useMemo Deps**: Consumer hooks use `version` (not Map ref) in `useMemo` deps to correctly detect data changes
+10. **Deferred TTL Cleanup**: TTL expiry scans run on a 15s interval instead of every 500ms batch
 
 ### Memory Management
 
 1. **Active Track TTL**: Expire tracks after 5 minutes of inactivity (moved to history, not deleted)
 2. **History TTL**: Evict history entries after 6 hours of inactivity (permanently deleted)
 3. **Position History Limit**: Max 100 positions per track (prevent unbounded growth)
-4. **HashMap Cleanup**: On every batch, expired active tracks move to history; stale history entries are evicted
-5. **Dual-Ref Architecture**: Both `tracksRef` and `historyRef` are `useRef` (not `useState`), so mutations during the batch loop don't trigger intermediate re-renders. React state is synced once at the end of each batch via `setTracks()` and `setHistory()`
+4. **HashMap Cleanup**: A 15-second interval scans for expired active tracks (moved to history) and stale history entries (evicted). Decoupled from the 500ms batch loop to avoid redundant scans.
+5. **Dual-Ref Architecture**: Both `tracksRef` and `historyRef` are `useRef` (not `useState`), so mutations during the batch loop don't trigger intermediate re-renders. A single `setUpdateCounter(c => c + 1)` call at the end of each batch triggers exactly one render cycle.
 
 **Memory Budget Estimate**: With ~200 aircraft over 6 hours, each track holding 100 positions
 (~800 bytes per position pair + metadata), history consumes approximately 200 x (100 x 16 + 500) ≈ 420 KB — negligible for desktop apps.
