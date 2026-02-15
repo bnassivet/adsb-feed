@@ -12,9 +12,7 @@ use crate::config::{Config, ConnectionMode};
 use crate::error::{ClientError, Result};
 use crate::metrics::Metrics;
 use bytes::{Buf, BytesMut};
-use pulsar::{
-    producer, Producer, Pulsar, TokioExecutor,
-};
+use pulsar::{producer, Producer, Pulsar, TokioExecutor};
 use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
@@ -141,7 +139,8 @@ impl ADSBFeedClient {
     /// or the process receives a termination signal.
     pub async fn run(&mut self) -> Result<()> {
         info!("Starting ADS-B Pulsar Client");
-        info!("Configuration: source_id={}, socket={}:{}, pulsar={}, topic={}, test_mode={}",
+        info!(
+            "Configuration: source_id={}, socket={}:{}, pulsar={}, topic={}, test_mode={}",
             self.config.source_id,
             self.config.socket_host,
             self.config.socket_port,
@@ -173,7 +172,10 @@ impl ADSBFeedClient {
 
             match self.connect_socket().await {
                 Ok(mut stream) => {
-                    info!("Connected to dump1090 at {}:{}", self.config.socket_host, self.config.socket_port);
+                    info!(
+                        "Connected to dump1090 at {}:{}",
+                        self.config.socket_host, self.config.socket_port
+                    );
 
                     match self.receive_and_forward(&mut stream).await {
                         Err(ClientError::Shutdown) => {
@@ -258,15 +260,22 @@ impl ADSBFeedClient {
 
         loop {
             attempt += 1;
-            info!("Attempting to connect to dump1090 at {}:{} (attempt {})",
-                self.config.socket_host, self.config.socket_port, attempt);
+            info!(
+                "Attempting to connect to dump1090 at {}:{} (attempt {})",
+                self.config.socket_host, self.config.socket_port, attempt
+            );
 
             match tokio::time::timeout(
                 self.config.socket_timeout(),
-                TcpStream::connect((self.config.socket_host.as_str(), self.config.socket_port))
-            ).await {
+                TcpStream::connect((self.config.socket_host.as_str(), self.config.socket_port)),
+            )
+            .await
+            {
                 Ok(Ok(stream)) => {
-                    info!("Successfully connected to {}:{}", self.config.socket_host, self.config.socket_port);
+                    info!(
+                        "Successfully connected to {}:{}",
+                        self.config.socket_host, self.config.socket_port
+                    );
                     return Ok(stream);
                 }
                 Ok(Err(e)) => {
@@ -290,19 +299,26 @@ impl ADSBFeedClient {
 
         loop {
             attempt += 1;
-            info!("Connecting to Pulsar broker at {} (attempt {})",
-                self.config.pulsar_broker, attempt);
+            info!(
+                "Connecting to Pulsar broker at {} (attempt {})",
+                self.config.pulsar_broker, attempt
+            );
 
             match self.try_connect_pulsar().await {
                 Ok((client, producer)) => {
-                    info!("Successfully connected to Pulsar. Topic: {}, Producer: {}",
-                        self.config.pulsar_topic, self.config.source_id);
+                    info!(
+                        "Successfully connected to Pulsar. Topic: {}, Producer: {}",
+                        self.config.pulsar_topic, self.config.source_id
+                    );
                     self.pulsar_client = Some(client);
                     self.pulsar_producer = Some(producer);
                     return Ok(());
                 }
                 Err(e) => {
-                    warn!("Failed to connect to Pulsar: {}. Retrying in {:?}...", e, retry_delay);
+                    warn!(
+                        "Failed to connect to Pulsar: {}. Retrying in {:?}...",
+                        e, retry_delay
+                    );
                     sleep(retry_delay).await;
                     retry_delay = std::cmp::min(retry_delay * 2, max_delay);
                 }
@@ -311,7 +327,10 @@ impl ADSBFeedClient {
     }
 
     fn start_pulsar_reconnect_task(&mut self) {
-        if self.config.test_mode || self.pulsar_producer.is_some() || self.pulsar_reconnect_task_running {
+        if self.config.test_mode
+            || self.pulsar_producer.is_some()
+            || self.pulsar_reconnect_task_running
+        {
             return;
         }
 
@@ -496,11 +515,14 @@ impl ADSBFeedClient {
     }
 
     /// Processes incoming data with line buffering.
-    fn process_buffer(&mut self, data: &[u8]) -> Result<Vec<Vec<u8>>> {
+    pub(crate) fn process_buffer(&mut self, data: &[u8]) -> Result<Vec<Vec<u8>>> {
         self.line_buffer.extend_from_slice(data);
 
         if self.line_buffer.len() > self.config.max_line_buffer_size {
-            warn!("Line buffer overflow ({} bytes), clearing buffer", self.line_buffer.len());
+            warn!(
+                "Line buffer overflow ({} bytes), clearing buffer",
+                self.line_buffer.len()
+            );
             self.line_buffer.clear();
             self.metrics.inc_errors();
             return Err(ClientError::BufferOverflow {
@@ -535,8 +557,15 @@ impl ADSBFeedClient {
             self.metrics.inc_messages_sent();
 
             match String::from_utf8(message.clone()) {
-                Ok(s) => info!("[TEST MODE] Message {}: {}", self.metrics.messages_sent(), s.trim()),
-                Err(_) => warn!("[TEST MODE] Could not decode message {}", self.metrics.messages_sent()),
+                Ok(s) => info!(
+                    "[TEST MODE] Message {}: {}",
+                    self.metrics.messages_sent(),
+                    s.trim()
+                ),
+                Err(_) => warn!(
+                    "[TEST MODE] Could not decode message {}",
+                    self.metrics.messages_sent()
+                ),
             }
 
             if self.metrics.messages_sent() % self.config.log_sample_rate == 0 {
@@ -565,7 +594,8 @@ impl ADSBFeedClient {
                 self.retry_queue.pop_front();
                 self.retry_queue.push_back(message);
             }
-            self.metrics.set_retry_queue_size(self.retry_queue.len() as u64);
+            self.metrics
+                .set_retry_queue_size(self.retry_queue.len() as u64);
             self.start_pulsar_reconnect_task();
             return Ok(());
         }
@@ -595,10 +625,13 @@ impl ADSBFeedClient {
 
                 if self.retry_queue.len() < self.config.max_retry_queue_size {
                     self.retry_queue.push_back(message);
-                    self.metrics.set_retry_queue_size(self.retry_queue.len() as u64);
+                    self.metrics
+                        .set_retry_queue_size(self.retry_queue.len() as u64);
                 } else {
-                    warn!("Retry queue full ({} messages), dropping oldest message",
-                        self.config.max_retry_queue_size);
+                    warn!(
+                        "Retry queue full ({} messages), dropping oldest message",
+                        self.config.max_retry_queue_size
+                    );
                     self.retry_queue.pop_front();
                     self.retry_queue.push_back(message);
                 }
@@ -655,7 +688,8 @@ impl ADSBFeedClient {
             self.retry_queue.push_front(msg);
         }
 
-        self.metrics.set_retry_queue_size(self.retry_queue.len() as u64);
+        self.metrics
+            .set_retry_queue_size(self.retry_queue.len() as u64);
 
         if sent_count > 0 {
             info!("Successfully sent {} queued messages", sent_count);
@@ -673,5 +707,134 @@ impl Drop for ADSBFeedClient {
     fn drop(&mut self) {
         info!("Cleaning up ADS-B Pulsar Client");
         info!("{}", self.final_stats());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_config() -> Config {
+        let mut config = Config::default();
+        config.test_mode = true;
+        config
+    }
+
+    fn test_client() -> ADSBFeedClient {
+        ADSBFeedClient::new(test_config()).unwrap()
+    }
+
+    // --- process_buffer tests ---
+
+    #[test]
+    fn test_process_buffer_single_line() {
+        let mut client = test_client();
+        let messages = client
+            .process_buffer(b"MSG,3,1,1,A1B2C3,1,,,,,,35000,,,,,,,,,,,\n")
+            .unwrap();
+        assert_eq!(messages.len(), 1);
+    }
+
+    #[test]
+    fn test_process_buffer_multiple_lines() {
+        let mut client = test_client();
+        let data = b"line1\nline2\nline3\n";
+        let messages = client.process_buffer(data).unwrap();
+        assert_eq!(messages.len(), 3);
+    }
+
+    #[test]
+    fn test_process_buffer_incomplete_buffered() {
+        let mut client = test_client();
+        // No newline — should buffer but return nothing
+        let messages = client.process_buffer(b"partial data").unwrap();
+        assert!(messages.is_empty());
+
+        // Complete the line
+        let messages = client.process_buffer(b" continued\n").unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0], b"partial data continued");
+    }
+
+    #[test]
+    fn test_process_buffer_empty_lines_skipped() {
+        let mut client = test_client();
+        let messages = client.process_buffer(b"\n\n\n").unwrap();
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn test_process_buffer_whitespace_only_skipped() {
+        let mut client = test_client();
+        let messages = client.process_buffer(b"   \n\t\n").unwrap();
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn test_process_buffer_crlf() {
+        let mut client = test_client();
+        let messages = client.process_buffer(b"line\r\n").unwrap();
+        assert_eq!(messages.len(), 1);
+        // The \r will be included in the line content (before the \n split)
+        assert!(messages[0].ends_with(b"\r"));
+    }
+
+    #[test]
+    fn test_process_buffer_overflow() {
+        let mut config = test_config();
+        config.max_line_buffer_size = 20;
+        let mut client = ADSBFeedClient::new(config).unwrap();
+
+        let result =
+            client.process_buffer(b"this is a very long line that exceeds the buffer limit");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ClientError::BufferOverflow { .. } => {}
+            other => panic!("expected BufferOverflow, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_process_buffer_mixed() {
+        let mut client = test_client();
+        let messages = client.process_buffer(b"complete\nincomplete").unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0], b"complete");
+
+        // Complete the incomplete line
+        let messages = client.process_buffer(b" data\n").unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0], b"incomplete data");
+    }
+
+    // --- Client lifecycle tests ---
+
+    #[test]
+    fn test_client_new_valid_config() {
+        assert!(ADSBFeedClient::new(Config::default()).is_ok());
+    }
+
+    #[test]
+    fn test_client_new_invalid_config() {
+        let mut config = Config::default();
+        config.source_id = "".to_string();
+        assert!(ADSBFeedClient::new(config).is_err());
+    }
+
+    #[test]
+    fn test_shutdown_signal() {
+        let client = test_client();
+        assert!(!*client.shutdown_rx.borrow());
+        client.shutdown();
+        assert!(*client.shutdown_rx.borrow());
+    }
+
+    #[test]
+    fn test_metrics_handle() {
+        let client = test_client();
+        let metrics = client.metrics();
+        assert_eq!(metrics.messages_sent(), 0);
+        metrics.inc_messages_sent();
+        assert_eq!(client.metrics().messages_sent(), 1);
     }
 }

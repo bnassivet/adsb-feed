@@ -1559,6 +1559,53 @@ Tauri supports cross-compilation for different platforms. See:
 
 ---
 
+## Testing
+
+### TDD Workflow
+
+All development follows Test-Driven Development (Red-Green-Refactor):
+
+1. **Red** — Write a failing test describing the desired behavior
+2. **Green** — Write minimum code to pass
+3. **Refactor** — Clean up, keeping tests green
+
+### Rust Tests (`src-tauri/`)
+
+```bash
+# From adsb-feed/rust/
+cargo test --workspace                        # All tests
+cargo test -p adsb-pulsar-client-desktop-lib  # Tauri crate only
+```
+
+**Modules with tests:**
+- `sbs_parser.rs` — SBS-1 message parsing (MSG subtypes, edge cases, field trimming)
+- `state.rs` — AppState defaults, ConnectionStatus/StatusResponse serialization
+
+### TypeScript Tests (`src/`)
+
+```bash
+npm test            # All tests (CI)
+npm run test:watch  # Watch mode (TDD)
+```
+
+**Test stack:** Vitest + jsdom + @testing-library/react
+
+| Directory | Tests | Coverage |
+|-----------|-------|----------|
+| `src/lib/__tests__/` | colors, types, h3-density, format | Pure utility functions |
+| `src/hooks/__tests__/` | useLocalStorage, useAircraftTracks, useSimulatedTracks | Hook logic and filters |
+| `src/components/__tests__/` | ConnectionStatus, MetricsBar, Filters | Component rendering and interactions |
+
+**Mocking:** `src/test/mocks/tauri.ts` provides mock `@tauri-apps/api` (invoke, events) for testing without Tauri runtime.
+
+### What Is NOT Tested (and Why)
+
+- **`commands.rs` / `bridge.rs`** — Tightly coupled to `tauri::AppHandle`; tested via Tauri integration testing
+- **`MapInner.tsx`** — Leaflet map internals require complex DOM mocking with minimal return on value
+- **Pulsar connectivity** — Use `Config::test_mode = true` to bypass in tests
+
+---
+
 ## Future Enhancements
 
 ### Planned Features

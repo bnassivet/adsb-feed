@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useAircraftTrackingContext } from "@/contexts/AircraftTrackingContext";
 import type { AircraftTrack, Filters } from "@/lib/types";
 
-function matchesFilters(t: AircraftTrack, filters: Filters): boolean {
+export function matchesFilters(t: AircraftTrack, filters: Filters): boolean {
   if (
     filters.callsign &&
     !(t.callsign ?? "")

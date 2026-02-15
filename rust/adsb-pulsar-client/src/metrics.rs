@@ -107,7 +107,9 @@ impl Metrics {
     ///
     /// * `bytes` - Number of bytes to add
     pub fn add_bytes_received(&self, bytes: u64) {
-        self.inner.bytes_received.fetch_add(bytes, Ordering::Relaxed);
+        self.inner
+            .bytes_received
+            .fetch_add(bytes, Ordering::Relaxed);
     }
 
     /// Adds to the bytes sent counter (atomic).
@@ -245,5 +247,129 @@ impl std::fmt::Display for MetricsSnapshot {
             self.bytes_sent as f64 / 1024.0 / 1024.0,
             self.bytes_received as f64 / 1024.0 / 1024.0
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_metrics_all_zero() {
+        let m = Metrics::new();
+        assert_eq!(m.messages_sent(), 0);
+        assert_eq!(m.errors(), 0);
+        assert_eq!(m.bytes_received(), 0);
+        assert_eq!(m.bytes_sent(), 0);
+        assert_eq!(m.retry_queue_size(), 0);
+    }
+
+    #[test]
+    fn test_inc_messages_sent() {
+        let m = Metrics::new();
+        m.inc_messages_sent();
+        m.inc_messages_sent();
+        m.inc_messages_sent();
+        assert_eq!(m.messages_sent(), 3);
+    }
+
+    #[test]
+    fn test_inc_errors() {
+        let m = Metrics::new();
+        m.inc_errors();
+        m.inc_errors();
+        assert_eq!(m.errors(), 2);
+    }
+
+    #[test]
+    fn test_add_bytes_received_cumulative() {
+        let m = Metrics::new();
+        m.add_bytes_received(100);
+        m.add_bytes_received(200);
+        assert_eq!(m.bytes_received(), 300);
+    }
+
+    #[test]
+    fn test_add_bytes_sent_cumulative() {
+        let m = Metrics::new();
+        m.add_bytes_sent(50);
+        m.add_bytes_sent(75);
+        assert_eq!(m.bytes_sent(), 125);
+    }
+
+    #[test]
+    fn test_set_retry_queue_size() {
+        let m = Metrics::new();
+        m.set_retry_queue_size(42);
+        assert_eq!(m.retry_queue_size(), 42);
+        m.set_retry_queue_size(0);
+        assert_eq!(m.retry_queue_size(), 0);
+    }
+
+    #[test]
+    fn test_snapshot_captures_values() {
+        let m = Metrics::new();
+        m.inc_messages_sent();
+        m.inc_messages_sent();
+        m.inc_errors();
+        m.add_bytes_received(1024);
+        m.add_bytes_sent(512);
+        m.set_retry_queue_size(5);
+
+        let snap = m.snapshot();
+        assert_eq!(snap.messages_sent, 2);
+        assert_eq!(snap.errors, 1);
+        assert_eq!(snap.bytes_received, 1024);
+        assert_eq!(snap.bytes_sent, 512);
+        assert_eq!(snap.retry_queue_size, 5);
+    }
+
+    #[test]
+    fn test_snapshot_display_format() {
+        let m = Metrics::new();
+        m.inc_messages_sent();
+        m.inc_errors();
+        let display = m.snapshot().to_string();
+        assert!(display.contains("Messages:"), "should contain Messages:");
+        assert!(display.contains("Errors:"), "should contain Errors:");
+    }
+
+    #[test]
+    fn test_metrics_clone_shares_state() {
+        let m = Metrics::new();
+        let m2 = m.clone();
+        m.inc_messages_sent();
+        assert_eq!(m2.messages_sent(), 1);
+    }
+
+    #[test]
+    fn test_messages_per_second_nonnegative() {
+        let m = Metrics::new();
+        assert!(m.messages_per_second() >= 0.0);
+        m.inc_messages_sent();
+        assert!(m.messages_per_second() >= 0.0);
+    }
+
+    #[test]
+    fn test_snapshot_serialize_json() {
+        let m = Metrics::new();
+        m.inc_messages_sent();
+        m.add_bytes_received(100);
+        let snap = m.snapshot();
+        let value = serde_json::to_value(&snap).unwrap();
+
+        assert!(value.get("messages_sent").is_some());
+        assert!(value.get("errors").is_some());
+        assert!(value.get("bytes_received").is_some());
+        assert!(value.get("bytes_sent").is_some());
+        assert!(value.get("retry_queue_size").is_some());
+        assert!(value.get("elapsed_secs").is_some());
+        assert!(value.get("throughput_msg_per_sec").is_some());
+    }
+
+    #[test]
+    fn test_elapsed_is_nonnegative() {
+        let m = Metrics::new();
+        assert!(m.elapsed().as_secs() >= 0);
     }
 }

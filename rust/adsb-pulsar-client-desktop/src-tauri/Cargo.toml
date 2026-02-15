@@ -20,6 +20,9 @@ adsb-pulsar-client = { path = "../../adsb-pulsar-client", default-features = fal
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[dev-dependencies]
+serde_json = { workspace = true }
+
 [lib]
 name = "adsb_pulsar_client_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]

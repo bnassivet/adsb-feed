@@ -2,6 +2,7 @@
 import { useState } from "react";
 import type { AircraftTrack } from "@/lib/types";
 import { altitudeToColor } from "@/lib/colors";
+import { timeAgo } from "@/lib/format";
 
 type SortKey =
   | "callsign"
@@ -13,16 +14,6 @@ type SortKey =
 interface Props {
   tracks: AircraftTrack[];
   historyTracks?: AircraftTrack[];
-}
-
-function timeAgo(lastSeen: number): string {
-  const seconds = Math.floor((Date.now() - lastSeen) / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  const remainMin = minutes % 60;
-  return `${hours}h ${remainMin}m ago`;
 }
 
 export function AircraftTable({ tracks, historyTracks = [] }: Props) {

@@ -15,7 +15,7 @@ interface FlightState {
 }
 
 /** Compute heading in degrees (0-360) from point A to point B. */
-function computeHeading(
+export function computeHeading(
   lat1: number,
   lng1: number,
   lat2: number,
@@ -30,7 +30,7 @@ function computeHeading(
 }
 
 /** Linearly interpolate between two waypoints. */
-function interpolate(
+export function interpolate(
   a: [number, number],
   b: [number, number],
   t: number,

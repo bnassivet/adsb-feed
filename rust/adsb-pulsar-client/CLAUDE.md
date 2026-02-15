@@ -219,20 +219,77 @@ info!("{}", stats);
 
 ## Testing
 
-### Unit Tests
+### TDD Workflow
+
+All changes follow Test-Driven Development:
+1. **Red**: Write a failing test first
+2. **Green**: Minimum code to make it pass
+3. **Refactor**: Clean up while tests stay green
+
+**No code lands without a test.** Bug fixes require a regression test first.
+
+### Unit Tests (~52 tests)
+
+Tests live inline in each module under `#[cfg(test)] mod tests`:
+
+| Module | Tests | What's Covered |
+|--------|-------|----------------|
+| `config.rs` | 18 | Validation (empty source_id, invalid broker URLs, zero buffers), connection mode parsing, duration conversions, serde roundtrip |
+| `error.rs` | 10 | `is_recoverable()` and `should_retry()` for all variants, display formatting |
+| `metrics.rs` | 12 | Atomic counters, snapshot consistency, clone-shares-state, JSON serialization |
+| `client.rs` | 12 | `process_buffer()` — single/multi-line extraction, incomplete buffering, CRLF, overflow, empty/whitespace lines |
 
 ```bash
-# Run all tests
-cargo test
+# Run all unit tests
+cargo test -p adsb-pulsar-client
 
-# Run specific test
-cargo test test_config_validation
+# Run a specific module's tests
+cargo test -p adsb-pulsar-client config::tests
+cargo test -p adsb-pulsar-client error::tests
 
-# Run with output
-cargo test -- --nocapture
+# Run a single test by name
+cargo test -p adsb-pulsar-client test_default_config_is_valid
+
+# Show println output
+cargo test -p adsb-pulsar-client -- --nocapture
 ```
 
-### Integration Testing
+### Integration Tests (5 tests)
+
+Located in `tests/` directory with shared infrastructure in `tests/common/mod.rs`:
+
+| Test | What |
+|------|------|
+| `test_client_connects_receives_messages` | Mock sends 3 SBS lines, message tap receives all 3 |
+| `test_message_tap_delivers_all` | Send N messages, verify tap count == N |
+| `test_client_shutdown_stops_cleanly` | Client runs, verify metrics > 0, clean abort |
+| `test_client_handles_disconnect` | Mock disconnects, client handles gracefully |
+| `test_large_burst` | 100 messages rapid-fire, all arrive via tap |
+
+**Test infrastructure (`tests/common/mod.rs`):**
+- `MockDump1090` — TCP listener on port 0, accepts connection, sends configurable SBS lines
+- `SBS_MSG3_POSITION`, `SBS_MSG1_CALLSIGN`, `SBS_MSG4_SPEED` — sample constants
+- `test_config_for_port(port)` — creates `Config` with `test_mode = true` pointing to localhost
+
+```bash
+# Run integration tests only
+cargo test -p adsb-pulsar-client --test test_message_flow
+
+# Run all tests (unit + integration + doc-tests)
+cargo test -p adsb-pulsar-client
+```
+
+### Doc-Tests (8 tests)
+
+Inline `///` examples in `error.rs`, `metrics.rs`, and `lib.rs` that compile and run as tests.
+
+### CI Gate
+
+```bash
+cargo test -p adsb-pulsar-client && cargo clippy -p adsb-pulsar-client -- -D warnings && cargo fmt --check
+```
+
+### Manual Integration Testing
 
 ```bash
 # Start local Pulsar (Docker)

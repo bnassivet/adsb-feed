@@ -18,10 +18,7 @@ use tracing::{error, info, warn};
 ///
 /// Returns a `FeedHandle` that can be used to stop the feed
 /// and read metrics.
-pub fn start_feed(
-    app: AppHandle,
-    config: Config,
-) -> Result<FeedHandle, String> {
+pub fn start_feed(app: AppHandle, config: Config) -> Result<FeedHandle, String> {
     let test_mode = config.test_mode;
     let socket_read_timeout_secs = config.socket_read_timeout_secs;
     let mut client = ADSBFeedClient::new(config).map_err(|e| e.to_string())?;
@@ -49,15 +46,18 @@ pub fn start_feed(
     // Task 1: Run the feed client
     let client_task = tokio::spawn(async move {
         // Emit connecting status
-        let _ = app_for_client.emit("adsb:status", StatusResponse {
-            is_running: true,
-            socket_status: ConnectionStatus::Connecting,
-            pulsar_status: if test_mode {
-                ConnectionStatus::Disconnected
-            } else {
-                ConnectionStatus::Connecting
+        let _ = app_for_client.emit(
+            "adsb:status",
+            StatusResponse {
+                is_running: true,
+                socket_status: ConnectionStatus::Connecting,
+                pulsar_status: if test_mode {
+                    ConnectionStatus::Disconnected
+                } else {
+                    ConnectionStatus::Connecting
+                },
             },
-        });
+        );
 
         // Run client with shutdown signal
         tokio::select! {
@@ -83,11 +83,14 @@ pub fn start_feed(
         }
 
         let _ = app_for_client.emit("adsb:stopped", serde_json::json!({}));
-        let _ = app_for_client.emit("adsb:status", StatusResponse {
-            is_running: false,
-            socket_status: ConnectionStatus::Disconnected,
-            pulsar_status: ConnectionStatus::Disconnected,
-        });
+        let _ = app_for_client.emit(
+            "adsb:status",
+            StatusResponse {
+                is_running: false,
+                socket_status: ConnectionStatus::Disconnected,
+                pulsar_status: ConnectionStatus::Disconnected,
+            },
+        );
     });
 
     // Task 2: Relay messages to frontend (throttled)
@@ -107,7 +110,8 @@ pub fn start_feed(
             last_message_time_watchdog,
             test_mode,
             socket_read_timeout_secs,
-        ).await;
+        )
+        .await;
     });
 
     let shutdown_fn = Box::new(move || {

@@ -66,3 +66,55 @@ impl AppState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_app_state_new_defaults() {
+        let state = AppState::new();
+        let config = state.config.lock().unwrap();
+        // Verify it's a default Config by checking a known default value
+        assert_eq!(config.source_id, "kraspberryPi");
+    }
+
+    #[test]
+    fn test_app_state_feed_handle_starts_none() {
+        let state = AppState::new();
+        let handle = state.feed_handle.lock().unwrap();
+        assert!(handle.is_none());
+    }
+
+    #[test]
+    fn test_app_state_initial_status_not_running() {
+        let state = AppState::new();
+        let status = state.connection_status.lock().unwrap();
+        assert!(!status.is_running);
+    }
+
+    #[test]
+    fn test_connection_status_serialize() {
+        let status = ConnectionStatus::Connected;
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["status"], "Connected");
+
+        let error = ConnectionStatus::Error("test error".to_string());
+        let json = serde_json::to_value(&error).unwrap();
+        assert_eq!(json["status"], "Error");
+        assert_eq!(json["message"], "test error");
+    }
+
+    #[test]
+    fn test_status_response_serialize() {
+        let response = StatusResponse {
+            is_running: true,
+            socket_status: ConnectionStatus::Connected,
+            pulsar_status: ConnectionStatus::Disconnected,
+        };
+        let json = serde_json::to_value(&response).unwrap();
+        assert_eq!(json["is_running"], true);
+        assert!(json.get("socket_status").is_some());
+        assert!(json.get("pulsar_status").is_some());
+    }
+}

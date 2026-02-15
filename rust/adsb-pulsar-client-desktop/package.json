@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -22,6 +24,9 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@tauri-apps/cli": "^2",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/geojson": "^7946.0.16",
     "@types/leaflet": "^1.9.8",
     "@types/node": "^22",
@@ -29,8 +34,10 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "^15",
+    "jsdom": "^28.1.0",
     "postcss": "^8",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.0.18"
   }
 }

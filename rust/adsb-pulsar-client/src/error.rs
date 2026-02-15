@@ -62,7 +62,10 @@ pub enum ClientError {
 }
 
 impl serde::Serialize for ClientError {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.to_string())
     }
 }
@@ -91,10 +94,7 @@ impl ClientError {
     /// assert!(error.is_recoverable());
     /// ```
     pub fn is_recoverable(&self) -> bool {
-        matches!(
-            self,
-            ClientError::Socket(_) | ClientError::Pulsar(_)
-        )
+        matches!(self, ClientError::Socket(_) | ClientError::Pulsar(_))
     }
 
     /// Checks if the error should trigger a retry.
@@ -111,5 +111,84 @@ impl ClientError {
             self,
             ClientError::Socket(_) | ClientError::Pulsar(_) | ClientError::RetryQueueFull(_)
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_socket_error_is_recoverable() {
+        let err = ClientError::Socket(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "refused",
+        ));
+        assert!(err.is_recoverable());
+    }
+
+    #[test]
+    fn test_config_error_not_recoverable() {
+        let err = ClientError::Config("bad config".into());
+        assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_buffer_overflow_not_recoverable() {
+        let err = ClientError::BufferOverflow {
+            current: 100,
+            limit: 50,
+        };
+        assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_retry_queue_full_not_recoverable() {
+        let err = ClientError::RetryQueueFull(1000);
+        assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_shutdown_not_recoverable() {
+        let err = ClientError::Shutdown;
+        assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_other_not_recoverable() {
+        let err = ClientError::Other("something".into());
+        assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_socket_error_should_retry() {
+        let err = ClientError::Socket(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "refused",
+        ));
+        assert!(err.should_retry());
+    }
+
+    #[test]
+    fn test_retry_queue_full_should_retry() {
+        let err = ClientError::RetryQueueFull(1000);
+        assert!(err.should_retry());
+    }
+
+    #[test]
+    fn test_config_error_should_not_retry() {
+        let err = ClientError::Config("bad".into());
+        assert!(!err.should_retry());
+    }
+
+    #[test]
+    fn test_error_display_contains_context() {
+        let err = ClientError::BufferOverflow {
+            current: 100,
+            limit: 50,
+        };
+        let display = err.to_string();
+        assert!(display.contains("100"), "should contain current size");
+        assert!(display.contains("50"), "should contain limit");
     }
 }

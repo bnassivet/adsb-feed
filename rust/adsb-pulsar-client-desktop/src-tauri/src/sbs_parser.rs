@@ -125,7 +125,8 @@ mod tests {
 
     #[test]
     fn test_parse_msg1_callsign() {
-        let line = "MSG,1,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,AIR123,,,,,,,,,,,";
+        let line =
+            "MSG,1,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,AIR123,,,,,,,,,,,";
         let pos = parse_sbs_message(line).unwrap();
         assert_eq!(pos.callsign, Some("AIR123".to_string()));
         assert_eq!(pos.altitude, None);
@@ -139,5 +140,106 @@ mod tests {
     #[test]
     fn test_reject_short_line() {
         assert!(parse_sbs_message("MSG,3,1").is_none());
+    }
+
+    #[test]
+    fn test_parse_msg4_speed() {
+        let line = "MSG,4,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,,450.5,275.3,,,,,,,,,0";
+        let pos = parse_sbs_message(line).unwrap();
+        assert_eq!(pos.ground_speed, Some(450.5));
+        assert_eq!(pos.track, Some(275.3));
+    }
+
+    #[test]
+    fn test_parse_msg5_squawk() {
+        // Fields: 0=MSG,1=5,2=1,3=1,4=hex,5=1,6=date,7=time,8=date,9=time,10=cs,11=alt,12=gs,13=trk,14=lat,15=lon,16=vr,17=sqk,...
+        let line = "MSG,5,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,35000,,,,,,7700,,,,0";
+        let pos = parse_sbs_message(line).unwrap();
+        assert_eq!(pos.squawk, Some("7700".to_string()));
+    }
+
+    #[test]
+    fn test_empty_hex_ident_returns_none() {
+        let line = "MSG,3,1,1,,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,35000,,,45.5,-73.5,,,,,,0";
+        assert!(parse_sbs_message(line).is_none());
+    }
+
+    #[test]
+    fn test_whitespace_in_fields() {
+        let line = "MSG,3,1,1, A1B2C3 ,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000, AIR123 , 35000 ,,,,,,,,,, 0 ";
+        let pos = parse_sbs_message(line).unwrap();
+        assert_eq!(pos.hex_ident, "A1B2C3");
+        assert_eq!(pos.callsign, Some("AIR123".to_string()));
+        assert_eq!(pos.altitude, Some(35000.0));
+    }
+
+    #[test]
+    fn test_is_on_ground_values() {
+        // "0" -> false
+        let line =
+            "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,,,,,,,,,,,0";
+        assert_eq!(parse_sbs_message(line).unwrap().is_on_ground, Some(false));
+
+        // "1" -> true
+        let line =
+            "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,,,,,,,,,,,1";
+        assert_eq!(parse_sbs_message(line).unwrap().is_on_ground, Some(true));
+
+        // "-1" -> false
+        let line =
+            "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,,,,,,,,,,,-1";
+        assert_eq!(parse_sbs_message(line).unwrap().is_on_ground, Some(false));
+
+        // "" -> None
+        let line = "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,,,,,,,,,,,";
+        assert_eq!(parse_sbs_message(line).unwrap().is_on_ground, None);
+    }
+
+    #[test]
+    fn test_all_optional_fields_empty() {
+        let line = "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,,,,,,,,,,,";
+        let pos = parse_sbs_message(line).unwrap();
+        assert_eq!(pos.hex_ident, "A1B2C3");
+        assert_eq!(pos.callsign, None);
+        assert_eq!(pos.altitude, None);
+        assert_eq!(pos.ground_speed, None);
+        assert_eq!(pos.track, None);
+        assert_eq!(pos.latitude, None);
+        assert_eq!(pos.longitude, None);
+        assert_eq!(pos.vertical_rate, None);
+        assert_eq!(pos.squawk, None);
+    }
+
+    #[test]
+    fn test_negative_altitude() {
+        let line =
+            "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,-50,,,,,,,,,,,";
+        let pos = parse_sbs_message(line).unwrap();
+        assert_eq!(pos.altitude, Some(-50.0));
+    }
+
+    #[test]
+    fn test_extra_fields_ignored() {
+        // 23+ fields — should still parse the first 22
+        let line = "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,35000,,,45.5,-73.5,,,,,,0,extra1,extra2";
+        let pos = parse_sbs_message(line).unwrap();
+        assert_eq!(pos.altitude, Some(35000.0));
+    }
+
+    #[test]
+    fn test_non_numeric_altitude() {
+        let line =
+            "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,abc,,,,,,,,,,,";
+        let pos = parse_sbs_message(line).unwrap();
+        assert_eq!(pos.altitude, None);
+    }
+
+    #[test]
+    fn test_parse_bool_edge_cases() {
+        assert_eq!(parse_bool("0"), Some(false));
+        assert_eq!(parse_bool("1"), Some(true));
+        assert_eq!(parse_bool("-1"), Some(false));
+        assert_eq!(parse_bool(""), None);
+        assert_eq!(parse_bool("abc"), None);
     }
 }
