@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { altitudeToColor, densityColor } from "../colors";
+import { altitudeToColor, densityColor, ALTITUDE_SCALE_STOPS } from "../colors";
 
 describe("altitudeToColor", () => {
   it("returns gray for null", () => {
@@ -31,6 +31,29 @@ describe("altitudeToColor", () => {
 
   it("clamps altitude above 50000 to 50000", () => {
     expect(altitudeToColor(60000)).toBe(altitudeToColor(50000));
+  });
+});
+
+describe("ALTITUDE_SCALE_STOPS", () => {
+  it("covers range from 0 to 50000 ft", () => {
+    expect(ALTITUDE_SCALE_STOPS[0].altitude).toBe(0);
+    expect(ALTITUDE_SCALE_STOPS[ALTITUDE_SCALE_STOPS.length - 1].altitude).toBe(50000);
+  });
+
+  it("has valid RGB colors for all stops", () => {
+    for (const stop of ALTITUDE_SCALE_STOPS) {
+      expect(stop.color).toMatch(/^rgb\(\d+,\d+,\d+\)$/);
+    }
+  });
+
+  it("has at least 5 stops for a smooth gradient", () => {
+    expect(ALTITUDE_SCALE_STOPS.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("has altitudes in ascending order", () => {
+    for (let i = 1; i < ALTITUDE_SCALE_STOPS.length; i++) {
+      expect(ALTITUDE_SCALE_STOPS[i].altitude).toBeGreaterThan(ALTITUDE_SCALE_STOPS[i - 1].altitude);
+    }
   });
 });
 

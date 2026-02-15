@@ -19,6 +19,10 @@ function renderFilters(overrides = {}) {
     showSimulation: false,
     onToggleSimulation: vi.fn(),
     simulationCount: 0,
+    liveColorMode: "track" as const,
+    onLiveColorModeChange: vi.fn(),
+    historyColorMode: "track" as const,
+    onHistoryColorModeChange: vi.fn(),
     ...overrides,
   };
   return { ...render(<FiltersPanel {...defaultProps} />), props: defaultProps };
@@ -64,5 +68,30 @@ describe("FiltersPanel", () => {
     const checkbox = screen.getByText("H3 density heatmap").closest("label")!.querySelector("input")!;
     await user.click(checkbox);
     expect(onToggleDensity).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders color coding section with live and history selects", () => {
+    renderFilters();
+    expect(screen.getByText("Color coding")).toBeInTheDocument();
+    expect(screen.getByLabelText("Live tracks")).toBeInTheDocument();
+    expect(screen.getByLabelText("History tracks")).toBeInTheDocument();
+  });
+
+  it("live color mode select calls handler on change", async () => {
+    const user = userEvent.setup();
+    const onLiveColorModeChange = vi.fn();
+    renderFilters({ onLiveColorModeChange });
+    const select = screen.getByLabelText("Live tracks");
+    await user.selectOptions(select, "plot");
+    expect(onLiveColorModeChange).toHaveBeenCalledWith("plot");
+  });
+
+  it("history color mode select calls handler on change", async () => {
+    const user = userEvent.setup();
+    const onHistoryColorModeChange = vi.fn();
+    renderFilters({ onHistoryColorModeChange });
+    const select = screen.getByLabelText("History tracks");
+    await user.selectOptions(select, "plot");
+    expect(onHistoryColorModeChange).toHaveBeenCalledWith("plot");
   });
 });

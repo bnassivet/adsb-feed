@@ -13,7 +13,7 @@ import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { startFeed, stopFeed } from "@/lib/commands";
 import { DEFAULT_FILTERS } from "@/lib/types";
-import type { Filters, DensityMetric } from "@/lib/types";
+import type { Filters, DensityMetric, AltitudeColorMode } from "@/lib/types";
 import Link from "next/link";
 
 const MIN_TABLE_HEIGHT = 150;
@@ -30,6 +30,8 @@ export default function Dashboard() {
   const [showDensity, setShowDensity] = useLocalStorage<boolean>("adsb-show-density", false);
   const [densityMetric, setDensityMetric] = useLocalStorage<DensityMetric>("adsb-density-metric", "positions");
   const [showSimulation, setShowSimulation] = useLocalStorage<boolean>("adsb-show-simulation", false);
+  const [liveColorMode, setLiveColorMode] = useLocalStorage<AltitudeColorMode>("adsb-live-color-mode", "track");
+  const [historyColorMode, setHistoryColorMode] = useLocalStorage<AltitudeColorMode>("adsb-history-color-mode", "track");
 
   const { tracks, history } = useAircraftTracks(filters);
   const simulatedTracks = useSimulatedTracks(showSimulation);
@@ -168,6 +170,10 @@ export default function Dashboard() {
               showSimulation={showSimulation}
               onToggleSimulation={handleToggleSimulation}
               simulationCount={simulatedTracks.length}
+              liveColorMode={liveColorMode}
+              onLiveColorModeChange={setLiveColorMode}
+              historyColorMode={historyColorMode}
+              onHistoryColorModeChange={setHistoryColorMode}
             />
           </aside>
         )}
@@ -176,7 +182,7 @@ export default function Dashboard() {
         <main className="flex-1 flex flex-col overflow-hidden">
           {/* Map — takes remaining space */}
           <div className="flex-1 min-h-0">
-            <Map tracks={allTracks} historyTracks={visibleHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} />
+            <Map tracks={allTracks} historyTracks={visibleHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} />
           </div>
 
           {/* Resize handle */}

@@ -1,3 +1,16 @@
+/** Pre-computed altitude scale stops for rendering a color legend. */
+export const ALTITUDE_SCALE_STOPS: { altitude: number; color: string }[] = [
+  { altitude: 0, color: "rgb(0,0,255)" },
+  { altitude: 6250, color: "rgb(0,128,255)" },
+  { altitude: 12500, color: "rgb(0,255,255)" },
+  { altitude: 18750, color: "rgb(0,255,128)" },
+  { altitude: 25000, color: "rgb(0,255,0)" },
+  { altitude: 31250, color: "rgb(128,255,0)" },
+  { altitude: 37500, color: "rgb(255,255,0)" },
+  { altitude: 43750, color: "rgb(255,128,0)" },
+  { altitude: 50000, color: "rgb(255,0,0)" },
+];
+
 /** Maps altitude (feet) to a color on a Jet-like scale.
  *
  * 0ft = blue, 12500ft = cyan, 25000ft = green, 37500ft = yellow, 50000ft = red.

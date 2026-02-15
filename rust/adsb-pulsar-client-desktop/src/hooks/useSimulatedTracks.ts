@@ -11,7 +11,7 @@ const MAX_POSITIONS = 100;
 interface FlightState {
   segmentIndex: number;
   segmentProgress: number;
-  positions: [number, number][];
+  positions: [number, number, number | null][];
 }
 
 /** Compute heading in degrees (0-360) from point A to point B. */
@@ -128,7 +128,7 @@ export function useSimulatedTracks(enabled: boolean): AircraftTrack[] {
         // Accumulate position trail
         state.positions = [
           ...state.positions.slice(-(MAX_POSITIONS - 1)),
-          [lat, lng],
+          [lat, lng, flight.altitude],
         ];
 
         newTracks.push(buildTrack(flight, state));

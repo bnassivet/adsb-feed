@@ -15,7 +15,7 @@ function makeTrack(overrides: Partial<AircraftTrack> = {}): AircraftTrack {
     squawk: "1234",
     is_on_ground: false,
     timestamp: "2024-01-15 10:30:00",
-    positions: [[45.5, -73.5]],
+    positions: [[45.5, -73.5, 35000]],
     last_seen: Date.now(),
     ...overrides,
   };
@@ -30,7 +30,7 @@ describe("computeH3Density", () => {
 
   it("returns features for single track with positions metric", () => {
     const track = makeTrack({
-      positions: [[45.5, -73.5], [45.51, -73.51]],
+      positions: [[45.5, -73.5, 35000], [45.51, -73.51, 36000]],
     });
     const result = computeH3Density([track], "positions", 5);
     expect(result.features.length).toBeGreaterThan(0);
@@ -43,11 +43,11 @@ describe("computeH3Density", () => {
   it("counts unique aircraft for aircraft metric", () => {
     const track1 = makeTrack({
       hex_ident: "AAA",
-      positions: [[45.5, -73.5]],
+      positions: [[45.5, -73.5, 35000]],
     });
     const track2 = makeTrack({
       hex_ident: "BBB",
-      positions: [[45.5, -73.5]], // same position, different aircraft
+      positions: [[45.5, -73.5, 35000]], // same position, different aircraft
     });
     const result = computeH3Density([track1, track2], "aircraft", 5);
     // At least one feature should have aircraft count >= 2
@@ -59,12 +59,12 @@ describe("computeH3Density", () => {
     const track1 = makeTrack({
       hex_ident: "AAA",
       altitude: 30000,
-      positions: [[45.5, -73.5]],
+      positions: [[45.5, -73.5, 30000]],
     });
     const track2 = makeTrack({
       hex_ident: "BBB",
       altitude: 40000,
-      positions: [[45.5, -73.5]],
+      positions: [[45.5, -73.5, 40000]],
     });
     const result = computeH3Density([track1, track2], "altitude", 5);
     // Should have altitude values; mean of 30000 and 40000 = 35000
@@ -76,12 +76,12 @@ describe("computeH3Density", () => {
     const trackWithAlt = makeTrack({
       hex_ident: "AAA",
       altitude: 30000,
-      positions: [[45.5, -73.5]],
+      positions: [[45.5, -73.5, 30000]],
     });
     const trackNoAlt = makeTrack({
       hex_ident: "BBB",
       altitude: null,
-      positions: [[45.5, -73.5]],
+      positions: [[45.5, -73.5, null]],
     });
     const result = computeH3Density([trackWithAlt, trackNoAlt], "altitude", 5);
     // The mean should be 30000 (only one altitude contributed)
@@ -94,8 +94,8 @@ describe("computeH3Density", () => {
 
   it("normalizes values between 0 and 1", () => {
     const tracks = [
-      makeTrack({ hex_ident: "A", positions: [[45.5, -73.5], [45.51, -73.51]] }),
-      makeTrack({ hex_ident: "B", positions: [[46.0, -74.0]] }),
+      makeTrack({ hex_ident: "A", positions: [[45.5, -73.5, 35000], [45.51, -73.51, 36000]] }),
+      makeTrack({ hex_ident: "B", positions: [[46.0, -74.0, 30000]] }),
     ];
     const result = computeH3Density(tracks, "positions", 5);
     for (const f of result.features) {
@@ -105,7 +105,7 @@ describe("computeH3Density", () => {
   });
 
   it("returns valid GeoJSON structure", () => {
-    const track = makeTrack({ positions: [[45.5, -73.5]] });
+    const track = makeTrack({ positions: [[45.5, -73.5, 35000]] });
     const result = computeH3Density([track], "positions", 5);
     expect(result.type).toBe("FeatureCollection");
     expect(Array.isArray(result.features)).toBe(true);
@@ -117,7 +117,7 @@ describe("computeH3Density", () => {
   });
 
   it("produces closed polygon rings", () => {
-    const track = makeTrack({ positions: [[45.5, -73.5]] });
+    const track = makeTrack({ positions: [[45.5, -73.5, 35000]] });
     const result = computeH3Density([track], "positions", 5);
     for (const f of result.features) {
       const ring = f.geometry.coordinates[0];

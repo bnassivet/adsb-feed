@@ -1,5 +1,5 @@
 "use client";
-import type { Filters, DensityMetric } from "@/lib/types";
+import type { Filters, DensityMetric, AltitudeColorMode } from "@/lib/types";
 
 interface Props {
   filters: Filters;
@@ -15,9 +15,13 @@ interface Props {
   showSimulation: boolean;
   onToggleSimulation: () => void;
   simulationCount: number;
+  liveColorMode: AltitudeColorMode;
+  onLiveColorModeChange: (mode: AltitudeColorMode) => void;
+  historyColorMode: AltitudeColorMode;
+  onHistoryColorModeChange: (mode: AltitudeColorMode) => void;
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, showSimulation, onToggleSimulation, simulationCount }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange }: Props) {
   return (
     <div className="flex flex-col gap-4 p-4">
       <div>
@@ -171,6 +175,37 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
             </label>
           </div>
         )}
+      </div>
+
+      {/* Color coding */}
+      <div>
+        <h4 className="text-xs font-semibold text-slate-400 mb-1.5">Color coding</h4>
+        <div className="flex flex-col gap-1.5">
+          <div>
+            <label htmlFor="live-color-mode" className="block text-xs text-slate-500 mb-0.5">Live tracks</label>
+            <select
+              id="live-color-mode"
+              value={liveColorMode}
+              onChange={(e) => onLiveColorModeChange(e.target.value as AltitudeColorMode)}
+              className="w-full px-2 py-1 bg-slate-700 border border-slate-600 rounded text-sm text-slate-200"
+            >
+              <option value="track">Track altitude (latest)</option>
+              <option value="plot">Plot altitude (per position)</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="history-color-mode" className="block text-xs text-slate-500 mb-0.5">History tracks</label>
+            <select
+              id="history-color-mode"
+              value={historyColorMode}
+              onChange={(e) => onHistoryColorModeChange(e.target.value as AltitudeColorMode)}
+              className="w-full px-2 py-1 bg-slate-700 border border-slate-600 rounded text-sm text-slate-200"
+            >
+              <option value="track">Track altitude (latest)</option>
+              <option value="plot">Plot altitude (per position)</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       {/* Simulation toggle */}

@@ -16,7 +16,7 @@ function makeTrack(overrides: Partial<AircraftTrack> = {}): AircraftTrack {
     squawk: "1234",
     is_on_ground: false,
     timestamp: "2024-01-15 10:30:00",
-    positions: [[45.5, -73.5]],
+    positions: [[45.5, -73.5, 35000]],
     last_seen: Date.now(),
     ...overrides,
   };

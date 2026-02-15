@@ -26,8 +26,8 @@ export interface AircraftTrack {
   squawk: string | null;
   is_on_ground: boolean | null;
   timestamp: string;
-  /** Position history for trajectory line drawing */
-  positions: [number, number][];
+  /** Position history for trajectory line drawing: [lat, lng, altitude | null] */
+  positions: [number, number, number | null][];
   /** Last update time for TTL expiry */
   last_seen: number;
 }
@@ -92,6 +92,9 @@ export interface Filters {
 
 /** Which metric the H3 density overlay displays. */
 export type DensityMetric = "positions" | "aircraft" | "altitude";
+
+/** How trajectory positions are colored: by each position's altitude or the track's latest altitude. */
+export type AltitudeColorMode = "plot" | "track";
 
 /** Maps a Leaflet zoom level to the appropriate H3 resolution. */
 export function zoomToH3Resolution(zoom: number): number {

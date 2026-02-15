@@ -17,8 +17,8 @@ interface AircraftTrackingContextValue {
 const AircraftTrackingContext = createContext<AircraftTrackingContextValue | null>(null);
 
 /** Append a position to a track's positions array, capping at MAX_POSITIONS. Mutates in place. */
-function appendPosition(track: AircraftTrack, lat: number, lng: number) {
-  track.positions.push([lat, lng]);
+export function appendPosition(track: AircraftTrack, lat: number, lng: number, altitude: number | null) {
+  track.positions.push([lat, lng, altitude]);
   if (track.positions.length > MAX_POSITIONS) {
     track.positions.shift();
   }
@@ -39,7 +39,7 @@ function mergePositionInto(track: AircraftTrack, pos: AircraftPosition, now: num
   track.last_seen = now;
 
   if (pos.latitude !== null && pos.longitude !== null) {
-    appendPosition(track, pos.latitude, pos.longitude);
+    appendPosition(track, pos.latitude, pos.longitude, pos.altitude ?? track.altitude);
   }
 }
 
@@ -81,7 +81,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
           last_seen: now,
         };
         if (pos.latitude !== null && pos.longitude !== null) {
-          track.positions.push([pos.latitude, pos.longitude]);
+          track.positions.push([pos.latitude, pos.longitude, pos.altitude ?? null]);
         }
         map.set(pos.hex_ident, track);
       }

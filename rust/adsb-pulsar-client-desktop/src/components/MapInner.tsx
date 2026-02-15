@@ -2,13 +2,14 @@
 import { useEffect, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Polyline, CircleMarker, Tooltip, GeoJSON, useMap } from "react-leaflet";
 import L from "leaflet";
-import type { AircraftTrack, DensityMetric } from "@/lib/types";
+import type { AircraftTrack, DensityMetric, AltitudeColorMode } from "@/lib/types";
 import { zoomToH3Resolution } from "@/lib/types";
 import { altitudeToColor, densityColor } from "@/lib/colors";
 import { computeH3Density } from "@/lib/h3-density";
 import type { DensityProperties } from "@/lib/h3-density";
 import { useMapZoom } from "@/hooks/useMapZoom";
 import { MapTileToggle } from "./MapTileToggle";
+import { AltitudeLegend } from "./AltitudeLegend";
 
 // Default center: Montreal
 const DEFAULT_CENTER: [number, number] = [45.5, -73.6];
@@ -77,6 +78,8 @@ interface Props {
   showDensity: boolean;
   densityMetric: DensityMetric;
   densityTracks: AircraftTrack[];
+  liveColorMode: AltitudeColorMode;
+  historyColorMode: AltitudeColorMode;
 }
 
 /** Renders H3 density hexagons with zoom-adaptive resolution. */
@@ -132,7 +135,13 @@ function DensityLayer({
   );
 }
 
-export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks }: Props) {
+/** Format altitude for tooltip display. */
+function formatAlt(alt: number | null): string {
+  if (alt === null) return "N/A";
+  return `${alt.toLocaleString()} ft`;
+}
+
+export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, liveColorMode, historyColorMode }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
 
   return (
@@ -156,15 +165,15 @@ export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, traje
         {/* History tracks — rendered first so active tracks layer on top */}
         {historyTracks.map((t) => {
           if (t.positions.length < 2) return null;
-          const color = altitudeToColor(t.altitude);
+          const trackColor = altitudeToColor(t.altitude);
 
           return (
             <div key={`hist-${t.hex_ident}`}>
               {trajectoryStyle === "line" && (
                 <Polyline
-                  positions={t.positions as [number, number][]}
+                  positions={t.positions.map(p => [p[0], p[1]] as [number, number])}
                   pathOptions={{
-                    color,
+                    color: trackColor,
                     weight: 1,
                     opacity: 0.25,
                   }}
@@ -175,37 +184,41 @@ export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, traje
                         {t.callsign ?? t.hex_ident}
                       </div>
                       <div>Hex: {t.hex_ident}</div>
+                      <div>Alt: {formatAlt(t.altitude)}</div>
                       <div>Last seen: {timeAgo(t.last_seen)}</div>
                     </div>
                   </Tooltip>
                 </Polyline>
               )}
               {trajectoryStyle === "dots" &&
-                (t.positions as [number, number][]).map((pos, i) => (
-                  <CircleMarker
-                    key={i}
-                    center={pos}
-                    radius={2}
-                    pathOptions={{
-                      color,
-                      fillColor: color,
-                      fillOpacity: 0.2,
-                      weight: 0,
-                    }}
-                  >
-                    {i === t.positions.length - 1 && (
+                t.positions.map((pos, i) => {
+                  const dotColor = historyColorMode === "plot" ? altitudeToColor(pos[2]) : trackColor;
+                  const isLast = i === t.positions.length - 1;
+                  return (
+                    <CircleMarker
+                      key={i}
+                      center={[pos[0], pos[1]] as [number, number]}
+                      radius={2}
+                      pathOptions={{
+                        color: dotColor,
+                        fillColor: dotColor,
+                        fillOpacity: 0.2,
+                        weight: 0,
+                      }}
+                    >
                       <Tooltip>
                         <div className="text-xs">
                           <div className="font-bold">
                             {t.callsign ?? t.hex_ident}
                           </div>
                           <div>Hex: {t.hex_ident}</div>
-                          <div>Last seen: {timeAgo(t.last_seen)}</div>
+                          <div>Alt: {formatAlt(pos[2])}</div>
+                          {isLast && <div>Last seen: {timeAgo(t.last_seen)}</div>}
                         </div>
                       </Tooltip>
-                    )}
-                  </CircleMarker>
-                ))
+                    </CircleMarker>
+                  );
+                })
               }
             </div>
           );
@@ -214,8 +227,8 @@ export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, traje
         {/* Active tracks */}
         {tracks.map((t) => {
           if (t.latitude === null || t.longitude === null) return null;
-          const color = altitudeToColor(t.altitude);
-          const icon = aircraftIcon(t.track ?? 0, color);
+          const trackColor = altitudeToColor(t.altitude);
+          const icon = aircraftIcon(t.track ?? 0, trackColor);
 
           return (
             <div key={t.hex_ident}>
@@ -243,28 +256,38 @@ export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, traje
               {/* Trajectory */}
               {t.positions.length > 1 && trajectoryStyle === "line" && (
                 <Polyline
-                  positions={t.positions as [number, number][]}
+                  positions={t.positions.map(p => [p[0], p[1]] as [number, number])}
                   pathOptions={{
-                    color,
+                    color: trackColor,
                     weight: 2,
                     opacity: 0.6,
                   }}
                 />
               )}
               {t.positions.length > 1 && trajectoryStyle === "dots" &&
-                (t.positions as [number, number][]).map((pos, i) => (
-                  <CircleMarker
-                    key={i}
-                    center={pos}
-                    radius={3}
-                    pathOptions={{
-                      color,
-                      fillColor: color,
-                      fillOpacity: 0.6,
-                      weight: 0,
-                    }}
-                  />
-                ))
+                t.positions.map((pos, i) => {
+                  const dotColor = liveColorMode === "plot" ? altitudeToColor(pos[2]) : trackColor;
+                  return (
+                    <CircleMarker
+                      key={i}
+                      center={[pos[0], pos[1]] as [number, number]}
+                      radius={3}
+                      pathOptions={{
+                        color: dotColor,
+                        fillColor: dotColor,
+                        fillOpacity: 0.6,
+                        weight: 0,
+                      }}
+                    >
+                      <Tooltip>
+                        <div className="text-xs">
+                          <div className="font-bold">{t.callsign ?? t.hex_ident}</div>
+                          <div>Alt: {formatAlt(pos[2])}</div>
+                        </div>
+                      </Tooltip>
+                    </CircleMarker>
+                  );
+                })
               }
             </div>
           );
@@ -272,6 +295,7 @@ export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, traje
       </MapContainer>
 
       <MapTileToggle theme={mapTheme} onToggle={onToggleTheme} />
+      <AltitudeLegend />
     </div>
   );
 }
