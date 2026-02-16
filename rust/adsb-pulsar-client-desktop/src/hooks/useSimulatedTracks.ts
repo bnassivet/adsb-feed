@@ -62,6 +62,7 @@ function buildTrack(
     timestamp: new Date().toISOString(),
     positions: state.positions,
     last_seen: Date.now(),
+    message_count: 0,
   };
 }
 

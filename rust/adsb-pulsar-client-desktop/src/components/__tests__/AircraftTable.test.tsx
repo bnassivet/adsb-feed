@@ -24,6 +24,7 @@ function makeTrack(hex: string, overrides?: Partial<AircraftTrack>): AircraftTra
     timestamp: "",
     positions: [],
     last_seen: Date.now(),
+    message_count: 0,
     ...overrides,
   };
 }
@@ -126,5 +127,28 @@ describe("AircraftTable selection", () => {
       block: "nearest",
       behavior: "smooth",
     });
+  });
+});
+
+describe("AircraftTable columns", () => {
+  it("renders RxTS column header", () => {
+    render(<AircraftTable tracks={[makeTrack("ABC123")]} />);
+    expect(screen.getByText("RxTS")).toBeInTheDocument();
+  });
+
+  it("renders Msg# column header", () => {
+    render(<AircraftTable tracks={[makeTrack("ABC123")]} />);
+    expect(screen.getByText("Msg#")).toBeInTheDocument();
+  });
+
+  it("displays relative time in RxTS column", () => {
+    const twoMinAgo = Date.now() - 120_000;
+    render(<AircraftTable tracks={[makeTrack("ABC123", { last_seen: twoMinAgo })]} />);
+    expect(screen.getByText("2m ago")).toBeInTheDocument();
+  });
+
+  it("displays message count in Msg# column", () => {
+    render(<AircraftTable tracks={[makeTrack("ABC123", { message_count: 42 })]} />);
+    expect(screen.getByText("42")).toBeInTheDocument();
   });
 });

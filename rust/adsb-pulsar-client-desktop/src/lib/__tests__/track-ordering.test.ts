@@ -17,6 +17,7 @@ function makeTrack(hex: string): AircraftTrack {
     timestamp: "",
     positions: [],
     last_seen: 0,
+    message_count: 0,
   };
 }
 

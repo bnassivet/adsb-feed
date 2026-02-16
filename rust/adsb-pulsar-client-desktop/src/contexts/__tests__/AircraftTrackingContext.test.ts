@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { appendPosition } from "../AircraftTrackingContext";
-import type { AircraftTrack } from "@/lib/types";
+import { appendPosition, mergePositionInto } from "../AircraftTrackingContext";
+import type { AircraftTrack, AircraftPosition } from "@/lib/types";
 
 function makeTrack(overrides: Partial<AircraftTrack> = {}): AircraftTrack {
   return {
@@ -17,6 +17,7 @@ function makeTrack(overrides: Partial<AircraftTrack> = {}): AircraftTrack {
     timestamp: "2024-01-15 10:30:00",
     positions: [],
     last_seen: Date.now(),
+    message_count: 0,
     ...overrides,
   };
 }
@@ -42,5 +43,38 @@ describe("appendPosition", () => {
     expect(track.positions.length).toBe(100);
     // First position should be the 6th one added (indices 5-104)
     expect(track.positions[0]).toEqual([45.05, -73.0, 30500]);
+  });
+});
+
+function makePosition(hex: string, overrides: Partial<AircraftPosition> = {}): AircraftPosition {
+  return {
+    hex_ident: hex,
+    callsign: null,
+    altitude: null,
+    ground_speed: null,
+    track: null,
+    latitude: null,
+    longitude: null,
+    vertical_rate: null,
+    squawk: null,
+    is_on_ground: null,
+    timestamp: "2024-01-15 10:30:00",
+    message_count: 1,
+    ...overrides,
+  };
+}
+
+describe("mergePositionInto — message_count", () => {
+  it("accumulates message_count from incoming position", () => {
+    const track = makeTrack({ message_count: 10 });
+    mergePositionInto(track, makePosition("A1B2C3", { message_count: 5 }), Date.now());
+    expect(track.message_count).toBe(15);
+  });
+
+  it("accumulates across multiple merges", () => {
+    const track = makeTrack({ message_count: 0 });
+    mergePositionInto(track, makePosition("A1B2C3", { message_count: 3 }), Date.now());
+    mergePositionInto(track, makePosition("A1B2C3", { message_count: 7 }), Date.now());
+    expect(track.message_count).toBe(10);
   });
 });

@@ -23,6 +23,7 @@ pub struct AircraftPosition {
     pub squawk: Option<String>,
     pub is_on_ground: Option<bool>,
     pub timestamp: String,
+    pub message_count: u64,
 }
 
 /// Parses a raw SBS-1 line into an `AircraftPosition`.
@@ -84,6 +85,7 @@ pub fn parse_sbs_message(line: &str) -> Option<AircraftPosition> {
         squawk: non_empty(fields[17]),
         is_on_ground: parse_bool(fields[21]),
         timestamp,
+        message_count: 0,
     })
 }
 
@@ -241,5 +243,12 @@ mod tests {
         assert_eq!(parse_bool("-1"), Some(false));
         assert_eq!(parse_bool(""), None);
         assert_eq!(parse_bool("abc"), None);
+    }
+
+    #[test]
+    fn test_message_count_defaults_to_zero() {
+        let line = "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,35000,,,45.5,-73.5,,,,,,0";
+        let pos = parse_sbs_message(line).unwrap();
+        assert_eq!(pos.message_count, 0);
     }
 }

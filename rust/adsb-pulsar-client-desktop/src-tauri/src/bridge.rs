@@ -141,6 +141,7 @@ async fn relay_messages(
 ) {
     let mut flush_interval = interval(Duration::from_millis(500));
     let mut buffer: HashMap<String, AircraftPosition> = HashMap::new();
+    let mut message_counts: HashMap<String, u64> = HashMap::new();
 
     loop {
         tokio::select! {
@@ -152,6 +153,7 @@ async fn relay_messages(
 
                         if let Ok(line) = String::from_utf8(data) {
                             if let Some(pos) = parse_sbs_message(&line) {
+                                *message_counts.entry(pos.hex_ident.clone()).or_insert(0) += 1;
                                 buffer.insert(pos.hex_ident.clone(), pos);
                             }
                         }
@@ -161,7 +163,12 @@ async fn relay_messages(
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         if !buffer.is_empty() {
-                            let batch: Vec<AircraftPosition> = buffer.drain().map(|(_, v)| v).collect();
+                            let mut batch: Vec<AircraftPosition> = buffer.drain().map(|(_, v)| v).collect();
+                            for pos in &mut batch {
+                                if let Some(count) = message_counts.remove(&pos.hex_ident) {
+                                    pos.message_count = count;
+                                }
+                            }
                             let _ = app.emit("adsb:message", &batch);
                         }
                         break;
@@ -170,7 +177,12 @@ async fn relay_messages(
             }
             _ = flush_interval.tick() => {
                 if !buffer.is_empty() {
-                    let batch: Vec<AircraftPosition> = buffer.drain().map(|(_, v)| v).collect();
+                    let mut batch: Vec<AircraftPosition> = buffer.drain().map(|(_, v)| v).collect();
+                    for pos in &mut batch {
+                        if let Some(count) = message_counts.remove(&pos.hex_ident) {
+                            pos.message_count = count;
+                        }
+                    }
                     let _ = app.emit("adsb:message", &batch);
                 }
             }

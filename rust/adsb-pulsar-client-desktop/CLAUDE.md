@@ -37,7 +37,7 @@ src/
 
 ### Key Patterns
 
-- **Tauri bridge** throttles ~50k msg/s down to ~2 updates/sec via HashMap buffer flushed every 500ms
+- **Tauri bridge** throttles ~50k msg/s down to ~2 updates/sec via HashMap buffer flushed every 500ms; tracks per-aircraft message counts pre-throttle
 - `broadcast::channel` as message tap — fire-and-forget (`let _ = tx.send()`)
 - `watch::channel` for shutdown signal
 - Tauri v2 capability-based permissions in `src-tauri/capabilities/default.json`
@@ -71,11 +71,11 @@ All changes follow Test-Driven Development:
 
 ### Rust Tests (src-tauri/)
 
-Tauri crate tests (~19 tests) live inline in each module:
+Tauri crate tests (~20 tests) live inline in each module:
 
 | Module | Tests | What's Covered |
 |--------|-------|----------------|
-| `sbs_parser.rs` | 14 | MSG subtypes 1/3/4/5, empty hex_ident, whitespace trimming, is_on_ground values, negative altitude, extra fields, non-numeric fields, parse_bool edge cases |
+| `sbs_parser.rs` | 15 | MSG subtypes 1/3/4/5, empty hex_ident, whitespace trimming, is_on_ground values, negative altitude, extra fields, non-numeric fields, parse_bool edge cases, message_count default |
 | `state.rs` | 5 | AppState defaults, feed_handle starts None, initial status, ConnectionStatus/StatusResponse JSON serialization |
 
 ```bash
@@ -95,9 +95,10 @@ Test stack: **Vitest** + jsdom + @testing-library/react + @testing-library/user-
 
 | Directory | Tests | What's Covered |
 |-----------|-------|----------------|
-| `src/lib/__tests__/` | ~18 | `altitudeToColor`, `zoomToH3Resolution`, `computeH3Density`, `formatBytes`/`timeAgo` |
-| `src/hooks/__tests__/` | ~12 | `useLocalStorage`, `useAircraftTracks` filter logic, `useSimulatedTracks` heading/interpolation |
-| `src/components/__tests__/` | ~12 | `ConnectionStatus` states, `MetricsBar` formatting, `Filters` interactions |
+| `src/lib/__tests__/` | ~54 | `altitudeToColor`, `zoomToH3Resolution`, `computeH3Density`, `formatBytes`/`timeAgo`, `track-ordering`, `aircraft-icon` |
+| `src/contexts/__tests__/` | ~5 | `appendPosition`, `mergePositionInto` message_count accumulation |
+| `src/hooks/__tests__/` | ~13 | `useLocalStorage`, `useAircraftTracks` filter logic, `useSimulatedTracks` heading/interpolation |
+| `src/components/__tests__/` | ~29 | `ConnectionStatus` states, `MetricsBar` formatting, `Filters` interactions, `AircraftTable` selection/RxTS/Msg#, `AltitudeLegend` |
 
 ```bash
 npm test                          # All tests once (CI mode)
@@ -128,8 +129,9 @@ npm test && npx next lint
 
 ### Rust (src-tauri/)
 - SBS-1 parsing: 22 comma-separated fields; MSG types 1-8 each populate different subsets
-- Use `Option<T>` for all SBS fields except `hex_ident` and `timestamp`
+- Use `Option<T>` for all SBS fields except `hex_ident`, `timestamp`, and `message_count`
 - `AircraftPosition` derives `Serialize` for Tauri event emission
+- `message_count: u64` defaults to 0 in parser; actual count set by bridge before emission
 
 ### TypeScript (src/)
 - Pure utility functions go in `src/lib/` — fully testable without React

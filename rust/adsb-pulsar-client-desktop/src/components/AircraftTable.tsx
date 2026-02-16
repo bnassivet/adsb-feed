@@ -9,7 +9,9 @@ type SortKey =
   | "hex_ident"
   | "altitude"
   | "ground_speed"
-  | "squawk";
+  | "squawk"
+  | "last_seen"
+  | "message_count";
 
 interface Props {
   tracks: AircraftTrack[];
@@ -82,6 +84,8 @@ export function AircraftTable({ tracks, historyTracks = [], selectedHexIdent, on
             <SortHeader label="Squawk" field="squawk" />
             <th className="px-3 py-2 text-left">Lat</th>
             <th className="px-3 py-2 text-left">Lon</th>
+            <SortHeader label="RxTS" field="last_seen" />
+            <SortHeader label="Msg#" field="message_count" />
           </tr>
         </thead>
         <tbody className="text-slate-300">
@@ -133,6 +137,12 @@ export function AircraftTable({ tracks, historyTracks = [], selectedHexIdent, on
               <td className="px-3 py-1.5 font-mono text-slate-500">
                 {t.longitude?.toFixed(4) ?? "—"}
               </td>
+              <td className="px-3 py-1.5 font-mono text-slate-500">
+                {timeAgo(t.last_seen)}
+              </td>
+              <td className="px-3 py-1.5 font-mono text-slate-400">
+                {t.message_count.toLocaleString()}
+              </td>
             </tr>
             );
           })}
@@ -140,7 +150,7 @@ export function AircraftTable({ tracks, historyTracks = [], selectedHexIdent, on
           {/* History divider */}
           {sortedHistory.length > 0 && (
             <tr>
-              <td colSpan={9} className="px-3 py-1 bg-slate-800/80">
+              <td colSpan={11} className="px-3 py-1 bg-slate-800/80">
                 <span className="text-[10px] text-slate-500 uppercase tracking-wider">
                   History ({sortedHistory.length})
                 </span>
@@ -191,6 +201,12 @@ export function AircraftTable({ tracks, historyTracks = [], selectedHexIdent, on
               <td className="px-3 py-1.5 font-mono text-slate-500">
                 {t.longitude?.toFixed(4) ?? "—"}
               </td>
+              <td className="px-3 py-1.5 font-mono text-slate-500">
+                {timeAgo(t.last_seen)}
+              </td>
+              <td className="px-3 py-1.5 font-mono text-slate-400">
+                {t.message_count.toLocaleString()}
+              </td>
             </tr>
             );
           })}
@@ -198,7 +214,7 @@ export function AircraftTable({ tracks, historyTracks = [], selectedHexIdent, on
           {sorted.length === 0 && sortedHistory.length === 0 && (
             <tr>
               <td
-                colSpan={9}
+                colSpan={11}
                 className="px-3 py-8 text-center text-slate-500"
               >
                 No aircraft tracked

@@ -17,6 +17,7 @@ function makeTrack(overrides: Partial<AircraftTrack> = {}): AircraftTrack {
     timestamp: "2024-01-15 10:30:00",
     positions: [[45.5, -73.5, 35000]],
     last_seen: Date.now(),
+    message_count: 0,
     ...overrides,
   };
 }

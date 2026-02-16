@@ -11,6 +11,7 @@ export interface AircraftPosition {
   squawk: string | null;
   is_on_ground: boolean | null;
   timestamp: string;
+  message_count: number;
 }
 
 /** Accumulated track state for a single aircraft (built from multiple positions). */
@@ -30,6 +31,8 @@ export interface AircraftTrack {
   positions: [number, number, number | null][];
   /** Last update time for TTL expiry */
   last_seen: number;
+  /** Total SBS-1 messages received for this aircraft (pre-throttle cumulative count). */
+  message_count: number;
 }
 
 /** Metrics snapshot from the Rust backend (mirrors MetricsSnapshot). */

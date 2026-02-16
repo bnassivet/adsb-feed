@@ -25,7 +25,7 @@ export function appendPosition(track: AircraftTrack, lat: number, lng: number, a
 }
 
 /** Apply position fields from an incoming message onto an existing track. Mutates in place. */
-function mergePositionInto(track: AircraftTrack, pos: AircraftPosition, now: number) {
+export function mergePositionInto(track: AircraftTrack, pos: AircraftPosition, now: number) {
   track.callsign = pos.callsign ?? track.callsign;
   track.altitude = pos.altitude ?? track.altitude;
   track.ground_speed = pos.ground_speed ?? track.ground_speed;
@@ -37,6 +37,7 @@ function mergePositionInto(track: AircraftTrack, pos: AircraftPosition, now: num
   track.is_on_ground = pos.is_on_ground ?? track.is_on_ground;
   track.timestamp = pos.timestamp;
   track.last_seen = now;
+  track.message_count += pos.message_count;
 
   if (pos.latitude !== null && pos.longitude !== null) {
     appendPosition(track, pos.latitude, pos.longitude, pos.altitude ?? track.altitude);
@@ -79,6 +80,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
           timestamp: pos.timestamp,
           positions: [],
           last_seen: now,
+          message_count: pos.message_count,
         };
         if (pos.latitude !== null && pos.longitude !== null) {
           track.positions.push([pos.latitude, pos.longitude, pos.altitude ?? null]);

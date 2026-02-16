@@ -338,7 +338,9 @@ accumulation even when users navigate to Settings or other pages.
 
 **Responsibilities**:
 - Render scrollable table with fixed header
-- Display columns: Hex ID, Callsign, Altitude, Speed, Track, Lat/Lon, Squawk
+- Display columns: Callsign, Hex, Alt, Spd, Hdg, V/S, Squawk, Lat, Lon, RxTS, Msg#
+- **RxTS**: Relative time since last received message (e.g., "3s ago") via `timeAgo(last_seen)`
+- **Msg#**: Total SBS-1 messages received for this aircraft (pre-throttle cumulative count)
 - Handle null values gracefully (display "—")
 - Render history rows below active rows, separated by a labeled divider row
 - History rows display with `opacity-40` for visual distinction (full opacity when selected)
@@ -779,8 +781,8 @@ export async function startFeed(): Promise<void> {
 **Purpose**: TypeScript type definitions (mirrors Rust types)
 
 **Key Types**:
-- `AircraftPosition`: Single SBS-1 message (from backend)
-- `AircraftTrack`: Accumulated track state (frontend only)
+- `AircraftPosition`: Single SBS-1 message (from backend). Includes `message_count` (set by bridge before emission).
+- `AircraftTrack`: Accumulated track state (frontend only). Includes `message_count` (cumulative sum of all received SBS-1 messages, pre-throttle).
 - `MetricsSnapshot`: Performance metrics
 - `ConnectionStatus`: Connection state union (`Disconnected | Connecting | Connected | Degraded | ConnectionLost | Error`)
 - `StatusResponse`: Combined status response (socket + pulsar)
@@ -987,7 +989,8 @@ pub struct AppState {
 
 **Message Relay Strategy** (Throttling):
 - Buffer messages in `HashMap<hex_ident, AircraftPosition>` (latest per aircraft)
-- Flush batch every 500ms to frontend
+- Track per-aircraft message counts in a separate `HashMap<hex_ident, u64>` — incremented on every successful parse (before throttle discard)
+- Flush batch every 500ms to frontend: attach accumulated `message_count` to each position before emission
 - Prevents overwhelming the webview with high-frequency updates
 - Each received message updates `Arc<RwLock<Instant>>` shared with the watchdog
 
@@ -1040,7 +1043,7 @@ Thresholds are derived from the configured `socket_read_timeout_secs` (default 7
 3. Extract transmission type (1-8)
 4. Parse fields: hex_ident, callsign, altitude, lat/lon, etc.
 5. Handle optional fields gracefully (return `None` for empty strings)
-6. Construct `AircraftPosition` struct
+6. Construct `AircraftPosition` struct with `message_count: 0` (actual count set by bridge)
 
 **Error Handling**:
 - Returns `None` for invalid messages (logged but not propagated)
@@ -1248,6 +1251,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
 
   const handleBatch = useCallback((batch: AircraftPosition[]) => {
     // Mutate existing tracks in-place via mergePositionInto()
+    // Accumulate message_count: track.message_count += pos.message_count
     // Use push()+shift() for position arrays (no spread allocation)
     // Consolidated history sync via same mergePositionInto() helper
     setUpdateCounter(c => c + 1);
@@ -1633,7 +1637,7 @@ cargo test -p adsb-pulsar-client-desktop-lib  # Tauri crate only
 ```
 
 **Modules with tests:**
-- `sbs_parser.rs` — SBS-1 message parsing (MSG subtypes, edge cases, field trimming)
+- `sbs_parser.rs` — SBS-1 message parsing (MSG subtypes, edge cases, field trimming, message_count default)
 - `state.rs` — AppState defaults, ConnectionStatus/StatusResponse serialization
 
 ### TypeScript Tests (`src/`)
@@ -1648,8 +1652,9 @@ npm run test:watch  # Watch mode (TDD)
 | Directory | Tests | Coverage |
 |-----------|-------|----------|
 | `src/lib/__tests__/` | colors, types, h3-density, format, track-ordering, aircraft-icon | Pure utility functions |
+| `src/contexts/__tests__/` | AircraftTrackingContext (appendPosition, mergePositionInto message_count) | Context merge logic |
 | `src/hooks/__tests__/` | useLocalStorage, useAircraftTracks, useSimulatedTracks | Hook logic and filters |
-| `src/components/__tests__/` | ConnectionStatus, MetricsBar, Filters, AircraftTable | Component rendering and interactions |
+| `src/components/__tests__/` | ConnectionStatus, MetricsBar, Filters, AircraftTable (selection, RxTS, Msg#) | Component rendering and interactions |
 
 **Mocking:** `src/test/mocks/tauri.ts` provides mock `@tauri-apps/api` (invoke, events) for testing without Tauri runtime.
 
