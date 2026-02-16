@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { Map } from "@/components/Map";
 import { AircraftTable } from "@/components/AircraftTable";
 import { MetricsBar } from "@/components/MetricsBar";
@@ -33,6 +33,8 @@ export default function Dashboard() {
   const [liveColorMode, setLiveColorMode] = useLocalStorage<AltitudeColorMode>("adsb-live-color-mode", "track");
   const [historyColorMode, setHistoryColorMode] = useLocalStorage<AltitudeColorMode>("adsb-history-color-mode", "track");
 
+  const [selectedHexIdent, setSelectedHexIdent] = useState<string | null>(null);
+
   const { tracks, history } = useAircraftTracks(filters);
   const simulatedTracks = useSimulatedTracks(showSimulation);
   const allTracks = useMemo(() => [...tracks, ...simulatedTracks], [tracks, simulatedTracks]);
@@ -41,6 +43,19 @@ export default function Dashboard() {
   const isRunning = status.is_running;
 
   const visibleHistory = showHistory ? history : [];
+
+  // Toggle selection: clicking same track deselects, clicking different selects
+  const handleSelectTrack = useCallback((hexIdent: string | null) => {
+    setSelectedHexIdent(prev => prev === hexIdent ? null : hexIdent);
+  }, []);
+
+  // Auto-deselect when selected track disappears (TTL expiry)
+  useEffect(() => {
+    if (!selectedHexIdent) return;
+    const exists = allTracks.some(t => t.hex_ident === selectedHexIdent)
+      || visibleHistory.some(t => t.hex_ident === selectedHexIdent);
+    if (!exists) setSelectedHexIdent(null);
+  }, [selectedHexIdent, allTracks, visibleHistory]);
   const densityTracks = useMemo(
     () => (showDensity ? [...allTracks, ...history] : []),
     [showDensity, allTracks, history],
@@ -182,7 +197,7 @@ export default function Dashboard() {
         <main className="flex-1 flex flex-col overflow-hidden">
           {/* Map — takes remaining space */}
           <div className="flex-1 min-h-0">
-            <Map tracks={allTracks} historyTracks={visibleHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} />
+            <Map tracks={allTracks} historyTracks={visibleHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} />
           </div>
 
           {/* Resize handle */}
@@ -193,7 +208,7 @@ export default function Dashboard() {
             className="bg-slate-900 overflow-hidden flex-shrink-0"
             style={{ height: tableHeight }}
           >
-            <AircraftTable tracks={allTracks} historyTracks={visibleHistory} />
+            <AircraftTable tracks={allTracks} historyTracks={visibleHistory} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} />
           </div>
         </main>
       </div>

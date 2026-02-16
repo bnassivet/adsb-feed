@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { AircraftTrack } from "@/lib/types";
 import { altitudeToColor } from "@/lib/colors";
 import { timeAgo } from "@/lib/format";
@@ -14,9 +14,11 @@ type SortKey =
 interface Props {
   tracks: AircraftTrack[];
   historyTracks?: AircraftTrack[];
+  selectedHexIdent?: string | null;
+  onSelectTrack?: (hex: string) => void;
 }
 
-export function AircraftTable({ tracks, historyTracks = [] }: Props) {
+export function AircraftTable({ tracks, historyTracks = [], selectedHexIdent, onSelectTrack }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("callsign");
   const [sortAsc, setSortAsc] = useState(true);
 
@@ -34,6 +36,14 @@ export function AircraftTable({ tracks, historyTracks = [] }: Props) {
 
   const sorted = sortTracks(tracks);
   const sortedHistory = sortTracks(historyTracks);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll selected row into view
+  useEffect(() => {
+    if (!selectedHexIdent || !containerRef.current) return;
+    const row = containerRef.current.querySelector(`[data-hex="${selectedHexIdent}"]`);
+    row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selectedHexIdent]);
 
   function handleSort(key: SortKey) {
     if (sortKey === key) {
@@ -59,7 +69,7 @@ export function AircraftTable({ tracks, historyTracks = [] }: Props) {
   }
 
   return (
-    <div className="overflow-auto h-full">
+    <div ref={containerRef} className="overflow-auto h-full">
       <table className="w-full text-xs">
         <thead className="bg-slate-800 text-slate-400 sticky top-0">
           <tr>
@@ -75,10 +85,19 @@ export function AircraftTable({ tracks, historyTracks = [] }: Props) {
           </tr>
         </thead>
         <tbody className="text-slate-300">
-          {sorted.map((t) => (
+          {sorted.map((t) => {
+            const isSelected = t.hex_ident === selectedHexIdent;
+            return (
             <tr
               key={t.hex_ident}
-              className="border-b border-slate-800 hover:bg-slate-800/50"
+              data-testid={`row-${t.hex_ident}`}
+              data-hex={t.hex_ident}
+              onClick={() => onSelectTrack?.(t.hex_ident)}
+              className={`border-b border-slate-800 ${
+                isSelected
+                  ? "bg-blue-900/40 hover:bg-blue-900/50"
+                  : "hover:bg-slate-800/50"
+              }${onSelectTrack ? " cursor-pointer" : ""}`}
             >
               <td className="px-3 py-1.5 font-mono font-semibold">
                 {t.hex_ident.startsWith("SIM-") && (
@@ -115,7 +134,8 @@ export function AircraftTable({ tracks, historyTracks = [] }: Props) {
                 {t.longitude?.toFixed(4) ?? "—"}
               </td>
             </tr>
-          ))}
+            );
+          })}
 
           {/* History divider */}
           {sortedHistory.length > 0 && (
@@ -129,10 +149,19 @@ export function AircraftTable({ tracks, historyTracks = [] }: Props) {
           )}
 
           {/* History rows — dimmed */}
-          {sortedHistory.map((t) => (
+          {sortedHistory.map((t) => {
+            const isSelected = t.hex_ident === selectedHexIdent;
+            return (
             <tr
               key={`hist-${t.hex_ident}`}
-              className="border-b border-slate-800 hover:bg-slate-800/50 opacity-40"
+              data-testid={`row-hist-${t.hex_ident}`}
+              data-hex={t.hex_ident}
+              onClick={() => onSelectTrack?.(t.hex_ident)}
+              className={`border-b border-slate-800 ${
+                isSelected
+                  ? "bg-blue-900/40 hover:bg-blue-900/50"
+                  : "hover:bg-slate-800/50 opacity-40"
+              }${onSelectTrack ? " cursor-pointer" : ""}`}
             >
               <td className="px-3 py-1.5 font-mono font-semibold">
                 {t.callsign ?? "—"}
@@ -163,7 +192,8 @@ export function AircraftTable({ tracks, historyTracks = [] }: Props) {
                 {t.longitude?.toFixed(4) ?? "—"}
               </td>
             </tr>
-          ))}
+            );
+          })}
 
           {sorted.length === 0 && sortedHistory.length === 0 && (
             <tr>

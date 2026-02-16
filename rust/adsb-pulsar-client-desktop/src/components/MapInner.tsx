@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useMemo } from "react";
-import { MapContainer, TileLayer, Marker, Polyline, GeoJSON, Tooltip, useMap } from "react-leaflet";
+import { useEffect, useMemo, useCallback } from "react";
+import { MapContainer, TileLayer, Marker, Polyline, GeoJSON, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import type { AircraftTrack, DensityMetric, AltitudeColorMode } from "@/lib/types";
 import { zoomToH3Resolution } from "@/lib/types";
@@ -8,6 +8,8 @@ import { altitudeToColor, densityColor, cachedAltitudeToColor } from "@/lib/colo
 import { computeH3Density } from "@/lib/h3-density";
 import type { DensityProperties } from "@/lib/h3-density";
 import { useMapZoom } from "@/hooks/useMapZoom";
+import { aircraftIconHtml } from "@/lib/aircraft-icon";
+import { orderTracksWithSelectedLast } from "@/lib/track-ordering";
 import { MapTileToggle } from "./MapTileToggle";
 import { AltitudeLegend } from "./AltitudeLegend";
 
@@ -26,19 +28,14 @@ const TILE_CONFIGS = {
   },
 } as const;
 
-/** Creates a rotated triangle SVG icon for an aircraft. */
-function aircraftIcon(heading: number, color: string): L.DivIcon {
-  const svg = `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-    <g transform="rotate(${heading}, 12, 12)">
-      <polygon points="12,2 6,20 12,16 18,20" fill="${color}" stroke="#000" stroke-width="1" opacity="0.9"/>
-    </g>
-  </svg>`;
-
+/** Creates a rotated triangle SVG DivIcon for an aircraft, with optional selection ring. */
+function aircraftIcon(heading: number, color: string, selected: boolean = false): L.DivIcon {
+  const result = aircraftIconHtml(heading, color, selected);
   return L.divIcon({
-    html: svg,
-    className: "",
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
+    html: result.html,
+    className: result.className,
+    iconSize: result.iconSize,
+    iconAnchor: result.iconAnchor,
   });
 }
 
@@ -69,6 +66,14 @@ function MapResizeHandler() {
   return null;
 }
 
+/** Deselects when clicking empty map space (marker clicks don't propagate to map). */
+function MapClickHandler({ onDeselect }: { onDeselect: () => void }) {
+  useMapEvents({
+    click: () => onDeselect(),
+  });
+  return null;
+}
+
 interface Props {
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];
@@ -80,6 +85,8 @@ interface Props {
   densityTracks: AircraftTrack[];
   liveColorMode: AltitudeColorMode;
   historyColorMode: AltitudeColorMode;
+  selectedHexIdent: string | null;
+  onSelectTrack: (hex: string | null) => void;
 }
 
 /** Renders H3 density hexagons with zoom-adaptive resolution. */
@@ -151,21 +158,26 @@ function DotsLayer({
   tracks,
   colorMode,
   type,
+  selectedHexIdent,
 }: {
   tracks: AircraftTrack[];
   colorMode: AltitudeColorMode;
   type: "history" | "live";
+  selectedHexIdent: string | null;
 }) {
   const map = useMap();
 
   useEffect(() => {
     const markers: L.CircleMarker[] = [];
-    const radius = type === "history" ? 2 : 3;
-    const fillOpacity = type === "history" ? 0.2 : 0.6;
+    const baseRadius = type === "history" ? 2 : 3;
+    const baseFillOpacity = type === "history" ? 0.2 : 0.6;
 
     for (const t of tracks) {
       if (t.positions.length < 2) continue;
       const trackColor = cachedAltitudeToColor(t.altitude);
+      const isSelected = t.hex_ident === selectedHexIdent;
+      const radius = isSelected ? baseRadius + 2 : baseRadius;
+      const fillOpacity = isSelected ? 0.9 : baseFillOpacity;
 
       for (let i = 0; i < t.positions.length; i++) {
         const pos = t.positions[i];
@@ -210,13 +222,25 @@ function DotsLayer({
         m.remove();
       }
     };
-  }, [map, tracks, colorMode, type]);
+  }, [map, tracks, colorMode, type, selectedHexIdent]);
 
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, liveColorMode, historyColorMode }: Props) {
+export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, liveColorMode, historyColorMode, selectedHexIdent, onSelectTrack }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
+
+  // Reorder tracks so selected renders on top (last in array = top layer)
+  const orderedTracks = useMemo(
+    () => orderTracksWithSelectedLast(tracks, selectedHexIdent),
+    [tracks, selectedHexIdent],
+  );
+  const orderedHistory = useMemo(
+    () => orderTracksWithSelectedLast(historyTracks, selectedHexIdent),
+    [historyTracks, selectedHexIdent],
+  );
+
+  const handleDeselect = useCallback(() => onSelectTrack(null), [onSelectTrack]);
 
   return (
     <div className="h-full w-full relative">
@@ -228,6 +252,7 @@ export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, traje
         preferCanvas={true}
       >
         <MapResizeHandler />
+        <MapClickHandler onDeselect={handleDeselect} />
         <TileLayer
           key={mapTheme}
           attribution={tile.attribution}
@@ -239,11 +264,12 @@ export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, traje
 
         {/* History tracks — rendered first so active tracks layer on top */}
         {trajectoryStyle === "dots" && historyTracks.length > 0 && (
-          <DotsLayer tracks={historyTracks} colorMode={historyColorMode} type="history" />
+          <DotsLayer tracks={historyTracks} colorMode={historyColorMode} type="history" selectedHexIdent={selectedHexIdent} />
         )}
-        {trajectoryStyle === "line" && historyTracks.map((t) => {
+        {trajectoryStyle === "line" && orderedHistory.map((t) => {
           if (t.positions.length < 2) return null;
           const trackColor = cachedAltitudeToColor(t.altitude);
+          const isSelected = t.hex_ident === selectedHexIdent;
 
           return (
             <Polyline
@@ -251,8 +277,8 @@ export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, traje
               positions={toLatLngs(t.positions)}
               pathOptions={{
                 color: trackColor,
-                weight: 1,
-                opacity: 0.25,
+                weight: isSelected ? 3 : 1,
+                opacity: isSelected ? 0.7 : 0.25,
               }}
             >
               <Tooltip sticky>
@@ -271,20 +297,22 @@ export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, traje
 
         {/* Active track dots — imperative layer for performance */}
         {trajectoryStyle === "dots" && tracks.length > 0 && (
-          <DotsLayer tracks={tracks} colorMode={liveColorMode} type="live" />
+          <DotsLayer tracks={tracks} colorMode={liveColorMode} type="live" selectedHexIdent={selectedHexIdent} />
         )}
 
         {/* Active tracks — aircraft markers and line trajectories */}
-        {tracks.map((t) => {
+        {orderedTracks.map((t) => {
           if (t.latitude === null || t.longitude === null) return null;
           const trackColor = cachedAltitudeToColor(t.altitude);
-          const icon = aircraftIcon(t.track ?? 0, trackColor);
+          const isSelected = t.hex_ident === selectedHexIdent;
+          const icon = aircraftIcon(t.track ?? 0, trackColor, isSelected);
 
           return (
             <div key={t.hex_ident}>
               <Marker
                 position={[t.latitude, t.longitude]}
                 icon={icon}
+                eventHandlers={{ click: () => onSelectTrack(t.hex_ident) }}
               >
                 <Tooltip direction="top" offset={[0, -12]}>
                   <div className="text-xs">
@@ -309,8 +337,8 @@ export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, traje
                   positions={toLatLngs(t.positions)}
                   pathOptions={{
                     color: trackColor,
-                    weight: 2,
-                    opacity: 0.6,
+                    weight: isSelected ? 4 : 2,
+                    opacity: isSelected ? 0.9 : 0.6,
                   }}
                 />
               )}

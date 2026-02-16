@@ -21,3 +21,21 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #64748b;
 }
+
+/* Selected aircraft marker — renders above other markers */
+.selected-marker {
+  z-index: 1000 !important;
+}
+
+/* Static ring around selected aircraft */
+.selected-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+  pointer-events: none;
+}

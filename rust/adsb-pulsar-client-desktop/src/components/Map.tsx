@@ -26,8 +26,10 @@ interface Props {
   densityTracks: AircraftTrack[];
   liveColorMode: AltitudeColorMode;
   historyColorMode: AltitudeColorMode;
+  selectedHexIdent: string | null;
+  onSelectTrack: (hex: string | null) => void;
 }
 
-export function Map({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, liveColorMode, historyColorMode }: Props) {
-  return <MapInner tracks={tracks} historyTracks={historyTracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} showDensity={showDensity} densityMetric={densityMetric} densityTracks={densityTracks} liveColorMode={liveColorMode} historyColorMode={historyColorMode} />;
+export function Map({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, liveColorMode, historyColorMode, selectedHexIdent, onSelectTrack }: Props) {
+  return <MapInner tracks={tracks} historyTracks={historyTracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} showDensity={showDensity} densityMetric={densityMetric} densityTracks={densityTracks} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={onSelectTrack} />;
 }
