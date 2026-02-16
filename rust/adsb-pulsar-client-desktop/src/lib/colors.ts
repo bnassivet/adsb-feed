@@ -16,7 +16,7 @@ export const ALTITUDE_SCALE_STOPS: { altitude: number; color: string }[] = [
  * 0ft = blue, 12500ft = cyan, 25000ft = green, 37500ft = yellow, 50000ft = red.
  */
 export function altitudeToColor(altitude: number | null): string {
-  if (altitude === null) return "#888888";
+  if (altitude == null) return "#888888"; // handles both null and undefined
 
   const clamped = Math.max(0, Math.min(50000, altitude));
   const ratio = clamped / 50000;
@@ -58,6 +58,33 @@ export function densityColor(normalized: number): { color: string; fillOpacity: 
   // Reduced max opacity from 0.8 to 0.3 for better transparency at high densities
   const fillOpacity = 0.08 + 0.22 * t;
   return { color, fillOpacity };
+}
+
+const COLOR_CACHE_MAX = 512;
+const colorCache = new Map<number | null, string>();
+
+/** Cached version of altitudeToColor — avoids recomputing the same rgb() string. */
+export function cachedAltitudeToColor(altitude: number | null): string {
+  // Normalize undefined to null for consistent cache keys
+  const key = altitude ?? null;
+  const cached = colorCache.get(key);
+  if (cached !== undefined) return cached;
+
+  const color = altitudeToColor(key);
+
+  if (colorCache.size >= COLOR_CACHE_MAX) {
+    // Evict oldest entry (first inserted)
+    const firstKey = colorCache.keys().next().value;
+    colorCache.delete(firstKey!);
+  }
+  colorCache.set(key, color);
+
+  return color;
+}
+
+/** Clears the altitude color cache. Exported for testing. */
+export function clearColorCache(): void {
+  colorCache.clear();
 }
 
 function interpolateColor(

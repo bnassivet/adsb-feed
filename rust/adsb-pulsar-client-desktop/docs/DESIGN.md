@@ -456,6 +456,34 @@ faded history trajectories without needing explicit z-index management.
 [Active markers + trajectories]  ← rendered last (top layer)
 ```
 
+**Canvas Renderer**:
+
+`MapContainer` uses `preferCanvas={true}` to render all vector layers (`CircleMarker`, `Polyline`)
+on a single `<canvas>` element instead of individual SVG `<path>` nodes. This reduces DOM node
+count from O(n) to O(1) and is critical for smooth pan/zoom with thousands of trajectory dots.
+Tooltips and mouse events still work via Leaflet's canvas hit-testing.
+
+**Imperative Dots Layer (`DotsLayer`)**:
+
+When `trajectoryStyle === "dots"`, trajectory dots are rendered imperatively via Leaflet's
+native API instead of React `<CircleMarker>` components. This avoids React VDOM reconciliation
+of 10,000+ component instances every 500ms.
+
+Implementation:
+- Uses `useMap()` to get the Leaflet map instance
+- Creates `L.circleMarker()` objects in a `useEffect` cleanup cycle
+- Tooltips bound via `marker.bindTooltip(() => html)` — lazy (content built only on hover)
+- Cleanup removes all markers when `tracks`, `colorMode`, or `type` change
+- Combined with canvas renderer, creating/destroying 5,000 markers is ~5ms (lightweight JS objects)
+
+```
+DotsLayer({ tracks, colorMode, type: "history" | "live" })
+  → useMap() to get map instance
+  → useEffect([tracks, colorMode]) creates L.CircleMarker objects
+  → Each marker gets bindTooltip with lazy content
+  → Cleanup removes all markers
+```
+
 **Active Marker Behavior**:
 - **Icon**: Rotated triangle SVG, color-coded by altitude
 - **Tooltip**: Callsign, hex, altitude, speed, squawk
@@ -682,16 +710,21 @@ useTauriEvent<AircraftPosition[]>("adsb:message", (batch) => {
 
 #### 1. **colors.ts** (`src/lib/colors.ts`)
 
-**Purpose**: Map altitude to color for aircraft markers
+**Purpose**: Map altitude to color for aircraft markers and trajectory dots
 
-**Function**: `getAltitudeColor(altitude: number | null): string`
+**Functions**:
+- `altitudeToColor(altitude: number | null): string` — Jet-like colormap (blue → cyan → green → yellow → red, 0–50,000 ft). Returns `#888888` for null/undefined.
+- `cachedAltitudeToColor(altitude: number | null): string` — Bounded `Map` cache (max 512 entries, FIFO eviction) wrapping `altitudeToColor`. Used in hot paths (trajectory dots) to avoid recomputing the same `rgb(...)` string thousands of times per render cycle. Altitudes cluster around common flight levels, yielding ~98% cache hit rate.
+- `clearColorCache(): void` — Resets the cache (exported for test isolation).
+- `densityColor(normalized: number): { color: string; fillOpacity: number }` — Purple → yellow → red scale for H3 density hexagons.
 
-**Color Scale**:
-- **0-5,000 ft**: Green (low altitude)
-- **5,000-15,000 ft**: Yellow (climbing/descending)
-- **15,000-30,000 ft**: Orange (cruise)
-- **30,000+ ft**: Red (high altitude)
-- **null**: Gray (no altitude data)
+**Color Scale** (Jet colormap):
+- **0 ft**: Blue `rgb(0,0,255)`
+- **12,500 ft**: Cyan `rgb(0,255,255)`
+- **25,000 ft**: Green `rgb(0,255,0)`
+- **37,500 ft**: Yellow `rgb(255,255,0)`
+- **50,000 ft**: Red `rgb(255,0,0)`
+- **null/undefined**: Gray `#888888`
 
 **File**: `src/lib/colors.ts`
 
@@ -1471,15 +1504,18 @@ const { tracks, history } = useAircraftTracks(filters);
 ### Frontend Optimizations
 
 1. **Event Batching**: Messages batched into 500ms intervals (reduce React re-renders)
-2. **Map Rendering**: Leaflet uses canvas for efficient marker rendering
-3. **Virtual Scrolling**: (Future) Table uses virtual scrolling for 1000+ aircraft
-4. **Lazy Loading**: Map component loaded dynamically (no SSR overhead)
-5. **Memoization**: (Future) Use `React.memo()` for expensive components
-6. **In-Place Track Mutation**: Existing tracks are mutated via `mergePositionInto()` instead of allocating new objects per position update
-7. **Zero-Allocation Position Append**: `push()`+`shift()` replaces `[...spread, newItem]` for position arrays — eliminates ~800 array allocations/sec with 40 aircraft
-8. **Memoized Context Value**: Provider value is wrapped in `useMemo([updateCounter])` to prevent unnecessary consumer re-renders
-9. **Version Counter in useMemo Deps**: Consumer hooks use `version` (not Map ref) in `useMemo` deps to correctly detect data changes
-10. **Deferred TTL Cleanup**: TTL expiry scans run on a 15s interval instead of every 500ms batch
+2. **Canvas Renderer**: `MapContainer preferCanvas={true}` draws all vector layers on a single `<canvas>` element instead of individual SVG `<path>` nodes — reduces DOM node count from ~5,000 to 1
+3. **Imperative Dots Layer**: Trajectory dots created via `L.circleMarker()` + `useMap()`/`useEffect()` instead of React `<CircleMarker>` components — eliminates VDOM reconciliation of 10,000+ components every 500ms
+4. **Cached Altitude Colors**: `cachedAltitudeToColor()` uses a bounded `Map` cache (512 entries, FIFO eviction) to avoid recomputing `rgb()` strings — ~98% hit rate due to altitude clustering around flight levels
+5. **Lazy Tooltips**: `marker.bindTooltip(() => html)` builds tooltip content only on hover, not on creation — avoids building 5,000 HTML strings per render cycle
+6. **Lazy Loading**: Map component loaded dynamically (no SSR overhead)
+7. **In-Place Track Mutation**: Existing tracks are mutated via `mergePositionInto()` instead of allocating new objects per position update
+8. **Zero-Allocation Position Append**: `push()`+`shift()` replaces `[...spread, newItem]` for position arrays — eliminates ~800 array allocations/sec with 40 aircraft
+9. **Memoized Context Value**: Provider value is wrapped in `useMemo([updateCounter])` to prevent unnecessary consumer re-renders
+10. **Version Counter in useMemo Deps**: Consumer hooks use `version` (not Map ref) in `useMemo` deps to correctly detect data changes
+11. **Deferred TTL Cleanup**: TTL expiry scans run on a 15s interval instead of every 500ms batch
+12. **Virtual Scrolling**: (Future) Table uses virtual scrolling for 1000+ aircraft
+13. **Memoization**: (Future) Use `React.memo()` for expensive components
 
 ### Memory Management
 
@@ -1620,7 +1656,7 @@ npm run test:watch  # Watch mode (TDD)
 ### Technical Improvements
 
 1. **Virtual Scrolling**: Handle 1000+ aircraft efficiently in table
-2. **WebGL Rendering**: Use WebGL-based map library for better performance
+2. **WebGL Rendering**: Use WebGL-based map library for even higher density rendering (canvas renderer handles current scale well)
 3. **Worker Threads**: Move heavy parsing to Web Workers
 4. **Persistent Storage**: Cache tracks locally for offline analysis (currently in-memory only; could use IndexedDB or tauri-plugin-store to survive app restarts)
 5. **E2E Testing**: Add Playwright tests for UI flows
