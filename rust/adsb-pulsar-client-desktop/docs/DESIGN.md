@@ -153,10 +153,12 @@ src/
 │   ├── useSimulatedTracks.ts # Simulated demo flight tracks
 │   └── useTauriEvent.ts     # Event listener abstraction
 ├── lib/                     # Utilities and types
+│   ├── aircraft-icon.ts     # Pure SVG/HTML generation for aircraft map icons
 │   ├── colors.ts            # Altitude-based color mapping
 │   ├── commands.ts          # Tauri command wrappers
 │   ├── h3-density.ts        # H3 hexagonal density computation
 │   ├── simulation-data.ts   # Simulated flight definitions
+│   ├── track-ordering.ts    # Render-order utility for selected track
 │   └── types.ts             # TypeScript type definitions
 ```
 
@@ -281,6 +283,7 @@ accumulation even when users navigate to Settings or other pages.
 - `mapTheme: "light" | "dark"`: Map tile style
 - `tableHeight: number`: Resizable table height in pixels
 - `showHistory: boolean`: Whether to display expired aircraft (persisted to localStorage)
+- `selectedHexIdent: string | null`: Currently selected aircraft (toggle behavior: click same to deselect)
 
 **Derived State**:
 - `visibleHistory`: Computed as `showHistory ? history : []` — avoids passing full history arrays to child components when the toggle is off, reducing unnecessary rendering work
@@ -330,21 +333,25 @@ accumulation even when users navigate to Settings or other pages.
 **Props**:
 - `tracks: AircraftTrack[]`: Active aircraft tracks
 - `historyTracks?: AircraftTrack[]`: Optional expired aircraft tracks (defaults to `[]`)
+- `selectedHexIdent?: string | null`: Currently selected aircraft hex_ident
+- `onSelectTrack?: (hex: string) => void`: Callback when a row is clicked
 
 **Responsibilities**:
 - Render scrollable table with fixed header
 - Display columns: Hex ID, Callsign, Altitude, Speed, Track, Lat/Lon, Squawk
 - Handle null values gracefully (display "—")
 - Render history rows below active rows, separated by a labeled divider row
-- History rows display with `opacity-40` for visual distinction
+- History rows display with `opacity-40` for visual distinction (full opacity when selected)
 - History rows show relative "last seen" time (e.g., "23m ago") in place of heading/vertical rate
+- Highlight selected row (`bg-blue-900/40`) and auto-scroll it into view
 
 **Styling**:
 - Dark background (`bg-slate-900`)
 - Fixed header with `sticky top-0`
 - Overflow scrolling for table body
 - History divider: uppercase label with count (e.g., "HISTORY (12)")
-- History rows: dimmed via `opacity-40` class
+- History rows: dimmed via `opacity-40` class (removed when selected)
+- Selected row: `bg-blue-900/40` highlight + `cursor-pointer` when clickable
 
 **File**: `src/components/AircraftTable.tsx`
 
@@ -416,6 +423,8 @@ before deciding to enable the display.
 - `mapTheme: "light" | "dark"`: Tile style
 - `onToggleTheme: () => void`: Theme toggle callback
 - `trajectoryStyle: "line" | "dots"`: How to render position trails
+- `selectedHexIdent: string | null`: Currently selected aircraft hex_ident
+- `onSelectTrack: (hex: string | null) => void`: Selection callback (`null` = deselect)
 
 **Responsibilities**:
 - Use Next.js `dynamic()` to disable SSR (Leaflet requires browser)
@@ -488,6 +497,15 @@ DotsLayer({ tracks, colorMode, type: "history" | "live" })
 - **Icon**: Rotated triangle SVG, color-coded by altitude
 - **Tooltip**: Callsign, hex, altitude, speed, squawk
 - **Trajectory**: Polyline or dots connecting recent positions
+- **Click**: Selects the aircraft (emits `onSelectTrack(hex_ident)`)
+
+**Selected Aircraft Visual Feedback**:
+- **Icon**: Enlarged (36×36 vs 24×24), white stroke, static ring overlay via CSS
+- **Polyline (live)**: `weight: 4`, `opacity: 0.9` (vs default `2`/`0.6`)
+- **Polyline (history)**: `weight: 3`, `opacity: 0.7` (vs default `1`/`0.25`)
+- **Dots**: `radius + 2`, `fillOpacity: 0.9`
+- **Render order**: Selected track moved to end of array (renders on top)
+- **Map click**: Clicking empty map space deselects (`MapClickHandler` component)
 
 **History Track Behavior**:
 - **No marker icon**: The aircraft is no longer present
@@ -1163,6 +1181,7 @@ let config = state.config.lock().map_err(|e| e.to_string())?;
 | `history: AircraftTrack[]` (filtered) | `useAircraftTracks` hook (derived from context) | Computed on each render |
 | `filters: Filters` | `Dashboard` component | None |
 | `isRunning: boolean` | `Dashboard` component | None |
+| `selectedHexIdent: string \| null` | `Dashboard` component | None (auto-deselects on track disappear) |
 | `mapTheme: "light" \| "dark"` | `Dashboard` + `useLocalStorage` | localStorage |
 | `tableHeight: number` | `Dashboard` + `useLocalStorage` | localStorage |
 | `showHistory: boolean` | `Dashboard` + `useLocalStorage` | localStorage |
@@ -1628,9 +1647,9 @@ npm run test:watch  # Watch mode (TDD)
 
 | Directory | Tests | Coverage |
 |-----------|-------|----------|
-| `src/lib/__tests__/` | colors, types, h3-density, format | Pure utility functions |
+| `src/lib/__tests__/` | colors, types, h3-density, format, track-ordering, aircraft-icon | Pure utility functions |
 | `src/hooks/__tests__/` | useLocalStorage, useAircraftTracks, useSimulatedTracks | Hook logic and filters |
-| `src/components/__tests__/` | ConnectionStatus, MetricsBar, Filters | Component rendering and interactions |
+| `src/components/__tests__/` | ConnectionStatus, MetricsBar, Filters, AircraftTable | Component rendering and interactions |
 
 **Mocking:** `src/test/mocks/tauri.ts` provides mock `@tauri-apps/api` (invoke, events) for testing without Tauri runtime.
 
@@ -1775,6 +1794,70 @@ graph TD
 | Key | Type | Default | Purpose |
 |-----|------|---------|---------|
 | `adsb-show-history` | `boolean` | `false` | Toggle visibility of history tracks |
+
+---
+
+## Bidirectional Track Selection
+
+### Overview
+
+Clicking an aircraft marker on the map or a row in the table selects it. Selection is reflected bidirectionally: highlighted row in the table, emphasized trajectory and static ring on the map marker. Clicking the same target again or clicking empty map space deselects. The selected track auto-deselects when it disappears (TTL expiry).
+
+### Design Decisions and Rationale
+
+#### 1. State Lives in `page.tsx`, Not Context
+
+**Decision**: `selectedHexIdent: string | null` is a `useState` in `Dashboard`, passed via props.
+
+**Rationale**: Selection is a **UI concern between two sibling components** (Map and Table), not application-wide data. Adding it to `AircraftTrackingContext` would conflate view state with data state and cause unnecessary re-renders in components that don't care about selection. Prop drilling through one level (page → Map/Table) is simpler and more explicit.
+
+#### 2. Toggle Behavior via `useCallback`
+
+**Decision**: `handleSelectTrack(hex)` toggles — clicking the same hex deselects (`prev === hex ? null : hex`).
+
+**Rationale**: Users expect click-to-toggle on both surfaces. A separate "deselect" button would add UI clutter. The map's `MapClickHandler` provides an additional deselection path (clicking empty space).
+
+#### 3. Render-Order Z-Index (No CSS z-index for Map Layers)
+
+**Decision**: `orderTracksWithSelectedLast()` moves the selected track to the end of the array before rendering.
+
+**Rationale**: In Leaflet, later-rendered elements appear on top. This approach reuses the existing JSX rendering order pattern (already used for history-before-active) and avoids fighting with Leaflet's z-index/pane API. The `.selected-marker` CSS class provides `z-index: 1000` for the DivIcon container only, as a safety net.
+
+#### 4. Pure `aircraftIconHtml()` Extracted for Testability
+
+**Decision**: SVG generation extracted to `src/lib/aircraft-icon.ts` as a pure function returning `{ html, className, iconSize, iconAnchor }`. A thin `aircraftIcon()` wrapper in MapInner calls `L.divIcon()`.
+
+**Rationale**: The icon now has two visual states (selected: larger, white stroke, ring div; unselected: standard). Testing both states against `L.DivIcon` would require mocking Leaflet. The pure function is fully testable (12 unit tests) with zero dependencies.
+
+#### 5. Static Ring (Not Pulsing Animation)
+
+**Decision**: The selection ring is a static `border-radius: 50%` circle with `pointer-events: none`.
+
+**Rationale**: A static ring provides clear visual feedback without the distraction of continuous animation. `pointer-events: none` prevents the ring div from intercepting clicks intended for the marker beneath it.
+
+#### 6. Auto-Deselect on Track Disappearance
+
+**Decision**: A `useEffect` in `page.tsx` checks if `selectedHexIdent` still exists in `allTracks` or `visibleHistory`. If not, it sets selection to `null`.
+
+**Rationale**: When an aircraft's active TTL expires and it moves to history (or history TTL expires and it's evicted), the selected state would become stale — highlighting nothing. Auto-deselection keeps the UI consistent without user intervention.
+
+#### 7. No Click Handlers on Dots
+
+**Decision**: Only `<Marker>` icons (active aircraft) are clickable on the map. The `DotsLayer` circles are not clickable for selection.
+
+**Rationale**: The `DotsLayer` renders thousands of `L.circleMarker` objects imperatively for performance. Adding individual click handlers to each dot would negate the performance benefit and create a confusing UX (which dot represents "the aircraft"?). Users select via the aircraft marker icon or the table row.
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `src/lib/track-ordering.ts` | `orderTracksWithSelectedLast()` — render-order utility |
+| `src/lib/aircraft-icon.ts` | `aircraftIconHtml()` — pure SVG/HTML generation with selection state |
+| `src/app/globals.css` | `.selected-marker` z-index + `.selected-ring` static ring |
+| `src/app/page.tsx` | `selectedHexIdent` state, toggle handler, auto-deselect effect |
+| `src/components/Map.tsx` | Prop passthrough |
+| `src/components/MapInner.tsx` | `MapClickHandler`, marker click events, visual emphasis |
+| `src/components/AircraftTable.tsx` | Row click, highlight, auto-scroll |
 
 ---
 
