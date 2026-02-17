@@ -33,6 +33,7 @@ export default function Dashboard() {
   const [showSimulation, setShowSimulation] = useLocalStorage<boolean>("adsb-show-simulation", false);
   const [liveColorMode, setLiveColorMode] = useLocalStorage<AltitudeColorMode>("adsb-live-color-mode", "track");
   const [historyColorMode, setHistoryColorMode] = useLocalStorage<AltitudeColorMode>("adsb-history-color-mode", "track");
+  const [includeImportedInDensity, setIncludeImportedInDensity] = useLocalStorage<boolean>("adsb-include-imported-density", false);
 
   const [selectedHexIdent, setSelectedHexIdent] = useState<string | null>(null);
 
@@ -60,8 +61,8 @@ export default function Dashboard() {
     if (!exists) setSelectedHexIdent(null);
   }, [selectedHexIdent, allTracks, visibleHistory]);
   const densityTracks = useMemo(
-    () => (showDensity ? [...allTracks, ...history] : []),
-    [showDensity, allTracks, history],
+    () => (showDensity ? [...allTracks, ...history, ...(includeImportedInDensity ? imported : [])] : []),
+    [showDensity, allTracks, history, includeImportedInDensity, imported],
   );
 
   function handleToggleTheme() {
@@ -82,6 +83,10 @@ export default function Dashboard() {
 
   function handleToggleImported() {
     setShowImported((prev: boolean) => !prev);
+  }
+
+  function handleToggleIncludeImportedInDensity() {
+    setIncludeImportedInDensity((prev: boolean) => !prev);
   }
 
   async function handleExport() {
@@ -242,6 +247,8 @@ export default function Dashboard() {
               showImported={showImported}
               onToggleImported={handleToggleImported}
               onClearImported={clearImported}
+              includeImportedInDensity={includeImportedInDensity}
+              onToggleIncludeImportedInDensity={handleToggleIncludeImportedInDensity}
             />
           </aside>
         )}

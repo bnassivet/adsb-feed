@@ -23,9 +23,11 @@ interface Props {
   showImported: boolean;
   onToggleImported: () => void;
   onClearImported: () => void;
+  includeImportedInDensity: boolean;
+  onToggleIncludeImportedInDensity: () => void;
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity }: Props) {
   return (
     <div className="flex flex-col gap-4 p-4">
       <div>
@@ -201,6 +203,17 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
               />
               Mean altitude
             </label>
+            {importedCount > 0 && (
+              <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer mt-1 pt-1 border-t border-slate-700/50">
+                <input
+                  type="checkbox"
+                  checked={includeImportedInDensity}
+                  onChange={onToggleIncludeImportedInDensity}
+                  className="accent-purple-500"
+                />
+                Include imported
+              </label>
+            )}
           </div>
         )}
       </div>

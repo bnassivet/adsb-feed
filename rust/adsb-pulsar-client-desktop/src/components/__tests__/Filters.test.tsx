@@ -27,6 +27,8 @@ function renderFilters(overrides = {}) {
     showImported: false,
     onToggleImported: vi.fn(),
     onClearImported: vi.fn(),
+    includeImportedInDensity: false,
+    onToggleIncludeImportedInDensity: vi.fn(),
     ...overrides,
   };
   return { ...render(<FiltersPanel {...defaultProps} />), props: defaultProps };
@@ -127,5 +129,51 @@ describe("imported tracks section", () => {
     const checkbox = screen.getByText(/Show imported/).closest("label")!.querySelector("input")!;
     await user.click(checkbox);
     expect(onToggleImported).toHaveBeenCalledOnce();
+  });
+});
+
+describe("include imported in density", () => {
+  it("shows checkbox when density is ON and imported tracks exist", () => {
+    renderFilters({
+      showDensity: true,
+      importedCount: 5,
+      includeImportedInDensity: false,
+      onToggleIncludeImportedInDensity: vi.fn(),
+    });
+    expect(screen.getByText(/Include imported/)).toBeInTheDocument();
+  });
+
+  it("hides checkbox when density is OFF", () => {
+    renderFilters({
+      showDensity: false,
+      importedCount: 5,
+      includeImportedInDensity: false,
+      onToggleIncludeImportedInDensity: vi.fn(),
+    });
+    expect(screen.queryByText(/Include imported/)).not.toBeInTheDocument();
+  });
+
+  it("hides checkbox when no imported tracks", () => {
+    renderFilters({
+      showDensity: true,
+      importedCount: 0,
+      includeImportedInDensity: false,
+      onToggleIncludeImportedInDensity: vi.fn(),
+    });
+    expect(screen.queryByText(/Include imported/)).not.toBeInTheDocument();
+  });
+
+  it("calls toggle handler when checkbox clicked", async () => {
+    const user = userEvent.setup();
+    const onToggle = vi.fn();
+    renderFilters({
+      showDensity: true,
+      importedCount: 3,
+      includeImportedInDensity: false,
+      onToggleIncludeImportedInDensity: onToggle,
+    });
+    const checkbox = screen.getByText(/Include imported/).closest("label")!.querySelector("input")!;
+    await user.click(checkbox);
+    expect(onToggle).toHaveBeenCalledOnce();
   });
 });
