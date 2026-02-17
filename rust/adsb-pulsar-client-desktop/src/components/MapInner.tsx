@@ -163,15 +163,15 @@ function DotsLayer({
 }: {
   tracks: AircraftTrack[];
   colorMode: AltitudeColorMode;
-  type: "history" | "live";
+  type: "history" | "live" | "imported";
   selectedHexIdent: string | null;
 }) {
   const map = useMap();
 
   useEffect(() => {
     const markers: L.CircleMarker[] = [];
-    const baseRadius = type === "history" ? 2 : 3;
-    const baseFillOpacity = type === "history" ? 0.2 : 0.6;
+    const baseRadius = type === "history" ? 2 : type === "imported" ? 2.5 : 3;
+    const baseFillOpacity = type === "history" ? 0.2 : type === "imported" ? 0.35 : 0.6;
 
     for (const t of tracks) {
       if (t.positions.length < 2) continue;
@@ -207,6 +207,10 @@ function DotsLayer({
             parts.push(`</div>`);
             return parts.join("");
           });
+        } else if (type === "imported") {
+          marker.bindTooltip(() =>
+            `<div class="text-xs"><div class="font-bold">${label}</div><div>Hex: ${t.hex_ident}</div><div>Alt: ${formatAlt(pos[2])}</div><div class="text-indigo-400">Imported</div></div>`
+          );
         } else {
           marker.bindTooltip(() =>
             `<div class="text-xs"><div class="font-bold">${label}</div><div>Alt: ${formatAlt(pos[2])}</div></div>`
@@ -296,8 +300,11 @@ export function MapInner({ tracks, historyTracks, importedTracks = [], mapTheme,
           );
         })}
 
-        {/* Imported tracks — dashed indigo polylines, no markers */}
-        {importedTracks.map((t) => {
+        {/* Imported tracks — dots or dashed indigo polylines */}
+        {trajectoryStyle === "dots" && importedTracks.length > 0 && (
+          <DotsLayer tracks={importedTracks} colorMode="plot" type="imported" selectedHexIdent={null} />
+        )}
+        {trajectoryStyle === "line" && importedTracks.map((t) => {
           if (t.positions.length < 2) return null;
           return (
             <Polyline
