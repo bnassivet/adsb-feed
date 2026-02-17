@@ -12,6 +12,7 @@ import { useMetrics } from "@/hooks/useMetrics";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { startFeed, stopFeed } from "@/lib/commands";
+import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
 import { DEFAULT_FILTERS } from "@/lib/types";
 import type { Filters, DensityMetric, AltitudeColorMode } from "@/lib/types";
 import Link from "next/link";
@@ -35,7 +36,8 @@ export default function Dashboard() {
 
   const [selectedHexIdent, setSelectedHexIdent] = useState<string | null>(null);
 
-  const { tracks, history } = useAircraftTracks(filters);
+  const { tracks, history, imported, importTracks, clearImported } = useAircraftTracks(filters);
+  const [showImported, setShowImported] = useLocalStorage<boolean>("adsb-show-imported", true);
   const simulatedTracks = useSimulatedTracks(showSimulation);
   const allTracks = useMemo(() => [...tracks, ...simulatedTracks], [tracks, simulatedTracks]);
   const metrics = useMetrics();
@@ -43,6 +45,7 @@ export default function Dashboard() {
   const isRunning = status.is_running;
 
   const visibleHistory = showHistory ? history : [];
+  const visibleImported = showImported ? imported : [];
 
   // Toggle selection: clicking same track deselects, clicking different selects
   const handleSelectTrack = useCallback((hexIdent: string | null) => {
@@ -75,6 +78,29 @@ export default function Dashboard() {
 
   function handleToggleSimulation() {
     setShowSimulation((prev: boolean) => !prev);
+  }
+
+  function handleToggleImported() {
+    setShowImported((prev: boolean) => !prev);
+  }
+
+  async function handleExport() {
+    try {
+      setError(null);
+      await exportTracksToFile(tracks, history);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function handleImport() {
+    try {
+      setError(null);
+      const importedTracks = await importTracksFromFile();
+      if (importedTracks) importTracks(importedTracks);
+    } catch (e) {
+      setError(String(e));
+    }
   }
 
   const handleResize = useCallback(
@@ -142,6 +168,29 @@ export default function Dashboard() {
               {error}
             </span>
           )}
+          <button
+            onClick={handleExport}
+            className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded transition"
+            title="Export tracks to GeoJSON"
+          >
+            Export
+          </button>
+          <button
+            onClick={handleImport}
+            className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded transition"
+            title="Import tracks from GeoJSON"
+          >
+            Import
+          </button>
+          {imported.length > 0 && (
+            <button
+              onClick={clearImported}
+              className="px-3 py-1.5 bg-slate-700 hover:bg-red-600 text-slate-400 hover:text-white text-sm rounded transition"
+              title="Clear imported tracks"
+            >
+              Clear import
+            </button>
+          )}
           {isRunning ? (
             <button
               onClick={handleStop}
@@ -189,6 +238,10 @@ export default function Dashboard() {
               onLiveColorModeChange={setLiveColorMode}
               historyColorMode={historyColorMode}
               onHistoryColorModeChange={setHistoryColorMode}
+              importedCount={imported.length}
+              showImported={showImported}
+              onToggleImported={handleToggleImported}
+              onClearImported={clearImported}
             />
           </aside>
         )}
@@ -197,7 +250,7 @@ export default function Dashboard() {
         <main className="flex-1 flex flex-col overflow-hidden">
           {/* Map — takes remaining space */}
           <div className="flex-1 min-h-0">
-            <Map tracks={allTracks} historyTracks={visibleHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} />
+            <Map tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} />
           </div>
 
           {/* Resize handle */}
@@ -208,7 +261,7 @@ export default function Dashboard() {
             className="bg-slate-900 overflow-hidden flex-shrink-0"
             style={{ height: tableHeight }}
           >
-            <AircraftTable tracks={allTracks} historyTracks={visibleHistory} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} />
+            <AircraftTable tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} />
           </div>
         </main>
       </div>

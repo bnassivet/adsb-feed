@@ -130,6 +130,47 @@ describe("AircraftTable selection", () => {
   });
 });
 
+describe("collapsible sections", () => {
+  it("renders history section header with track count", () => {
+    render(<AircraftTable tracks={[]} historyTracks={[makeTrack("H1")]} />);
+    expect(screen.getByText(/History/)).toBeInTheDocument();
+    expect(screen.getByText(/\(1\)/)).toBeInTheDocument();
+  });
+
+  it("collapses history rows when header is clicked", async () => {
+    const user = userEvent.setup();
+    render(<AircraftTable tracks={[]} historyTracks={[makeTrack("H1")]} />);
+
+    expect(screen.getByTestId("row-hist-H1")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("history-section-header"));
+    expect(screen.queryByTestId("row-hist-H1")).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("history-section-header"));
+    expect(screen.getByTestId("row-hist-H1")).toBeInTheDocument();
+  });
+
+  it("renders imported section header with track count", () => {
+    render(<AircraftTable tracks={[]} importedTracks={[makeTrack("I1")]} />);
+    expect(screen.getByText(/Imported/)).toBeInTheDocument();
+  });
+
+  it("collapses imported rows when header is clicked", async () => {
+    const user = userEvent.setup();
+    render(<AircraftTable tracks={[]} importedTracks={[makeTrack("I1")]} />);
+
+    expect(screen.getByTestId("row-imported-I1")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("imported-section-header"));
+    expect(screen.queryByTestId("row-imported-I1")).not.toBeInTheDocument();
+  });
+
+  it("hides imported section when no imported tracks", () => {
+    render(<AircraftTable tracks={[]} importedTracks={[]} />);
+    expect(screen.queryByTestId("imported-section-header")).not.toBeInTheDocument();
+  });
+});
+
 describe("AircraftTable columns", () => {
   it("renders RxTS column header", () => {
     render(<AircraftTable tracks={[makeTrack("ABC123")]} />);

@@ -16,13 +16,16 @@ type SortKey =
 interface Props {
   tracks: AircraftTrack[];
   historyTracks?: AircraftTrack[];
+  importedTracks?: AircraftTrack[];
   selectedHexIdent?: string | null;
   onSelectTrack?: (hex: string) => void;
 }
 
-export function AircraftTable({ tracks, historyTracks = [], selectedHexIdent, onSelectTrack }: Props) {
+export function AircraftTable({ tracks, historyTracks = [], importedTracks = [], selectedHexIdent, onSelectTrack }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("callsign");
   const [sortAsc, setSortAsc] = useState(true);
+  const [historyCollapsed, setHistoryCollapsed] = useState(false);
+  const [importedCollapsed, setImportedCollapsed] = useState(false);
 
   function sortTracks(list: AircraftTrack[]) {
     return [...list].sort((a, b) => {
@@ -38,6 +41,7 @@ export function AircraftTable({ tracks, historyTracks = [], selectedHexIdent, on
 
   const sorted = sortTracks(tracks);
   const sortedHistory = sortTracks(historyTracks);
+  const sortedImported = sortTracks(importedTracks);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll selected row into view
@@ -147,19 +151,23 @@ export function AircraftTable({ tracks, historyTracks = [], selectedHexIdent, on
             );
           })}
 
-          {/* History divider */}
+          {/* History header — collapsible */}
           {sortedHistory.length > 0 && (
-            <tr>
+            <tr
+              data-testid="history-section-header"
+              className="cursor-pointer select-none"
+              onClick={() => setHistoryCollapsed(prev => !prev)}
+            >
               <td colSpan={11} className="px-3 py-1 bg-slate-800/80">
                 <span className="text-[10px] text-slate-500 uppercase tracking-wider">
-                  History ({sortedHistory.length})
+                  {historyCollapsed ? "\u25B8" : "\u25BE"} History ({sortedHistory.length})
                 </span>
               </td>
             </tr>
           )}
 
           {/* History rows — dimmed */}
-          {sortedHistory.map((t) => {
+          {!historyCollapsed && sortedHistory.map((t) => {
             const isSelected = t.hex_ident === selectedHexIdent;
             return (
             <tr
@@ -211,7 +219,47 @@ export function AircraftTable({ tracks, historyTracks = [], selectedHexIdent, on
             );
           })}
 
-          {sorted.length === 0 && sortedHistory.length === 0 && (
+          {/* Imported header — collapsible */}
+          {sortedImported.length > 0 && (
+            <tr
+              data-testid="imported-section-header"
+              className="cursor-pointer select-none"
+              onClick={() => setImportedCollapsed(prev => !prev)}
+            >
+              <td colSpan={11} className="px-3 py-1 bg-indigo-900/30">
+                <span className="text-[10px] text-indigo-400 uppercase tracking-wider">
+                  {importedCollapsed ? "\u25B8" : "\u25BE"} Imported ({sortedImported.length})
+                </span>
+              </td>
+            </tr>
+          )}
+
+          {/* Imported rows — indigo tint */}
+          {!importedCollapsed && sortedImported.map((t) => (
+            <tr
+              key={`imported-${t.hex_ident}`}
+              data-testid={`row-imported-${t.hex_ident}`}
+              data-hex={t.hex_ident}
+              onClick={() => onSelectTrack?.(t.hex_ident)}
+              className={`border-b border-slate-800 opacity-60${onSelectTrack ? " cursor-pointer" : ""}`}
+            >
+              <td className="px-3 py-1.5 font-mono font-semibold text-indigo-300">{t.callsign ?? "—"}</td>
+              <td className="px-3 py-1.5 font-mono text-indigo-400/60">{t.hex_ident}</td>
+              <td className="px-3 py-1.5 font-mono">
+                <span style={{ color: altitudeToColor(t.altitude) }}>{t.altitude?.toLocaleString() ?? "—"}</span>
+              </td>
+              <td className="px-3 py-1.5 font-mono">{t.ground_speed?.toFixed(0) ?? "—"}</td>
+              <td className="px-3 py-1.5 font-mono">{t.track?.toFixed(0) ?? "—"}{t.track !== null ? "\u00B0" : ""}</td>
+              <td className="px-3 py-1.5 font-mono">{t.vertical_rate?.toFixed(0) ?? "—"}</td>
+              <td className="px-3 py-1.5 font-mono text-slate-400">{t.squawk ?? "—"}</td>
+              <td className="px-3 py-1.5 font-mono text-slate-500">{t.latitude?.toFixed(4) ?? "—"}</td>
+              <td className="px-3 py-1.5 font-mono text-slate-500">{t.longitude?.toFixed(4) ?? "—"}</td>
+              <td className="px-3 py-1.5 font-mono text-slate-500">{timeAgo(t.last_seen)}</td>
+              <td className="px-3 py-1.5 font-mono text-slate-400">{t.message_count.toLocaleString()}</td>
+            </tr>
+          ))}
+
+          {sorted.length === 0 && sortedHistory.length === 0 && sortedImported.length === 0 && (
             <tr>
               <td
                 colSpan={11}

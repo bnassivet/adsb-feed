@@ -77,6 +77,7 @@ function MapClickHandler({ onDeselect }: { onDeselect: () => void }) {
 interface Props {
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];
+  importedTracks?: AircraftTrack[];
   mapTheme: "light" | "dark";
   onToggleTheme: () => void;
   trajectoryStyle: "line" | "dots";
@@ -227,7 +228,7 @@ function DotsLayer({
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, liveColorMode, historyColorMode, selectedHexIdent, onSelectTrack }: Props) {
+export function MapInner({ tracks, historyTracks, importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, liveColorMode, historyColorMode, selectedHexIdent, onSelectTrack }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
 
   // Reorder tracks so selected renders on top (last in array = top layer)
@@ -289,6 +290,34 @@ export function MapInner({ tracks, historyTracks, mapTheme, onToggleTheme, traje
                   <div>Hex: {t.hex_ident}</div>
                   <div>Alt: {formatAlt(t.altitude)}</div>
                   <div>Last seen: {timeAgo(t.last_seen)}</div>
+                </div>
+              </Tooltip>
+            </Polyline>
+          );
+        })}
+
+        {/* Imported tracks — dashed indigo polylines, no markers */}
+        {importedTracks.map((t) => {
+          if (t.positions.length < 2) return null;
+          return (
+            <Polyline
+              key={`imported-${t.hex_ident}`}
+              positions={toLatLngs(t.positions)}
+              pathOptions={{
+                color: "#818cf8",
+                weight: 2,
+                opacity: 0.5,
+                dashArray: "6 4",
+              }}
+            >
+              <Tooltip sticky>
+                <div className="text-xs">
+                  <div className="font-bold">
+                    {t.callsign ?? t.hex_ident}
+                  </div>
+                  <div>Hex: {t.hex_ident}</div>
+                  <div>Alt: {formatAlt(t.altitude)}</div>
+                  <div className="text-indigo-400">Imported</div>
                 </div>
               </Tooltip>
             </Polyline>

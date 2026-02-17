@@ -23,6 +23,10 @@ function renderFilters(overrides = {}) {
     onLiveColorModeChange: vi.fn(),
     historyColorMode: "track" as const,
     onHistoryColorModeChange: vi.fn(),
+    importedCount: 0,
+    showImported: false,
+    onToggleImported: vi.fn(),
+    onClearImported: vi.fn(),
     ...overrides,
   };
   return { ...render(<FiltersPanel {...defaultProps} />), props: defaultProps };
@@ -93,5 +97,35 @@ describe("FiltersPanel", () => {
     const select = screen.getByLabelText("History tracks");
     await user.selectOptions(select, "plot");
     expect(onHistoryColorModeChange).toHaveBeenCalledWith("plot");
+  });
+});
+
+describe("imported tracks section", () => {
+  it("shows imported toggle when importedCount > 0", () => {
+    renderFilters({ importedCount: 5, showImported: true });
+    expect(screen.getByText(/Show imported/)).toBeInTheDocument();
+    expect(screen.getByText("(5)")).toBeInTheDocument();
+  });
+
+  it("hides imported section when importedCount is 0", () => {
+    renderFilters({ importedCount: 0 });
+    expect(screen.queryByText(/Show imported/)).not.toBeInTheDocument();
+  });
+
+  it("calls onClearImported when clear button clicked", async () => {
+    const user = userEvent.setup();
+    const onClearImported = vi.fn();
+    renderFilters({ importedCount: 3, showImported: true, onClearImported });
+    await user.click(screen.getByText("Clear"));
+    expect(onClearImported).toHaveBeenCalledOnce();
+  });
+
+  it("calls onToggleImported when checkbox toggled", async () => {
+    const user = userEvent.setup();
+    const onToggleImported = vi.fn();
+    renderFilters({ importedCount: 2, showImported: false, onToggleImported });
+    const checkbox = screen.getByText(/Show imported/).closest("label")!.querySelector("input")!;
+    await user.click(checkbox);
+    expect(onToggleImported).toHaveBeenCalledOnce();
   });
 });

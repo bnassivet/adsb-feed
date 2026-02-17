@@ -8,6 +8,19 @@
     "core:event:default",
     "core:window:default",
     "store:default",
-    "shell:default"
+    "shell:default",
+    "dialog:default",
+    "fs:default",
+    "fs:allow-write-text-file",
+    "fs:allow-read-text-file",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$DOWNLOAD/**" },
+        { "path": "$DESKTOP/**" },
+        { "path": "$DOCUMENT/**" }
+      ]
+    }
   ]
 }

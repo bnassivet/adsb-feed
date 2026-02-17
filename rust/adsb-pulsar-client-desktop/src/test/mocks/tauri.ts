@@ -37,6 +37,38 @@ vi.mock("@tauri-apps/api/core", () => ({
   }),
 }));
 
+// Mock @tauri-apps/plugin-dialog
+const mockDialogSave = vi.fn<() => Promise<string | null>>().mockResolvedValue(null);
+const mockDialogOpen = vi.fn<() => Promise<string | null>>().mockResolvedValue(null);
+
+export function mockSaveDialogResponse(path: string | null): void {
+  mockDialogSave.mockResolvedValueOnce(path);
+}
+
+export function mockOpenDialogResponse(path: string | null): void {
+  mockDialogOpen.mockResolvedValueOnce(path);
+}
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  save: () => mockDialogSave(),
+  open: () => mockDialogOpen(),
+}));
+
+// Mock @tauri-apps/plugin-fs
+const mockWriteTextFile = vi.fn<(path: string, content: string) => Promise<void>>().mockResolvedValue(undefined);
+const mockReadTextFile = vi.fn<(path: string) => Promise<string>>().mockResolvedValue("");
+
+export function mockReadFileResponse(content: string): void {
+  mockReadTextFile.mockResolvedValueOnce(content);
+}
+
+export { mockWriteTextFile, mockReadTextFile };
+
+vi.mock("@tauri-apps/plugin-fs", () => ({
+  writeTextFile: (path: string, content: string) => mockWriteTextFile(path, content),
+  readTextFile: (path: string) => mockReadTextFile(path),
+}));
+
 // Mock @tauri-apps/api/event
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (event: string, handler: EventCallback): Promise<UnlistenFn> => {

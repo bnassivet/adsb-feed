@@ -11,7 +11,10 @@ const CLEANUP_INTERVAL_MS = 15_000; // TTL cleanup every 15 seconds
 interface AircraftTrackingContextValue {
   tracks: Map<string, AircraftTrack>;
   history: Map<string, AircraftTrack>;
+  imported: Map<string, AircraftTrack>;
   version: number;
+  importTracks: (tracks: AircraftTrack[]) => void;
+  clearImported: () => void;
 }
 
 const AircraftTrackingContext = createContext<AircraftTrackingContextValue | null>(null);
@@ -51,7 +54,22 @@ export function mergePositionInto(track: AircraftTrack, pos: AircraftPosition, n
 export function AircraftTrackingProvider({ children }: { children: ReactNode }) {
   const tracksRef = useRef<Map<string, AircraftTrack>>(new Map());
   const historyRef = useRef<Map<string, AircraftTrack>>(new Map());
+  const importedRef = useRef<Map<string, AircraftTrack>>(new Map());
   const [updateCounter, setUpdateCounter] = useState(0);
+
+  const importTracks = useCallback((tracks: AircraftTrack[]) => {
+    const map = importedRef.current;
+    map.clear();
+    for (const t of tracks) {
+      map.set(t.hex_ident, t);
+    }
+    setUpdateCounter((c) => c + 1);
+  }, []);
+
+  const clearImported = useCallback(() => {
+    importedRef.current.clear();
+    setUpdateCounter((c) => c + 1);
+  }, []);
 
   const handleBatch = useCallback((batch: AircraftPosition[]) => {
     const now = Date.now();
@@ -135,8 +153,15 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
 
   // Fix 4: memoize context value — only creates new object when updateCounter changes
   const value = useMemo<AircraftTrackingContextValue>(
-    () => ({ tracks: tracksRef.current, history: historyRef.current, version: updateCounter }),
-    [updateCounter],
+    () => ({
+      tracks: tracksRef.current,
+      history: historyRef.current,
+      imported: importedRef.current,
+      version: updateCounter,
+      importTracks,
+      clearImported,
+    }),
+    [updateCounter, importTracks, clearImported],
   );
 
   return (

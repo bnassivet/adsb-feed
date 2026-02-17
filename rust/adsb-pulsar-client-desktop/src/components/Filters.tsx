@@ -19,9 +19,13 @@ interface Props {
   onLiveColorModeChange: (mode: AltitudeColorMode) => void;
   historyColorMode: AltitudeColorMode;
   onHistoryColorModeChange: (mode: AltitudeColorMode) => void;
+  importedCount: number;
+  showImported: boolean;
+  onToggleImported: () => void;
+  onClearImported: () => void;
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported }: Props) {
   return (
     <div className="flex flex-col gap-4 p-4">
       <div>
@@ -129,6 +133,30 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
           </span>
         </label>
       </div>
+
+      {/* Imported overlay toggle — only visible when imported tracks exist */}
+      {importedCount > 0 && (
+        <div>
+          <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showImported}
+              onChange={onToggleImported}
+              className="accent-indigo-500"
+            />
+            <span>
+              Show imported{" "}
+              <span className="text-indigo-400/60 font-mono">({importedCount})</span>
+            </span>
+          </label>
+          <button
+            onClick={onClearImported}
+            className="mt-1 ml-5 text-[10px] text-slate-500 hover:text-red-400 transition"
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       {/* Density overlay */}
       <div>

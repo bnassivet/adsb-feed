@@ -35,7 +35,7 @@ export function matchesFilters(t: AircraftTrack, filters: Filters): boolean {
  * @returns Filtered active tracks and history tracks
  */
 export function useAircraftTracks(filters: Filters) {
-  const { tracks: tracksMap, history: historyMap, version } = useAircraftTrackingContext();
+  const { tracks: tracksMap, history: historyMap, imported: importedMap, version, importTracks, clearImported } = useAircraftTrackingContext();
 
   const tracks = useMemo(
     () => Array.from(tracksMap.values()).filter((t) => matchesFilters(t, filters)),
@@ -50,5 +50,11 @@ export function useAircraftTracks(filters: Filters) {
     [version, filters],
   );
 
-  return { tracks, history };
+  const imported = useMemo(
+    () => Array.from(importedMap.values()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [version],
+  );
+
+  return { tracks, history, imported, importTracks, clearImported };
 }
