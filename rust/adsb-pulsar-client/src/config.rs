@@ -1,4 +1,4 @@
-//! Configuration for the ADS-B Pulsar client.
+//! Configuration for the ADS-B feed client.
 //!
 //! This module defines the configuration structure and command-line arguments
 //! for the client. All configuration can be provided via:
@@ -26,6 +26,44 @@ pub enum ConnectionMode {
     Server,
 }
 
+/// Kind of message forwarder backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ForwarderKind {
+    /// Apache Pulsar (default)
+    #[default]
+    Pulsar,
+    /// File output (one SBS-1 line per message)
+    File,
+    /// No-op (discard messages; used in test mode and Tauri app)
+    Noop,
+}
+
+impl std::fmt::Display for ForwarderKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ForwarderKind::Pulsar => write!(f, "pulsar"),
+            ForwarderKind::File => write!(f, "file"),
+            ForwarderKind::Noop => write!(f, "noop"),
+        }
+    }
+}
+
+impl std::str::FromStr for ForwarderKind {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "pulsar" => Ok(ForwarderKind::Pulsar),
+            "file" => Ok(ForwarderKind::File),
+            "noop" => Ok(ForwarderKind::Noop),
+            other => Err(format!(
+                "Unknown forwarder kind: '{}'. Expected: pulsar, file, noop",
+                other
+            )),
+        }
+    }
+}
+
 /// Command-line arguments and runtime configuration.
 ///
 /// All fields can be set via command-line arguments or environment variables
@@ -48,7 +86,7 @@ pub enum ConnectionMode {
     feature = "cli",
     command(
         name = "adsb-pulsar-client",
-        about = "ADS-B Feed Client - Forward dump1090 SBS-1 messages to Apache Pulsar",
+        about = "ADS-B Feed Client - Forward dump1090 SBS-1 messages to pluggable backends",
         version
     )
 )]
@@ -223,10 +261,10 @@ pub struct Config {
     #[serde(default = "default_pulsar_batch_max_messages")]
     pub pulsar_batch_max_messages: u32,
 
-    /// Run in test mode (no Pulsar, just log messages)
+    /// Run in test mode (no forwarder connections, just log messages)
     #[cfg_attr(
         feature = "cli",
-        arg(long, help = "Run in test mode without Pulsar (display messages only)")
+        arg(long, help = "Run in test mode (display messages only, no forwarding)")
     )]
     #[serde(default)]
     pub test_mode: bool,
@@ -254,6 +292,30 @@ pub struct Config {
     )]
     #[serde(default = "default_connection_mode")]
     pub connection_mode: String,
+
+    /// Forwarder backends to use (can be specified multiple times)
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "forwarder",
+            default_value = "pulsar",
+            help = "Forwarder backend: pulsar, file, noop (can be repeated)"
+        )
+    )]
+    #[serde(default = "default_forwarders")]
+    pub forwarders: Vec<ForwarderKind>,
+
+    /// Output file path for the file forwarder
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "file-path",
+            default_value_t = default_file_path(),
+            help = "Output file path for the file forwarder"
+        )
+    )]
+    #[serde(default = "default_file_path")]
+    pub file_path: String,
 }
 
 // Default value functions for serde
@@ -308,6 +370,15 @@ fn default_log_level() -> String {
 fn default_connection_mode() -> String {
     "client".to_string()
 }
+fn default_forwarders() -> Vec<ForwarderKind> {
+    vec![ForwarderKind::Pulsar]
+}
+fn default_file_path() -> String {
+    format!(
+        "adsb_messages_{}.sbs",
+        chrono::Local::now().format("%Y%m%d_%H%M")
+    )
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -330,6 +401,8 @@ impl Default for Config {
             test_mode: false,
             log_level: default_log_level(),
             connection_mode: default_connection_mode(),
+            forwarders: default_forwarders(),
+            file_path: default_file_path(),
         }
     }
 }
@@ -339,7 +412,7 @@ impl Config {
     ///
     /// Checks for:
     /// - Non-empty source_id
-    /// - Valid Pulsar broker URL format
+    /// - Valid Pulsar broker URL format (only when Pulsar forwarder is selected)
     /// - Valid connection mode string
     /// - Non-zero buffer sizes
     pub fn validate(&self) -> Result<()> {
@@ -348,8 +421,9 @@ impl Config {
             return Err(ClientError::Config("source_id cannot be empty".into()));
         }
 
-        // Validate Pulsar broker URL
-        if !self.pulsar_broker.starts_with("pulsar://")
+        // Validate Pulsar broker URL only when Pulsar forwarder is configured
+        if self.forwarders.contains(&ForwarderKind::Pulsar)
+            && !self.pulsar_broker.starts_with("pulsar://")
             && !self.pulsar_broker.starts_with("pulsar+ssl://")
         {
             return Err(ClientError::Config(
@@ -568,5 +642,64 @@ mod tests {
         );
         assert_eq!(original.test_mode, deserialized.test_mode);
         assert_eq!(original.connection_mode, deserialized.connection_mode);
+        assert_eq!(original.forwarders, deserialized.forwarders);
+    }
+
+    #[test]
+    fn test_validate_file_forwarder_skips_broker_check() {
+        let mut config = Config::default();
+        config.forwarders = vec![ForwarderKind::File];
+        config.pulsar_broker = "not-a-valid-url".to_string();
+        // Should pass because Pulsar broker is not checked when not using Pulsar
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_noop_forwarder_skips_broker_check() {
+        let mut config = Config::default();
+        config.forwarders = vec![ForwarderKind::Noop];
+        config.pulsar_broker = "garbage".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_forwarder_kind_display() {
+        assert_eq!(ForwarderKind::Pulsar.to_string(), "pulsar");
+        assert_eq!(ForwarderKind::File.to_string(), "file");
+        assert_eq!(ForwarderKind::Noop.to_string(), "noop");
+    }
+
+    #[test]
+    fn test_forwarder_kind_from_str() {
+        assert_eq!(
+            "pulsar".parse::<ForwarderKind>().unwrap(),
+            ForwarderKind::Pulsar
+        );
+        assert_eq!(
+            "file".parse::<ForwarderKind>().unwrap(),
+            ForwarderKind::File
+        );
+        assert_eq!(
+            "noop".parse::<ForwarderKind>().unwrap(),
+            ForwarderKind::Noop
+        );
+        assert_eq!(
+            "PULSAR".parse::<ForwarderKind>().unwrap(),
+            ForwarderKind::Pulsar
+        );
+        assert!("unknown".parse::<ForwarderKind>().is_err());
+    }
+
+    #[test]
+    fn test_default_forwarders_is_pulsar() {
+        let config = Config::default();
+        assert_eq!(config.forwarders, vec![ForwarderKind::Pulsar]);
+    }
+
+    #[test]
+    fn test_default_file_path_has_timestamp() {
+        let config = Config::default();
+        assert!(config.file_path.starts_with("adsb_messages_"));
+        assert!(config.file_path.ends_with(".sbs"));
     }
 }

@@ -11,8 +11,11 @@ rust-version = "1.75"
 # Async runtime
 tokio = { workspace = true }
 
+# Async trait for dyn dispatch
+async-trait = "0.1"
+
 # Pulsar client
-pulsar = { version = "6.3", default-features = false, features = ["tokio-runtime", "compression"] }
+pulsar = { version = "6.3", default-features = false, features = ["tokio-runtime", "compression"], optional = true }
 
 # CLI argument parsing (optional, for CLI binary)
 clap = { version = "4.5", features = ["derive", "env"], optional = true }
@@ -41,10 +44,12 @@ bytes = "1.7"
 [dev-dependencies]
 tokio-test = "0.4"
 serde_json = { workspace = true }
+tempfile = "3"
 
 [features]
-default = ["cli"]
+default = ["cli", "pulsar"]
 cli = ["clap"]
+pulsar = ["dep:pulsar"]
 metrics = ["prometheus"]
 
 [lib]

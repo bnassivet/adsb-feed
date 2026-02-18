@@ -5,6 +5,7 @@
 
 mod common;
 
+use adsb_pulsar_client::forwarder::NoopForwarder;
 use adsb_pulsar_client::ADSBFeedClient;
 use common::{
     test_config_for_port, MockDump1090, SBS_MSG1_CALLSIGN, SBS_MSG3_POSITION, SBS_MSG4_SPEED,
@@ -18,7 +19,7 @@ async fn test_client_connects_receives_messages() {
     let port = mock.port();
 
     let config = test_config_for_port(port);
-    let mut client = ADSBFeedClient::new(config).unwrap();
+    let mut client = ADSBFeedClient::new(config, vec![Box::new(NoopForwarder)]).unwrap();
     let mut tap = client.with_message_tap(100);
 
     let lines = vec![
@@ -58,7 +59,7 @@ async fn test_message_tap_delivers_all() {
     let port = mock.port();
 
     let config = test_config_for_port(port);
-    let mut client = ADSBFeedClient::new(config).unwrap();
+    let mut client = ADSBFeedClient::new(config, vec![Box::new(NoopForwarder)]).unwrap();
     let mut tap = client.with_message_tap(200);
 
     let n = 10;
@@ -101,7 +102,7 @@ async fn test_client_shutdown_stops_cleanly() {
     let port = mock.port();
 
     let config = test_config_for_port(port);
-    let mut client = ADSBFeedClient::new(config).unwrap();
+    let mut client = ADSBFeedClient::new(config, vec![Box::new(NoopForwarder)]).unwrap();
 
     // Keep mock alive to accept connection and keep sending
     let mock_handle = tokio::spawn(async move {
@@ -115,9 +116,6 @@ async fn test_client_shutdown_stops_cleanly() {
         }
     });
 
-    // Use the public shutdown() method via a shared reference trick:
-    // We call shutdown before moving client into the task by cloning
-    // the watch sender through a closure.
     let metrics = client.metrics();
 
     let client_handle = tokio::spawn(async move { client.run().await });
@@ -129,10 +127,6 @@ async fn test_client_shutdown_stops_cleanly() {
         "should have processed some messages"
     );
 
-    // We can't call client.shutdown() after move, but we can abort
-    // and verify the metrics were correct up to this point.
-    // For a proper shutdown test, we'd need to restructure the API.
-    // For now, abort is sufficient to verify the client was running.
     client_handle.abort();
     mock_handle.abort();
 }
@@ -143,7 +137,7 @@ async fn test_client_handles_disconnect() {
     let port = mock.port();
 
     let config = test_config_for_port(port);
-    let mut client = ADSBFeedClient::new(config).unwrap();
+    let mut client = ADSBFeedClient::new(config, vec![Box::new(NoopForwarder)]).unwrap();
     let metrics = client.metrics();
 
     let lines = vec![SBS_MSG3_POSITION.to_string()];
@@ -172,7 +166,7 @@ async fn test_large_burst() {
     let port = mock.port();
 
     let config = test_config_for_port(port);
-    let mut client = ADSBFeedClient::new(config).unwrap();
+    let mut client = ADSBFeedClient::new(config, vec![Box::new(NoopForwarder)]).unwrap();
     let mut tap = client.with_message_tap(500);
 
     let n = 100;

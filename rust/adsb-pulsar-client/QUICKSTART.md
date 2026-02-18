@@ -35,10 +35,10 @@ make release
 
 ## 2. Test Locally
 
-### Test Mode (No Pulsar)
+### Test Mode (no backend needed)
 
 ```bash
-# Run against local dump1090 and just display messages
+# Connect to dump1090 and count messages — no backend required
 ./target/debug/adsb-pulsar-client \
   --socket-host localhost \
   --socket-port 30003 \
@@ -46,15 +46,41 @@ make release
   --log-level debug
 ```
 
+### Write to a Local File (no Pulsar needed)
+
+```bash
+# Forward messages to a file — useful for offline analysis or testing
+./target/debug/adsb-pulsar-client \
+  --forwarder file \
+  --file-path /tmp/adsb_test.sbs \
+  --socket-host localhost \
+  --socket-port 30003 \
+  --log-level debug
+```
+
 ### With Local Pulsar
 
 ```bash
-# Make sure Pulsar is running locally
+# Start Pulsar
 docker run -it -p 6650:6650 -p 8080:8080 apachepulsar/pulsar:latest bin/pulsar standalone
 
-# Run the client
+# Forward to Pulsar
 ./target/release/adsb-pulsar-client \
   --source-id my-local-test \
+  --socket-host localhost \
+  --socket-port 30003 \
+  --pulsar-broker pulsar://localhost:6650 \
+  --pulsar-topic persistent://public/default/adsb-test
+```
+
+### Forward to Pulsar and File Simultaneously
+
+```bash
+# Fan-out to both backends at once
+./target/release/adsb-pulsar-client \
+  --forwarder pulsar \
+  --forwarder file \
+  --file-path /tmp/adsb_backup.sbs \
   --socket-host localhost \
   --socket-port 30003 \
   --pulsar-broker pulsar://localhost:6650 \
@@ -189,3 +215,115 @@ make release
 2. **Tune batch settings** for your use case (see README.md)
 3. **Monitor with journalctl** to track performance
 4. **Use systemd** for automatic restarts and logging
+
+---
+
+## Developer Guide — Multi-Forwarder Configuration
+
+### Using the Library Directly
+
+When embedding `adsb-pulsar-client` as a library you construct forwarders manually and pass them
+to `ADSBFeedClient::new`:
+
+```rust
+use adsb_pulsar_client::{ADSBFeedClient, Config};
+use adsb_pulsar_client::forwarder::{MessageForwarder, NoopForwarder};
+use adsb_pulsar_client::forwarder::file::FileForwarder;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = Config::default();
+
+    // Build forwarder list — order doesn't matter
+    let forwarders: Vec<Box<dyn MessageForwarder>> = vec![
+        Box::new(FileForwarder::new("/tmp/adsb.sbs".into())),
+        Box::new(NoopForwarder),   // swap in PulsarForwarder for production
+    ];
+
+    let mut client = ADSBFeedClient::new(config, forwarders)?;
+    client.run().await?;
+    Ok(())
+}
+```
+
+### Implementing a Custom Forwarder
+
+```rust
+use adsb_pulsar_client::forwarder::MessageForwarder;
+use adsb_pulsar_client::error::Result;
+
+pub struct MyForwarder { connected: bool }
+
+#[async_trait::async_trait]
+impl MessageForwarder for MyForwarder {
+    async fn connect(&mut self) -> Result<()> {
+        self.connected = true;
+        Ok(())
+    }
+    async fn send(&mut self, message: &[u8]) -> Result<()> {
+        // deliver message to your backend
+        Ok(())
+    }
+    async fn flush(&mut self) -> Result<()> { Ok(()) }
+    async fn disconnect(&mut self) -> Result<()> {
+        self.connected = false;
+        Ok(())
+    }
+    fn is_connected(&self) -> bool { self.connected }
+    fn name(&self) -> &str { "my-backend" }
+}
+```
+
+**Contract to implement:**
+- Return `Err` from `send()` if delivery fails — the client will call `disconnect()` and retry.
+- `is_connected()` controls whether the client calls `send()` or enqueues for retry.
+- `flush()` is called on every housekeeping tick (~500 ms); buffer aggressively, flush here.
+- See [`docs/DESIGN.md`](docs/DESIGN.md) for the full interface specification.
+
+### Observing Messages with the Tap Channel
+
+```rust
+let mut client = ADSBFeedClient::new(config, forwarders)?;
+
+// Attach a broadcast receiver before run()
+let mut tap = client.with_message_tap(1024);
+
+tokio::spawn(async move {
+    while let Ok(msg) = tap.recv().await {
+        println!("saw: {}", String::from_utf8_lossy(&msg));
+    }
+});
+
+client.run().await?;
+```
+
+The tap is fire-and-forget — a slow consumer only drops its own messages, never blocks forwarding.
+
+### Feature Flags
+
+| Feature | Default | Notes |
+|---------|---------|-------|
+| `pulsar` | **on** | Include Pulsar dependency and `PulsarForwarder` |
+| `cli` | **on** | Include `clap` derive on `Config` (gates the binary) |
+
+Disable Pulsar for lightweight embeddings:
+
+```toml
+[dependencies]
+adsb-pulsar-client = { path = "…", default-features = false, features = ["cli"] }
+```
+
+### Running Tests
+
+```bash
+# All tests (77 unit + integration + doc-tests)
+cargo test -p adsb-pulsar-client
+
+# Without Pulsar feature (checks no pulsar-only code leaks)
+cargo test -p adsb-pulsar-client --no-default-features --features cli
+
+# CI gate
+cargo test -p adsb-pulsar-client && \
+  cargo clippy -p adsb-pulsar-client -- -D warnings && \
+  cargo fmt --check
+```

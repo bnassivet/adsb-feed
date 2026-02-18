@@ -1,23 +1,22 @@
-//! Core ADS-B Pulsar client implementation.
+//! Core ADS-B feed client implementation.
 //!
 //! This module contains the main [`ADSBFeedClient`] struct which handles:
 //! - TCP socket connections to dump1090
-//! - Apache Pulsar producer for message forwarding
-//! - Automatic reconnection with exponential backoff
-//! - Message retry queue for reliability
+//! - Fan-out message forwarding to pluggable backends
+//! - Per-forwarder retry queues for reliability
 //! - Line buffering to prevent message fragmentation
 //! - Metrics tracking and periodic statistics logging
 
 use crate::config::{Config, ConnectionMode};
 use crate::error::{ClientError, Result};
+use crate::forwarder::MessageForwarder;
 use crate::metrics::Metrics;
 use bytes::{Buf, BytesMut};
-use pulsar::{producer, Producer, Pulsar, TokioExecutor};
 use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, watch};
 use tokio::time::{interval, sleep};
 use tracing::{debug, error, info, warn};
 
@@ -30,29 +29,22 @@ const MAX_RETRY_DRAIN_PER_TICK: usize = 500;
 /// Main ADS-B Feed Client.
 ///
 /// Manages the complete lifecycle of receiving ADS-B messages from dump1090
-/// and forwarding them to Apache Pulsar.
+/// and forwarding them to one or more pluggable backends via [`MessageForwarder`].
 pub struct ADSBFeedClient {
     /// Client configuration
     config: Config,
     /// Thread-safe metrics tracker
     metrics: Metrics,
-    /// Pulsar client connection (None if in test mode or disconnected)
-    pulsar_client: Option<Pulsar<TokioExecutor>>,
-    /// Pulsar producer for sending messages (None if in test mode or disconnected)
-    pulsar_producer: Option<Producer<TokioExecutor>>,
-    /// Queue for messages that failed to send (bounded by max_retry_queue_size)
-    retry_queue: VecDeque<Vec<u8>>,
+    /// Pluggable message forwarders (e.g., Pulsar, file, noop)
+    forwarders: Vec<Box<dyn MessageForwarder>>,
+    /// Per-forwarder retry queues (indexed same as `forwarders`)
+    retry_queues: Vec<VecDeque<Vec<u8>>>,
     /// Buffer for accumulating incomplete lines from socket reads
     line_buffer: BytesMut,
     /// Cached timestamp in milliseconds (updated periodically for performance)
     last_timestamp_ms: i64,
     /// Counter for determining when to update cached timestamp
     timestamp_update_counter: u64,
-
-    /// Channel used by a background task to deliver a (client, producer) once Pulsar reconnects.
-    pulsar_reconnect_rx: mpsc::UnboundedReceiver<(Pulsar<TokioExecutor>, Producer<TokioExecutor>)>,
-    pulsar_reconnect_tx: mpsc::UnboundedSender<(Pulsar<TokioExecutor>, Producer<TokioExecutor>)>,
-    pulsar_reconnect_task_running: bool,
 
     /// Optional broadcast channel for tapping into raw messages
     message_tx: Option<broadcast::Sender<Vec<u8>>>,
@@ -63,25 +55,27 @@ pub struct ADSBFeedClient {
 }
 
 impl ADSBFeedClient {
-    /// Creates a new ADS-B feed client with the given configuration.
-    pub fn new(config: Config) -> Result<Self> {
+    /// Creates a new ADS-B feed client with the given configuration and forwarders.
+    ///
+    /// The `forwarders` vector determines which backends receive messages.
+    /// Each forwarder gets its own retry queue for independent failure handling.
+    pub fn new(config: Config, forwarders: Vec<Box<dyn MessageForwarder>>) -> Result<Self> {
         config.validate()?;
 
-        let (pulsar_reconnect_tx, pulsar_reconnect_rx) = mpsc::unbounded_channel();
+        let retry_queues = (0..forwarders.len())
+            .map(|_| VecDeque::with_capacity(1000))
+            .collect();
+
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         Ok(Self {
             config,
             metrics: Metrics::new(),
-            pulsar_client: None,
-            pulsar_producer: None,
-            retry_queue: VecDeque::with_capacity(1000),
+            forwarders,
+            retry_queues,
             line_buffer: BytesMut::with_capacity(8192),
             last_timestamp_ms: chrono::Utc::now().timestamp_millis(),
             timestamp_update_counter: 0,
-            pulsar_reconnect_rx,
-            pulsar_reconnect_tx,
-            pulsar_reconnect_task_running: false,
             message_tx: None,
             shutdown_tx,
             shutdown_rx,
@@ -131,28 +125,29 @@ impl ADSBFeedClient {
     /// Runs the client main loop.
     ///
     /// This is the primary entry point that:
-    /// 1. Connects to Pulsar (unless in test mode)
+    /// 1. Connects all forwarders (unless in test mode)
     /// 2. Starts the appropriate connection mode (client or server)
     /// 3. Begins receiving and forwarding messages
     ///
     /// Runs until an unrecoverable error occurs, shutdown is requested,
     /// or the process receives a termination signal.
     pub async fn run(&mut self) -> Result<()> {
-        info!("Starting ADS-B Pulsar Client");
+        let names: Vec<&str> = self.forwarders.iter().map(|f| f.name()).collect();
+        info!("Starting ADS-B Feed Client (forwarders: {:?})", names);
         info!(
-            "Configuration: source_id={}, socket={}:{}, pulsar={}, topic={}, test_mode={}",
+            "Configuration: source_id={}, socket={}:{}, test_mode={}",
             self.config.source_id,
             self.config.socket_host,
             self.config.socket_port,
-            self.config.pulsar_broker,
-            self.config.pulsar_topic,
             self.config.test_mode
         );
 
         if self.config.test_mode {
-            info!("Running in TEST MODE - Pulsar connection disabled");
+            info!("Running in TEST MODE - forwarder connections disabled");
         } else {
-            self.start_pulsar_reconnect_task();
+            for forwarder in &mut self.forwarders {
+                forwarder.connect().await?;
+            }
         }
 
         match self.config.get_connection_mode() {
@@ -170,7 +165,7 @@ impl ADSBFeedClient {
                 return Ok(());
             }
 
-            match self.connect_socket().await {
+            match Self::connect_socket(&self.config).await {
                 Ok(mut stream) => {
                     info!(
                         "Connected to dump1090 at {}:{}",
@@ -253,28 +248,28 @@ impl ADSBFeedClient {
     }
 
     /// Connects to dump1090 socket with exponential backoff retry.
-    async fn connect_socket(&self) -> Result<TcpStream> {
-        let mut retry_delay = self.config.initial_retry_delay();
-        let max_delay = self.config.max_retry_delay();
+    async fn connect_socket(config: &Config) -> Result<TcpStream> {
+        let mut retry_delay = config.initial_retry_delay();
+        let max_delay = config.max_retry_delay();
         let mut attempt = 0u32;
 
         loop {
             attempt += 1;
             info!(
                 "Attempting to connect to dump1090 at {}:{} (attempt {})",
-                self.config.socket_host, self.config.socket_port, attempt
+                config.socket_host, config.socket_port, attempt
             );
 
             match tokio::time::timeout(
-                self.config.socket_timeout(),
-                TcpStream::connect((self.config.socket_host.as_str(), self.config.socket_port)),
+                config.socket_timeout(),
+                TcpStream::connect((config.socket_host.as_str(), config.socket_port)),
             )
             .await
             {
                 Ok(Ok(stream)) => {
                     info!(
                         "Successfully connected to {}:{}",
-                        self.config.socket_host, self.config.socket_port
+                        config.socket_host, config.socket_port
                     );
                     return Ok(stream);
                 }
@@ -291,139 +286,11 @@ impl ADSBFeedClient {
         }
     }
 
-    /// Connects to Pulsar broker and creates producer with retry logic.
-    async fn connect_pulsar(&mut self) -> Result<()> {
-        let mut retry_delay = self.config.initial_retry_delay();
-        let max_delay = self.config.max_retry_delay();
-        let mut attempt = 0u32;
-
-        loop {
-            attempt += 1;
-            info!(
-                "Connecting to Pulsar broker at {} (attempt {})",
-                self.config.pulsar_broker, attempt
-            );
-
-            match self.try_connect_pulsar().await {
-                Ok((client, producer)) => {
-                    info!(
-                        "Successfully connected to Pulsar. Topic: {}, Producer: {}",
-                        self.config.pulsar_topic, self.config.source_id
-                    );
-                    self.pulsar_client = Some(client);
-                    self.pulsar_producer = Some(producer);
-                    return Ok(());
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to connect to Pulsar: {}. Retrying in {:?}...",
-                        e, retry_delay
-                    );
-                    sleep(retry_delay).await;
-                    retry_delay = std::cmp::min(retry_delay * 2, max_delay);
-                }
-            }
-        }
-    }
-
-    fn start_pulsar_reconnect_task(&mut self) {
-        if self.config.test_mode
-            || self.pulsar_producer.is_some()
-            || self.pulsar_reconnect_task_running
-        {
-            return;
-        }
-
-        let config = self.config.clone();
-        let tx = self.pulsar_reconnect_tx.clone();
-
-        self.pulsar_reconnect_task_running = true;
-
-        tokio::spawn(async move {
-            let mut retry_delay = config.initial_retry_delay();
-            let max_delay = config.max_retry_delay();
-            let mut attempt = 0u32;
-
-            loop {
-                attempt += 1;
-                info!(
-                    "Connecting to Pulsar broker at {} (attempt {})",
-                    config.pulsar_broker, attempt
-                );
-
-                let connect_result = Pulsar::builder(&config.pulsar_broker, TokioExecutor)
-                    .build()
-                    .await;
-
-                match connect_result {
-                    Ok(pulsar) => {
-                        let producer_result = pulsar
-                            .producer()
-                            .with_topic(&config.pulsar_topic)
-                            .with_name(&config.source_id)
-                            .with_options(producer::ProducerOptions {
-                                batch_size: Some(config.pulsar_batch_max_messages),
-                                ..Default::default()
-                            })
-                            .build()
-                            .await;
-
-                        match producer_result {
-                            Ok(producer) => {
-                                info!(
-                                    "Successfully connected to Pulsar. Topic: {}, Producer: {}",
-                                    config.pulsar_topic, config.source_id
-                                );
-                                let _ = tx.send((pulsar, producer));
-                                return;
-                            }
-                            Err(e) => {
-                                warn!(
-                                    "Failed to create Pulsar producer: {}. Retrying in {:?}...",
-                                    e, retry_delay
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to connect to Pulsar: {}. Retrying in {:?}...",
-                            e, retry_delay
-                        );
-                    }
-                }
-
-                sleep(retry_delay).await;
-                retry_delay = std::cmp::min(retry_delay * 2, max_delay);
-            }
-        });
-    }
-
-    /// Attempts a single Pulsar connection (no retry).
-    async fn try_connect_pulsar(&self) -> Result<(Pulsar<TokioExecutor>, Producer<TokioExecutor>)> {
-        let pulsar = Pulsar::builder(&self.config.pulsar_broker, TokioExecutor)
-            .build()
-            .await?;
-
-        let producer = pulsar
-            .producer()
-            .with_topic(&self.config.pulsar_topic)
-            .with_name(&self.config.source_id)
-            .with_options(producer::ProducerOptions {
-                batch_size: Some(self.config.pulsar_batch_max_messages),
-                ..Default::default()
-            })
-            .build()
-            .await?;
-
-        Ok((pulsar, producer))
-    }
-
-    /// Receives data from socket and forwards to Pulsar.
+    /// Receives data from socket and forwards to all registered forwarders.
     async fn receive_and_forward(&mut self, stream: &mut TcpStream) -> Result<()> {
         let mut buffer = vec![0u8; self.config.recv_buffer_size];
         let mut stats_interval = interval(Duration::from_secs(10));
-        let mut pulsar_housekeeping_interval = interval(Duration::from_secs(1));
+        let mut housekeeping_interval = interval(Duration::from_secs(1));
         let socket_read_timeout = self.config.socket_read_timeout();
 
         loop {
@@ -433,18 +300,6 @@ impl ADSBFeedClient {
                     if *self.shutdown_rx.borrow() {
                         info!("Shutdown signal received in receive loop");
                         return Err(ClientError::Shutdown);
-                    }
-                }
-
-                // Receive reconnection results without blocking dump1090 processing
-                maybe_connected = self.pulsar_reconnect_rx.recv() => {
-                    if let Some((client, producer)) = maybe_connected {
-                        self.pulsar_client = Some(client);
-                        self.pulsar_producer = Some(producer);
-                        self.pulsar_reconnect_task_running = false;
-                        self.drain_retry_queue_limited(MAX_RETRY_DRAIN_PER_TICK).await;
-                    } else {
-                        self.pulsar_reconnect_task_running = false;
                     }
                 }
 
@@ -476,7 +331,7 @@ impl ADSBFeedClient {
                             let messages = self.process_buffer(&buffer[..n])?;
 
                             for message in messages {
-                                self.send_to_pulsar(message).await?;
+                                self.forward_message(message).await?;
                             }
                         }
                         Err(e) => {
@@ -500,13 +355,14 @@ impl ADSBFeedClient {
                     info!("Statistics: {}", snapshot);
                 }
 
-                // Pulsar housekeeping
-                _ = pulsar_housekeeping_interval.tick() => {
+                // Forwarder housekeeping: drain retry queues, flush
+                _ = housekeeping_interval.tick() => {
                     if !self.config.test_mode {
-                        if self.pulsar_producer.is_some() {
-                            self.drain_retry_queue_limited(MAX_RETRY_DRAIN_PER_TICK).await;
-                        } else {
-                            self.start_pulsar_reconnect_task();
+                        for i in 0..self.forwarders.len() {
+                            if self.forwarders[i].is_connected() {
+                                self.drain_retry_queue(i, MAX_RETRY_DRAIN_PER_TICK).await;
+                                self.forwarders[i].flush().await.ok();
+                            }
                         }
                     }
                 }
@@ -545,8 +401,11 @@ impl ADSBFeedClient {
         Ok(messages)
     }
 
-    /// Sends message to Pulsar with retry queue fallback.
-    async fn send_to_pulsar(&mut self, message: Vec<u8>) -> Result<()> {
+    /// Forwards a message to all registered forwarders (fan-out).
+    ///
+    /// Each forwarder is attempted independently — if one fails, others
+    /// continue. Failed messages are enqueued in per-forwarder retry queues.
+    async fn forward_message(&mut self, message: Vec<u8>) -> Result<()> {
         // Emit to message tap if attached
         if let Some(ref tx) = self.message_tx {
             let _ = tx.send(message.clone());
@@ -576,91 +435,59 @@ impl ADSBFeedClient {
             return Ok(());
         }
 
-        // Normal mode: send to Pulsar
-        if self.pulsar_producer.is_none() {
-            self.metrics.inc_errors();
-            match String::from_utf8(message.clone()) {
-                Ok(s) => info!("[PULSAR DISCONNECTED] {}", s.trim()),
-                Err(_) => warn!("[PULSAR DISCONNECTED] Could not decode message"),
-            }
-
-            if self.retry_queue.len() < self.config.max_retry_queue_size {
-                self.retry_queue.push_back(message);
-            } else {
-                warn!(
-                    "Retry queue full ({} messages), dropping oldest message",
-                    self.config.max_retry_queue_size
-                );
-                self.retry_queue.pop_front();
-                self.retry_queue.push_back(message);
-            }
-            self.metrics
-                .set_retry_queue_size(self.retry_queue.len() as u64);
-            self.start_pulsar_reconnect_task();
-            return Ok(());
-        }
-
         // Update timestamp periodically
         if self.timestamp_update_counter % TIMESTAMP_UPDATE_INTERVAL == 0 {
             self.last_timestamp_ms = chrono::Utc::now().timestamp_millis();
         }
         self.timestamp_update_counter += 1;
 
-        // Try to send message
-        match self.try_send_message(&message).await {
-            Ok(()) => {
-                self.metrics.inc_messages_sent();
-                self.metrics.add_bytes_sent(message.len() as u64);
-
-                if self.metrics.messages_sent() % self.config.log_sample_rate == 0 {
-                    let snapshot = self.metrics.snapshot();
-                    debug!("{}", snapshot);
-                }
-
-                Ok(())
+        // Fan-out to all forwarders independently
+        for i in 0..self.forwarders.len() {
+            if !self.forwarders[i].is_connected() {
+                self.enqueue_retry(i, message.clone());
+                continue;
             }
-            Err(e) => {
-                self.metrics.inc_errors();
-                error!("Failed to send message to Pulsar: {}", e);
-
-                if self.retry_queue.len() < self.config.max_retry_queue_size {
-                    self.retry_queue.push_back(message);
-                    self.metrics
-                        .set_retry_queue_size(self.retry_queue.len() as u64);
-                } else {
-                    warn!(
-                        "Retry queue full ({} messages), dropping oldest message",
-                        self.config.max_retry_queue_size
-                    );
-                    self.retry_queue.pop_front();
-                    self.retry_queue.push_back(message);
+            match self.forwarders[i].send(&message).await {
+                Ok(()) => {}
+                Err(e) => {
+                    error!("Forwarder '{}' failed: {}", self.forwarders[i].name(), e);
+                    self.metrics.inc_errors();
+                    self.enqueue_retry(i, message.clone());
+                    self.forwarders[i].disconnect().await.ok();
                 }
-
-                self.pulsar_producer = None;
-                self.pulsar_client = None;
-                self.start_pulsar_reconnect_task();
-
-                Ok(())
             }
         }
+
+        // Global metrics
+        self.metrics.inc_messages_sent();
+        self.metrics.add_bytes_sent(message.len() as u64);
+
+        Ok(())
     }
 
-    /// Attempts to send a single message to Pulsar (no retry).
-    async fn try_send_message(&mut self, message: &[u8]) -> Result<()> {
-        if let Some(producer) = &mut self.pulsar_producer {
-            producer
-                .send_non_blocking(message)
-                .await
-                .map_err(|e: pulsar::error::Error| ClientError::Pulsar(e.into()))?;
-            Ok(())
+    /// Enqueues a message in the retry queue for a specific forwarder.
+    fn enqueue_retry(&mut self, forwarder_idx: usize, message: Vec<u8>) {
+        let queue = &mut self.retry_queues[forwarder_idx];
+        if queue.len() < self.config.max_retry_queue_size {
+            queue.push_back(message);
         } else {
-            Err(ClientError::Other("Pulsar producer not initialized".into()))
+            warn!(
+                "Retry queue for '{}' full ({} messages), dropping oldest",
+                self.forwarders[forwarder_idx].name(),
+                self.config.max_retry_queue_size
+            );
+            queue.pop_front();
+            queue.push_back(message);
         }
+        let total: usize = self.retry_queues.iter().map(|q| q.len()).sum();
+        self.metrics.set_retry_queue_size(total as u64);
     }
 
-    /// Drains the retry queue by attempting to resend failed messages (limited batch).
-    async fn drain_retry_queue_limited(&mut self, max_messages: usize) {
-        if self.retry_queue.is_empty() || self.pulsar_producer.is_none() {
+    /// Drains the retry queue for a specific forwarder (limited batch).
+    async fn drain_retry_queue(&mut self, forwarder_idx: usize, max_messages: usize) {
+        if self.retry_queues[forwarder_idx].is_empty()
+            || !self.forwarders[forwarder_idx].is_connected()
+        {
             return;
         }
 
@@ -668,16 +495,20 @@ impl ADSBFeedClient {
         let mut failed_messages = Vec::new();
 
         while sent_count < max_messages {
-            let Some(message) = self.retry_queue.pop_front() else {
+            let Some(message) = self.retry_queues[forwarder_idx].pop_front() else {
                 break;
             };
-            match self.try_send_message(&message).await {
+            match self.forwarders[forwarder_idx].send(&message).await {
                 Ok(()) => {
                     sent_count += 1;
                     self.metrics.add_bytes_sent(message.len() as u64);
                 }
                 Err(e) => {
-                    debug!("Failed to send queued message: {}", e);
+                    debug!(
+                        "Failed to send queued message via '{}': {}",
+                        self.forwarders[forwarder_idx].name(),
+                        e
+                    );
                     failed_messages.push(message);
                     break;
                 }
@@ -685,14 +516,18 @@ impl ADSBFeedClient {
         }
 
         for msg in failed_messages.into_iter().rev() {
-            self.retry_queue.push_front(msg);
+            self.retry_queues[forwarder_idx].push_front(msg);
         }
 
-        self.metrics
-            .set_retry_queue_size(self.retry_queue.len() as u64);
+        let total: usize = self.retry_queues.iter().map(|q| q.len()).sum();
+        self.metrics.set_retry_queue_size(total as u64);
 
         if sent_count > 0 {
-            info!("Successfully sent {} queued messages", sent_count);
+            info!(
+                "Successfully sent {} queued messages via '{}'",
+                sent_count,
+                self.forwarders[forwarder_idx].name()
+            );
         }
     }
 
@@ -705,7 +540,7 @@ impl ADSBFeedClient {
 
 impl Drop for ADSBFeedClient {
     fn drop(&mut self) {
-        info!("Cleaning up ADS-B Pulsar Client");
+        info!("Cleaning up ADS-B Feed Client");
         info!("{}", self.final_stats());
     }
 }
@@ -713,6 +548,7 @@ impl Drop for ADSBFeedClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::forwarder::NoopForwarder;
 
     fn test_config() -> Config {
         let mut config = Config::default();
@@ -721,7 +557,7 @@ mod tests {
     }
 
     fn test_client() -> ADSBFeedClient {
-        ADSBFeedClient::new(test_config()).unwrap()
+        ADSBFeedClient::new(test_config(), vec![Box::new(NoopForwarder)]).unwrap()
     }
 
     // --- process_buffer tests ---
@@ -783,7 +619,7 @@ mod tests {
     fn test_process_buffer_overflow() {
         let mut config = test_config();
         config.max_line_buffer_size = 20;
-        let mut client = ADSBFeedClient::new(config).unwrap();
+        let mut client = ADSBFeedClient::new(config, vec![Box::new(NoopForwarder)]).unwrap();
 
         let result =
             client.process_buffer(b"this is a very long line that exceeds the buffer limit");
@@ -811,14 +647,14 @@ mod tests {
 
     #[test]
     fn test_client_new_valid_config() {
-        assert!(ADSBFeedClient::new(Config::default()).is_ok());
+        assert!(ADSBFeedClient::new(Config::default(), vec![Box::new(NoopForwarder)]).is_ok());
     }
 
     #[test]
     fn test_client_new_invalid_config() {
         let mut config = Config::default();
         config.source_id = "".to_string();
-        assert!(ADSBFeedClient::new(config).is_err());
+        assert!(ADSBFeedClient::new(config, vec![Box::new(NoopForwarder)]).is_err());
     }
 
     #[test]
@@ -836,5 +672,21 @@ mod tests {
         assert_eq!(metrics.messages_sent(), 0);
         metrics.inc_messages_sent();
         assert_eq!(client.metrics().messages_sent(), 1);
+    }
+
+    #[test]
+    fn test_client_new_with_multiple_forwarders() {
+        let forwarders: Vec<Box<dyn MessageForwarder>> =
+            vec![Box::new(NoopForwarder), Box::new(NoopForwarder)];
+        let client = ADSBFeedClient::new(test_config(), forwarders).unwrap();
+        assert_eq!(client.forwarders.len(), 2);
+        assert_eq!(client.retry_queues.len(), 2);
+    }
+
+    #[test]
+    fn test_client_new_with_empty_forwarders() {
+        let client = ADSBFeedClient::new(test_config(), vec![]).unwrap();
+        assert_eq!(client.forwarders.len(), 0);
+        assert_eq!(client.retry_queues.len(), 0);
     }
 }

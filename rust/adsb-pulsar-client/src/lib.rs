@@ -1,19 +1,20 @@
-//! ADS-B Feed Client for Apache Pulsar
+//! ADS-B Feed Client
 //!
 //! High-performance Rust implementation for forwarding ADS-B messages
-//! from dump1090 to Apache Pulsar.
+//! from dump1090 to pluggable backends (Apache Pulsar, files, etc.).
 //!
 //! # Overview
 //!
 //! This library provides a robust, production-ready client for ingesting
 //! ADS-B (Automatic Dependent Surveillance-Broadcast) data from dump1090
-//! and forwarding it to Apache Pulsar for stream processing.
+//! and forwarding it through one or more [`forwarder::MessageForwarder`]
+//! backends.
 //!
 //! # Features
 //!
 //! - **High Performance**: Async/await with Tokio for maximum throughput
-//! - **Reliability**: Automatic reconnection with exponential backoff
-//! - **Data Integrity**: Message retry queue prevents data loss
+//! - **Pluggable Backends**: Forward to Pulsar, files, or custom backends
+//! - **Reliability**: Per-forwarder retry queues prevent data loss
 //! - **Zero-Copy**: Efficient buffer management with `bytes` crate
 //! - **Lock-Free Metrics**: Atomic operations for thread-safe tracking
 //! - **Production Ready**: Graceful shutdown, structured logging, systemd support
@@ -22,11 +23,13 @@
 //!
 //! ```no_run
 //! use adsb_pulsar_client::{ADSBFeedClient, Config};
+//! use adsb_pulsar_client::forwarder::NoopForwarder;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let config = Config::default();
-//!     let mut client = ADSBFeedClient::new(config)?;
+//!     let forwarders = vec![Box::new(NoopForwarder) as Box<dyn adsb_pulsar_client::forwarder::MessageForwarder>];
+//!     let mut client = ADSBFeedClient::new(config, forwarders)?;
 //!     client.run().await?;
 //!     Ok(())
 //! }
@@ -53,10 +56,11 @@
 pub mod client;
 pub mod config;
 pub mod error;
+pub mod forwarder;
 pub mod metrics;
 
 // Re-export main types for convenience
 pub use client::ADSBFeedClient;
-pub use config::{Config, ConnectionMode};
+pub use config::{Config, ConnectionMode, ForwarderKind};
 pub use error::{ClientError, Result};
 pub use metrics::{Metrics, MetricsSnapshot};

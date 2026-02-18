@@ -6,6 +6,7 @@
 
 use crate::sbs_parser::{parse_sbs_message, AircraftPosition};
 use crate::state::{ConnectionStatus, FeedHandle, StatusResponse};
+use adsb_pulsar_client::forwarder::NoopForwarder;
 use adsb_pulsar_client::{ADSBFeedClient, Config, Metrics};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,7 +22,8 @@ use tracing::{error, info, warn};
 pub fn start_feed(app: AppHandle, config: Config) -> Result<FeedHandle, String> {
     let test_mode = config.test_mode;
     let socket_read_timeout_secs = config.socket_read_timeout_secs;
-    let mut client = ADSBFeedClient::new(config).map_err(|e| e.to_string())?;
+    let mut client =
+        ADSBFeedClient::new(config, vec![Box::new(NoopForwarder)]).map_err(|e| e.to_string())?;
 
     // Attach message tap (buffer 4096 messages)
     let message_rx = client.with_message_tap(4096);

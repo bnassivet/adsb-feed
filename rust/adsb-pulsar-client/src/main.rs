@@ -1,16 +1,13 @@
-//! ADS-B Feed Client for Apache Pulsar
+//! ADS-B Feed Client — CLI entry point.
 //!
 //! High-performance Rust implementation that connects to dump1090 TCP socket
-//! and forwards SBS-1 messages to Apache Pulsar.
+//! and forwards SBS-1 messages to pluggable backends (Pulsar, file, etc.).
 
-mod client;
-mod config;
-mod error;
-mod metrics;
-
+use adsb_pulsar_client::forwarder::file::FileForwarder;
+use adsb_pulsar_client::forwarder::{MessageForwarder, NoopForwarder};
+use adsb_pulsar_client::{ADSBFeedClient, ClientError, Config, ForwarderKind};
 use clap::Parser;
-use client::ADSBFeedClient;
-use config::Config;
+use std::path::PathBuf;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -39,9 +36,55 @@ async fn main() {
     }
 }
 
+/// Builds forwarder instances based on configuration.
+fn build_forwarders(config: &Config) -> Result<Vec<Box<dyn MessageForwarder>>, ClientError> {
+    if config.test_mode {
+        return Ok(vec![Box::new(NoopForwarder)]);
+    }
+
+    let mut forwarders: Vec<Box<dyn MessageForwarder>> = Vec::new();
+
+    for kind in &config.forwarders {
+        match kind {
+            ForwarderKind::Pulsar => {
+                #[cfg(feature = "pulsar")]
+                {
+                    use adsb_pulsar_client::forwarder::pulsar_forwarder::PulsarForwarder;
+                    forwarders.push(Box::new(PulsarForwarder::new(config)));
+                }
+                #[cfg(not(feature = "pulsar"))]
+                {
+                    return Err(ClientError::Config(
+                        "Pulsar forwarder requested but 'pulsar' feature is not enabled. \
+                         Recompile with --features pulsar or use --forwarder file."
+                            .into(),
+                    ));
+                }
+            }
+            ForwarderKind::File => {
+                forwarders.push(Box::new(FileForwarder::new(PathBuf::from(
+                    &config.file_path,
+                ))));
+            }
+            ForwarderKind::Noop => {
+                forwarders.push(Box::new(NoopForwarder));
+            }
+        }
+    }
+
+    if forwarders.is_empty() {
+        return Err(ClientError::Config(
+            "No forwarders configured. Use --forwarder pulsar|file|noop.".into(),
+        ));
+    }
+
+    Ok(forwarders)
+}
+
 /// Runs the client with graceful shutdown handling.
-async fn run_client(config: Config) -> error::Result<()> {
-    let mut client = ADSBFeedClient::new(config)?;
+async fn run_client(config: Config) -> adsb_pulsar_client::error::Result<()> {
+    let forwarders = build_forwarders(&config)?;
+    let mut client = ADSBFeedClient::new(config, forwarders)?;
 
     // Setup graceful shutdown handler
     let shutdown = setup_shutdown_handler();
@@ -101,7 +144,7 @@ async fn setup_shutdown_handler() {
 /// Prints the startup banner to logs.
 fn print_banner() {
     info!("╔═══════════════════════════════════════════════════════╗");
-    info!("║   ADS-B Feed Client for Apache Pulsar (Rust)         ║");
+    info!("║   ADS-B Feed Client (Rust)                           ║");
     info!("║   High-Performance Edge Data Ingestion               ║");
     info!("╚═══════════════════════════════════════════════════════╝");
 }

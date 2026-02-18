@@ -1,17 +1,21 @@
 # ADS-B Pulsar Client (Rust)
 
-High-performance ADS-B feed client written in Rust that connects to dump1090 TCP socket and forwards SBS-1 messages to Apache Pulsar.
+High-performance ADS-B feed client written in Rust. Connects to a dump1090 TCP socket and fans
+SBS-1 messages out to one or more pluggable forwarding backends simultaneously (Apache Pulsar,
+local file, or custom implementations).
 
 ## Features
 
-- ⚡ **High Performance**: Async/await with Tokio for maximum throughput
-- 🔄 **Reliability**: Automatic reconnection with exponential backoff
-- 💾 **Message Retry Queue**: Prevents data loss during transient failures
+- ⚡ **High Performance**: Async/await with Tokio, ~50k msg/s on Raspberry Pi 4
+- 🔌 **Pluggable Backends**: Apache Pulsar, file output, or custom `MessageForwarder` implementations
+- 🔀 **Multi-Forwarder Fan-out**: Forward to several backends simultaneously (e.g., Pulsar + file)
+- 🔄 **Independent Failure Handling**: Each backend has its own retry queue; one failure doesn't affect others
+- 💾 **Per-Forwarder Retry Queue**: Prevents data loss during transient backend failures
 - 🔒 **Type Safety**: Leverages Rust's type system for correctness
-- 📊 **Comprehensive Metrics**: Throughput, error rates, queue sizes
+- 📊 **Comprehensive Metrics**: Throughput, error rates, queue sizes (lock-free atomics)
 - 🎯 **Zero-Copy Operations**: Efficient memory usage with `bytes` crate
 - 🛡️ **Graceful Shutdown**: Handles SIGINT/SIGTERM signals properly
-- 🧪 **Test Mode**: Run without Pulsar for development
+- 🧪 **Test Mode**: Run without any backend for development
 - 📝 **Structured Logging**: Using `tracing` for performance and clarity
 
 ## Comparison with Python Version
@@ -88,10 +92,10 @@ cargo install --path .
 
 ## Usage
 
-### Basic Usage
+### Basic Usage — Pulsar (default)
 
 ```bash
-# Connect to dump1090 and forward to Pulsar
+# Connect to dump1090 and forward to Apache Pulsar
 adsb-pulsar-client \
   --source-id raspberry-pi-01 \
   --socket-host 192.168.1.100 \
@@ -100,10 +104,35 @@ adsb-pulsar-client \
   --pulsar-topic persistent://kradsb/adsb/sbs-topic
 ```
 
-### Test Mode (No Pulsar)
+### Write to a Local File
 
 ```bash
-# Test connection to dump1090 without sending to Pulsar
+# Forward to a timestamped SBS-1 file (no Pulsar needed)
+adsb-pulsar-client \
+  --forwarder file \
+  --file-path /var/log/adsb/messages.sbs \
+  --socket-host 192.168.1.100 \
+  --socket-port 30003
+```
+
+### Forward to Multiple Backends Simultaneously
+
+```bash
+# Pulsar + local file at the same time
+adsb-pulsar-client \
+  --forwarder pulsar \
+  --forwarder file \
+  --file-path /var/log/adsb/messages.sbs \
+  --socket-host 192.168.1.100 \
+  --socket-port 30003 \
+  --pulsar-broker pulsar://pulsar.example.com:6650 \
+  --pulsar-topic persistent://kradsb/adsb/sbs-topic
+```
+
+### Test Mode (No Backend)
+
+```bash
+# Count messages from dump1090 without forwarding anywhere
 adsb-pulsar-client \
   --socket-host 192.168.1.100 \
   --socket-port 30003 \
@@ -135,25 +164,49 @@ adsb-pulsar-client \
 
 ## Configuration Options
 
+### Forwarder Selection
+
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--source-id` | kraspberryPi | Unique identifier for this data source |
-| `--socket-host` | 10.0.0.200 | dump1090 host address |
-| `--socket-port` | 30003 | dump1090 SBS-1 port |
-| `--pulsar-broker` | pulsar://localhost:6650 | Pulsar broker URL |
-| `--pulsar-topic` | persistent://kradsb/adsb/sbs-topic | Pulsar topic name |
-| `--recv-buffer-size` | 65536 | Socket receive buffer (bytes) |
-| `--socket-timeout-secs` | 30 | Socket timeout in seconds |
-| `--initial-retry-delay-secs` | 1 | Initial retry delay |
-| `--max-retry-delay-secs` | 60 | Maximum retry delay |
-| `--log-sample-rate` | 100 | Log stats every N messages |
-| `--max-retry-queue-size` | 1000 | Max messages in retry queue |
-| `--max-line-buffer-size` | 100000 | Max line buffer size (bytes) |
-| `--pulsar-batch-delay-ms` | 100 | Pulsar batch delay (ms) |
-| `--pulsar-batch-max-messages` | 100 | Max messages per batch |
-| `--test-mode` | false | Run without Pulsar |
-| `--log-level` | info | Logging level (trace/debug/info/warn/error) |
-| `--connection-mode` | client | Connection mode (client/server) |
+| `--forwarder` | `pulsar` | Backend to use: `pulsar`, `file`, `noop`. Repeat for multiple backends. |
+| `--file-path` | `adsb_messages_<timestamp>.sbs` | Output file path (used when `--forwarder file`) |
+
+### Source and Socket
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--source-id` | `kraspberryPi` | Unique identifier for this data source |
+| `--socket-host` | `10.0.0.200` | dump1090 host address |
+| `--socket-port` | `30003` | dump1090 SBS-1 port |
+| `--connection-mode` | `client` | TCP mode: `client` (connect out) or `server` (accept in) |
+
+### Pulsar (when `--forwarder pulsar`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--pulsar-broker` | `pulsar://localhost:6650` | Pulsar broker URL |
+| `--pulsar-topic` | `persistent://kradsb/adsb/sbs-topic` | Pulsar topic name |
+| `--pulsar-batch-delay-ms` | `100` | Batch delay before sending (ms) |
+| `--pulsar-batch-max-messages` | `100` | Max messages per batch |
+
+### Buffer and Reliability
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--recv-buffer-size` | `65536` | Socket receive buffer (bytes) |
+| `--socket-timeout-secs` | `30` | Socket read timeout |
+| `--initial-retry-delay-secs` | `1` | Initial reconnect backoff delay |
+| `--max-retry-delay-secs` | `60` | Maximum reconnect backoff delay |
+| `--max-retry-queue-size` | `1000` | Max messages in per-forwarder retry queue |
+| `--max-line-buffer-size` | `100000` | Max line buffer size (bytes) |
+
+### Diagnostics
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--test-mode` | `false` | Count messages without forwarding to any backend |
+| `--log-level` | `info` | Logging level: `trace`, `debug`, `info`, `warn`, `error` |
+| `--log-sample-rate` | `100` | Log statistics every N messages |
 
 ## Performance Tuning
 
@@ -326,67 +379,63 @@ RUST_LOG=debug adsb-pulsar-client [options]
 
 ## Development
 
+All development follows TDD (Red → Green → Refactor). See [`docs/DESIGN.md`](docs/DESIGN.md) for
+interface documentation and the custom forwarder guide.
+
 ### Run Tests
 
 ```bash
-cargo test
+# All tests in this crate (unit + integration + doc-tests, ~77 total)
+cargo test -p adsb-pulsar-client
+
+# Verify no-Pulsar build still compiles and passes
+cargo test -p adsb-pulsar-client --no-default-features --features cli
 ```
 
-### Format Code
+### Format and Lint
 
 ```bash
-cargo fmt
-```
-
-### Lint Code
-
-```bash
+cargo fmt --check
 cargo clippy -- -D warnings
 ```
 
 ### Generate Documentation
 
 ```bash
-cargo doc --open
+cargo doc --no-deps --open
 ```
 
 ## Architecture
 
 ```
-┌─────────────────┐
-│   dump1090       │
-│  (SBS-1 TCP)    │
-└────────┬────────┘
-         │ Raw SBS-1 messages
+┌──────────────────┐
+│    dump1090      │
+│  (SBS-1 TCP)     │
+└────────┬─────────┘
+         │ raw bytes
          ▼
-┌─────────────────┐
-│  Socket Reader  │  ← Async TCP with line buffering
-│  (Tokio)        │
-└────────┬────────┘
-         │ Complete messages
-         ▼
-┌─────────────────┐
-│ Message Buffer  │  ← BytesMut for zero-copy
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Retry Queue     │  ← VecDeque for failed messages
-│ (VecDeque)      │
-└────────┬────────┘
-         │ Batched messages
-         ▼
-┌─────────────────┐
-│ Pulsar Producer │  ← pulsar-rs async client
-│  (Async)        │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Apache Pulsar   │
-│  (Persistent)   │
-└─────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                   ADSBFeedClient                         │
+│                                                          │
+│  TcpStream → LineBuffer (BytesMut) → forward_message()  │
+│                                            │             │
+│                                  ┌─────────┴──────────┐  │
+│                                  │   Fan-out loop      │  │
+│                                  └──┬──────────────┬───┘  │
+│                                     │              │      │
+│                    retry_queues[0]  │    retry_queues[N]  │
+└─────────────────────────────────────┼──────────────┼──────┘
+                                      ▼              ▼
+                              Forwarder #0     Forwarder #N
+                           (PulsarForwarder) (FileForwarder / …)
+                                      │              │
+                                      ▼              ▼
+                              Apache Pulsar     /var/log/…
 ```
+
+Each forwarder manages its own connection lifecycle and retry queue. A failure in one backend does
+not affect message delivery to the others. See [`docs/DESIGN.md`](docs/DESIGN.md) for a full
+interface reference and design rationale.
 
 ## License
 

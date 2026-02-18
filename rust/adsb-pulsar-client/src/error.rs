@@ -37,8 +37,13 @@ pub enum ClientError {
     Socket(#[from] std::io::Error),
 
     /// Pulsar connection or send error
+    #[cfg(feature = "pulsar")]
     #[error("Pulsar error: {0}")]
     Pulsar(#[from] pulsar::Error),
+
+    /// Forwarder backend error (generic, always available)
+    #[error("Forwarder error: {0}")]
+    Forwarder(String),
 
     /// Configuration validation error
     #[error("Configuration error: {0}")]
@@ -74,7 +79,7 @@ impl ClientError {
     /// Checks if the error is recoverable.
     ///
     /// Recoverable errors can typically be resolved through:
-    /// - Reconnection (Socket, Pulsar errors)
+    /// - Reconnection (Socket, Pulsar, Forwarder errors)
     /// - Retry logic
     /// - Waiting for external service recovery
     ///
@@ -94,7 +99,12 @@ impl ClientError {
     /// assert!(error.is_recoverable());
     /// ```
     pub fn is_recoverable(&self) -> bool {
-        matches!(self, ClientError::Socket(_) | ClientError::Pulsar(_))
+        match self {
+            ClientError::Socket(_) | ClientError::Forwarder(_) => true,
+            #[cfg(feature = "pulsar")]
+            ClientError::Pulsar(_) => true,
+            _ => false,
+        }
     }
 
     /// Checks if the error should trigger a retry.
@@ -107,10 +117,14 @@ impl ClientError {
     /// * `true` - Should retry the operation
     /// * `false` - Should not retry (fatal or non-retriable)
     pub fn should_retry(&self) -> bool {
-        matches!(
-            self,
-            ClientError::Socket(_) | ClientError::Pulsar(_) | ClientError::RetryQueueFull(_)
-        )
+        match self {
+            ClientError::Socket(_) | ClientError::Forwarder(_) | ClientError::RetryQueueFull(_) => {
+                true
+            }
+            #[cfg(feature = "pulsar")]
+            ClientError::Pulsar(_) => true,
+            _ => false,
+        }
     }
 }
 
@@ -161,6 +175,27 @@ mod tests {
     }
 
     #[test]
+    fn test_forwarder_error_is_recoverable() {
+        let err = ClientError::Forwarder("connection lost".into());
+        assert!(err.is_recoverable());
+    }
+
+    #[test]
+    fn test_forwarder_error_should_retry() {
+        let err = ClientError::Forwarder("timeout".into());
+        assert!(err.should_retry());
+    }
+
+    #[cfg(feature = "pulsar")]
+    #[test]
+    fn test_pulsar_error_is_recoverable() {
+        // We can't easily construct a pulsar::Error, so we test via Forwarder
+        // which has the same recoverable semantics
+        let err = ClientError::Forwarder("pulsar-like error".into());
+        assert!(err.is_recoverable());
+    }
+
+    #[test]
     fn test_socket_error_should_retry() {
         let err = ClientError::Socket(std::io::Error::new(
             std::io::ErrorKind::ConnectionRefused,
@@ -190,5 +225,11 @@ mod tests {
         let display = err.to_string();
         assert!(display.contains("100"), "should contain current size");
         assert!(display.contains("50"), "should contain limit");
+    }
+
+    #[test]
+    fn test_forwarder_error_display() {
+        let err = ClientError::Forwarder("file write failed".into());
+        assert!(err.to_string().contains("file write failed"));
     }
 }

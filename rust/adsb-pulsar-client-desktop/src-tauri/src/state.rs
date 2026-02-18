@@ -22,6 +22,7 @@ pub enum ConnectionStatus {
     /// No messages for read_timeout + 30s — connection likely lost (red)
     ConnectionLost,
     /// Unexpected error (red)
+    #[allow(dead_code)]
     Error(String),
 }
 
