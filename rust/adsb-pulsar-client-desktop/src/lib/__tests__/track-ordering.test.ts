@@ -16,6 +16,7 @@ function makeTrack(hex: string): AircraftTrack {
     is_on_ground: null,
     timestamp: "",
     positions: [],
+    first_seen: 0,
     last_seen: 0,
     message_count: 0,
   };

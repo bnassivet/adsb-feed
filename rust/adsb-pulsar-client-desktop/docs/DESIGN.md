@@ -135,6 +135,7 @@ src/
 │   │   └── page.tsx         # Settings page
 │   └── globals.css          # Global Tailwind CSS
 ├── components/              # React UI components
+│   ├── AircraftDetailsPanel.tsx # Collapsible right panel for selected aircraft details
 │   ├── AircraftTable.tsx    # Tabular data display
 │   ├── ConnectionStatus.tsx # Connection indicator badges
 │   ├── Filters.tsx          # Filter panel (sidebar)
@@ -153,6 +154,7 @@ src/
 │   ├── useSimulatedTracks.ts # Simulated demo flight tracks
 │   └── useTauriEvent.ts     # Event listener abstraction
 ├── lib/                     # Utilities and types
+│   ├── aircraft-details.ts  # Pure utilities: vertical tendency, sparkline, altitude range, time format
 │   ├── aircraft-icon.ts     # Pure SVG/HTML generation for aircraft map icons
 │   ├── colors.ts            # Altitude-based color mapping
 │   ├── commands.ts          # Tauri command wrappers
@@ -201,11 +203,12 @@ graph TD
     Header --> Controls[Start/Stop/Settings Buttons]
 
     MainContent --> Sidebar[FiltersPanel]
-    MainContent --> MapTableSplit[Map + Table Split]
+    MainContent --> MapRow[Map Row]
+    MainContent --> ResizeHandle
+    MainContent --> Table[AircraftTable]
 
-    MapTableSplit --> Map[Map]
-    MapTableSplit --> ResizeHandle
-    MapTableSplit --> Table[AircraftTable]
+    MapRow --> Map[Map]
+    MapRow --> DetailsPanel[AircraftDetailsPanel]
 
     Map --> MapInner[MapInner]
     MapInner --> MapTileToggle
@@ -216,6 +219,7 @@ graph TD
     style Table fill:#FFD54F
     style Sidebar fill:#E57373
     style Footer fill:#BA68C8
+    style DetailsPanel fill:#CE93D8
 ```
 
 ### Component Details
@@ -275,6 +279,8 @@ accumulation even when users navigate to Settings or other pages.
 - `useLocalStorage("adsb-map-theme")`: Persist map theme
 - `useLocalStorage("adsb-table-height")`: Persist table height
 - `useLocalStorage("adsb-show-history")`: Persist history toggle
+- `useLocalStorage("adsb-details-panel-open")`: Persist details panel open/collapsed state
+- `useLocalStorage("adsb-details-panel-width")`: Persist details panel width in pixels
 
 **State Management**:
 - `filters: Filters`: Altitude/speed/callsign filters
@@ -284,9 +290,12 @@ accumulation even when users navigate to Settings or other pages.
 - `tableHeight: number`: Resizable table height in pixels
 - `showHistory: boolean`: Whether to display expired aircraft (persisted to localStorage)
 - `selectedHexIdent: string | null`: Currently selected aircraft (toggle behavior: click same to deselect)
+- `detailsPanelOpen: boolean`: Whether the details panel is expanded or collapsed (persisted)
+- `detailsPanelWidth: number`: Width of the expanded details panel in px, clamped 200–480 (persisted)
 
 **Derived State**:
 - `visibleHistory`: Computed as `showHistory ? history : []` — avoids passing full history arrays to child components when the toggle is off, reducing unnecessary rendering work
+- `selectedTrack`: Resolved from `selectedHexIdent` against `allTracks` then `visibleHistory`; `null` when no aircraft is selected. Passed as the `track` prop to `AircraftDetailsPanel`.
 
 **Layout Structure**:
 ```tsx
@@ -295,7 +304,18 @@ accumulation even when users navigate to Settings or other pages.
   <div className="flex flex-1">
     <aside> {/* Sidebar filters */} </aside>
     <main className="flex flex-col">
-      <div> {/* Map */} </div>
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        <div className="flex-1 min-w-0"> {/* Map */} </div>
+        {selectedTrack && (
+          <AircraftDetailsPanel
+            track={selectedTrack}
+            isOpen={detailsPanelOpen}
+            width={detailsPanelWidth}
+            onToggle={...}
+            onWidthChange={...}
+          />
+        )}
+      </div>
       <ResizeHandle />
       <div> {/* Table */} </div>
     </main>
@@ -582,6 +602,51 @@ DotsLayer({ tracks, colorMode, type: "history" | "live" })
 
 ---
 
+#### 12. **AircraftDetailsPanel** (`src/components/AircraftDetailsPanel.tsx`)
+
+**Purpose**: Collapsible right panel showing full details for the currently selected aircraft
+
+**Props**:
+- `track: AircraftTrack | null`: Selected track; returns `null` (renders nothing) when absent
+- `isOpen: boolean`: Whether the panel is expanded or collapsed to a 32px strip
+- `width: number`: Panel width in px (clamped 200–480, persisted)
+- `onToggle: () => void`: Called when fold/unfold button is clicked
+- `onWidthChange: (w: number) => void`: Called during drag resize
+
+**Three States**:
+1. **Hidden** — `track === null`: renders nothing; map fills full width
+2. **Collapsed** — `isOpen === false`: 32px strip with `>>` button (title "Unfold panel")
+3. **Expanded** — `isOpen === true`: full-width panel with content and `<<` button (title "Fold panel")
+
+**Content Sections** (expanded state):
+1. **Header**: "Aircraft Details" label + fold button `<<`
+2. **Identity**: ICAO hex (monospace, prominent), callsign (or "—")
+3. **Altitude / Speed / Heading**: altitude ft, ground_speed kts, track °, on-ground badge
+4. **Vertical Tendency**: arrow icon (▲ green / ▼ red / → slate) + formatted rate; SVG sparkline with axes:
+   - **Y-axis**: min/max altitude labels (`data-testid="sparkline-alt-min/max"`)
+   - **SVG** (120×40 viewBox): `<polyline>` coloured by tendency
+   - **X-axis**: `formatTrackTime(first_seen)` and `formatTrackTime(last_seen)` (`data-testid="sparkline-time-start/end"`)
+5. **Squawk**: 4-digit code (or "—") + special label badge (7700=EMERGENCY, 7600=RADIO FAILURE, 7500=HIJACK)
+6. **Message count**: cumulative SBS-1 messages for this aircraft
+7. **Last seen**: relative time string from `timeAgo(last_seen)`
+
+**Resize Behavior**:
+- Left edge: 1px `col-resize` draggable strip (tracks `clientX` delta; moving left = expanding)
+- Width clamped: min 200px, max 480px
+- Owned internally by `ExpandedPanel` sub-component (compare: `ResizeHandle` delegates `deltaY` to parent)
+
+**Pure Utilities** (`src/lib/aircraft-details.ts`):
+- `verticalTendency(vr)`: threshold ±200 ft/min; null → "level"
+- `formatVerticalRate(vr)`: "+2,400 ft/min", "—", "±0 ft/min"
+- `altitudeHistory(positions)`: extract non-null altitudes from position array
+- `altitudeRange(altitudes)`: `{ min, max } | null`
+- `formatTrackTime(ms)`: local "HH:MM:SS" string for sparkline axis labels
+- `altitudeSparklinePoints(altitudes, width, height)`: SVG `points` string; flat data → `height/2`
+
+**File**: `src/components/AircraftDetailsPanel.tsx`
+
+---
+
 ### Custom Hooks
 
 #### 1. **useAircraftTracks** (`src/hooks/useAircraftTracks.ts`)
@@ -681,6 +746,8 @@ useEffect(() => {
 **Use Cases**:
 - Map theme (`adsb-map-theme`)
 - Table height (`adsb-table-height`)
+- Details panel open state (`adsb-details-panel-open`)
+- Details panel width (`adsb-details-panel-width`)
 
 **File**: `src/hooks/useLocalStorage.ts`
 
@@ -782,7 +849,11 @@ export async function startFeed(): Promise<void> {
 
 **Key Types**:
 - `AircraftPosition`: Single SBS-1 message (from backend). Includes `message_count` (set by bridge before emission).
-- `AircraftTrack`: Accumulated track state (frontend only). Includes `message_count` (cumulative sum of all received SBS-1 messages, pre-throttle).
+- `AircraftTrack`: Accumulated track state (frontend only). Key fields:
+  - `message_count: number` — cumulative SBS-1 messages, pre-throttle
+  - `first_seen: number` — ms epoch of first detection; set **once** when the track is created in `AircraftTrackingContext`, never updated by `mergePositionInto`
+  - `last_seen: number` — ms epoch of most recent update
+  - `positions: [lat, lng, altitude | null][]` — capped at 100 entries, no per-position timestamps
 - `MetricsSnapshot`: Performance metrics
 - `ConnectionStatus`: Connection state union (`Disconnected | Connecting | Connected | Degraded | ConnectionLost | Error`)
 - `StatusResponse`: Combined status response (socket + pulsar)
@@ -1185,9 +1256,12 @@ let config = state.config.lock().map_err(|e| e.to_string())?;
 | `filters: Filters` | `Dashboard` component | None |
 | `isRunning: boolean` | `Dashboard` component | None |
 | `selectedHexIdent: string \| null` | `Dashboard` component | None (auto-deselects on track disappear) |
+| `selectedTrack: AircraftTrack \| null` | `Dashboard` component (derived) | None (useMemo from selectedHexIdent) |
 | `mapTheme: "light" \| "dark"` | `Dashboard` + `useLocalStorage` | localStorage |
 | `tableHeight: number` | `Dashboard` + `useLocalStorage` | localStorage |
 | `showHistory: boolean` | `Dashboard` + `useLocalStorage` | localStorage |
+| `detailsPanelOpen: boolean` | `Dashboard` + `useLocalStorage` | localStorage |
+| `detailsPanelWidth: number` | `Dashboard` + `useLocalStorage` | localStorage |
 | `metrics: MetricsSnapshot` | `useMetrics` hook | Polled from backend |
 | `status: StatusResponse` | `useConnectionStatus` hook | Polled from backend |
 
@@ -1651,10 +1725,10 @@ npm run test:watch  # Watch mode (TDD)
 
 | Directory | Tests | Coverage |
 |-----------|-------|----------|
-| `src/lib/__tests__/` | colors, types, h3-density, format, track-ordering, aircraft-icon | Pure utility functions |
+| `src/lib/__tests__/` | colors, types, h3-density, format, track-ordering, aircraft-icon, **aircraft-details** | Pure utility functions (incl. verticalTendency, sparkline, altitudeRange, formatTrackTime) |
 | `src/contexts/__tests__/` | AircraftTrackingContext (appendPosition, mergePositionInto message_count) | Context merge logic |
 | `src/hooks/__tests__/` | useLocalStorage, useAircraftTracks, useSimulatedTracks | Hook logic and filters |
-| `src/components/__tests__/` | ConnectionStatus, MetricsBar, Filters, AircraftTable (selection, RxTS, Msg#) | Component rendering and interactions |
+| `src/components/__tests__/` | ConnectionStatus, MetricsBar, Filters, AircraftTable (selection, RxTS, Msg#), **AircraftDetailsPanel** (fold/unfold, sparkline, axes) | Component rendering and interactions |
 
 **Mocking:** `src/test/mocks/tauri.ts` provides mock `@tauri-apps/api` (invoke, events) for testing without Tauri runtime.
 
@@ -1798,7 +1872,11 @@ graph TD
 
 | Key | Type | Default | Purpose |
 |-----|------|---------|---------|
+| `adsb-map-theme` | `"light" \| "dark"` | `"dark"` | Map tile theme |
+| `adsb-table-height` | `number` | `200` | Resizable table height in px |
 | `adsb-show-history` | `boolean` | `false` | Toggle visibility of history tracks |
+| `adsb-details-panel-open` | `boolean` | `true` | Details panel expanded vs. collapsed strip |
+| `adsb-details-panel-width` | `number` | `280` | Details panel width in px (200–480) |
 
 ---
 

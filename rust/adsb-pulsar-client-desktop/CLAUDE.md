@@ -29,9 +29,9 @@ src-tauri/src/
 
 src/
 ├── app/            # Next.js App Router pages
-├── components/     # React components (Map, AircraftTable, Filters, etc.)
+├── components/     # React components (Map, AircraftTable, AircraftDetailsPanel, Filters, etc.)
 ├── hooks/          # Custom hooks (useAircraftTracks, useLocalStorage, etc.)
-├── lib/            # Pure utilities (colors, types, h3-density, format)
+├── lib/            # Pure utilities (colors, types, h3-density, format, aircraft-details)
 └── test/           # Test setup and mocks
 ```
 
@@ -95,10 +95,10 @@ Test stack: **Vitest** + jsdom + @testing-library/react + @testing-library/user-
 
 | Directory | Tests | What's Covered |
 |-----------|-------|----------------|
-| `src/lib/__tests__/` | ~54 | `altitudeToColor`, `zoomToH3Resolution`, `computeH3Density`, `formatBytes`/`timeAgo`, `track-ordering`, `aircraft-icon` |
+| `src/lib/__tests__/` | ~82 | `altitudeToColor`, `zoomToH3Resolution`, `computeH3Density`, `formatBytes`/`timeAgo`, `track-ordering`, `aircraft-icon`, `verticalTendency`/`formatVerticalRate`/`altitudeHistory`/`altitudeSparklinePoints`/`altitudeRange`/`formatTrackTime` |
 | `src/contexts/__tests__/` | ~5 | `appendPosition`, `mergePositionInto` message_count accumulation |
 | `src/hooks/__tests__/` | ~13 | `useLocalStorage`, `useAircraftTracks` filter logic, `useSimulatedTracks` heading/interpolation |
-| `src/components/__tests__/` | ~29 | `ConnectionStatus` states, `MetricsBar` formatting, `Filters` interactions, `AircraftTable` selection/RxTS/Msg#, `AltitudeLegend` |
+| `src/components/__tests__/` | ~52 | `ConnectionStatus` states, `MetricsBar` formatting, `Filters` interactions, `AircraftTable` selection/RxTS/Msg#, `AltitudeLegend`, `AircraftDetailsPanel` fold/unfold/identity/tendency/sparkline/axes |
 
 ```bash
 npm test                          # All tests once (CI mode)
@@ -138,6 +138,19 @@ npm test && npx next lint
 - Hooks that contain pure logic should export the pure function separately for direct testing
 - Components use `"use client"` directive (Next.js App Router)
 - Map components use `dynamic()` with `{ ssr: false }` for Leaflet compatibility
+
+### AircraftTrack type (src/lib/types.ts)
+- `first_seen: number` — ms epoch of first detection; set once in `AircraftTrackingContext`, never updated by `mergePositionInto`
+- `last_seen: number` — ms epoch of most recent update
+- `positions: [lat, lng, altitude | null][]` — capped at 100 entries; no per-position timestamps
+- GeoJSON export/import (`src/lib/geojson.ts`) serialises both `first_seen` and `last_seen` in feature properties; `first_seen` falls back to `last_seen` for legacy files
+
+### AircraftDetailsPanel (src/components/AircraftDetailsPanel.tsx)
+- Collapsible right panel rendered beside the map when an aircraft is selected (`selectedTrack !== null`)
+- Three states: hidden (track=null), collapsed 32px strip (`>>` button), expanded (user-resizable, 200–480px)
+- Width and open state persisted via `useLocalStorage` keys `adsb-details-panel-open` / `adsb-details-panel-width`
+- Left edge is a draggable `col-resize` strip (mirrors `ResizeHandle` but horizontal, width delta owned internally)
+- Sparkline: last ≤100 altitude positions rendered as SVG `<polyline>`; y-axis shows min/max ft labels; x-axis shows `HH:MM:SS` of `first_seen` and `last_seen`
 
 ## Gotchas
 

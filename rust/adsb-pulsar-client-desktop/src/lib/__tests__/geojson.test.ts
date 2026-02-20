@@ -21,6 +21,7 @@ function makeTrack(overrides: Partial<AircraftTrack> = {}): AircraftTrack {
       [48.85, 2.35, 34000],
       [48.86, 2.36, 35000],
     ],
+    first_seen: 1705320000000,
     last_seen: 1705320000000,
     message_count: 42,
     ...overrides,
@@ -178,7 +179,7 @@ describe("geoJSONToTracks", () => {
           hex_ident: "",
           callsign: null, altitude: null, ground_speed: null, track: null,
           vertical_rate: null, squawk: null, is_on_ground: null,
-          timestamp: "", last_seen: 0, message_count: 0,
+          timestamp: "", first_seen: 0, last_seen: 0, message_count: 0,
         },
       }],
     };

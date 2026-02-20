@@ -29,6 +29,8 @@ export interface AircraftTrack {
   timestamp: string;
   /** Position history for trajectory line drawing: [lat, lng, altitude | null] */
   positions: [number, number, number | null][];
+  /** Time of first detection (ms since epoch). Set once, never updated. */
+  first_seen: number;
   /** Last update time for TTL expiry */
   last_seen: number;
   /** Total SBS-1 messages received for this aircraft (pre-throttle cumulative count). */

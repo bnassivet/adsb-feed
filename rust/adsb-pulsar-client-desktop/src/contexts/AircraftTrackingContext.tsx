@@ -97,6 +97,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
           is_on_ground: pos.is_on_ground ?? null,
           timestamp: pos.timestamp,
           positions: [],
+          first_seen: now,
           last_seen: now,
           message_count: pos.message_count,
         };

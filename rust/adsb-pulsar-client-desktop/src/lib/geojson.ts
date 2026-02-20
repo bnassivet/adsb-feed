@@ -26,6 +26,7 @@ export interface TrackProperties {
   squawk: string | null;
   is_on_ground: boolean | null;
   timestamp: string;
+  first_seen: number;
   last_seen: number;
   message_count: number;
   no_position?: boolean;
@@ -113,6 +114,7 @@ function trackToFeature(t: AircraftTrack): TrackFeature {
     squawk: t.squawk,
     is_on_ground: t.is_on_ground,
     timestamp: t.timestamp,
+    first_seen: t.first_seen,
     last_seen: t.last_seen,
     message_count: t.message_count,
   };
@@ -183,6 +185,7 @@ export function geoJSONToTracks(geojson: TrackFeatureCollection): AircraftTrack[
       is_on_ground: props.is_on_ground,
       timestamp: props.timestamp,
       positions,
+      first_seen: props.first_seen ?? props.last_seen,
       last_seen: props.last_seen,
       message_count: props.message_count,
     });

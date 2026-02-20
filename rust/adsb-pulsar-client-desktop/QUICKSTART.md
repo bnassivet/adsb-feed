@@ -99,6 +99,7 @@ Aircraft should appear on the map and in the table within seconds.
 | **Header** | Connection status indicators (Socket / Pulsar), Start/Stop button, Settings link |
 | **Sidebar** | Filter aircraft by callsign, altitude range, and ground speed range |
 | **Map** | Leaflet map with aircraft markers colored by altitude and rotated by heading |
+| **Details Panel** | Click any aircraft (map marker or table row) to open a right panel with full details: altitude sparkline with time/altitude axes, vertical tendency, squawk, message count, and last-seen time. Drag the left edge to resize; use `<<`/`>>` to fold/unfold |
 | **Table** | Sortable aircraft list with callsign, altitude, speed, squawk, and position |
 | **Footer** | Live metrics: messages/s, total sent, bytes received, errors, queue size, uptime |
 

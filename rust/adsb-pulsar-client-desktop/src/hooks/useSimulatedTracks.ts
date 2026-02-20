@@ -61,6 +61,7 @@ function buildTrack(
     is_on_ground: flight.is_on_ground,
     timestamp: new Date().toISOString(),
     positions: state.positions,
+    first_seen: Date.now(),
     last_seen: Date.now(),
     message_count: 0,
   };

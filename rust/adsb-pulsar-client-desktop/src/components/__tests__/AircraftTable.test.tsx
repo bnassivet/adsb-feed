@@ -23,6 +23,7 @@ function makeTrack(hex: string, overrides?: Partial<AircraftTrack>): AircraftTra
     is_on_ground: false,
     timestamp: "",
     positions: [],
+    first_seen: Date.now(),
     last_seen: Date.now(),
     message_count: 0,
     ...overrides,

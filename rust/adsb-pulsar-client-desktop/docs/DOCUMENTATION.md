@@ -298,6 +298,49 @@ graph TD
 
 ## Common Patterns
 
+### Pattern 4: Three-State Collapsible Panel
+
+**Use Case**: A side panel that can be fully hidden, collapsed to a narrow strip, or fully expanded.
+
+```typescript
+// State lives in parent (page.tsx); persisted via useLocalStorage
+const [panelOpen, setPanelOpen] = useLocalStorage<boolean>("key-open", true);
+const [panelWidth, setPanelWidth] = useLocalStorage<number>("key-width", 280);
+
+// Panel is absent from DOM when nothing is selected
+{selectedItem && (
+  <Panel
+    item={selectedItem}
+    isOpen={panelOpen}
+    width={panelWidth}
+    onToggle={() => setPanelOpen(p => !p)}
+    onWidthChange={setPanelWidth}
+  />
+)}
+```
+
+**Three states**:
+1. **Hidden** (`selectedItem === null`): Panel not rendered; sibling fills available space
+2. **Collapsed** (`isOpen === false`): Fixed-width strip (e.g. 32px) with an unfold button
+3. **Expanded** (`isOpen === true`): Full content panel with a fold button and draggable resize edge
+
+**Resize edge pattern**: Track `clientX` delta directly inside the component (`useRef` for `lastX` and `isDragging`). Clamp the new width to `[MIN, MAX]` and call `onWidthChange`. This keeps the resize logic encapsulated — the parent only stores/restores the final width value.
+
+**Immutability contract for `first_seen`**: When a track is created, set `first_seen: now` once. The `mergePositionInto` update path must **never** overwrite `first_seen`. This ensures the sparkline x-axis start label always reflects the true first detection time, not the most recent update.
+
+```typescript
+// AircraftTrackingContext.tsx — creation only
+const track: AircraftTrack = { ..., first_seen: now, last_seen: now };
+
+// mergePositionInto — update path, never touches first_seen
+function mergePositionInto(track: AircraftTrack, pos: AircraftPosition, now: number) {
+  track.last_seen = now;          // ✅ update last_seen
+  // track.first_seen = now;      // ❌ never do this
+}
+```
+
+---
+
 ### Pattern 1: Filtered Data from Global Context
 
 **Use Case**: Derive view-specific data from global state

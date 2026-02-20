@@ -6,6 +6,7 @@ import { MetricsBar } from "@/components/MetricsBar";
 import { ConnectionStatusIndicator } from "@/components/ConnectionStatus";
 import { FiltersPanel } from "@/components/Filters";
 import { ResizeHandle } from "@/components/ResizeHandle";
+import { AircraftDetailsPanel } from "@/components/AircraftDetailsPanel";
 import { useAircraftTracks } from "@/hooks/useAircraftTracks";
 import { useSimulatedTracks } from "@/hooks/useSimulatedTracks";
 import { useMetrics } from "@/hooks/useMetrics";
@@ -27,6 +28,8 @@ export default function Dashboard() {
   const [tableHeight, setTableHeight] = useLocalStorage<number>("adsb-table-height", 256);
   const [sidebarOpen, setSidebarOpen] = useLocalStorage<boolean>("adsb-sidebar-open", true);
   const [trajectoryStyle] = useLocalStorage<"line" | "dots">("adsb-trajectory-style", "line");
+  const [detailsPanelOpen, setDetailsPanelOpen] = useLocalStorage<boolean>("adsb-details-panel-open", true);
+  const [detailsPanelWidth, setDetailsPanelWidth] = useLocalStorage<number>("adsb-details-panel-width", 280);
   const [showHistory, setShowHistory] = useLocalStorage<boolean>("adsb-show-history", false);
   const [showDensity, setShowDensity] = useLocalStorage<boolean>("adsb-show-density", false);
   const [densityMetric, setDensityMetric] = useLocalStorage<DensityMetric>("adsb-density-metric", "positions");
@@ -47,6 +50,13 @@ export default function Dashboard() {
 
   const visibleHistory = showHistory ? history : [];
   const visibleImported = showImported ? imported : [];
+  const selectedTrack = useMemo(
+    () =>
+      allTracks.find(t => t.hex_ident === selectedHexIdent) ??
+      visibleHistory.find(t => t.hex_ident === selectedHexIdent) ??
+      null,
+    [selectedHexIdent, allTracks, visibleHistory],
+  );
 
   // Toggle selection: clicking same track deselects, clicking different selects
   const handleSelectTrack = useCallback((hexIdent: string | null) => {
@@ -255,9 +265,20 @@ export default function Dashboard() {
 
         {/* Map + Table */}
         <main className="flex-1 flex flex-col overflow-hidden">
-          {/* Map — takes remaining space */}
-          <div className="flex-1 min-h-0">
-            <Map tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} />
+          {/* Map row — flex row so details panel sits right of map */}
+          <div className="flex flex-1 min-h-0 overflow-hidden">
+            <div className="flex-1 min-w-0">
+              <Map tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} />
+            </div>
+            {selectedTrack && (
+              <AircraftDetailsPanel
+                track={selectedTrack}
+                isOpen={detailsPanelOpen}
+                width={detailsPanelWidth}
+                onToggle={() => setDetailsPanelOpen((p: boolean) => !p)}
+                onWidthChange={setDetailsPanelWidth}
+              />
+            )}
           </div>
 
           {/* Resize handle */}
