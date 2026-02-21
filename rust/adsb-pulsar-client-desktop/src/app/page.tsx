@@ -4,8 +4,8 @@ import { Map } from "@/components/Map";
 import { AircraftTable } from "@/components/AircraftTable";
 import { MetricsBar } from "@/components/MetricsBar";
 import { ConnectionStatusIndicator } from "@/components/ConnectionStatus";
-import { FiltersPanel } from "@/components/Filters";
 import { ResizeHandle } from "@/components/ResizeHandle";
+import { LeftPanel } from "@/components/LeftPanel";
 import { AircraftDetailsPanel } from "@/components/AircraftDetailsPanel";
 import { useAircraftTracks } from "@/hooks/useAircraftTracks";
 import { useSimulatedTracks } from "@/hooks/useSimulatedTracks";
@@ -27,6 +27,7 @@ export default function Dashboard() {
   const [mapTheme, setMapTheme] = useLocalStorage<"light" | "dark">("adsb-map-theme", "dark");
   const [tableHeight, setTableHeight] = useLocalStorage<number>("adsb-table-height", 256);
   const [sidebarOpen, setSidebarOpen] = useLocalStorage<boolean>("adsb-sidebar-open", true);
+  const [sidebarWidth, setSidebarWidth] = useLocalStorage<number>("adsb-sidebar-width", 224);
   const [trajectoryStyle] = useLocalStorage<"line" | "dots">("adsb-trajectory-style", "line");
   const [detailsPanelOpen, setDetailsPanelOpen] = useLocalStorage<boolean>("adsb-details-panel-open", true);
   const [detailsPanelWidth, setDetailsPanelWidth] = useLocalStorage<number>("adsb-details-panel-width", 280);
@@ -233,35 +234,35 @@ export default function Dashboard() {
       {/* Main content */}
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
-        {sidebarOpen && (
-          <aside className="w-56 bg-slate-900 border-r border-slate-700 overflow-y-auto flex-shrink-0">
-            <FiltersPanel
-              filters={filters}
-              onChange={setFilters}
-              trackCount={allTracks.length}
-              showHistory={showHistory}
-              onToggleHistory={handleToggleHistory}
-              historyCount={history.length}
-              showDensity={showDensity}
-              onToggleDensity={handleToggleDensity}
-              densityMetric={densityMetric}
-              onDensityMetricChange={setDensityMetric}
-              showSimulation={showSimulation}
-              onToggleSimulation={handleToggleSimulation}
-              simulationCount={simulatedTracks.length}
-              liveColorMode={liveColorMode}
-              onLiveColorModeChange={setLiveColorMode}
-              historyColorMode={historyColorMode}
-              onHistoryColorModeChange={setHistoryColorMode}
-              importedCount={imported.length}
-              showImported={showImported}
-              onToggleImported={handleToggleImported}
-              onClearImported={clearImported}
-              includeImportedInDensity={includeImportedInDensity}
-              onToggleIncludeImportedInDensity={handleToggleIncludeImportedInDensity}
-            />
-          </aside>
-        )}
+        <LeftPanel
+          isOpen={sidebarOpen}
+          width={sidebarWidth}
+          onToggle={() => setSidebarOpen((prev: boolean) => !prev)}
+          onWidthChange={setSidebarWidth}
+          filters={filters}
+          onChange={setFilters}
+          trackCount={allTracks.length}
+          showHistory={showHistory}
+          onToggleHistory={handleToggleHistory}
+          historyCount={history.length}
+          showDensity={showDensity}
+          onToggleDensity={handleToggleDensity}
+          densityMetric={densityMetric}
+          onDensityMetricChange={setDensityMetric}
+          showSimulation={showSimulation}
+          onToggleSimulation={handleToggleSimulation}
+          simulationCount={simulatedTracks.length}
+          liveColorMode={liveColorMode}
+          onLiveColorModeChange={setLiveColorMode}
+          historyColorMode={historyColorMode}
+          onHistoryColorModeChange={setHistoryColorMode}
+          importedCount={imported.length}
+          showImported={showImported}
+          onToggleImported={handleToggleImported}
+          onClearImported={clearImported}
+          includeImportedInDensity={includeImportedInDensity}
+          onToggleIncludeImportedInDensity={handleToggleIncludeImportedInDensity}
+        />
 
         {/* Map + Table */}
         <main className="flex-1 flex flex-col overflow-hidden">
