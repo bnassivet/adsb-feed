@@ -2,7 +2,7 @@
 name = "adsb-pulsar-client"
 version = "0.1.0"
 edition = "2021"
-authors = ["ADS-B Project Contributors"]
+authors = ["bruno.nassivet@gmail.com"]
 description = "High-performance ADS-B feed client for Apache Pulsar written in Rust"
 license = "MIT OR Apache-2.0"
 rust-version = "1.75"

@@ -10,3 +10,10 @@ src-tauri/gen/
 # IDE
 .vscode/
 .idea/
+
+# OS
+.DS_Store
+**/.DS_Store
+
+# TypeScript
+tsconfig.tsbuildinfo
