@@ -43,9 +43,25 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
           type="text"
           value={filters.callsign}
           onChange={(e) => onChange({ ...filters, callsign: e.target.value })}
-          placeholder="Search..."
+          placeholder="Search... (comma-separated)"
           className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded text-sm text-slate-200 placeholder-slate-500 focus:border-blue-500 focus:outline-none"
         />
+        {importedCount > 0 && (
+          <label className="flex items-center gap-2 mt-1.5 text-xs text-slate-500 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={filters.includeImportedInFilter}
+              onChange={() =>
+                onChange({
+                  ...filters,
+                  includeImportedInFilter: !filters.includeImportedInFilter,
+                })
+              }
+              className="accent-indigo-500"
+            />
+            Include Imported in filter
+          </label>
+        )}
       </div>
 
       {/* Altitude range */}

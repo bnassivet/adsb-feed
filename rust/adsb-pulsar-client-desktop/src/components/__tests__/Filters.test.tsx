@@ -37,14 +37,14 @@ function renderFilters(overrides = {}) {
 describe("FiltersPanel", () => {
   it("renders with default filters", () => {
     renderFilters();
-    expect(screen.getByPlaceholderText("Search...")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search... (comma-separated)")).toBeInTheDocument();
     expect(screen.getByText("Filters")).toBeInTheDocument();
   });
 
   it("callsign input calls onChange", async () => {
     const user = userEvent.setup();
     const { props } = renderFilters();
-    const input = screen.getByPlaceholderText("Search...");
+    const input = screen.getByPlaceholderText("Search... (comma-separated)");
     await user.type(input, "A");
     expect(props.onChange).toHaveBeenCalled();
     // Check that the last call includes the typed character
@@ -129,6 +129,47 @@ describe("imported tracks section", () => {
     const checkbox = screen.getByText(/Show imported/).closest("label")!.querySelector("input")!;
     await user.click(checkbox);
     expect(onToggleImported).toHaveBeenCalledOnce();
+  });
+});
+
+describe("include imported in filter (callsign/hex)", () => {
+  it("hides 'Include Imported in filter' checkbox when no imported tracks", () => {
+    renderFilters({ importedCount: 0 });
+    expect(screen.queryByText(/Include Imported in filter/)).not.toBeInTheDocument();
+  });
+
+  it("shows 'Include Imported in filter' checkbox when imported tracks exist", () => {
+    renderFilters({ importedCount: 3 });
+    expect(screen.getByText(/Include Imported in filter/)).toBeInTheDocument();
+  });
+
+  it("checkbox is unchecked by default (includeImportedInFilter: false)", () => {
+    renderFilters({ importedCount: 3, filters: { ...DEFAULT_FILTERS, includeImportedInFilter: false } });
+    const label = screen.getByText(/Include Imported in filter/).closest("label")!;
+    const checkbox = label.querySelector("input")!;
+    expect(checkbox).not.toBeChecked();
+  });
+
+  it("checkbox is checked when includeImportedInFilter is true", () => {
+    renderFilters({ importedCount: 3, filters: { ...DEFAULT_FILTERS, includeImportedInFilter: true } });
+    const label = screen.getByText(/Include Imported in filter/).closest("label")!;
+    const checkbox = label.querySelector("input")!;
+    expect(checkbox).toBeChecked();
+  });
+
+  it("clicking checkbox calls onChange with includeImportedInFilter toggled to true", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderFilters({
+      importedCount: 3,
+      filters: { ...DEFAULT_FILTERS, includeImportedInFilter: false },
+      onChange,
+    });
+    const label = screen.getByText(/Include Imported in filter/).closest("label")!;
+    await user.click(label.querySelector("input")!);
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ includeImportedInFilter: true }),
+    );
   });
 });
 

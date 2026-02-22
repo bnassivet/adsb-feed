@@ -4,14 +4,18 @@ import { useAircraftTrackingContext } from "@/contexts/AircraftTrackingContext";
 import type { AircraftTrack, Filters } from "@/lib/types";
 
 export function matchesFilters(t: AircraftTrack, filters: Filters): boolean {
-  if (
-    filters.callsign &&
-    !(t.callsign ?? "")
-      .toLowerCase()
-      .includes(filters.callsign.toLowerCase()) &&
-    !t.hex_ident.toLowerCase().includes(filters.callsign.toLowerCase())
-  ) {
-    return false;
+  if (filters.callsign) {
+    const tokens = filters.callsign
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    if (tokens.length > 0) {
+      const id = t.hex_ident.toLowerCase();
+      const cs = (t.callsign ?? "").toLowerCase();
+      if (!tokens.some((tok) => cs.includes(tok) || id.includes(tok))) {
+        return false;
+      }
+    }
   }
   if (t.altitude !== null) {
     if (t.altitude < filters.altitudeMin || t.altitude > filters.altitudeMax) {
@@ -51,9 +55,14 @@ export function useAircraftTracks(filters: Filters) {
   );
 
   const imported = useMemo(
-    () => Array.from(importedMap.values()),
+    () => {
+      const all = Array.from(importedMap.values());
+      return filters.includeImportedInFilter
+        ? all.filter((t) => matchesFilters(t, filters))
+        : all;
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [version],
+    [version, filters],
   );
 
   return { tracks, history, imported, importTracks, clearImported };

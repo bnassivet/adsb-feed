@@ -88,11 +88,14 @@ export interface Config {
 
 /** Filter state for the UI. */
 export interface Filters {
+  /** Raw input string; may contain comma-separated tokens for multi-ID filtering. */
   callsign: string;
   altitudeMin: number;
   altitudeMax: number;
   speedMin: number;
   speedMax: number;
+  /** When true, the callsign/hex filter is also applied to imported tracks. */
+  includeImportedInFilter: boolean;
 }
 
 /** Which metric the H3 density overlay displays. */
@@ -118,4 +121,5 @@ export const DEFAULT_FILTERS: Filters = {
   altitudeMax: 50000,
   speedMin: 0,
   speedMax: 600,
+  includeImportedInFilter: false,
 };

@@ -69,4 +69,42 @@ describe("matchesFilters", () => {
     expect(matchesFilters(track, pass)).toBe(true);
     expect(matchesFilters(track, fail)).toBe(false);
   });
+
+  // --- Multi-token (comma-separated) filter ---
+
+  it("passes when first of two comma-separated tokens matches callsign", () => {
+    const track = makeTrack({ callsign: "AIR123", hex_ident: "AABBCC" });
+    const filters: Filters = { ...DEFAULT_FILTERS, callsign: "AIR,BAW" };
+    expect(matchesFilters(track, filters)).toBe(true);
+  });
+
+  it("passes when second of two comma-separated tokens matches callsign", () => {
+    const track = makeTrack({ callsign: "BAW456", hex_ident: "AABBCC" });
+    const filters: Filters = { ...DEFAULT_FILTERS, callsign: "AIR,BAW" };
+    expect(matchesFilters(track, filters)).toBe(true);
+  });
+
+  it("fails when neither comma-separated token matches", () => {
+    const track = makeTrack({ callsign: "DLH789", hex_ident: "AABBCC" });
+    const filters: Filters = { ...DEFAULT_FILTERS, callsign: "AIR,BAW" };
+    expect(matchesFilters(track, filters)).toBe(false);
+  });
+
+  it("partial token matches hex_ident (substring)", () => {
+    const track = makeTrack({ callsign: null, hex_ident: "BAW456" });
+    const filters: Filters = { ...DEFAULT_FILTERS, callsign: "BAW" };
+    expect(matchesFilters(track, filters)).toBe(true);
+  });
+
+  it("whitespace-only tokens after split are ignored and pass all tracks", () => {
+    const track = makeTrack({ callsign: "DLH789", hex_ident: "AABBCC" });
+    const filters: Filters = { ...DEFAULT_FILTERS, callsign: "  ,  " };
+    expect(matchesFilters(track, filters)).toBe(true);
+  });
+
+  it("tokens are trimmed so 'AIR , BAW' works like 'AIR,BAW'", () => {
+    const track = makeTrack({ callsign: "BAW100", hex_ident: "AABBCC" });
+    const filters: Filters = { ...DEFAULT_FILTERS, callsign: "AIR , BAW" };
+    expect(matchesFilters(track, filters)).toBe(true);
+  });
 });
