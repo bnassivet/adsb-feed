@@ -1,5 +1,6 @@
 "use client";
 import type { Filters, DensityMetric, AltitudeColorMode } from "@/lib/types";
+import { RangeSlider } from "@/components/RangeSlider";
 
 interface Props {
   filters: Filters;
@@ -65,67 +66,26 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
       </div>
 
       {/* Altitude range */}
-      <div>
-        <label className="block text-xs text-slate-400 mb-1">
-          Altitude: {filters.altitudeMin.toLocaleString()} -{" "}
-          {filters.altitudeMax.toLocaleString()} ft
-        </label>
-        <div className="flex gap-2">
-          <input
-            type="range"
-            min={0}
-            max={50000}
-            step={1000}
-            value={filters.altitudeMin}
-            onChange={(e) =>
-              onChange({ ...filters, altitudeMin: Number(e.target.value) })
-            }
-            className="flex-1 accent-blue-500"
-          />
-          <input
-            type="range"
-            min={0}
-            max={50000}
-            step={1000}
-            value={filters.altitudeMax}
-            onChange={(e) =>
-              onChange({ ...filters, altitudeMax: Number(e.target.value) })
-            }
-            className="flex-1 accent-blue-500"
-          />
-        </div>
-      </div>
+      <RangeSlider
+        min={0}
+        max={50000}
+        step={1000}
+        valueMin={filters.altitudeMin}
+        valueMax={filters.altitudeMax}
+        onChange={(lo, hi) => onChange({ ...filters, altitudeMin: lo, altitudeMax: hi })}
+        formatLabel={(v) => `${v.toLocaleString()} ft`}
+      />
 
       {/* Speed range */}
-      <div>
-        <label className="block text-xs text-slate-400 mb-1">
-          Speed: {filters.speedMin} - {filters.speedMax} kts
-        </label>
-        <div className="flex gap-2">
-          <input
-            type="range"
-            min={0}
-            max={600}
-            step={10}
-            value={filters.speedMin}
-            onChange={(e) =>
-              onChange({ ...filters, speedMin: Number(e.target.value) })
-            }
-            className="flex-1 accent-blue-500"
-          />
-          <input
-            type="range"
-            min={0}
-            max={600}
-            step={10}
-            value={filters.speedMax}
-            onChange={(e) =>
-              onChange({ ...filters, speedMax: Number(e.target.value) })
-            }
-            className="flex-1 accent-blue-500"
-          />
-        </div>
-      </div>
+      <RangeSlider
+        min={0}
+        max={600}
+        step={10}
+        valueMin={filters.speedMin}
+        valueMax={filters.speedMax}
+        onChange={(lo, hi) => onChange({ ...filters, speedMin: lo, speedMax: hi })}
+        formatLabel={(v) => `${v} kts`}
+      />
 
       {/* Stats */}
       <div className="pt-2 border-t border-slate-700">

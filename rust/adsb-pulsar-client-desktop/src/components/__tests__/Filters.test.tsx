@@ -52,6 +52,18 @@ describe("FiltersPanel", () => {
     expect(lastCall.callsign).toContain("A");
   });
 
+  it("altitude filter renders dual-handle slider with formatted label", () => {
+    renderFilters();
+    // RangeSlider renders "0 ft – 50,000 ft" (em dash), not the old "Altitude: 0 - 50,000 ft"
+    expect(screen.getByText("0 ft – 50,000 ft")).toBeInTheDocument();
+  });
+
+  it("speed filter renders dual-handle slider with formatted label", () => {
+    renderFilters();
+    // RangeSlider renders "0 kts – 600 kts" (em dash)
+    expect(screen.getByText("0 kts – 600 kts")).toBeInTheDocument();
+  });
+
   it("displays track count", () => {
     renderFilters({ trackCount: 42 });
     expect(screen.getByText("42")).toBeInTheDocument();
