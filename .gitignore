@@ -365,6 +365,10 @@ hs_err_pid*
 .vscode/
 .claude/
 
+# Node / TypeScript
+node_modules/
+tsconfig.tsbuildinfo
+
 src/notebooks/figures/
 src/notebooks/figures_copy/
 src/notebooks/data_cache/
