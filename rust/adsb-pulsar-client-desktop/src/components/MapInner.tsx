@@ -302,20 +302,22 @@ export function MapInner({ tracks, historyTracks, importedTracks = [], mapTheme,
 
         {/* Imported tracks — dots or dashed indigo polylines */}
         {trajectoryStyle === "dots" && importedTracks.length > 0 && (
-          <DotsLayer tracks={importedTracks} colorMode="plot" type="imported" selectedHexIdent={null} />
+          <DotsLayer tracks={importedTracks} colorMode="plot" type="imported" selectedHexIdent={selectedHexIdent} />
         )}
         {trajectoryStyle === "line" && importedTracks.map((t) => {
           if (t.positions.length < 2) return null;
+          const isSelected = t.hex_ident === selectedHexIdent;
           return (
             <Polyline
               key={`imported-${t.hex_ident}`}
               positions={toLatLngs(t.positions)}
               pathOptions={{
                 color: "#818cf8",
-                weight: 2,
-                opacity: 0.5,
-                dashArray: "6 4",
+                weight: isSelected ? 3 : 2,
+                opacity: isSelected ? 0.8 : 0.5,
+                dashArray: isSelected ? undefined : "6 4",
               }}
+              eventHandlers={{ click: () => onSelectTrack(t.hex_ident) }}
             >
               <Tooltip sticky>
                 <div className="text-xs">

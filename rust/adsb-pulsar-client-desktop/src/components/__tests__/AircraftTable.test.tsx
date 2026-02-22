@@ -172,6 +172,38 @@ describe("collapsible sections", () => {
   });
 });
 
+describe("imported row selection", () => {
+  it("highlights selected imported row with indigo background", () => {
+    const importedTrack = makeTrack("IMP001", { callsign: "TEST01" });
+    render(
+      <AircraftTable
+        tracks={[]}
+        importedTracks={[importedTrack]}
+        selectedHexIdent="IMP001"
+        onSelectTrack={vi.fn()}
+      />,
+    );
+    const row = screen.getByTestId("row-imported-IMP001");
+    expect(row.className).toContain("bg-indigo-900/40");
+    expect(row.className).not.toContain("opacity-60");
+  });
+
+  it("keeps opacity-60 on unselected imported row", () => {
+    const importedTrack = makeTrack("IMP002", { callsign: "TEST02" });
+    render(
+      <AircraftTable
+        tracks={[]}
+        importedTracks={[importedTrack]}
+        selectedHexIdent={null}
+        onSelectTrack={vi.fn()}
+      />,
+    );
+    const row = screen.getByTestId("row-imported-IMP002");
+    expect(row.className).toContain("opacity-60");
+    expect(row.className).not.toContain("bg-indigo-900/40");
+  });
+});
+
 describe("AircraftTable columns", () => {
   it("renders RxTS column header", () => {
     render(<AircraftTable tracks={[makeTrack("ABC123")]} />);

@@ -363,4 +363,32 @@ describe("AircraftDetailsPanel content", () => {
     );
     expect(screen.getByText("EMERGENCY")).toBeInTheDocument();
   });
+
+  it("shows IMPORTED badge when isImported is true", () => {
+    render(
+      <AircraftDetailsPanel
+        track={makeTrack({ positions: [] })}
+        isOpen={true}
+        width={280}
+        onToggle={vi.fn()}
+        onWidthChange={vi.fn()}
+        isImported={true}
+      />,
+    );
+    expect(screen.getByText("IMPORTED")).toBeInTheDocument();
+  });
+
+  it("does not show IMPORTED badge when isImported is false", () => {
+    render(
+      <AircraftDetailsPanel
+        track={makeTrack({ positions: [] })}
+        isOpen={true}
+        width={280}
+        onToggle={vi.fn()}
+        onWidthChange={vi.fn()}
+        isImported={false}
+      />,
+    );
+    expect(screen.queryByText("IMPORTED")).not.toBeInTheDocument();
+  });
 });

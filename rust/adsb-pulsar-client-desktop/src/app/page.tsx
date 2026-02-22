@@ -55,8 +55,9 @@ export default function Dashboard() {
     () =>
       allTracks.find(t => t.hex_ident === selectedHexIdent) ??
       visibleHistory.find(t => t.hex_ident === selectedHexIdent) ??
+      visibleImported.find(t => t.hex_ident === selectedHexIdent) ??
       null,
-    [selectedHexIdent, allTracks, visibleHistory],
+    [selectedHexIdent, allTracks, visibleHistory, visibleImported],
   );
 
   // Toggle selection: clicking same track deselects, clicking different selects
@@ -67,10 +68,15 @@ export default function Dashboard() {
   // Auto-deselect when selected track disappears (TTL expiry)
   useEffect(() => {
     if (!selectedHexIdent) return;
-    const exists = allTracks.some(t => t.hex_ident === selectedHexIdent)
-      || visibleHistory.some(t => t.hex_ident === selectedHexIdent);
+    const exists =
+      allTracks.some(t => t.hex_ident === selectedHexIdent) ||
+      visibleHistory.some(t => t.hex_ident === selectedHexIdent) ||
+      visibleImported.some(t => t.hex_ident === selectedHexIdent);
     if (!exists) setSelectedHexIdent(null);
-  }, [selectedHexIdent, allTracks, visibleHistory]);
+  }, [selectedHexIdent, allTracks, visibleHistory, visibleImported]);
+
+  const isImportedSelection = visibleImported.some(t => t.hex_ident === selectedHexIdent);
+
   const densityTracks = useMemo(
     () => (showDensity ? [...allTracks, ...history, ...(includeImportedInDensity ? imported : [])] : []),
     [showDensity, allTracks, history, includeImportedInDensity, imported],
@@ -278,6 +284,7 @@ export default function Dashboard() {
                 width={detailsPanelWidth}
                 onToggle={() => setDetailsPanelOpen((p: boolean) => !p)}
                 onWidthChange={setDetailsPanelWidth}
+                isImported={isImportedSelection}
               />
             )}
           </div>

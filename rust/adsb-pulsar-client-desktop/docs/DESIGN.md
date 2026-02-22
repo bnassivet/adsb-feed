@@ -9,6 +9,9 @@
 6. [State Management](#state-management)
 7. [Global Context Manager Pattern](#global-context-manager-pattern)
 8. [In-Memory Aircraft History](#in-memory-aircraft-history)
+9. [GeoJSON Export/Import](#geojson-exportimport)
+10. [Imported Tracks Selection](#imported-tracks-selection)
+11. [Simulated Flights (Demo Mode)](#simulated-flights-demo-mode)
 
 ---
 
@@ -137,8 +140,10 @@ src/
 ├── components/              # React UI components
 │   ├── AircraftDetailsPanel.tsx # Collapsible right panel for selected aircraft details
 │   ├── AircraftTable.tsx    # Tabular data display
+│   ├── AltitudeLegend.tsx   # Floating altitude-to-color gradient bar on map
 │   ├── ConnectionStatus.tsx # Connection indicator badges
-│   ├── Filters.tsx          # Filter panel (sidebar)
+│   ├── Filters.tsx          # Filter controls (callsign, altitude, speed, toggles)
+│   ├── LeftPanel.tsx        # Collapsible resizable left panel wrapping Filters
 │   ├── Map.tsx              # Map wrapper (SSR bypass)
 │   ├── MapInner.tsx         # Actual Leaflet map
 │   ├── MapTileToggle.tsx    # Dark/light map theme toggle
@@ -150,16 +155,20 @@ src/
 │   ├── useAircraftTracks.ts # Filtered track consumer (reads from context)
 │   ├── useConnectionStatus.ts # Status polling
 │   ├── useLocalStorage.ts   # Persistent UI preferences
+│   ├── useMapZoom.ts        # Debounced Leaflet zoom level for H3 resolution
 │   ├── useMetrics.ts        # Metrics polling
 │   ├── useSimulatedTracks.ts # Simulated demo flight tracks
 │   └── useTauriEvent.ts     # Event listener abstraction
 ├── lib/                     # Utilities and types
 │   ├── aircraft-details.ts  # Pure utilities: vertical tendency, sparkline, altitude range, time format
 │   ├── aircraft-icon.ts     # Pure SVG/HTML generation for aircraft map icons
-│   ├── colors.ts            # Altitude-based color mapping
+│   ├── colors.ts            # Altitude-based color mapping + ALTITUDE_SCALE_STOPS
 │   ├── commands.ts          # Tauri command wrappers
+│   ├── file-io.ts           # Tauri native dialog integration for export/import
+│   ├── format.ts            # Pure format helpers (timeAgo, formatBytes)
+│   ├── geojson.ts           # Bidirectional AircraftTrack ↔ GeoJSON conversion
 │   ├── h3-density.ts        # H3 hexagonal density computation
-│   ├── simulation-data.ts   # Simulated flight definitions
+│   ├── simulation-data.ts   # 20 Montreal-area simulated flight definitions
 │   ├── track-ordering.ts    # Render-order utility for selected track
 │   └── types.ts             # TypeScript type definitions
 ```
@@ -200,9 +209,10 @@ graph TD
     Dashboard --> Footer[MetricsBar]
 
     Header --> StatusIndicators[ConnectionStatusIndicator x2]
-    Header --> Controls[Start/Stop/Settings Buttons]
+    Header --> Controls[Export/Import/Start/Stop/Settings]
 
-    MainContent --> Sidebar[FiltersPanel]
+    MainContent --> LeftPanel[LeftPanel<br/>Collapsible]
+    LeftPanel --> FiltersPanel[FiltersPanel]
     MainContent --> MapRow[Map Row]
     MainContent --> ResizeHandle
     MainContent --> Table[AircraftTable]
@@ -212,12 +222,13 @@ graph TD
 
     Map --> MapInner[MapInner]
     MapInner --> MapTileToggle
-    MapInner --> LeafletMarkers[Aircraft Markers<br/>Polylines]
+    MapInner --> AltitudeLegend
+    MapInner --> LeafletMarkers[Aircraft Markers<br/>Polylines/Dots]
 
     style Dashboard fill:#81C784
     style Map fill:#64B5F6
     style Table fill:#FFD54F
-    style Sidebar fill:#E57373
+    style LeftPanel fill:#E57373
     style Footer fill:#BA68C8
     style DetailsPanel fill:#CE93D8
 ```
@@ -266,44 +277,54 @@ accumulation even when users navigate to Settings or other pages.
 **Purpose**: Main application page (aircraft tracking dashboard)
 
 **Responsibilities**:
-- Orchestrate all UI components (header, sidebar, map, table, footer)
-- Manage top-level state (filters, running status, errors)
+- Orchestrate all UI components (header, left panel, map, table, details panel, footer)
+- Manage top-level state (filters, running status, errors, selection)
 - Handle start/stop commands via Tauri IPC
-- Persist UI preferences (map theme, table height) to localStorage
+- Handle GeoJSON export/import via `file-io.ts`
+- Persist UI preferences to localStorage
 
 **Custom Hooks Used**:
-- `useAircraftTracks(filters)`: Track state with filtering (returns `{ tracks, history }`)
+- `useAircraftTracks(filters)`: Track state with filtering (returns `{ tracks, history, imported, importTracks, clearImported }`)
+- `useSimulatedTracks(enabled)`: Self-animating demo flight tracks
 - `useMetrics()`: Performance metrics polling
 - `useConnectionStatus()`: Connection status polling
-- `useTauriEvent("adsb:stopped")`: Listen for stop events
-- `useLocalStorage("adsb-map-theme")`: Persist map theme
-- `useLocalStorage("adsb-table-height")`: Persist table height
-- `useLocalStorage("adsb-show-history")`: Persist history toggle
-- `useLocalStorage("adsb-details-panel-open")`: Persist details panel open/collapsed state
-- `useLocalStorage("adsb-details-panel-width")`: Persist details panel width in pixels
+- `useLocalStorage(...)`: Persist map theme, table height, panel states, toggles, color modes
 
 **State Management**:
 - `filters: Filters`: Altitude/speed/callsign filters
-- `isRunning: boolean`: Feed running status
 - `error: string | null`: Error messages
 - `mapTheme: "light" | "dark"`: Map tile style
 - `tableHeight: number`: Resizable table height in pixels
-- `showHistory: boolean`: Whether to display expired aircraft (persisted to localStorage)
+- `sidebarOpen: boolean`: Left panel expanded/collapsed (persisted)
+- `sidebarWidth: number`: Left panel width in px, 180–400 (persisted)
+- `trajectoryStyle: "line" | "dots"`: Trajectory rendering mode (persisted)
+- `showHistory: boolean`: Whether to display expired aircraft (persisted)
+- `showDensity: boolean`: H3 density overlay toggle (persisted)
+- `densityMetric: DensityMetric`: Which metric to display in H3 hexagons (persisted)
+- `showSimulation: boolean`: Simulated demo flight toggle (persisted)
+- `liveColorMode: AltitudeColorMode`: Color mode for live tracks (persisted)
+- `historyColorMode: AltitudeColorMode`: Color mode for history tracks (persisted)
+- `showImported: boolean`: Visibility of imported GeoJSON tracks (persisted)
+- `includeImportedInDensity: boolean`: Include imported tracks in H3 density (persisted)
 - `selectedHexIdent: string | null`: Currently selected aircraft (toggle behavior: click same to deselect)
 - `detailsPanelOpen: boolean`: Whether the details panel is expanded or collapsed (persisted)
 - `detailsPanelWidth: number`: Width of the expanded details panel in px, clamped 200–480 (persisted)
 
 **Derived State**:
-- `visibleHistory`: Computed as `showHistory ? history : []` — avoids passing full history arrays to child components when the toggle is off, reducing unnecessary rendering work
-- `selectedTrack`: Resolved from `selectedHexIdent` against `allTracks` then `visibleHistory`; `null` when no aircraft is selected. Passed as the `track` prop to `AircraftDetailsPanel`.
+- `allTracks`: Merge of live `tracks` + `simulatedTracks`
+- `visibleHistory`: `showHistory ? history : []`
+- `visibleImported`: `showImported ? imported : []`
+- `selectedTrack`: Resolved from `selectedHexIdent` against `allTracks`, then `visibleHistory`, then `visibleImported`; `null` when no aircraft is selected
+- `isImportedSelection`: Whether the selected track came from the imported collection (drives `IMPORTED` badge in details panel)
+- `densityTracks`: Computed from `allTracks + history + (imported if includeImportedInDensity)` when density overlay is enabled
 
 **Layout Structure**:
 ```tsx
 <div className="h-screen flex flex-col">
-  <header> {/* Header bar */} </header>
-  <div className="flex flex-1">
-    <aside> {/* Sidebar filters */} </aside>
-    <main className="flex flex-col">
+  <header> {/* Header bar: status, sidebar toggle, export/import/clear, start/stop, settings */} </header>
+  <div className="flex flex-1 overflow-hidden">
+    <LeftPanel isOpen={sidebarOpen} width={sidebarWidth} ... />
+    <main className="flex-1 flex flex-col overflow-hidden">
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div className="flex-1 min-w-0"> {/* Map */} </div>
         {selectedTrack && (
@@ -313,11 +334,12 @@ accumulation even when users navigate to Settings or other pages.
             width={detailsPanelWidth}
             onToggle={...}
             onWidthChange={...}
+            isImported={isImportedSelection}
           />
         )}
       </div>
       <ResizeHandle />
-      <div> {/* Table */} </div>
+      <div> {/* AircraftTable */} </div>
     </main>
   </div>
   <MetricsBar />
@@ -348,11 +370,12 @@ accumulation even when users navigate to Settings or other pages.
 
 #### 4. **AircraftTable** (`src/components/AircraftTable.tsx`)
 
-**Purpose**: Tabular display of active and historical aircraft data
+**Purpose**: Tabular display of active, historical, and imported aircraft data
 
 **Props**:
 - `tracks: AircraftTrack[]`: Active aircraft tracks
 - `historyTracks?: AircraftTrack[]`: Optional expired aircraft tracks (defaults to `[]`)
+- `importedTracks?: AircraftTrack[]`: Optional imported GeoJSON tracks (defaults to `[]`)
 - `selectedHexIdent?: string | null`: Currently selected aircraft hex_ident
 - `onSelectTrack?: (hex: string) => void`: Callback when a row is clicked
 
@@ -362,18 +385,24 @@ accumulation even when users navigate to Settings or other pages.
 - **RxTS**: Relative time since last received message (e.g., "3s ago") via `timeAgo(last_seen)`
 - **Msg#**: Total SBS-1 messages received for this aircraft (pre-throttle cumulative count)
 - Handle null values gracefully (display "—")
-- Render history rows below active rows, separated by a labeled divider row
+- Render three row sections: active, history, imported — each separated by a collapsible divider
 - History rows display with `opacity-40` for visual distinction (full opacity when selected)
 - History rows show relative "last seen" time (e.g., "23m ago") in place of heading/vertical rate
-- Highlight selected row (`bg-blue-900/40`) and auto-scroll it into view
+- Imported rows display with `opacity-60` and indigo text tint for visual identity
+- Highlight selected row and auto-scroll it into view
+
+**Row Sections**:
+1. **Active rows** — standard rendering, selected highlight: `bg-blue-900/40`
+2. **History divider** — uppercase label with count (e.g., "HISTORY (12)"), collapsible
+3. **History rows** — dimmed via `opacity-40`, selected highlight: `bg-blue-900/40`
+4. **Imported divider** — uppercase label with count (e.g., "IMPORTED (5)"), collapsible
+5. **Imported rows** — dimmed via `opacity-60`, indigo text tint, selected highlight: `bg-indigo-900/40`
 
 **Styling**:
 - Dark background (`bg-slate-900`)
 - Fixed header with `sticky top-0`
 - Overflow scrolling for table body
-- History divider: uppercase label with count (e.g., "HISTORY (12)")
-- History rows: dimmed via `opacity-40` class (removed when selected)
-- Selected row: `bg-blue-900/40` highlight + `cursor-pointer` when clickable
+- Selected row: `bg-blue-900/40` (active/history) or `bg-indigo-900/40` (imported) + `cursor-pointer` when clickable
 
 **File**: `src/components/AircraftTable.tsx`
 
@@ -602,7 +631,48 @@ DotsLayer({ tracks, colorMode, type: "history" | "live" })
 
 ---
 
-#### 12. **AircraftDetailsPanel** (`src/components/AircraftDetailsPanel.tsx`)
+#### 12. **LeftPanel** (`src/components/LeftPanel.tsx`)
+
+**Purpose**: Collapsible resizable left sidebar that wraps the `FiltersPanel`
+
+**Props**:
+- `isOpen: boolean`: Expanded or collapsed
+- `width: number`: Panel width in px (clamped 180–400, persisted)
+- `onToggle: () => void`: Toggle expanded/collapsed
+- `onWidthChange: (w: number) => void`: Called during drag resize
+- Plus all `FiltersPanel` props: `filters`, `onChange`, `trackCount`, `showHistory`, `onToggleHistory`, `historyCount`, `showDensity`, `onToggleDensity`, `densityMetric`, `onDensityMetricChange`, `showSimulation`, `onToggleSimulation`, `simulationCount`, `liveColorMode`, `onLiveColorModeChange`, `historyColorMode`, `onHistoryColorModeChange`, `importedCount`, `showImported`, `onToggleImported`, `onClearImported`, `includeImportedInDensity`, `onToggleIncludeImportedInDensity`
+
+**Two States**:
+1. **Collapsed** — 32px strip with `>>` button ("Show filters panel")
+2. **Expanded** — full-width panel with `<<` button ("Hide filters panel") and `FiltersPanel` content
+
+**Resize Behavior**:
+- Right edge: 1px `col-resize` draggable strip (tracks `clientX` delta; moving right = expanding)
+- Width clamped: min 180px, max 400px
+- Width state is owned by parent (`onWidthChange` callback), same pattern as `AircraftDetailsPanel`
+
+**Design Note**: The `LeftPanel` is the left-side mirror of `AircraftDetailsPanel`. Both use the same collapsed-strip + expanded-panel + drag-resize architecture. The key difference: `LeftPanel` is always rendered (no "hidden" state), while `AircraftDetailsPanel` is conditionally mounted based on selection. The sidebar toggle in the header bar also controls `isOpen`.
+
+**File**: `src/components/LeftPanel.tsx`
+
+---
+
+#### 13. **AltitudeLegend** (`src/components/AltitudeLegend.tsx`)
+
+**Purpose**: Floating altitude-to-color gradient bar overlaid on the map
+
+**Responsibilities**:
+- Render a vertical 3×120px gradient bar using `ALTITUDE_SCALE_STOPS` from `colors.ts`
+- Display three labels: `50k` (top), `25k` (middle), `0` (bottom) with `ft` unit
+- Position in top-right of map with `z-[1000]` and `pointer-events-none`
+
+**Dependencies**: Uses `ALTITUDE_SCALE_STOPS` (named export from `colors.ts`) — an array of `[normalizedPosition, cssColor]` pairs used to build the CSS `linear-gradient`.
+
+**File**: `src/components/AltitudeLegend.tsx`
+
+---
+
+#### 14. **AircraftDetailsPanel** (`src/components/AircraftDetailsPanel.tsx`)
 
 **Purpose**: Collapsible right panel showing full details for the currently selected aircraft
 
@@ -612,6 +682,7 @@ DotsLayer({ tracks, colorMode, type: "history" | "live" })
 - `width: number`: Panel width in px (clamped 200–480, persisted)
 - `onToggle: () => void`: Called when fold/unfold button is clicked
 - `onWidthChange: (w: number) => void`: Called during drag resize
+- `isImported?: boolean`: When `true`, displays an indigo `IMPORTED` badge in the header (defaults to `false`)
 
 **Three States**:
 1. **Hidden** — `track === null`: renders nothing; map fills full width
@@ -619,7 +690,7 @@ DotsLayer({ tracks, colorMode, type: "history" | "live" })
 3. **Expanded** — `isOpen === true`: full-width panel with content and `<<` button (title "Fold panel")
 
 **Content Sections** (expanded state):
-1. **Header**: "Aircraft Details" label + fold button `<<`
+1. **Header**: "Aircraft Details" label + optional `IMPORTED` badge (indigo, shown when `isImported === true`) + fold button `<<`
 2. **Identity**: ICAO hex (monospace, prominent), callsign (or "—")
 3. **Altitude / Speed / Heading**: altitude ft, ground_speed kts, track °, on-ground badge
 4. **Vertical Tendency**: arrow icon (▲ green / ▼ red / → slate) + formatted rate; SVG sparkline with axes:
@@ -767,7 +838,51 @@ useEffect(() => {
 
 ---
 
-#### 5. **useTauriEvent** (`src/hooks/useTauriEvent.ts`)
+#### 5. **useMapZoom** (`src/hooks/useMapZoom.ts`)
+
+**Purpose**: Expose current Leaflet map zoom level as a debounced integer state
+
+**Parameters**: `debounceMs?: number` (default 300ms)
+
+**Returns**: `number` (integer zoom level)
+
+**Responsibilities**:
+- Call `useMap()` from react-leaflet (must be inside `<MapContainer>`)
+- Listen to Leaflet `"zoomend"` event
+- Debounce updates by `debounceMs` to avoid triggering expensive H3 recomputation on every pinch-zoom tick
+- Return `Math.round(zoom)` — fractional zoom from smooth gestures is snapped to integer
+
+**Use Case**: Drives H3 density hexagon resolution in `MapInner`. Lower zoom → coarser H3 resolution; higher zoom → finer resolution.
+
+**File**: `src/hooks/useMapZoom.ts`
+
+---
+
+#### 6. **useSimulatedTracks** (`src/hooks/useSimulatedTracks.ts`)
+
+**Purpose**: Self-animating hook producing `AircraftTrack[]` from predefined flight routes for demo/trade-show use
+
+**Parameters**: `enabled: boolean`
+
+**Returns**: `AircraftTrack[]`
+
+**Responsibilities**:
+- Animate 20 simulated flights from `SIMULATED_FLIGHTS` in `simulation-data.ts`
+- Tick every 2 seconds (`TICK_MS = 2000`), advance `PROGRESS_PER_TICK = 0.04` per tick (~50s per waypoint segment)
+- Interpolate linearly between `[lat, lng]` waypoints with heading computed from `computeHeading()`
+- Stagger starting positions: `segmentProgress = (i * 0.15) % 1` so aircraft are spread along their routes on first enable
+- Cap position trail at 100 entries; clear trail on route loop to avoid teleport line back to waypoint 0
+- Reset state and return empty array when `enabled` switches to `false`
+
+**Exported Pure Helpers** (testable without React):
+- `computeHeading(lat1, lng1, lat2, lng2): number` — equirectangular heading with `cos(midLat)` correction
+- `interpolate(a, b, t): [number, number]` — linear interpolation between two `[lat, lng]` points
+
+**File**: `src/hooks/useSimulatedTracks.ts`
+
+---
+
+#### 7. **useTauriEvent** (`src/hooks/useTauriEvent.ts`)
 
 **Purpose**: Listen for Tauri events with TypeScript type safety
 
@@ -804,6 +919,7 @@ useTauriEvent<AircraftPosition[]>("adsb:message", (batch) => {
 - `cachedAltitudeToColor(altitude: number | null): string` — Bounded `Map` cache (max 512 entries, FIFO eviction) wrapping `altitudeToColor`. Used in hot paths (trajectory dots) to avoid recomputing the same `rgb(...)` string thousands of times per render cycle. Altitudes cluster around common flight levels, yielding ~98% cache hit rate.
 - `clearColorCache(): void` — Resets the cache (exported for test isolation).
 - `densityColor(normalized: number): { color: string; fillOpacity: number }` — Purple → yellow → red scale for H3 density hexagons.
+- `ALTITUDE_SCALE_STOPS: [number, string][]` — Named export of `[normalizedPosition, cssColor]` pairs used by `AltitudeLegend` to build its CSS `linear-gradient`.
 
 **Color Scale** (Jet colormap):
 - **0 ft**: Blue `rgb(0,0,255)`
@@ -863,6 +979,77 @@ export async function startFeed(): Promise<void> {
 **Type Safety**: These types match Rust structs via `serde` serialization
 
 **File**: `src/lib/types.ts`
+
+---
+
+#### 4. **format.ts** (`src/lib/format.ts`)
+
+**Purpose**: Pure formatting utilities
+
+**Functions**:
+- `timeAgo(lastSeen: number): string` — Converts ms epoch to relative time string: `"Xs ago"`, `"Xm ago"`, `"Xh Xm ago"`
+- `formatBytes(bytes: number): string` — Converts byte count to human-readable: `"0 B"`, `"1.5 KB"`, `"2.34 MB"`
+
+**File**: `src/lib/format.ts`
+
+---
+
+#### 5. **geojson.ts** (`src/lib/geojson.ts`)
+
+**Purpose**: Bidirectional conversion between `AircraftTrack[]` and GeoJSON `FeatureCollection`
+
+**Key Types**:
+- `TrackProperties`: All `AircraftTrack` metadata fields (`hex_ident`, `callsign`, `altitude`, `first_seen`, `last_seen`, `message_count`, etc.) plus `no_position: boolean`
+- `TrackFeature`: GeoJSON `Feature` with `Point` or `LineString` geometry
+- `TrackFeatureCollection`: GeoJSON `FeatureCollection` with `ExportMetadata` (`exported_at`, `track_count`, `source: "adsb-pulsar-client-desktop"`, `version: 1`)
+
+**Functions**:
+- `tracksToGeoJSON(activeTracks, historyTracks?)`: Merges both arrays and serializes each track as:
+  - `Point` at `[0,0]` with `no_position: true` if no positions recorded
+  - `Point` if exactly 1 position
+  - `LineString` if 2+ positions
+  - Coordinate axis swap: internal `[lat, lng, alt]` → GeoJSON `[lng, lat, alt]`
+- `geoJSONToTracks(geojson)`: Inverse conversion; reconstructs `AircraftTrack[]`; skips features without `hex_ident`; `first_seen` falls back to `last_seen` for legacy files
+
+**File**: `src/lib/geojson.ts`
+
+---
+
+#### 6. **file-io.ts** (`src/lib/file-io.ts`)
+
+**Purpose**: Orchestration layer bridging `geojson.ts` with Tauri native file dialogs
+
+**Functions**:
+- `exportTracksToFile(activeTracks, historyTracks)`: Opens native **save dialog** (default filename `adsb-tracks-<ISO-datetime>.geojson`), serializes via `tracksToGeoJSON`, writes with `writeTextFile`. Returns `true` if saved, `false` if cancelled.
+- `importTracksFromFile()`: Opens native **open dialog** (`.geojson`/`.json` filter), reads with `readTextFile`, parses via `geoJSONToTracks`. Returns `AircraftTrack[] | null` (null if cancelled).
+
+**Tauri Plugin Dependencies**: `@tauri-apps/plugin-dialog` (`save`, `open`) and `@tauri-apps/plugin-fs` (`writeTextFile`, `readTextFile`)
+
+**File**: `src/lib/file-io.ts`
+
+---
+
+#### 7. **simulation-data.ts** (`src/lib/simulation-data.ts`)
+
+**Purpose**: Static data defining 20 simulated flight routes for demo mode
+
+**Type**: `SimulatedFlight` — `hex_ident`, `callsign`, `squawk`, `altitude`, `ground_speed`, `vertical_rate`, `is_on_ground`, `waypoints: [number, number][]`
+
+**Flight Categories** (all concentrated around Montreal, ~30km radius):
+
+| Category | Count | Altitude Range |
+|----------|-------|---------------|
+| Helicopters (police, medical, news, fire, tour) | 6 | 600–1,500 ft |
+| Float plane / banner tow / skydive | 3 | 500–2,800 ft |
+| General aviation / student / VFR | 4 | 1,200–3,000 ft |
+| Military (CF-18 aerobatics) | 1 | 8,000 ft |
+| Commercial (YUL arrivals/departures/holding) | 4 | 9,000–22,000 ft |
+| High-altitude overflight | 1 | 40,000 ft |
+| Training (touch-and-go pattern) | 1 | 1,800 ft |
+
+**Notable**: EVAC1 (SIM-0011) has squawk `7700` (EMERGENCY) — useful for testing squawk alert rendering in `AircraftDetailsPanel`.
+
+**File**: `src/lib/simulation-data.ts`
 
 ---
 
@@ -1725,10 +1912,10 @@ npm run test:watch  # Watch mode (TDD)
 
 | Directory | Tests | Coverage |
 |-----------|-------|----------|
-| `src/lib/__tests__/` | colors, types, h3-density, format, track-ordering, aircraft-icon, **aircraft-details** | Pure utility functions (incl. verticalTendency, sparkline, altitudeRange, formatTrackTime) |
+| `src/lib/__tests__/` | colors, types, h3-density, format, track-ordering, aircraft-icon, aircraft-details, **geojson**, **file-io** | Pure utility functions (incl. GeoJSON conversion, file dialog orchestration) |
 | `src/contexts/__tests__/` | AircraftTrackingContext (appendPosition, mergePositionInto message_count) | Context merge logic |
 | `src/hooks/__tests__/` | useLocalStorage, useAircraftTracks, useSimulatedTracks | Hook logic and filters |
-| `src/components/__tests__/` | ConnectionStatus, MetricsBar, Filters, AircraftTable (selection, RxTS, Msg#), **AircraftDetailsPanel** (fold/unfold, sparkline, axes) | Component rendering and interactions |
+| `src/components/__tests__/` | ConnectionStatus, MetricsBar, Filters, AircraftTable (selection, RxTS, Msg#, **imported row highlight**), AircraftDetailsPanel (fold/unfold, sparkline, axes, **IMPORTED badge**), **AltitudeLegend**, **LeftPanel** | Component rendering and interactions |
 
 **Mocking:** `src/test/mocks/tauri.ts` provides mock `@tauri-apps/api` (invoke, events) for testing without Tauri runtime.
 
@@ -1745,7 +1932,7 @@ npm run test:watch  # Watch mode (TDD)
 ### Planned Features
 
 1. **Historical Replay**: Load and replay past tracks from Delta Lake (note: in-memory history up to 6 hours is now available for session-scoped review)
-2. **Export Functionality**: Export tracks to KML/GeoJSON
+2. **KML Export**: Export tracks to KML format (GeoJSON export/import is already implemented — see [GeoJSON Export/Import](#geojson-exportimport))
 3. **Alerts**: Configurable alerts for specific aircraft (e.g., "notify when AAL123 appears")
 4. **Performance Dashboard**: More detailed metrics visualization (charts)
 5. **Multi-Source Support**: Connect to multiple dump1090 instances simultaneously
@@ -1870,13 +2057,7 @@ graph TD
 
 ### localStorage Keys
 
-| Key | Type | Default | Purpose |
-|-----|------|---------|---------|
-| `adsb-map-theme` | `"light" \| "dark"` | `"dark"` | Map tile theme |
-| `adsb-table-height` | `number` | `200` | Resizable table height in px |
-| `adsb-show-history` | `boolean` | `false` | Toggle visibility of history tracks |
-| `adsb-details-panel-open` | `boolean` | `true` | Details panel expanded vs. collapsed strip |
-| `adsb-details-panel-width` | `number` | `280` | Details panel width in px (200–480) |
+See the complete localStorage keys table in the [Simulated Flights](#simulated-flights-demo-mode) section.
 
 ---
 
@@ -1920,9 +2101,9 @@ Clicking an aircraft marker on the map or a row in the table selects it. Selecti
 
 #### 6. Auto-Deselect on Track Disappearance
 
-**Decision**: A `useEffect` in `page.tsx` checks if `selectedHexIdent` still exists in `allTracks` or `visibleHistory`. If not, it sets selection to `null`.
+**Decision**: A `useEffect` in `page.tsx` checks if `selectedHexIdent` still exists in `allTracks`, `visibleHistory`, or `visibleImported`. If not, it sets selection to `null`.
 
-**Rationale**: When an aircraft's active TTL expires and it moves to history (or history TTL expires and it's evicted), the selected state would become stale — highlighting nothing. Auto-deselection keeps the UI consistent without user intervention.
+**Rationale**: When an aircraft's active TTL expires and it moves to history (or history TTL expires and it's evicted), or when imported tracks are cleared, the selected state would become stale — highlighting nothing. Auto-deselection keeps the UI consistent without user intervention.
 
 #### 7. No Click Handlers on Dots
 
@@ -1941,6 +2122,206 @@ Clicking an aircraft marker on the map or a row in the table selects it. Selecti
 | `src/components/Map.tsx` | Prop passthrough |
 | `src/components/MapInner.tsx` | `MapClickHandler`, marker click events, visual emphasis |
 | `src/components/AircraftTable.tsx` | Row click, highlight, auto-scroll |
+
+---
+
+## GeoJSON Export/Import
+
+### Overview
+
+The application supports exporting aircraft tracks (active + history) to GeoJSON files and importing previously exported tracks back for visualization. This enables sharing flight data between sessions, devices, or users.
+
+### Architecture
+
+```mermaid
+graph LR
+    Export[Export button<br/>page.tsx] -->|onClick| FIO[file-io.ts<br/>exportTracksToFile]
+    FIO -->|serialize| GJ[geojson.ts<br/>tracksToGeoJSON]
+    GJ -->|FeatureCollection| FIO
+    FIO -->|native save dialog| Tauri[Tauri plugin-dialog<br/>+ plugin-fs]
+    Tauri -->|writeTextFile| Disk[.geojson file]
+
+    Import[Import button<br/>page.tsx] -->|onClick| FIO2[file-io.ts<br/>importTracksFromFile]
+    FIO2 -->|native open dialog| Tauri2[Tauri plugin-dialog<br/>+ plugin-fs]
+    Tauri2 -->|readTextFile| FIO2
+    FIO2 -->|parse| GJ2[geojson.ts<br/>geoJSONToTracks]
+    GJ2 -->|AircraftTrack list| Hook[useAircraftTracks<br/>importTracks callback]
+    Hook -->|updates| Context[AircraftTrackingContext<br/>importedRef Map]
+
+    style FIO fill:#FFD54F
+    style GJ fill:#81C784
+    style Tauri fill:#64B5F6
+    style Context fill:#CE93D8
+```
+
+### GeoJSON Schema
+
+Each exported file is a standard GeoJSON `FeatureCollection` with metadata:
+
+```json
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "exported_at": "2026-02-22T15:30:00.000Z",
+    "track_count": 42,
+    "source": "adsb-pulsar-client-desktop",
+    "version": 1
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "LineString", "coordinates": [[lng, lat, alt], ...] },
+      "properties": {
+        "hex_ident": "ABC123",
+        "callsign": "AAL456",
+        "first_seen": 1708617000000,
+        "last_seen": 1708620600000,
+        "message_count": 1234,
+        ...
+      }
+    }
+  ]
+}
+```
+
+**Geometry rules**:
+- `LineString` for tracks with 2+ positions
+- `Point` for tracks with exactly 1 position
+- `Point` at `[0,0]` with `no_position: true` for tracks with no recorded positions
+
+**Coordinate axis swap**: Internal storage uses `[lat, lng, alt]` — GeoJSON uses `[lng, lat, alt]`. The conversion handles this transparently.
+
+### Imported Tracks Lifecycle
+
+1. **Import**: `importTracksFromFile()` → `geoJSONToTracks()` → `importTracks()` callback updates `importedRef` Map in `AircraftTrackingContext`
+2. **Display**: Controlled by `showImported` toggle in `LeftPanel`; rendered as indigo-tinted rows in table and dashed indigo polylines (or dots) on map
+3. **Clear**: "Clear import" button removes all imported tracks from memory
+4. **Persistence**: Imported tracks exist only in memory — they are not persisted across app restarts
+
+### Design Decisions
+
+#### 1. Imported Tracks as Third Collection
+
+**Decision**: Imported tracks are stored in a separate `importedRef: Map<string, AircraftTrack>` alongside `tracksRef` (active) and `historyRef` (history).
+
+**Rationale**: Imported tracks have a different lifecycle (no TTL expiry, no Tauri event updates). Mixing them with active or history tracks would require discriminant fields and complicate the hot path. A separate collection keeps concerns cleanly separated.
+
+#### 2. Indigo Visual Identity
+
+**Decision**: Imported tracks use indigo (`#818cf8`) as their accent color — indigo polylines, indigo text tint in table rows, indigo `IMPORTED` badge in details panel, indigo selection highlight (`bg-indigo-900/40`).
+
+**Rationale**: Blue is already used for active selection (`bg-blue-900/40`). Indigo provides a visually distinct but harmonious accent that clearly communicates "this data was imported, not received live." The consistent indigo theme across all surfaces (map, table, details panel) reinforces this distinction.
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `src/lib/geojson.ts` | `tracksToGeoJSON` / `geoJSONToTracks` conversion |
+| `src/lib/file-io.ts` | Tauri native dialog integration |
+| `src/app/page.tsx` | Export/Import button handlers, `clearImported` |
+| `src/contexts/AircraftTrackingContext.tsx` | `importedRef` Map, `importTracks` / `clearImported` |
+| `src/hooks/useAircraftTracks.ts` | Exposes `imported`, `importTracks`, `clearImported` from context |
+
+---
+
+## Imported Tracks Selection
+
+### Overview
+
+Imported tracks (loaded via GeoJSON import) participate fully in the bidirectional selection system. Clicking an imported track row in the table, or an imported polyline on the map, selects it and displays its details in the `AircraftDetailsPanel` with an `IMPORTED` badge.
+
+### Design Decisions
+
+#### 1. Three-Source `selectedTrack` Lookup
+
+**Decision**: The `selectedTrack` memo in `page.tsx` searches three collections in order: `allTracks` → `visibleHistory` → `visibleImported`.
+
+**Rationale**: Live tracks take priority (an aircraft transmitting live should always "win" over a stale import). History is next. Imported is last. This ordering also applies to the auto-deselect `useEffect`.
+
+#### 2. `isImported` Prop (Not Type Field)
+
+**Decision**: An `isImported?: boolean` prop is passed to `AircraftDetailsPanel` rather than adding a `source` field to `AircraftTrack`.
+
+**Rationale**: The source of a track is a UI concern (badge display), not a data concern. Adding a field to `AircraftTrack` would leak presentation logic into the data model and require changes to GeoJSON serialization. The boolean prop keeps the concern at the page level where the three collections are already available.
+
+#### 3. Polyline Click for Imported Tracks
+
+**Decision**: Imported `<Polyline>` elements have `onClick` handlers for selection. This diverges from Decision 7 (No Click Handlers on Dots) because imported tracks have no marker icons.
+
+**Rationale**: Live aircraft have a `<Marker>` icon as the click target. Imported tracks render only as polylines/dots — without a clickable polyline, the only way to select an imported track would be via the table. Adding click handlers to the relatively few imported polylines (typically dozens, not thousands) has negligible performance impact.
+
+#### 4. Selection Visual Emphasis for Imported Tracks
+
+**Decision**: When an imported track is selected:
+- **Map polyline**: `weight: 3` (vs 2), `opacity: 0.8` (vs 0.5), solid line (vs dashed `6 4`)
+- **Map dots**: Larger radius, higher opacity (same as live/history selection pattern)
+- **Table row**: `bg-indigo-900/40` (vs `opacity-60`), matching indigo accent
+- **Details panel**: `IMPORTED` badge in header, all other sections render normally
+
+### Files
+
+| File | Change |
+|------|--------|
+| `src/app/page.tsx` | `selectedTrack` lookup includes `visibleImported`; auto-deselect checks all three; `isImportedSelection` derived; `isImported` prop passed to panel |
+| `src/components/AircraftDetailsPanel.tsx` | `isImported` prop; indigo `IMPORTED` badge in header |
+| `src/components/MapInner.tsx` | DotsLayer `selectedHexIdent` forwarded; Polyline `onClick` + selection emphasis |
+| `src/components/AircraftTable.tsx` | Imported row `bg-indigo-900/40` selection highlight |
+
+---
+
+## Simulated Flights (Demo Mode)
+
+### Overview
+
+The application includes a built-in simulation mode that animates 20 aircraft along predefined routes near Montreal. This enables demonstrations, UI development, and testing without a live ADS-B feed or dump1090 connection.
+
+### How It Works
+
+1. **Enable**: Toggle "Show simulation" in `LeftPanel` → sets `showSimulation = true`
+2. **Hook**: `useSimulatedTracks(true)` starts a 2-second tick interval
+3. **Animation**: Each tick advances aircraft by `PROGRESS_PER_TICK = 0.04` along their waypoint segments
+4. **Merge**: `allTracks = [...tracks, ...simulatedTracks]` — simulated tracks are indistinguishable from live tracks in rendering
+5. **Disable**: Toggle off → state resets, empty array returned
+
+### Design Decisions
+
+#### 1. Simulated Tracks Merge with Live Tracks
+
+**Decision**: Simulated tracks are concatenated into `allTracks` alongside real live tracks.
+
+**Rationale**: The simulation is intended for UI development and demos. Simulated tracks should exercise the same rendering paths (markers, polylines, dots, selection, details panel) as live tracks. Keeping them separate would require duplicating all rendering logic.
+
+#### 2. Client-Side Animation (Not Backend)
+
+**Decision**: Simulation runs entirely in the React hook, not via Tauri events.
+
+**Rationale**: The simulation doesn't need the bridge/parser pipeline. Running it client-side avoids the complexity of mocking TCP sockets or Pulsar, and provides instant enable/disable without backend state management.
+
+#### 3. Staggered Starting Positions
+
+**Decision**: Aircraft start at different progress offsets: `segmentProgress = (i * 0.15) % 1`.
+
+**Rationale**: Without staggering, all 20 aircraft would start at waypoint 0 simultaneously, creating an unrealistic cluster. Staggering spreads them along their routes from the first tick, immediately providing a realistic-looking traffic picture.
+
+### localStorage Keys (Complete)
+
+| Key | Type | Default | Purpose |
+|-----|------|---------|---------|
+| `adsb-map-theme` | `"light" \| "dark"` | `"dark"` | Map tile theme |
+| `adsb-table-height` | `number` | `256` | Resizable table height in px |
+| `adsb-sidebar-open` | `boolean` | `true` | Left panel expanded/collapsed |
+| `adsb-sidebar-width` | `number` | `224` | Left panel width in px (180–400) |
+| `adsb-trajectory-style` | `"line" \| "dots"` | `"line"` | Trajectory rendering mode |
+| `adsb-show-history` | `boolean` | `false` | Toggle visibility of history tracks |
+| `adsb-show-density` | `boolean` | `false` | Toggle H3 density overlay |
+| `adsb-density-metric` | `DensityMetric` | `"positions"` | Which metric for H3 hexagons |
+| `adsb-show-simulation` | `boolean` | `false` | Toggle simulated demo flights |
+| `adsb-live-color-mode` | `AltitudeColorMode` | `"track"` | Color mode for live tracks |
+| `adsb-history-color-mode` | `AltitudeColorMode` | `"track"` | Color mode for history tracks |
+| `adsb-show-imported` | `boolean` | `true` | Toggle visibility of imported tracks |
+| `adsb-include-imported-density` | `boolean` | `false` | Include imported in H3 density |
+| `adsb-details-panel-open` | `boolean` | `true` | Details panel expanded vs. collapsed |
+| `adsb-details-panel-width` | `number` | `280` | Details panel width in px (200–480) |
 
 ---
 

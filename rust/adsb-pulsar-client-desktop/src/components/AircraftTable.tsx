@@ -235,13 +235,19 @@ export function AircraftTable({ tracks, historyTracks = [], importedTracks = [],
           )}
 
           {/* Imported rows — indigo tint */}
-          {!importedCollapsed && sortedImported.map((t) => (
+          {!importedCollapsed && sortedImported.map((t) => {
+            const isSelected = t.hex_ident === selectedHexIdent;
+            return (
             <tr
               key={`imported-${t.hex_ident}`}
               data-testid={`row-imported-${t.hex_ident}`}
               data-hex={t.hex_ident}
               onClick={() => onSelectTrack?.(t.hex_ident)}
-              className={`border-b border-slate-800 opacity-60${onSelectTrack ? " cursor-pointer" : ""}`}
+              className={`border-b border-slate-800 ${
+                isSelected
+                  ? "bg-indigo-900/40 hover:bg-indigo-900/50"
+                  : "hover:bg-slate-800/50 opacity-60"
+              }${onSelectTrack ? " cursor-pointer" : ""}`}
             >
               <td className="px-3 py-1.5 font-mono font-semibold text-indigo-300">{t.callsign ?? "—"}</td>
               <td className="px-3 py-1.5 font-mono text-indigo-400/60">{t.hex_ident}</td>
@@ -257,7 +263,8 @@ export function AircraftTable({ tracks, historyTracks = [], importedTracks = [],
               <td className="px-3 py-1.5 font-mono text-slate-500">{timeAgo(t.last_seen)}</td>
               <td className="px-3 py-1.5 font-mono text-slate-400">{t.message_count.toLocaleString()}</td>
             </tr>
-          ))}
+            );
+          })}
 
           {sorted.length === 0 && sortedHistory.length === 0 && sortedImported.length === 0 && (
             <tr>

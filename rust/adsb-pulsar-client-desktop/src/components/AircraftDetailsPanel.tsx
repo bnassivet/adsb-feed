@@ -28,6 +28,7 @@ interface Props {
   width: number;
   onToggle: () => void;
   onWidthChange: (w: number) => void;
+  isImported?: boolean;
 }
 
 export function AircraftDetailsPanel({
@@ -36,6 +37,7 @@ export function AircraftDetailsPanel({
   width,
   onToggle,
   onWidthChange,
+  isImported = false,
 }: Props) {
   if (track === null) return null;
 
@@ -45,6 +47,7 @@ export function AircraftDetailsPanel({
       width={width}
       onToggle={onToggle}
       onWidthChange={onWidthChange}
+      isImported={isImported}
     />
   ) : (
     <CollapsedStrip onToggle={onToggle} />
@@ -73,11 +76,13 @@ function ExpandedPanel({
   width,
   onToggle,
   onWidthChange,
+  isImported = false,
 }: {
   track: AircraftTrack;
   width: number;
   onToggle: () => void;
   onWidthChange: (w: number) => void;
+  isImported?: boolean;
 }) {
   const lastX = useRef(0);
   const isDragging = useRef(false);
@@ -135,9 +140,16 @@ function ExpandedPanel({
       <div className="flex-1 overflow-y-auto overflow-x-hidden flex flex-col min-w-0">
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700 flex-shrink-0">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
-            Aircraft Details
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+              Aircraft Details
+            </span>
+            {isImported && (
+              <span className="px-1 py-0.5 text-[9px] font-bold rounded bg-indigo-800/60 text-indigo-300 leading-none uppercase tracking-wide">
+                IMPORTED
+              </span>
+            )}
+          </div>
           <button
             onClick={onToggle}
             title="Fold panel"
