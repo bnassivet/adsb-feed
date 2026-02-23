@@ -2,6 +2,7 @@
 import { useMemo } from "react";
 import { useAircraftTrackingContext } from "@/contexts/AircraftTrackingContext";
 import type { AircraftTrack, Filters } from "@/lib/types";
+import { DEFAULT_FILTERS } from "@/lib/types";
 
 export function matchesFilters(t: AircraftTrack, filters: Filters): boolean {
   if (filters.callsign) {
@@ -23,7 +24,9 @@ export function matchesFilters(t: AircraftTrack, filters: Filters): boolean {
     }
   }
   if (t.ground_speed !== null) {
-    if (t.ground_speed < filters.speedMin || t.ground_speed > filters.speedMax) {
+    if (t.ground_speed < filters.speedMin) return false;
+    // speedMax at the slider ceiling (DEFAULT_FILTERS.speedMax) means "no upper limit"
+    if (filters.speedMax < DEFAULT_FILTERS.speedMax && t.ground_speed > filters.speedMax) {
       return false;
     }
   }

@@ -70,6 +70,18 @@ describe("matchesFilters", () => {
     expect(matchesFilters(track, fail)).toBe(false);
   });
 
+  it("speedMax at slider maximum (600) is treated as unlimited — passes aircraft above 600 kts", () => {
+    const track = makeTrack({ ground_speed: 650 });
+    const filters: Filters = { ...DEFAULT_FILTERS, speedMin: 0, speedMax: 600 };
+    expect(matchesFilters(track, filters)).toBe(true);
+  });
+
+  it("speedMax below slider maximum still enforces the upper bound", () => {
+    const track = makeTrack({ ground_speed: 650 });
+    const filters: Filters = { ...DEFAULT_FILTERS, speedMin: 0, speedMax: 590 };
+    expect(matchesFilters(track, filters)).toBe(false);
+  });
+
   // --- Multi-token (comma-separated) filter ---
 
   it("passes when first of two comma-separated tokens matches callsign", () => {
