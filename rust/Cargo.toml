@@ -1,5 +1,5 @@
 [workspace]
-members = ["adsb-pulsar-client", "adsb-pulsar-client-desktop/src-tauri"]
+members = ["adsb-pulsar-client", "adsb-data-engine", "adsb-pulsar-client-desktop/src-tauri"]
 resolver = "2"
 
 [workspace.dependencies]

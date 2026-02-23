@@ -4,8 +4,8 @@
 //! to the frontend via Tauri events, with throttling to prevent
 //! overwhelming the webview.
 
-use crate::sbs_parser::{parse_sbs_message, AircraftPosition};
 use crate::state::{ConnectionStatus, FeedHandle, StatusResponse};
+use adsb_data_engine::{parse_sbs_message, AircraftPosition, StorageHandle};
 use adsb_pulsar_client::forwarder::NoopForwarder;
 use adsb_pulsar_client::{ADSBFeedClient, Config, Metrics};
 use std::collections::HashMap;
@@ -19,7 +19,11 @@ use tracing::{error, info, warn};
 ///
 /// Returns a `FeedHandle` that can be used to stop the feed
 /// and read metrics.
-pub fn start_feed(app: AppHandle, config: Config) -> Result<FeedHandle, String> {
+pub fn start_feed(
+    app: AppHandle,
+    config: Config,
+    storage: Option<StorageHandle>,
+) -> Result<FeedHandle, String> {
     let test_mode = config.test_mode;
     let socket_read_timeout_secs = config.socket_read_timeout_secs;
     let mut client =
@@ -95,9 +99,9 @@ pub fn start_feed(app: AppHandle, config: Config) -> Result<FeedHandle, String> 
         );
     });
 
-    // Task 2: Relay messages to frontend (throttled)
+    // Task 2: Relay messages to frontend (throttled) + persist to DuckDB
     let message_task = tokio::spawn(async move {
-        relay_messages(app_for_messages, message_rx, last_message_time).await;
+        relay_messages(app_for_messages, message_rx, last_message_time, storage).await;
     });
 
     // Task 3: Relay metrics to frontend
@@ -135,11 +139,13 @@ pub fn start_feed(app: AppHandle, config: Config) -> Result<FeedHandle, String> 
 /// Relays parsed SBS messages to the frontend, throttled to ~2 updates/sec.
 ///
 /// Buffers messages into a HashMap keyed by hex_ident (keeping latest position
-/// per aircraft), then flushes the batch every 500ms.
+/// per aircraft), then flushes the batch every 500ms. If a `StorageHandle` is
+/// provided, positions are also persisted to DuckDB on each flush (non-fatal on failure).
 async fn relay_messages(
     app: AppHandle,
     mut rx: broadcast::Receiver<Vec<u8>>,
     last_message_time: Arc<RwLock<Instant>>,
+    storage: Option<StorageHandle>,
 ) {
     let mut flush_interval = interval(Duration::from_millis(500));
     let mut buffer: HashMap<String, AircraftPosition> = HashMap::new();
@@ -171,6 +177,7 @@ async fn relay_messages(
                                     pos.message_count = count;
                                 }
                             }
+                            persist_batch(&storage, &batch).await;
                             let _ = app.emit("adsb:message", &batch);
                         }
                         break;
@@ -185,9 +192,19 @@ async fn relay_messages(
                             pos.message_count = count;
                         }
                     }
+                    persist_batch(&storage, &batch).await;
                     let _ = app.emit("adsb:message", &batch);
                 }
             }
+        }
+    }
+}
+
+/// Persist a batch of positions to DuckDB (non-fatal on failure).
+async fn persist_batch(storage: &Option<StorageHandle>, batch: &[AircraftPosition]) {
+    if let Some(ref storage) = storage {
+        if let Err(e) = storage.insert_batch(batch.to_vec()).await {
+            warn!("Storage insert failed: {e}");
         }
     }
 }

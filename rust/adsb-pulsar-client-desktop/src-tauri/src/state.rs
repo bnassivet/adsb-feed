@@ -2,6 +2,7 @@
 //!
 //! Holds the shared state between Tauri commands and background tasks.
 
+use adsb_data_engine::StorageHandle;
 use adsb_pulsar_client::{Config, Metrics};
 use serde::Serialize;
 use std::sync::Mutex;
@@ -52,10 +53,12 @@ pub struct AppState {
     pub feed_handle: Mutex<Option<FeedHandle>>,
     /// Current connection status
     pub connection_status: Mutex<StatusResponse>,
+    /// DuckDB storage handle (None if init failed — app still works in real-time-only mode)
+    pub storage: Option<StorageHandle>,
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    pub fn new(storage: Option<StorageHandle>) -> Self {
         Self {
             config: Mutex::new(Config::default()),
             feed_handle: Mutex::new(None),
@@ -64,6 +67,7 @@ impl AppState {
                 socket_status: ConnectionStatus::Disconnected,
                 pulsar_status: ConnectionStatus::Disconnected,
             }),
+            storage,
         }
     }
 }
@@ -74,7 +78,7 @@ mod tests {
 
     #[test]
     fn test_app_state_new_defaults() {
-        let state = AppState::new();
+        let state = AppState::new(None);
         let config = state.config.lock().unwrap();
         // Verify it's a default Config by checking a known default value
         assert_eq!(config.source_id, "kraspberryPi");
@@ -82,14 +86,14 @@ mod tests {
 
     #[test]
     fn test_app_state_feed_handle_starts_none() {
-        let state = AppState::new();
+        let state = AppState::new(None);
         let handle = state.feed_handle.lock().unwrap();
         assert!(handle.is_none());
     }
 
     #[test]
     fn test_app_state_initial_status_not_running() {
-        let state = AppState::new();
+        let state = AppState::new(None);
         let status = state.connection_status.lock().unwrap();
         assert!(!status.is_running);
     }

@@ -1,6 +1,15 @@
 /** Typed wrappers around Tauri invoke() for all backend commands. */
 import { invoke } from "@tauri-apps/api/core";
-import type { Config, MetricsSnapshot, StatusResponse } from "./types";
+import type {
+  AircraftSummary,
+  BboxQuery,
+  Config,
+  MetricsSnapshot,
+  PositionRecord,
+  StatusResponse,
+  StorageStats,
+  TrajectoryQuery,
+} from "./types";
 
 export async function startFeed(): Promise<void> {
   return invoke("start_feed");
@@ -28,4 +37,32 @@ export async function saveConfig(config: Config): Promise<void> {
 
 export async function validateConfig(config: Config): Promise<void> {
   return invoke("validate_config", { config });
+}
+
+// --- Historical query commands ---
+
+export async function queryBbox(
+  query: BboxQuery
+): Promise<PositionRecord[]> {
+  return invoke("query_bbox", { query });
+}
+
+export async function getTrajectory(
+  query: TrajectoryQuery
+): Promise<PositionRecord[]> {
+  return invoke("get_trajectory", { query });
+}
+
+export async function getAircraftSummary(
+  startMs?: number | null,
+  endMs?: number | null
+): Promise<AircraftSummary[]> {
+  return invoke("get_aircraft_summary", {
+    startMs: startMs ?? null,
+    endMs: endMs ?? null,
+  });
+}
+
+export async function getStorageStats(): Promise<StorageStats> {
+  return invoke("get_storage_stats");
 }

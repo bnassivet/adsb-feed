@@ -3,14 +3,14 @@
 //! Parses 22-field comma-separated SBS-1 (BaseStation) messages
 //! into structured `AircraftPosition` values.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Parsed aircraft position from an SBS-1 message.
 ///
 /// Fields are optional because each MSG subtype only populates
 /// a subset. The frontend merges multiple updates per hex_ident
 /// to build a complete aircraft state.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AircraftPosition {
     pub hex_ident: String,
     pub callsign: Option<String>,
@@ -154,7 +154,6 @@ mod tests {
 
     #[test]
     fn test_parse_msg5_squawk() {
-        // Fields: 0=MSG,1=5,2=1,3=1,4=hex,5=1,6=date,7=time,8=date,9=time,10=cs,11=alt,12=gs,13=trk,14=lat,15=lon,16=vr,17=sqk,...
         let line = "MSG,5,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,35000,,,,,,7700,,,,0";
         let pos = parse_sbs_message(line).unwrap();
         assert_eq!(pos.squawk, Some("7700".to_string()));

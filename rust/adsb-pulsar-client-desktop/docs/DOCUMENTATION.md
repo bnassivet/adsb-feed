@@ -85,11 +85,12 @@ export function useYourData(filters: Filters) {
    - **Provider**: Manages raw data, listens to events, handles lifecycle
    - **Hook**: Applies filters, returns view-specific data
 
-2. **In-Memory Only** (No Persistence by Default):
+2. **In-Memory Only for React Context** (No Browser Persistence by Default):
    - Simpler: No serialization/deserialization
    - Faster: No localStorage overhead
    - Fresher: Data is always current-session
-   - Add persistence only when needed (see "When to Add Persistence" below)
+   - Note: Cross-restart persistence for streaming data is handled at the Rust layer (DuckDB via `adsb-data-engine`) — not in React context
+   - Add browser persistence only when needed (see "When to Add Persistence" below)
 
 3. **Version Counter Pattern**:
    ```typescript
@@ -133,13 +134,18 @@ export function useYourData(filters: Filters) {
 
 #### When to Add Persistence
 
-Add localStorage/IndexedDB only when:
-- Users expect data to survive app restarts (e.g., saved filters, preferences)
+**Browser-side (localStorage/IndexedDB)** — add when:
+- Users expect preferences to survive app restarts (e.g., saved filters, map theme)
 - Data is expensive to recompute (e.g., large processed datasets)
-- Session continuity is critical (e.g., draft edits, shopping cart)
+- Session continuity is critical (e.g., draft edits)
 
-**Don't add persistence for**:
-- Real-time streaming data (stale after restart anyway)
+**Rust backend (DuckDB)** — for streaming data that must survive restarts:
+- The Tauri bridge persists every 500ms position batch to `adsb_history.db` via `adsb-data-engine`
+- Frontend queries historical data via `queryBbox`, `getTrajectory`, `getAircraftSummary` commands
+- This is preferred over localStorage for high-volume streaming data (avoids browser storage limits and serialization overhead)
+
+**Don't add browser persistence for**:
+- High-volume real-time streaming data — use DuckDB (Rust backend) instead
 - Data that's fast to re-fetch from backend
 - Temporary caches (browser memory is sufficient)
 

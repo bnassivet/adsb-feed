@@ -1,0 +1,18 @@
+[package]
+name = "adsb-data-engine"
+version = "0.1.0"
+edition = "2021"
+description = "ADS-B data storage and query engine with DuckDB"
+authors = ["ADS-B Project Contributors"]
+
+[dependencies]
+duckdb = { version = "1.2", features = ["bundled"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

@@ -11,6 +11,7 @@ Desktop aircraft tracker built with Tauri v2 (Rust backend) + Next.js 15 + React
 ### Stack
 
 - **Backend**: Tauri v2 Rust (`src-tauri/src/`)
+- **Shared library**: `adsb-data-engine` (workspace crate) — SBS-1 parser + DuckDB persistent storage
 - **Frontend**: Next.js 15 App Router + React 19 (`src/`)
 - **Styling**: Tailwind CSS v4
 - **Map**: Leaflet via react-leaflet (dynamic import, SSR disabled)
@@ -19,25 +20,33 @@ Desktop aircraft tracker built with Tauri v2 (Rust backend) + Next.js 15 + React
 ### Source Layout
 
 ```
+../adsb-data-engine/src/      # Workspace crate (shared library)
+├── lib.rs          # Re-exports: parse_sbs_message, AircraftPosition, StorageHandle, query types
+├── sbs_parser.rs   # SBS-1 CSV parser (22-field MSG messages) — moved from src-tauri
+├── storage.rs      # DuckDB StorageHandle: insert_batch, query_bbox, get_trajectory, etc.
+├── types.rs        # Domain types: PositionRecord, BboxQuery, TrajectoryQuery, AircraftSummary, StorageStats
+└── error.rs        # StorageError types
+
 src-tauri/src/
-├── lib.rs          # Tauri app builder, command/plugin registration
+├── lib.rs          # Tauri app builder, command/plugin registration, init_storage()
 ├── main.rs         # Entry point (calls lib::run)
-├── bridge.rs       # Feed bridge: ADSBFeedClient → Tauri events (throttled)
-├── commands.rs     # Tauri IPC commands (start/stop feed, get status/config)
-├── sbs_parser.rs   # SBS-1 CSV parser (22-field MSG messages)
-└── state.rs        # AppState, ConnectionStatus, StatusResponse
+├── bridge.rs       # Feed bridge: ADSBFeedClient → Tauri events (throttled) + DuckDB writes
+├── commands.rs     # Tauri IPC commands: feed control + 4 DuckDB historical query commands
+└── state.rs        # AppState (includes storage: Option<StorageHandle>), ConnectionStatus, StatusResponse
 
 src/
 ├── app/            # Next.js App Router pages
 ├── components/     # React components (Map, AircraftTable, AircraftDetailsPanel, Filters, etc.)
 ├── hooks/          # Custom hooks (useAircraftTracks, useLocalStorage, etc.)
-├── lib/            # Pure utilities (colors, types, h3-density, format, aircraft-details)
+├── lib/            # Pure utilities (colors, types, h3-density, format, aircraft-details, commands)
 └── test/           # Test setup and mocks
 ```
 
 ### Key Patterns
 
 - **Tauri bridge** throttles ~50k msg/s down to ~2 updates/sec via HashMap buffer flushed every 500ms; tracks per-aircraft message counts pre-throttle
+- **DuckDB writes on every flush**: each 500ms batch is persisted to `adsb_history.db` via `StorageHandle::insert_batch()` — non-fatal if storage is unavailable
+- **Graceful DuckDB degradation**: `AppState.storage: Option<StorageHandle>` — `None` if DuckDB init fails; app runs in real-time-only mode; all historical query commands return `"Storage not available"`
 - `broadcast::channel` as message tap — fire-and-forget (`let _ = tx.send()`)
 - `watch::channel` for shutdown signal
 - Tauri v2 capability-based permissions in `src-tauri/capabilities/default.json`
@@ -69,20 +78,25 @@ All changes follow Test-Driven Development:
 
 **No code lands without a test.**
 
-### Rust Tests (src-tauri/)
+### Rust Tests
 
-Tauri crate tests (~20 tests) live inline in each module:
+**adsb-data-engine** crate (~15 tests, in `adsb-data-engine/src/`):
 
 | Module | Tests | What's Covered |
 |--------|-------|----------------|
 | `sbs_parser.rs` | 15 | MSG subtypes 1/3/4/5, empty hex_ident, whitespace trimming, is_on_ground values, negative altitude, extra fields, non-numeric fields, parse_bool edge cases, message_count default |
+
+**Tauri crate** tests (~5 tests, inline in `src-tauri/src/`):
+
+| Module | Tests | What's Covered |
+|--------|-------|----------------|
 | `state.rs` | 5 | AppState defaults, feed_handle starts None, initial status, ConnectionStatus/StatusResponse JSON serialization |
 
 ```bash
 # From adsb-feed/rust/
-cargo test -p adsb-pulsar-client-desktop-lib          # All Tauri tests
-cargo test -p adsb-pulsar-client-desktop-lib sbs_parser  # Parser only
-cargo test -p adsb-pulsar-client-desktop-lib state       # State only
+cargo test -p adsb-data-engine                        # Data engine: parser + storage
+cargo test -p adsb-pulsar-client-desktop-lib          # Tauri: state tests
+cargo test -p adsb-data-engine sbs_parser             # Parser only
 ```
 
 **Not tested (and why):**
@@ -95,7 +109,7 @@ Test stack: **Vitest** + jsdom + @testing-library/react + @testing-library/user-
 
 | Directory | Tests | What's Covered |
 |-----------|-------|----------------|
-| `src/lib/__tests__/` | ~82 | `altitudeToColor`, `zoomToH3Resolution`, `computeH3Density`, `formatBytes`/`timeAgo`, `track-ordering`, `aircraft-icon`, `verticalTendency`/`formatVerticalRate`/`altitudeHistory`/`altitudeSparklinePoints`/`altitudeRange`/`formatTrackTime` |
+| `src/lib/__tests__/` | ~82+ | `altitudeToColor`, `zoomToH3Resolution`, `computeH3Density`, `formatBytes`/`timeAgo`, `track-ordering`, `aircraft-icon`, `verticalTendency`/`formatVerticalRate`/`altitudeHistory`/`altitudeSparklinePoints`/`altitudeRange`/`formatTrackTime`, **DuckDB command wrappers** (`commands.test.ts`) |
 | `src/contexts/__tests__/` | ~5 | `appendPosition`, `mergePositionInto` message_count accumulation |
 | `src/hooks/__tests__/` | ~13 | `useLocalStorage`, `useAircraftTracks` filter logic, `useSimulatedTracks` heading/interpolation |
 | `src/components/__tests__/` | ~52 | `ConnectionStatus` states, `MetricsBar` formatting, `Filters` interactions, `AircraftTable` selection/RxTS/Msg#, `AltitudeLegend`, `AircraftDetailsPanel` fold/unfold/identity/tendency/sparkline/axes |
@@ -118,8 +132,8 @@ npx vitest run --reporter=verbose # Verbose with test names
 ### CI Gate
 
 ```bash
-# Rust
-cargo test -p adsb-pulsar-client-desktop-lib && cargo clippy -p adsb-pulsar-client-desktop-lib -- -D warnings
+# Rust (both data engine and Tauri crate)
+cargo test -p adsb-data-engine && cargo test -p adsb-pulsar-client-desktop-lib && cargo clippy --workspace -- -D warnings
 
 # TypeScript
 npm test && npx next lint
@@ -127,11 +141,13 @@ npm test && npx next lint
 
 ## Code Conventions
 
-### Rust (src-tauri/)
+### Rust (adsb-data-engine + src-tauri/)
+- SBS-1 parsing lives in `adsb-data-engine/src/sbs_parser.rs` (shared crate), not in the Tauri crate
 - SBS-1 parsing: 22 comma-separated fields; MSG types 1-8 each populate different subsets
 - Use `Option<T>` for all SBS fields except `hex_ident`, `timestamp`, and `message_count`
 - `AircraftPosition` derives `Serialize` for Tauri event emission
 - `message_count: u64` defaults to 0 in parser; actual count set by bridge before emission
+- DuckDB queries use `tokio::task::spawn_blocking` because `duckdb-rs` is synchronous (blocking FFI)
 
 ### TypeScript (src/)
 - Pure utility functions go in `src/lib/` — fully testable without React
@@ -158,3 +174,5 @@ npm test && npx next lint
 - Tauri v2 commands silently fail without proper permissions in `capabilities/default.json`
 - `create-next-app` fails if `src-tauri/` exists — scaffold manually or use temp dir
 - Workspace dep names use hyphens (`adsb-pulsar-client`), Rust `use` statements use underscores (`adsb_pulsar_client`)
+- DuckDB historical query commands return `"Storage not available"` if init failed — callers must handle this gracefully
+- `sbs_parser.rs` is in `adsb-data-engine` crate, NOT in `src-tauri/src/` (was moved as part of shared library refactor)

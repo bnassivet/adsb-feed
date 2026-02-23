@@ -4,6 +4,7 @@
 
 use crate::bridge;
 use crate::state::{AppState, ConnectionStatus, StatusResponse};
+use adsb_data_engine::{AircraftSummary, BboxQuery, PositionRecord, StorageStats, TrajectoryQuery};
 use adsb_pulsar_client::{Config, MetricsSnapshot};
 use tauri::State;
 
@@ -20,7 +21,7 @@ pub async fn start_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
 
     let config = { state.config.lock().map_err(|e| e.to_string())?.clone() };
 
-    let feed_handle = bridge::start_feed(app, config)?;
+    let feed_handle = bridge::start_feed(app, config, state.storage.clone())?;
 
     // Update status
     {
@@ -125,4 +126,62 @@ pub fn save_config(config: Config, state: State<'_, AppState>) -> Result<(), Str
 #[tauri::command]
 pub fn validate_config(config: Config) -> Result<(), String> {
     config.validate().map_err(|e| e.to_string())
+}
+
+// --- Historical query commands ---
+
+/// Query positions within a bounding box and optional time window.
+#[tauri::command]
+pub async fn query_bbox(
+    query: BboxQuery,
+    state: State<'_, AppState>,
+) -> Result<Vec<PositionRecord>, String> {
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage.query_bbox(query).await.map_err(|e| e.to_string())
+}
+
+/// Get trajectory for a single aircraft.
+#[tauri::command]
+pub async fn get_trajectory(
+    query: TrajectoryQuery,
+    state: State<'_, AppState>,
+) -> Result<Vec<PositionRecord>, String> {
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .get_trajectory(query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Get summary of distinct aircraft in a time window.
+#[tauri::command]
+pub async fn get_aircraft_summary(
+    start_ms: Option<i64>,
+    end_ms: Option<i64>,
+    state: State<'_, AppState>,
+) -> Result<Vec<AircraftSummary>, String> {
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .get_aircraft_summary(start_ms, end_ms)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Get storage statistics (row count, time range, estimated size).
+#[tauri::command]
+pub async fn get_storage_stats(state: State<'_, AppState>) -> Result<StorageStats, String> {
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage.get_stats().await.map_err(|e| e.to_string())
 }

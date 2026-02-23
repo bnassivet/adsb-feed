@@ -18,6 +18,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 chrono = { workspace = true }
 adsb-pulsar-client = { path = "../../adsb-pulsar-client", default-features = false }
+adsb-data-engine = { path = "../../adsb-data-engine" }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

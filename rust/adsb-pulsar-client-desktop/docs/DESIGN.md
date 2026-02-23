@@ -9,9 +9,10 @@
 6. [State Management](#state-management)
 7. [Global Context Manager Pattern](#global-context-manager-pattern)
 8. [In-Memory Aircraft History](#in-memory-aircraft-history)
-9. [GeoJSON Export/Import](#geojson-exportimport)
-10. [Imported Tracks Selection](#imported-tracks-selection)
-11. [Simulated Flights (Demo Mode)](#simulated-flights-demo-mode)
+9. [DuckDB Persistent History](#duckdb-persistent-history)
+10. [GeoJSON Export/Import](#geojson-exportimport)
+11. [Imported Tracks Selection](#imported-tracks-selection)
+12. [Simulated Flights (Demo Mode)](#simulated-flights-demo-mode)
 
 ---
 
@@ -41,38 +42,54 @@ graph TB
             State[AppState<br/>Shared State]
             Bridge[Bridge Layer<br/>Message Relay]
             Client[ADSBFeedClient<br/>Core Library]
+            Storage[adsb-data-engine<br/>DuckDB StorageHandle]
         end
 
         subgraph "External Systems"
             Socket[dump1090<br/>TCP Socket]
             Pulsar[Apache Pulsar<br/>Message Broker]
+            DB[(adsb_history.db<br/>DuckDB file)]
         end
     end
 
     UI -->|invoke| Commands
     Commands -->|Mutex Config| State
     Commands -->|start/stop| Bridge
+    Commands -->|query_bbox / get_trajectory| Storage
     Bridge -->|Tauri Events| Events
     Events -->|Update State| Hooks
     Hooks -->|Re-render| UI
+    Bridge -->|insert_batch every 500ms| Storage
 
     Client -->|TCP| Socket
     Client -->|pulsar-client| Pulsar
     Bridge -->|spawn| Client
+    Storage -->|read/write| DB
 
     style UI fill:#81C784
     style Commands fill:#64B5F6
     style Bridge fill:#FFD54F
     style Client fill:#E57373
+    style Storage fill:#CE93D8
 ```
+
+### Dual History System
+
+The application maintains **two complementary history layers**:
+
+| Layer | Scope | Implementation | Query API |
+|-------|-------|---------------|-----------|
+| **In-Memory** | Current session (6h TTL) | React `useRef` Maps in `AircraftTrackingContext` | Filter toggle in UI |
+| **DuckDB** | Persistent (across restarts) | `adsb-data-engine` StorageHandle | Tauri commands: `query_bbox`, `get_trajectory`, etc. |
 
 ### Key Design Principles
 
-1. **Separation of Concerns**: Frontend handles UI/UX, backend handles I/O and message processing
+1. **Separation of Concerns**: Frontend handles UI/UX, backend handles I/O, parsing, and persistence
 2. **Event-Driven Communication**: Backend emits Tauri events, frontend listens reactively
 3. **Type Safety**: Shared types between Rust (serde) and TypeScript (interfaces)
 4. **Non-Blocking UI**: All data operations run on Tokio async runtime in background tasks
-5. **Reusability**: Core `adsb-pulsar-client` library used as dependency (no code duplication)
+5. **Reusability**: Core `adsb-pulsar-client` library shared across CLI and desktop; `adsb-data-engine` shared parser + DuckDB storage crate
+6. **Graceful Degradation**: DuckDB storage is optional — app runs in real-time-only mode if initialization fails
 
 ### Technology Stack
 
@@ -88,6 +105,8 @@ graph TB
 | **Backend Language** | Rust | 1.75+ | High-performance backend |
 | **Async Runtime** | Tokio | 1.x | Asynchronous task execution |
 | **Core Library** | adsb-pulsar-client | (workspace) | Shared ADSB client logic |
+| **Data Engine** | adsb-data-engine | (workspace) | SBS-1 parser + DuckDB persistent storage |
+| **Embedded Database** | DuckDB | 1.2 | OLAP embedded DB for historical aircraft queries |
 
 ### Application Window Configuration
 
@@ -268,7 +287,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 navigation (Next.js App Router preserves layouts). This enables continuous aircraft data
 accumulation even when users navigate to Settings or other pages.
 
-**See Also**: [Global Context Manager Pattern](#global-context-manager-pattern)
+**See Also**: [Global Context Manager Pattern](#global-context-manager-pattern), [DuckDB Persistent History](#duckdb-persistent-history)
 
 ---
 
@@ -937,7 +956,7 @@ useTauriEvent<AircraftPosition[]>("adsb:message", (batch) => {
 
 **Purpose**: Wrapper functions for Tauri commands
 
-**Functions**:
+**Feed Control Functions**:
 - `startFeed(): Promise<void>`: Start the feed client
 - `stopFeed(): Promise<void>`: Stop the feed client
 - `getStatus(): Promise<StatusResponse>`: Get connection status
@@ -946,12 +965,22 @@ useTauriEvent<AircraftPosition[]>("adsb:message", (batch) => {
 - `saveConfig(config: Config): Promise<void>`: Save configuration
 - `validateConfig(config: Config): Promise<void>`: Validate config
 
+**Historical Query Functions (DuckDB)**:
+- `queryBbox(query: BboxQuery): Promise<PositionRecord[]>`: Query positions in geographic bounds + time window
+- `getTrajectory(query: TrajectoryQuery): Promise<PositionRecord[]>`: Full position history for a single aircraft
+- `getAircraftSummary(startMs?: number, endMs?: number): Promise<AircraftSummary[]>`: All aircraft seen with stats
+- `getStorageStats(): Promise<StorageStats>`: Database row count, size, age
+
 **Implementation**:
 ```typescript
 import { invoke } from "@tauri-apps/api/core";
 
 export async function startFeed(): Promise<void> {
   await invoke("start_feed");
+}
+
+export async function queryBbox(query: BboxQuery): Promise<PositionRecord[]> {
+  return await invoke("query_bbox", { query });
 }
 ```
 
@@ -975,6 +1004,12 @@ export async function startFeed(): Promise<void> {
 - `StatusResponse`: Combined status response (socket + pulsar)
 - `Config`: Client configuration (includes `socket_read_timeout_secs` used for watchdog thresholds)
 - `Filters`: UI filter state
+- **DuckDB historical query types** (mirror Rust structs from `adsb-data-engine`):
+  - `PositionRecord`: Single stored position row (`hex_ident`, `callsign`, lat/lon, `altitude`, `ground_speed`, `track`, `vertical_rate`, `squawk`, `is_on_ground`, `timestamp_ms`)
+  - `BboxQuery`: Geographic + time bounding box (`north`, `south`, `east`, `west`, optional `start_ms`/`end_ms`, `limit`)
+  - `TrajectoryQuery`: Single aircraft query (`hex_ident`, optional `start_ms`/`end_ms`)
+  - `AircraftSummary`: Per-aircraft statistics (`hex_ident`, `callsign`, `position_count`, `first_seen_ms`, `last_seen_ms`, `min_altitude`, `max_altitude`)
+  - `StorageStats`: Database health (`row_count`, `db_size_bytes`, `oldest_timestamp_ms`, `newest_timestamp_ms`)
 
 **Type Safety**: These types match Rust structs via `serde` serialization
 
@@ -1058,14 +1093,20 @@ export async function startFeed(): Promise<void> {
 ### Directory Structure
 
 ```
+../adsb-data-engine/src/  # Workspace crate — shared by Tauri app
+├── lib.rs                # Re-exports public API
+├── sbs_parser.rs         # SBS-1 message parser (22-field CSV)
+├── storage.rs            # DuckDB StorageHandle (CRUD + queries)
+├── types.rs              # PositionRecord, BboxQuery, TrajectoryQuery, AircraftSummary, StorageStats
+└── error.rs              # StorageError types
+
 src-tauri/
 ├── src/
 │   ├── main.rs           # Entry point (calls lib.rs::run())
-│   ├── lib.rs            # Tauri app initialization
-│   ├── commands.rs       # Tauri command handlers
-│   ├── state.rs          # Application state (Mutex<Config>, FeedHandle)
-│   ├── bridge.rs         # Bridge between client library and Tauri
-│   └── sbs_parser.rs     # SBS-1 message parser
+│   ├── lib.rs            # Tauri app initialization + init_storage()
+│   ├── commands.rs       # Tauri command handlers (feed control + DuckDB queries)
+│   ├── state.rs          # Application state (Mutex<Config>, FeedHandle, storage: Option<StorageHandle>)
+│   └── bridge.rs         # Bridge between client library and Tauri + DuckDB writes
 ├── build.rs              # Build script
 ├── Cargo.toml            # Rust dependencies
 ├── tauri.conf.json       # Tauri configuration
@@ -1077,24 +1118,29 @@ src-tauri/
 
 ```mermaid
 graph TD
-    Main[main.rs<br/>Entry Point] --> Lib[lib.rs<br/>Tauri Builder]
+    Main[main.rs<br/>Entry Point] --> Lib[lib.rs<br/>Tauri Builder + init_storage]
     Lib --> Commands[commands.rs<br/>Tauri Commands]
     Lib --> State[state.rs<br/>AppState]
 
     Commands --> Bridge[bridge.rs<br/>Bridge Layer]
     Bridge --> Client[adsb-pulsar-client<br/>Core Library]
-    Bridge --> Parser[sbs_parser.rs<br/>SBS-1 Parser]
+    Bridge --> Parser[adsb-data-engine<br/>SBS-1 Parser]
+    Bridge -->|insert_batch every 500ms| Storage[adsb-data-engine<br/>DuckDB StorageHandle]
+    Commands -->|query_bbox / get_trajectory<br/>get_aircraft_summary / get_storage_stats| Storage
 
     Client --> Socket[TCP Socket<br/>dump1090]
     Client --> Pulsar[Pulsar Client<br/>Message Broker]
 
-    Bridge -->|Tauri Events| Frontend[Frontend<br/>React]
+    Bridge -->|Tauri Events adsb:message| Frontend[Frontend<br/>React]
+    Storage -->|PositionRecord list| Frontend
 
     style Main fill:#E57373
     style Commands fill:#64B5F6
     style Bridge fill:#FFD54F
     style Client fill:#81C784
     style Frontend fill:#BA68C8
+    style Storage fill:#CE93D8
+    style Parser fill:#CE93D8
 ```
 
 ### Backend Modules
@@ -1133,8 +1179,32 @@ graph TD
     commands::get_config,
     commands::save_config,
     commands::validate_config,
+    // Historical query commands (DuckDB):
+    commands::query_bbox,
+    commands::get_trajectory,
+    commands::get_aircraft_summary,
+    commands::get_storage_stats,
 ])
 ```
+
+**DuckDB Initialization**:
+```rust
+fn init_storage(app: &tauri::App) -> Option<StorageHandle> {
+    let db_path = app.path().app_data_dir().ok()?.join("adsb_history.db");
+    match StorageHandle::open(StorageConfig {
+        db_path: Some(db_path),
+        source_id: "desktop".to_string(),
+    }) {
+        Ok(handle) => Some(handle),
+        Err(e) => {
+            warn!("Storage init failed: {e}");
+            None  // App continues in real-time-only mode
+        }
+    }
+}
+```
+
+The `storage: Option<StorageHandle>` is stored in `AppState`. When `None`, all historical query commands return `Err("Storage not available")`.
 
 **File**: `src-tauri/src/lib.rs`
 
@@ -1175,6 +1245,31 @@ graph TD
 
 ##### `validate_config(config: Config) -> Result<(), String>`
 - Validates configuration without saving
+
+##### Historical Query Commands (DuckDB)
+
+All four commands below:
+- Return `Err("Storage not available")` if `AppState.storage` is `None`
+- Run on `tokio::task::spawn_blocking` (DuckDB C FFI is blocking)
+- Accept optional `start_ms` / `end_ms` epoch-ms time boundaries
+
+##### `query_bbox(query: BboxQuery) -> Result<Vec<PositionRecord>, String>`
+- Queries all positions within a geographic bounding box (`north`, `south`, `east`, `west`)
+- Optional time window (`start_ms`, `end_ms`) and `limit` (default 10,000)
+- Results sorted by `hex_ident`, then `timestamp_ms`
+
+##### `get_trajectory(query: TrajectoryQuery) -> Result<Vec<PositionRecord>, String>`
+- Retrieves all recorded positions for a single aircraft (`hex_ident`)
+- Optional time window
+- Results sorted by `timestamp_ms` (chronological order)
+
+##### `get_aircraft_summary(start_ms: Option<i64>, end_ms: Option<i64>) -> Result<Vec<AircraftSummary>, String>`
+- Returns summary statistics for all distinct aircraft seen in the time window
+- Each `AircraftSummary`: `hex_ident`, `callsign`, `position_count`, `first_seen_ms`, `last_seen_ms`, `min_altitude`, `max_altitude`
+
+##### `get_storage_stats() -> Result<StorageStats, String>`
+- Returns database health metrics: `row_count`, `db_size_bytes`, `oldest_timestamp_ms`, `newest_timestamp_ms`
+- Useful for displaying storage status in the UI
 
 **File**: `src-tauri/src/commands.rs`
 
@@ -1222,8 +1317,11 @@ pub struct AppState {
     pub config: Mutex<Config>,                    // Current configuration
     pub feed_handle: Mutex<Option<FeedHandle>>,   // Running feed (None when stopped)
     pub connection_status: Mutex<StatusResponse>, // Current status
+    pub storage: Option<StorageHandle>,           // DuckDB handle (None if init failed)
 }
 ```
+
+`storage` is intentionally not behind a `Mutex` — `StorageHandle` uses an internal `Arc<Mutex<Connection>>` for thread safety. The outer `Option` represents whether DuckDB initialized successfully; once set at app startup it never changes.
 
 **File**: `src-tauri/src/state.rs`
 
@@ -1245,10 +1343,13 @@ pub struct AppState {
    - **Socket Watchdog Task**: Monitors message activity and emits `adsb:status` events (see below)
 4. Return `FeedHandle` for shutdown and metrics access
 
-**Message Relay Strategy** (Throttling):
+**Message Relay Strategy** (Throttling + DuckDB persistence):
 - Buffer messages in `HashMap<hex_ident, AircraftPosition>` (latest per aircraft)
 - Track per-aircraft message counts in a separate `HashMap<hex_ident, u64>` — incremented on every successful parse (before throttle discard)
-- Flush batch every 500ms to frontend: attach accumulated `message_count` to each position before emission
+- Flush batch every 500ms:
+  1. Attach accumulated `message_count` to each position
+  2. **Persist batch to DuckDB** via `StorageHandle::insert_batch()` — non-fatal if storage unavailable
+  3. Emit `adsb:message` Tauri event to frontend
 - Prevents overwhelming the webview with high-frequency updates
 - Each received message updates `Arc<RwLock<Instant>>` shared with the watchdog
 
@@ -1357,7 +1458,7 @@ sequenceDiagram
     end
 ```
 
-### Message Flow (Real-time Updates)
+### Message Flow (Real-time Updates + DuckDB Persistence)
 
 ```mermaid
 graph LR
@@ -1366,6 +1467,7 @@ graph LR
     C -->|parse_sbs_message| D[AircraftPosition]
     C -->|update| LMT[last_message_time]
     D -->|buffer in HashMap| E[Batch]
+    E -->|every 500ms| DB[DuckDB<br/>insert_batch]
     E -->|every 500ms| F[Tauri Event<br/>adsb:message]
     F -->|listen| G[useAircraftTracks]
     G -->|merge & filter| H[tracks: AircraftTrack list]
@@ -1381,6 +1483,7 @@ graph LR
     style I fill:#64B5F6
     style W fill:#FF9800
     style LMT fill:#CE93D8
+    style DB fill:#CE93D8
 ```
 
 ### Shutdown Flow
@@ -1420,6 +1523,7 @@ sequenceDiagram
 - `config: Mutex<Config>`: Current configuration (loaded from tauri-plugin-store)
 - `feed_handle: Mutex<Option<FeedHandle>>`: Handle to running feed (None when stopped)
 - `connection_status: Mutex<StatusResponse>`: Current connection status
+- `storage: Option<StorageHandle>`: DuckDB handle (None if init failed); set once at startup, never changes
 
 **Access Pattern**:
 ```rust
@@ -1740,10 +1844,11 @@ const { tracks, history } = useAircraftTracks(filters);
 
 ### Future Enhancements
 
-1. **Persistent History** (Optional):
-   - Add localStorage/IndexedDB backup
-   - Load on mount, save periodically
-   - Trade-off: Complexity vs. session persistence
+1. **Persistent History** (Implemented via DuckDB):
+   - DuckDB `adsb_history.db` writes every 500ms batch — survives restarts
+   - Query via `queryBbox`, `getTrajectory`, `getAircraftSummary` commands
+   - See [DuckDB Persistent History](#duckdb-persistent-history) for full details
+   - Remaining: UI to expose these historical queries
 
 2. **Context Segmentation**:
    - Separate contexts for metrics, status, tracks
@@ -1889,16 +1994,20 @@ All development follows Test-Driven Development (Red-Green-Refactor):
 2. **Green** — Write minimum code to pass
 3. **Refactor** — Clean up, keeping tests green
 
-### Rust Tests (`src-tauri/`)
+### Rust Tests
 
 ```bash
 # From adsb-feed/rust/
 cargo test --workspace                        # All tests
-cargo test -p adsb-pulsar-client-desktop-lib  # Tauri crate only
+cargo test -p adsb-data-engine               # Data engine: SBS parser + storage
+cargo test -p adsb-pulsar-client-desktop-lib  # Tauri crate: state tests
 ```
 
-**Modules with tests:**
-- `sbs_parser.rs` — SBS-1 message parsing (MSG subtypes, edge cases, field trimming, message_count default)
+**adsb-data-engine modules with tests:**
+- `sbs_parser.rs` — SBS-1 message parsing (MSG subtypes 1/3/4/5, edge cases, field trimming, message_count default)
+- `storage.rs` — DuckDB insert/query round-trips (in-memory DB via `StorageConfig { db_path: None }`)
+
+**adsb-pulsar-client-desktop-lib modules with tests:**
 - `state.rs` — AppState defaults, ConnectionStatus/StatusResponse serialization
 
 ### TypeScript Tests (`src/`)
@@ -1912,7 +2021,7 @@ npm run test:watch  # Watch mode (TDD)
 
 | Directory | Tests | Coverage |
 |-----------|-------|----------|
-| `src/lib/__tests__/` | colors, types, h3-density, format, track-ordering, aircraft-icon, aircraft-details, **geojson**, **file-io** | Pure utility functions (incl. GeoJSON conversion, file dialog orchestration) |
+| `src/lib/__tests__/` | colors, types, h3-density, format, track-ordering, aircraft-icon, aircraft-details, **geojson**, **file-io**, **commands** (DuckDB wrappers) | Pure utility functions (incl. GeoJSON conversion, file dialog orchestration, DuckDB command invoke wrappers) |
 | `src/contexts/__tests__/` | AircraftTrackingContext (appendPosition, mergePositionInto message_count) | Context merge logic |
 | `src/hooks/__tests__/` | useLocalStorage, useAircraftTracks, useSimulatedTracks | Hook logic and filters |
 | `src/components/__tests__/` | ConnectionStatus, MetricsBar, Filters, AircraftTable (selection, RxTS, Msg#, **imported row highlight**), AircraftDetailsPanel (fold/unfold, sparkline, axes, **IMPORTED badge**), **AltitudeLegend**, **LeftPanel** | Component rendering and interactions |
@@ -1924,6 +2033,7 @@ npm run test:watch  # Watch mode (TDD)
 - **`commands.rs` / `bridge.rs`** — Tightly coupled to `tauri::AppHandle`; tested via Tauri integration testing
 - **`MapInner.tsx`** — Leaflet map internals require complex DOM mocking with minimal return on value
 - **Pulsar connectivity** — Use `Config::test_mode = true` to bypass in tests
+- **DuckDB live persistence** — `bridge.rs` DuckDB writes tested indirectly; storage unit tests use in-memory DuckDB (`db_path: None`) to avoid file system dependencies
 
 ---
 
@@ -1931,7 +2041,7 @@ npm run test:watch  # Watch mode (TDD)
 
 ### Planned Features
 
-1. **Historical Replay**: Load and replay past tracks from Delta Lake (note: in-memory history up to 6 hours is now available for session-scoped review)
+1. **Historical Query UI**: Build a history browser panel with time-range pickers and trajectory replay using the existing DuckDB query commands (`query_bbox`, `get_trajectory`, `get_aircraft_summary`) — backend is fully implemented, only frontend UI is missing
 2. **KML Export**: Export tracks to KML format (GeoJSON export/import is already implemented — see [GeoJSON Export/Import](#geojson-exportimport))
 3. **Alerts**: Configurable alerts for specific aircraft (e.g., "notify when AAL123 appears")
 4. **Performance Dashboard**: More detailed metrics visualization (charts)
@@ -1943,7 +2053,7 @@ npm run test:watch  # Watch mode (TDD)
 1. **Virtual Scrolling**: Handle 1000+ aircraft efficiently in table
 2. **WebGL Rendering**: Use WebGL-based map library for even higher density rendering (canvas renderer handles current scale well)
 3. **Worker Threads**: Move heavy parsing to Web Workers
-4. **Persistent Storage**: Cache tracks locally for offline analysis (currently in-memory only; could use IndexedDB or tauri-plugin-store to survive app restarts)
+4. **DuckDB Data Pruning UI**: Surface `prune(older_than_ms)` command to let users manage database size from Settings
 5. **E2E Testing**: Add Playwright tests for UI flows
 6. **CI/CD**: Automate builds for macOS, Windows, Linux
 
@@ -2058,6 +2168,131 @@ graph TD
 ### localStorage Keys
 
 See the complete localStorage keys table in the [Simulated Flights](#simulated-flights-demo-mode) section.
+
+---
+
+## DuckDB Persistent History
+
+### Overview
+
+Alongside the in-memory 6-hour history (session-only), the application maintains a **file-backed DuckDB database** that persists all aircraft positions across app restarts. Every 500ms flush writes the current position batch to `adsb_history.db` in the Tauri app data directory.
+
+The two systems are complementary:
+
+| Feature | In-Memory History | DuckDB Persistent History |
+|---------|-------------------|--------------------------|
+| **Scope** | Current session only | Survives app restarts |
+| **TTL** | 5 min active → 6h history | No TTL (use `prune` or manual) |
+| **Query** | Filter via React context | SQL queries via Tauri commands |
+| **UI access** | "Show history" toggle | Query commands (UI TBD) |
+| **Storage** | ~420 KB for 200 aircraft | ~128 bytes/row (grows indefinitely) |
+
+### Storage Engine (`adsb-data-engine` crate)
+
+**Location**: `adsb-data-engine/src/storage.rs`
+
+**Database**: `StorageHandle` wraps an `Arc<Mutex<Connection>>` (thread-safe DuckDB connection).
+
+**Schema** (single `positions` table):
+
+```sql
+CREATE TABLE positions (
+    hex_ident    TEXT NOT NULL,
+    callsign     TEXT,
+    latitude     DOUBLE,
+    longitude    DOUBLE,
+    altitude     DOUBLE,
+    ground_speed DOUBLE,
+    track        DOUBLE,
+    vertical_rate DOUBLE,
+    squawk       TEXT,
+    is_on_ground BOOLEAN,
+    timestamp_ms BIGINT NOT NULL,
+    source_id    TEXT
+);
+CREATE INDEX idx_positions_ts     ON positions(timestamp_ms);
+CREATE INDEX idx_positions_hex_ts ON positions(hex_ident, timestamp_ms);
+```
+
+**Async/sync dual API**: All public methods are async (wrapping `tokio::task::spawn_blocking`) since DuckDB is a blocking C FFI library.
+
+### Query Operations
+
+| Method | Parameters | Returns | Description |
+|--------|-----------|---------|-------------|
+| `insert_batch` | `Vec<AircraftPosition>` | — | Persist a batch of positions |
+| `query_bbox` | `BboxQuery` | `Vec<PositionRecord>` | All positions in lat/lon box + time window |
+| `get_trajectory` | `TrajectoryQuery` | `Vec<PositionRecord>` | Full path for one aircraft |
+| `get_aircraft_summary` | `start_ms?`, `end_ms?` | `Vec<AircraftSummary>` | Stats for all aircraft seen |
+| `get_storage_stats` | — | `StorageStats` | Row count, DB size, age |
+| `prune` | `older_than_ms` | deleted row count | Delete old data |
+
+### Data Flow
+
+```
+[SBS-1 messages from dump1090]
+        ↓
+  [bridge.rs — every 500ms]
+        ↓
+  ┌─────────────────────────────┐
+  │  insert_batch(positions)    │   → DuckDB: positions table
+  │  emit("adsb:message", ...)  │   → Frontend: in-memory AircraftTrackingContext
+  └─────────────────────────────┘
+        ↓
+  [DuckDB file on disk]
+  ~/.config/adsb-pulsar-client-desktop/adsb_history.db
+        ↓
+  [Frontend query via invoke()]
+  queryBbox / getTrajectory / getAircraftSummary / getStorageStats
+```
+
+### Accessing DuckDB Data from the Frontend
+
+All four DuckDB query commands are available in `src/lib/commands.ts`:
+
+```typescript
+import { queryBbox, getTrajectory, getAircraftSummary, getStorageStats } from "@/lib/commands";
+
+// Check storage health:
+const stats = await getStorageStats();
+// { row_count: 45000, db_size_bytes: 5760000, oldest_timestamp_ms: ..., newest_timestamp_ms: ... }
+
+// Get all aircraft seen in the last hour:
+const now = Date.now();
+const aircraft = await getAircraftSummary(now - 3_600_000, now);
+
+// Replay a specific aircraft's trajectory:
+const positions = await getTrajectory({ hex_ident: "A1B2C3" });
+
+// Query a geographic bounding box:
+const positions = await queryBbox({
+  north: 46.0, south: 45.0, east: -73.0, west: -74.0,
+  start_ms: now - 86_400_000,  // last 24 hours
+  end_ms: now,
+  limit: 10_000
+});
+```
+
+### Current Limitation: No UI for Historical Queries
+
+As of Feb 2026, the backend infrastructure is fully implemented but **no UI components exist** to trigger historical queries. The "Show history" toggle in the Filters panel displays only in-memory history (React context), not DuckDB. Building a history browser panel with time-range pickers and trajectory replay is the planned next step.
+
+### Design Decisions
+
+**Why DuckDB over SQLite?**
+DuckDB is an OLAP (analytical) engine — it handles range scans and aggregations over millions of rows efficiently. SQLite is OLTP-oriented and would be slower on `SELECT ... WHERE timestamp_ms BETWEEN ...` over large datasets. DuckDB also supports `ST_Distance` spatial queries via its `spatial` extension for future geo-aware queries.
+
+**Why a separate `adsb-data-engine` crate?**
+Isolating parser + storage in a shared workspace crate lets the data engine be tested independently of Tauri. The `sbs_parser.rs` tests don't need a Tauri runtime. The storage tests use an in-memory DuckDB (`StorageConfig { db_path: None }`).
+
+**Files**:
+- `adsb-data-engine/src/storage.rs` — `StorageHandle`, `StorageConfig`, all query methods
+- `adsb-data-engine/src/types.rs` — `PositionRecord`, `BboxQuery`, `TrajectoryQuery`, `AircraftSummary`, `StorageStats`
+- `src-tauri/src/lib.rs` — `init_storage()`, storage injected into `AppState`
+- `src-tauri/src/bridge.rs` — `persist_batch()` called on every 500ms flush
+- `src-tauri/src/commands.rs` — four historical query command handlers
+- `src/lib/commands.ts` — TypeScript wrappers: `queryBbox`, `getTrajectory`, `getAircraftSummary`, `getStorageStats`
+- `src/lib/types.ts` — TypeScript mirrors of all DuckDB types
 
 ---
 
@@ -2332,8 +2567,14 @@ The ADS-B Aircraft Tracker desktop application demonstrates a modern, performant
 - **Tauri v2**: Combines Rust backend efficiency with web frontend flexibility
 - **Event-Driven IPC**: Clean separation between frontend and backend
 - **Type Safety**: Shared types (Rust ↔ TypeScript) via serde
-- **Reusability**: Core library (`adsb-pulsar-client`) shared across CLI and desktop apps
+- **Reusability**: Core library (`adsb-pulsar-client`) shared across CLI and desktop apps; `adsb-data-engine` shared parser + storage tested independently of Tauri
 - **Responsive UI**: Real-time updates with minimal latency
 - **Cross-Platform**: Single codebase builds for macOS, Windows, Linux
+- **Dual History System**: In-memory 6-hour session history (instant, filtered) + DuckDB persistent storage (survives restarts, queryable by bounds/trajectory/summary)
+- **Graceful Degradation**: DuckDB is optional — the app runs in real-time-only mode if storage initialization fails
 
-This design prioritizes developer experience (hot reload, TypeScript), user experience (responsive UI, offline-capable), and performance (async I/O, efficient rendering).
+This design prioritizes developer experience (hot reload, TypeScript, TDD), user experience (responsive UI, offline-capable, persistent history), and performance (async I/O, efficient rendering, OLAP-optimized storage).
+
+---
+
+*Last updated: February 2026 — Added `adsb-data-engine` workspace crate (DuckDB persistent history), dual history system, 4 historical query Tauri commands, and TypeScript wrappers.*

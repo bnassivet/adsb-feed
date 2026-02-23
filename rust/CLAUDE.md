@@ -8,6 +8,7 @@ Cargo workspace containing the ADS-B feed client library and Tauri desktop app.
 |-------|------|---------|
 | `adsb-pulsar-client` | `adsb-pulsar-client/` | Library + CLI for dump1090 → Pulsar forwarding |
 | `adsb-pulsar-client-desktop-lib` | `adsb-pulsar-client-desktop/src-tauri/` | Tauri v2 desktop app backend |
+| `adsb-data-engine` | `adsb-data-engine/` | Shared SBS-1 parser + DuckDB persistent storage for historical queries |
 
 ## Testing
 
@@ -29,6 +30,7 @@ cargo fmt --workspace --check             # Format check
 ```bash
 cargo test -p adsb-pulsar-client              # Library: ~65 tests (unit + integration + doc)
 cargo test -p adsb-pulsar-client-desktop-lib  # Tauri: ~19 tests (unit)
+cargo test -p adsb-data-engine               # Data engine: ~15 tests (SBS parser + storage)
 ```
 
 ### Run Specific Tests
@@ -51,3 +53,4 @@ cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt -
 - Tauri crate uses `default-features = false` to exclude clap
 - `[profile.release]` settings must be in this workspace root `Cargo.toml`, not member crates
 - `protoc` required at build time (Pulsar crate dependency)
+- `adsb-data-engine` uses `duckdb` crate (DuckDB 1.2) via C FFI — no extra system packages needed beyond Rust toolchain; DuckDB is statically linked

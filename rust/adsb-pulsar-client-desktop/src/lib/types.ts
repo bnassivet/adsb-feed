@@ -115,6 +115,60 @@ export function zoomToH3Resolution(zoom: number): number {
   return 7;
 }
 
+// --- Historical query types (mirrors Rust adsb-data-engine types) ---
+
+/** Row returned from DuckDB historical queries. */
+export interface PositionRecord {
+  hex_ident: string;
+  callsign: string | null;
+  latitude: number;
+  longitude: number;
+  altitude: number | null;
+  ground_speed: number | null;
+  track: number | null;
+  vertical_rate: number | null;
+  squawk: string | null;
+  is_on_ground: boolean | null;
+  timestamp_ms: number;
+}
+
+/** Bounding box + time window query parameters. */
+export interface BboxQuery {
+  north: number;
+  south: number;
+  east: number;
+  west: number;
+  start_ms?: number | null;
+  end_ms?: number | null;
+  limit: number;
+}
+
+/** Single-aircraft trajectory query. */
+export interface TrajectoryQuery {
+  hex_ident: string;
+  start_ms?: number | null;
+  end_ms?: number | null;
+}
+
+/** Summary of a single aircraft within a time window. */
+export interface AircraftSummary {
+  hex_ident: string;
+  callsign: string | null;
+  position_count: number;
+  first_seen_ms: number;
+  last_seen_ms: number;
+  min_altitude: number | null;
+  max_altitude: number | null;
+}
+
+/** Storage statistics. */
+export interface StorageStats {
+  row_count: number;
+  db_size_bytes: number;
+  oldest_timestamp_ms: number | null;
+  newest_timestamp_ms: number | null;
+}
+
 export const DEFAULT_FILTERS: Filters = {
   callsign: "",
   altitudeMin: 0,
