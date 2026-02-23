@@ -47,22 +47,6 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
           placeholder="Search... (comma-separated)"
           className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded text-sm text-slate-200 placeholder-slate-500 focus:border-blue-500 focus:outline-none"
         />
-        {importedCount > 0 && (
-          <label className="flex items-center gap-2 mt-1.5 text-xs text-slate-500 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={filters.includeImportedInFilter}
-              onChange={() =>
-                onChange({
-                  ...filters,
-                  includeImportedInFilter: !filters.includeImportedInFilter,
-                })
-              }
-              className="accent-indigo-500"
-            />
-            Include Imported in filter
-          </label>
-        )}
       </div>
 
       {/* Altitude range */}
@@ -86,6 +70,24 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
         onChange={(lo, hi) => onChange({ ...filters, speedMin: lo, speedMax: hi })}
         formatLabel={(v) => `${v} kts`}
       />
+
+      {/* Include imported in filters */}
+      {importedCount > 0 && (
+        <label className="flex items-center gap-2 text-xs text-slate-500 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={filters.includeImportedInFilter}
+            onChange={() =>
+              onChange({
+                ...filters,
+                includeImportedInFilter: !filters.includeImportedInFilter,
+              })
+            }
+            className="accent-indigo-500"
+          />
+          Include Imported in filters
+        </label>
+      )}
 
       {/* Stats */}
       <div className="pt-2 border-t border-slate-700">
@@ -222,6 +224,13 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
               <option value="plot">Plot altitude (per position)</option>
             </select>
           </div>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="pt-2 border-t border-slate-700">
+        <div className="text-xs text-slate-400">
+          Simulated flights
         </div>
       </div>
 

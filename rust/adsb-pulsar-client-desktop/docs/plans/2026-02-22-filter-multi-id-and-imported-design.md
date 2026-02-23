@@ -6,12 +6,12 @@
 
 ## Overview
 
-Enhance the Callsign / Hex filter to accept a comma-separated list of identifiers, and add an "Include Imported in filter" toggle so the same filter can be applied to imported tracks.
+Enhance the Callsign / Hex filter to accept a comma-separated list of identifiers, and add an "Include Imported in filters" toggle so the same filter can be applied to imported tracks.
 
 ## Requirements
 
 1. **Multi-ID input**: The Callsign / Hex text field accepts one or more tokens separated by commas (e.g., `AAL123, BAW`). A track passes the filter if **any** token is a case-insensitive substring of its callsign or hex_ident.
-2. **Include Imported in filter**: A new checkbox visible when imported tracks exist. When checked, the Callsign / Hex filter is also applied to imported tracks (within the already-visible imported layer). When unchecked, imported tracks are shown unfiltered (existing behaviour).
+2. **Include Imported in filters**: A new checkbox visible when imported tracks exist. When checked, the Callsign / Hex filter is also applied to imported tracks (within the already-visible imported layer). When unchecked, imported tracks are shown unfiltered (existing behaviour).
 
 ## Design
 
@@ -88,7 +88,7 @@ const imported = useMemo(
 
 ```
 [input: "Search... (comma-separated)"]
-☐ Include Imported in filter          ← only when importedCount > 0
+☐ Include Imported in filters          ← only when importedCount > 0
 ```
 
 No new props on `FiltersPanel` — `includeImportedInFilter` is part of the `Filters` object already passed via `filters` + `onChange`.
@@ -113,7 +113,7 @@ No new props on `FiltersPanel` — `includeImportedInFilter` is part of the `Fil
 
 | Scenario | Expected |
 |----------|----------|
-| `importedCount === 0` | "Include Imported in filter" not rendered |
+| `importedCount === 0` | "Include Imported in filters" not rendered |
 | `importedCount > 0` | checkbox rendered |
 | Click checkbox | `onChange` called with `includeImportedInFilter: true` |
 

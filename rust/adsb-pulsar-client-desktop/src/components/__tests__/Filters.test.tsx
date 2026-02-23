@@ -144,27 +144,27 @@ describe("imported tracks section", () => {
   });
 });
 
-describe("include imported in filter (callsign/hex)", () => {
-  it("hides 'Include Imported in filter' checkbox when no imported tracks", () => {
+describe("include imported in filters (callsign/hex)", () => {
+  it("hides 'Include Imported in filters' checkbox when no imported tracks", () => {
     renderFilters({ importedCount: 0 });
-    expect(screen.queryByText(/Include Imported in filter/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Include Imported in filters/)).not.toBeInTheDocument();
   });
 
-  it("shows 'Include Imported in filter' checkbox when imported tracks exist", () => {
+  it("shows 'Include Imported in filters' checkbox when imported tracks exist", () => {
     renderFilters({ importedCount: 3 });
-    expect(screen.getByText(/Include Imported in filter/)).toBeInTheDocument();
+    expect(screen.getByText(/Include Imported in filters/)).toBeInTheDocument();
   });
 
   it("checkbox is unchecked by default (includeImportedInFilter: false)", () => {
     renderFilters({ importedCount: 3, filters: { ...DEFAULT_FILTERS, includeImportedInFilter: false } });
-    const label = screen.getByText(/Include Imported in filter/).closest("label")!;
+    const label = screen.getByText(/Include Imported in filters/).closest("label")!;
     const checkbox = label.querySelector("input")!;
     expect(checkbox).not.toBeChecked();
   });
 
   it("checkbox is checked when includeImportedInFilter is true", () => {
     renderFilters({ importedCount: 3, filters: { ...DEFAULT_FILTERS, includeImportedInFilter: true } });
-    const label = screen.getByText(/Include Imported in filter/).closest("label")!;
+    const label = screen.getByText(/Include Imported in filters/).closest("label")!;
     const checkbox = label.querySelector("input")!;
     expect(checkbox).toBeChecked();
   });
@@ -177,7 +177,7 @@ describe("include imported in filter (callsign/hex)", () => {
       filters: { ...DEFAULT_FILTERS, includeImportedInFilter: false },
       onChange,
     });
-    const label = screen.getByText(/Include Imported in filter/).closest("label")!;
+    const label = screen.getByText(/Include Imported in filters/).closest("label")!;
     await user.click(label.querySelector("input")!);
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({ includeImportedInFilter: true }),
