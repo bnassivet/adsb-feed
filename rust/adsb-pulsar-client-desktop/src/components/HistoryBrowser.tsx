@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getStorageStats, getAircraftSummary, getTrajectory } from "@/lib/commands";
 import { recordsToTrack } from "@/lib/history-convert";
 import type { AircraftSummary, AircraftTrack, StorageStats } from "@/lib/types";
@@ -33,10 +33,14 @@ export function HistoryBrowser({ onImportTracks }: Props) {
   const [summaries, setSummaries] = useState<AircraftSummary[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Time range inputs — initialized from storage stats once they load
+  // Time range — stored as default values for uncontrolled inputs (set once from stats).
+  // Using uncontrolled inputs avoids Tauri/WKWebView's controlled-input re-render issue
+  // where each onChange → setState → re-render interrupts the native segment-picker editing.
   const now = Date.now();
-  const [startVal, setStartVal] = useState(() => toDatetimeLocal(now - 24 * 60 * 60 * 1000));
-  const [endVal, setEndVal] = useState(() => toDatetimeLocal(now));
+  const [startDefault, setStartDefault] = useState(() => toDatetimeLocal(now - 24 * 60 * 60 * 1000));
+  const [endDefault, setEndDefault] = useState(() => toDatetimeLocal(now));
+  const startRef = useRef<HTMLInputElement>(null);
+  const endRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     getStorageStats().then((result) => {
@@ -45,32 +49,38 @@ export function HistoryBrowser({ onImportTracks }: Props) {
       } else {
         const s = result as StorageStats;
         setStats(s);
-        // Pre-fill the time range to span all available data so Browse shows results immediately
+        // Pre-fill the time range to span all available data so Browse shows results immediately.
+        // These only affect the defaultValue on first mount of the inputs (before Browse is opened).
         if (s.oldest_timestamp_ms !== null) {
-          setStartVal(toDatetimeLocal(s.oldest_timestamp_ms));
+          setStartDefault(toDatetimeLocal(s.oldest_timestamp_ms));
         }
         if (s.newest_timestamp_ms !== null) {
-          setEndVal(toDatetimeLocal(s.newest_timestamp_ms));
+          setEndDefault(toDatetimeLocal(s.newest_timestamp_ms));
         }
       }
     });
   }, []);
+
+  /** Read current values from the uncontrolled inputs, falling back to defaults. */
+  function getTimeRange(): [number, number] {
+    const startStr = startRef.current?.value ?? startDefault;
+    const endStr = endRef.current?.value ?? endDefault;
+    return [new Date(startStr).getTime(), new Date(endStr).getTime()];
+  }
 
   async function handleBrowse() {
     if (!browsing) {
       setBrowsing(true);
     }
     setLoading(true);
-    const startMs = new Date(startVal).getTime();
-    const endMs = new Date(endVal).getTime();
+    const [startMs, endMs] = getTimeRange();
     const results = await getAircraftSummary(startMs, endMs);
     setSummaries(typeof results === "string" ? [] : (results as AircraftSummary[]));
     setLoading(false);
   }
 
   async function handleLoadTrajectory(summary: AircraftSummary) {
-    const startMs = new Date(startVal).getTime();
-    const endMs = new Date(endVal).getTime();
+    const [startMs, endMs] = getTimeRange();
     const records = await getTrajectory({
       hex_ident: summary.hex_ident,
       start_ms: startMs,
@@ -134,8 +144,8 @@ export function HistoryBrowser({ onImportTracks }: Props) {
             Start
             <input
               type="datetime-local"
-              value={startVal}
-              onChange={(e) => setStartVal(e.target.value)}
+              ref={startRef}
+              defaultValue={startDefault}
               className="block w-full mt-0.5 px-1.5 py-0.5 text-xs bg-slate-800 border border-slate-600 rounded text-slate-200"
             />
           </label>
@@ -143,8 +153,8 @@ export function HistoryBrowser({ onImportTracks }: Props) {
             End
             <input
               type="datetime-local"
-              value={endVal}
-              onChange={(e) => setEndVal(e.target.value)}
+              ref={endRef}
+              defaultValue={endDefault}
               className="block w-full mt-0.5 px-1.5 py-0.5 text-xs bg-slate-800 border border-slate-600 rounded text-slate-200"
             />
           </label>

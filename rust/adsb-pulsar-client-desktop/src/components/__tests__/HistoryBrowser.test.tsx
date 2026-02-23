@@ -128,4 +128,18 @@ describe("HistoryBrowser", () => {
       expect(screen.getByLabelText(/end/i)).toBeInTheDocument();
     });
   });
+
+  it("queries with stats-based default times on first browse", async () => {
+    vi.mocked(getStorageStats).mockResolvedValue(STATS);
+    vi.mocked(getAircraftSummary).mockResolvedValue(SUMMARY);
+    render(<HistoryBrowser onImportTracks={onImportTracks} />);
+    await waitFor(() => screen.getByText(/browse db history/i));
+    await userEvent.click(screen.getByText(/browse db history/i));
+    await waitFor(() => {
+      expect(getAircraftSummary).toHaveBeenCalledWith(
+        STATS.oldest_timestamp_ms,
+        STATS.newest_timestamp_ms
+      );
+    });
+  });
 });
