@@ -4,6 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { FiltersPanel } from "../Filters";
 import { DEFAULT_FILTERS } from "@/lib/types";
 
+// HistoryBrowser has its own tests; mock it here to avoid Tauri/DuckDB side effects
+vi.mock("@/components/HistoryBrowser", () => ({
+  HistoryBrowser: () => null,
+}));
+
 function renderFilters(overrides = {}) {
   const defaultProps = {
     filters: DEFAULT_FILTERS,
@@ -29,6 +34,7 @@ function renderFilters(overrides = {}) {
     onClearImported: vi.fn(),
     includeImportedInDensity: false,
     onToggleIncludeImportedInDensity: vi.fn(),
+    onImportTracks: vi.fn(),
     ...overrides,
   };
   return { ...render(<FiltersPanel {...defaultProps} />), props: defaultProps };

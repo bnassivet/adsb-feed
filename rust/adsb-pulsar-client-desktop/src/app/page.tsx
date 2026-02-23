@@ -268,6 +268,7 @@ export default function Dashboard() {
           onClearImported={clearImported}
           includeImportedInDensity={includeImportedInDensity}
           onToggleIncludeImportedInDensity={handleToggleIncludeImportedInDensity}
+          onImportTracks={importTracks}
         />
 
         {/* Map + Table */}

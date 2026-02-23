@@ -1,6 +1,7 @@
 "use client";
-import type { Filters, DensityMetric, AltitudeColorMode } from "@/lib/types";
+import type { Filters, DensityMetric, AltitudeColorMode, AircraftTrack } from "@/lib/types";
 import { RangeSlider } from "@/components/RangeSlider";
+import { HistoryBrowser } from "@/components/HistoryBrowser";
 
 interface Props {
   filters: Filters;
@@ -26,9 +27,10 @@ interface Props {
   onClearImported: () => void;
   includeImportedInDensity: boolean;
   onToggleIncludeImportedInDensity: () => void;
+  onImportTracks: (tracks: AircraftTrack[]) => void;
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, onImportTracks }: Props) {
   return (
     <div className="flex flex-col gap-4 p-4">
       <div>
@@ -250,6 +252,14 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
             )}
           </span>
         </label>
+      </div>
+
+      {/* DuckDB History Browser */}
+      <div className="border-t border-slate-700 pt-2 mt-2 -mx-4 px-0">
+        <div className="px-4 pb-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">
+          DB History
+        </div>
+        <HistoryBrowser onImportTracks={onImportTracks} />
       </div>
     </div>
   );

@@ -4,6 +4,11 @@ import { LeftPanel } from "@/components/LeftPanel";
 import type { DensityMetric, AltitudeColorMode } from "@/lib/types";
 import { DEFAULT_FILTERS } from "@/lib/types";
 
+// HistoryBrowser has its own tests; mock it here to avoid Tauri/DuckDB side effects
+vi.mock("@/components/HistoryBrowser", () => ({
+  HistoryBrowser: () => null,
+}));
+
 // Minimal props required by FiltersPanel, forwarded through LeftPanel
 const baseFilterProps = {
   filters: DEFAULT_FILTERS,
@@ -29,6 +34,7 @@ const baseFilterProps = {
   onClearImported: vi.fn(),
   includeImportedInDensity: false,
   onToggleIncludeImportedInDensity: vi.fn(),
+  onImportTracks: vi.fn(),
 };
 
 describe("LeftPanel", () => {
