@@ -85,8 +85,8 @@ describe("LeftPanel", () => {
     render(
       <LeftPanel isOpen={true} width={224} onToggle={vi.fn()} onWidthChange={vi.fn()} {...baseFilterProps} />
     );
-    // FiltersPanel renders a "Filters" heading
-    expect(screen.getByText("Filters")).toBeInTheDocument();
+    // FiltersPanel renders a "Search & Filters" section heading
+    expect(screen.getByText("Search & Filters")).toBeInTheDocument();
   });
 
   it("drag on resize edge calls onWidthChange with clamped value", () => {

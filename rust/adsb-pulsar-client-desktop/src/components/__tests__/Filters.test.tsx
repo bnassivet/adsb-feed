@@ -44,7 +44,7 @@ describe("FiltersPanel", () => {
   it("renders with default filters", () => {
     renderFilters();
     expect(screen.getByPlaceholderText("Search... (comma-separated)")).toBeInTheDocument();
-    expect(screen.getByText("Filters")).toBeInTheDocument();
+    expect(screen.getByText("Search & Filters")).toBeInTheDocument();
   });
 
   it("callsign input calls onChange", async () => {
