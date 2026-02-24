@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { getStorageStats, getAircraftSummary, getTrajectory } from "@/lib/commands";
 import { recordsToTrack } from "@/lib/history-convert";
 import type { AircraftSummary, AircraftTrack, StorageStats } from "@/lib/types";
+import { useDisplayTz } from "@/hooks/useDisplayTz";
 
 interface Props {
   onImportTracks: (tracks: AircraftTrack[]) => void;
@@ -14,11 +15,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatMs(ms: number | null): string {
-  if (ms === null) return "—";
-  return new Date(ms).toLocaleString();
-}
-
 /** Returns a datetime-local string (YYYY-MM-DDTHH:MM) from ms epoch. */
 function toDatetimeLocal(ms: number): string {
   const d = new Date(ms);
@@ -27,8 +23,10 @@ function toDatetimeLocal(ms: number): string {
 }
 
 export function HistoryBrowser({ onImportTracks }: Props) {
+  const { formatTime } = useDisplayTz();
   const [stats, setStats] = useState<StorageStats | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [browsing, setBrowsing] = useState(false);
   const [summaries, setSummaries] = useState<AircraftSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -66,6 +64,17 @@ export function HistoryBrowser({ onImportTracks }: Props) {
     const startStr = startRef.current?.value ?? startDefault;
     const endStr = endRef.current?.value ?? endDefault;
     return [new Date(startStr).getTime(), new Date(endStr).getTime()];
+  }
+
+  async function handleRefreshStats() {
+    setRefreshing(true);
+    const result = await getStorageStats();
+    if (typeof result === "string") {
+      setUnavailable(true);
+    } else {
+      setStats(result as StorageStats);
+    }
+    setRefreshing(false);
   }
 
   async function handleBrowse() {
@@ -109,6 +118,18 @@ export function HistoryBrowser({ onImportTracks }: Props) {
     <div className="flex flex-col gap-1">
       {/* Stats strip */}
       <div className="px-3 py-1.5 text-xs text-slate-400 border-b border-slate-800 space-y-0.5">
+        <div className="flex justify-between items-center">
+          <span className="text-[10px] uppercase tracking-wide text-slate-500">DB Stats</span>
+          <button
+            onClick={handleRefreshStats}
+            disabled={refreshing}
+            aria-label="Refresh stats"
+            title="Refresh stats"
+            className="text-slate-500 hover:text-slate-300 transition disabled:opacity-40 leading-none"
+          >
+            {refreshing ? "…" : "↻"}
+          </button>
+        </div>
         <div className="flex justify-between">
           <span>Records</span>
           <span className="text-slate-300">{stats.row_count.toLocaleString()}</span>
@@ -119,11 +140,11 @@ export function HistoryBrowser({ onImportTracks }: Props) {
         </div>
         <div className="flex justify-between">
           <span>Oldest</span>
-          <span className="text-slate-300">{formatMs(stats.oldest_timestamp_ms)}</span>
+          <span className="text-slate-300">{stats.oldest_timestamp_ms !== null ? formatTime(stats.oldest_timestamp_ms) : "—"}</span>
         </div>
         <div className="flex justify-between">
           <span>Newest</span>
-          <span className="text-slate-300">{formatMs(stats.newest_timestamp_ms)}</span>
+          <span className="text-slate-300">{stats.newest_timestamp_ms !== null ? formatTime(stats.newest_timestamp_ms) : "—"}</span>
         </div>
       </div>
 

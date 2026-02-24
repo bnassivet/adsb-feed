@@ -173,18 +173,19 @@ src/
 ├── hooks/                   # Custom React hooks
 │   ├── useAircraftTracks.ts # Filtered track consumer (reads from context)
 │   ├── useConnectionStatus.ts # Status polling
+│   ├── useDisplayTz.ts      # Display timezone preference (localStorage-backed: local/utc/source)
 │   ├── useLocalStorage.ts   # Persistent UI preferences
 │   ├── useMapZoom.ts        # Debounced Leaflet zoom level for H3 resolution
 │   ├── useMetrics.ts        # Metrics polling
 │   ├── useSimulatedTracks.ts # Simulated demo flight tracks
 │   └── useTauriEvent.ts     # Event listener abstraction
 ├── lib/                     # Utilities and types
-│   ├── aircraft-details.ts  # Pure utilities: vertical tendency, sparkline, altitude range, time format
+│   ├── aircraft-details.ts  # Pure utilities: vertical tendency, sparkline, altitude range, formatTrackTime(ms, tzName?)
 │   ├── aircraft-icon.ts     # Pure SVG/HTML generation for aircraft map icons
 │   ├── colors.ts            # Altitude-based color mapping + ALTITUDE_SCALE_STOPS
 │   ├── commands.ts          # Tauri command wrappers
 │   ├── file-io.ts           # Tauri native dialog integration for export/import
-│   ├── format.ts            # Pure format helpers (timeAgo, formatBytes)
+│   ├── format.ts            # Pure format helpers (timeAgo, formatBytes, formatWithTz)
 │   ├── geojson.ts           # Bidirectional AircraftTrack ↔ GeoJSON conversion
 │   ├── h3-density.ts        # H3 hexagonal density computation
 │   ├── simulation-data.ts   # 20 Montreal-area simulated flight definitions
@@ -377,13 +378,17 @@ accumulation even when users navigate to Settings or other pages.
 - Validate configuration before saving
 - Save configuration via `save_config` command
 
-**Configuration Fields**:
+**Configuration Fields** (Connection section):
 - `source_id`: Unique identifier for this client
 - `socket_host`, `socket_port`: dump1090 TCP connection
+- `dump1090_tz`: Timezone for SBS-1 timestamps — `"Local"` (machine), `"UTC"`, or IANA name (e.g. `"Europe/Paris"`); persisted in `Config` via `save_config`
 - `pulsar_broker`, `pulsar_topic`: Pulsar connection
 - Buffer sizes, timeouts, retry policies
 - `test_mode`: Run without Pulsar (socket-only)
 - `log_level`: Debug, info, warn, error
+
+**Display Section**:
+- `Time Display`: three-button toggle — `Local` / `UTC` / `Source`; stored in `localStorage` under key `adsb-display-tz` via `useDisplayTz` hook (independent of Config)
 
 ---
 
@@ -715,7 +720,7 @@ DotsLayer({ tracks, colorMode, type: "history" | "live" })
 4. **Vertical Tendency**: arrow icon (▲ green / ▼ red / → slate) + formatted rate; SVG sparkline with axes:
    - **Y-axis**: min/max altitude labels (`data-testid="sparkline-alt-min/max"`)
    - **SVG** (120×40 viewBox): `<polyline>` coloured by tendency
-   - **X-axis**: `formatTrackTime(first_seen)` and `formatTrackTime(last_seen)` (`data-testid="sparkline-time-start/end"`)
+   - **X-axis**: `formatTrackTime(first_seen, resolvedTzName)` and `formatTrackTime(last_seen, resolvedTzName)` — timezone from `useDisplayTz().resolvedTzName` (`data-testid="sparkline-time-start/end"`)
 5. **Squawk**: 4-digit code (or "—") + special label badge (7700=EMERGENCY, 7600=RADIO FAILURE, 7500=HIJACK)
 6. **Message count**: cumulative SBS-1 messages for this aircraft
 7. **Last seen**: relative time string from `timeAgo(last_seen)`
@@ -1348,7 +1353,7 @@ pub struct AppState {
 - Track per-aircraft message counts in a separate `HashMap<hex_ident, u64>` — incremented on every successful parse (before throttle discard)
 - Flush batch every 500ms:
   1. Attach accumulated `message_count` to each position
-  2. **Persist batch to DuckDB** via `StorageHandle::insert_batch()` — non-fatal if storage unavailable
+  2. **Persist batch to DuckDB** via `StorageHandle::insert_batch(positions, dump1090_tz)` — TZ read from `Config.dump1090_tz` at feed start; non-fatal if storage unavailable
   3. Emit `adsb:message` Tauri event to frontend
 - Prevents overwhelming the webview with high-frequency updates
 - Each received message updates `Arc<RwLock<Instant>>` shared with the watchdog
@@ -2021,9 +2026,9 @@ npm run test:watch  # Watch mode (TDD)
 
 | Directory | Tests | Coverage |
 |-----------|-------|----------|
-| `src/lib/__tests__/` | colors, types, h3-density, format, track-ordering, aircraft-icon, aircraft-details, **geojson**, **file-io**, **commands** (DuckDB wrappers) | Pure utility functions (incl. GeoJSON conversion, file dialog orchestration, DuckDB command invoke wrappers) |
+| `src/lib/__tests__/` | colors, types, h3-density, format (**formatWithTz**), track-ordering, aircraft-icon, aircraft-details (**formatTrackTime** with tzName), **geojson**, **file-io**, **commands** (DuckDB wrappers) | Pure utility functions (incl. TZ formatting, GeoJSON conversion, file dialog orchestration, DuckDB command invoke wrappers) |
 | `src/contexts/__tests__/` | AircraftTrackingContext (appendPosition, mergePositionInto message_count) | Context merge logic |
-| `src/hooks/__tests__/` | useLocalStorage, useAircraftTracks, useSimulatedTracks | Hook logic and filters |
+| `src/hooks/__tests__/` | useLocalStorage, useAircraftTracks, useSimulatedTracks, **useDisplayTz** | Hook logic, filters, TZ persistence |
 | `src/components/__tests__/` | ConnectionStatus, MetricsBar, Filters, AircraftTable (selection, RxTS, Msg#, **imported row highlight**), AircraftDetailsPanel (fold/unfold, sparkline, axes, **IMPORTED badge**), **AltitudeLegend**, **LeftPanel** | Component rendering and interactions |
 
 **Mocking:** `src/test/mocks/tauri.ts` provides mock `@tauri-apps/api` (invoke, events) for testing without Tauri runtime.
@@ -2041,7 +2046,7 @@ npm run test:watch  # Watch mode (TDD)
 
 ### Planned Features
 
-1. **Historical Query UI**: Build a history browser panel with time-range pickers and trajectory replay using the existing DuckDB query commands (`query_bbox`, `get_trajectory`, `get_aircraft_summary`) — backend is fully implemented, only frontend UI is missing
+1. **Historical Query UI** ✅ Implemented: `HistoryBrowser` component provides time-range pickers, bounding-box query, storage stats, and trajectory display using `query_bbox`, `get_trajectory`, `get_aircraft_summary` commands
 2. **KML Export**: Export tracks to KML format (GeoJSON export/import is already implemented — see [GeoJSON Export/Import](#geojson-exportimport))
 3. **Alerts**: Configurable alerts for specific aircraft (e.g., "notify when AAL123 appears")
 4. **Performance Dashboard**: More detailed metrics visualization (charts)
@@ -2235,7 +2240,7 @@ CREATE INDEX idx_positions_hex_ts ON positions(hex_ident, timestamp_ms);
   [bridge.rs — every 500ms]
         ↓
   ┌─────────────────────────────┐
-  │  insert_batch(positions)    │   → DuckDB: positions table
+  │  insert_batch(positions, tz)│   → DuckDB: positions table (always UTC ms)
   │  emit("adsb:message", ...)  │   → Frontend: in-memory AircraftTrackingContext
   └─────────────────────────────┘
         ↓
@@ -2275,7 +2280,7 @@ const positions = await queryBbox({
 
 ### Current Limitation: No UI for Historical Queries
 
-As of Feb 2026, the backend infrastructure is fully implemented but **no UI components exist** to trigger historical queries. The "Show history" toggle in the Filters panel displays only in-memory history (React context), not DuckDB. Building a history browser panel with time-range pickers and trajectory replay is the planned next step.
+The `HistoryBrowser` component (`src/components/HistoryBrowser.tsx`) provides the UI for historical queries: time-range pickers (datetime-local inputs, always machine-local time), bounding-box query, storage stats (oldest/newest timestamps displayed in the user's selected display timezone via `useDisplayTz`), and trajectory results rendered as `AircraftTrack` entries on the map and in the table.
 
 ### Design Decisions
 
@@ -2284,6 +2289,13 @@ DuckDB is an OLAP (analytical) engine — it handles range scans and aggregation
 
 **Why a separate `adsb-data-engine` crate?**
 Isolating parser + storage in a shared workspace crate lets the data engine be tested independently of Tauri. The `sbs_parser.rs` tests don't need a Tauri runtime. The storage tests use an in-memory DuckDB (`StorageConfig { db_path: None }`).
+
+**UTC-only storage — timezone is a parsing concern, not a storage concern**
+
+`timestamp_ms BIGINT` always stores **true UTC epoch milliseconds**. The dump1090 timezone (`Config.dump1090_tz`) is applied by `parse_timestamp_to_ms(ts, tz)` at insertion time (bridge → DuckDB), converting the naive SBS-1 wall-clock string to UTC before writing. Display timezone is a separate UI concern handled by `useDisplayTz` in the frontend. This separation means:
+- Stored data is timezone-agnostic and always comparable
+- `dump1090_tz` changes take effect on the next flush without any DB migration
+- Existing rows are not retroactively corrected when `dump1090_tz` changes
 
 **Files**:
 - `adsb-data-engine/src/storage.rs` — `StorageHandle`, `StorageConfig`, all query methods
@@ -2577,4 +2589,4 @@ This design prioritizes developer experience (hot reload, TypeScript, TDD), user
 
 ---
 
-*Last updated: February 2026 — Added `adsb-data-engine` workspace crate (DuckDB persistent history), dual history system, 4 historical query Tauri commands, and TypeScript wrappers.*
+*Last updated: February 2026 — Added `adsb-data-engine` workspace crate (DuckDB persistent history), dual history system, 4 historical query Tauri commands, and TypeScript wrappers. Added `HistoryBrowser` UI component. Added configurable source timezone (`Config.dump1090_tz`, IANA-aware, UTC-only storage) and display timezone preference (`useDisplayTz` hook, localStorage-backed Local/UTC/Source toggle in Settings).*

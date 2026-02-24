@@ -85,9 +85,13 @@ impl StorageHandle {
 
     /// Batch insert parsed positions (synchronous).
     ///
-    /// Converts `AircraftPosition.timestamp` (string) to epoch milliseconds.
+    /// Converts `AircraftPosition.timestamp` (string) to epoch milliseconds using `tz`.
     /// Positions without lat/lon are still stored (partial updates are valid in SBS-1).
-    pub fn insert_batch_sync(&self, positions: &[AircraftPosition]) -> Result<(), StorageError> {
+    pub fn insert_batch_sync(
+        &self,
+        positions: &[AircraftPosition],
+        tz: &str,
+    ) -> Result<(), StorageError> {
         if positions.is_empty() {
             return Ok(());
         }
@@ -100,7 +104,7 @@ impl StorageHandle {
         let mut appender = storage.conn.appender("positions")?;
 
         for pos in positions {
-            let timestamp_ms = parse_timestamp_to_ms(&pos.timestamp);
+            let timestamp_ms = parse_timestamp_to_ms(&pos.timestamp, tz);
 
             appender.append_row(params![
                 pos.hex_ident,
@@ -380,9 +384,13 @@ impl StorageHandle {
     // --- Async wrappers (Step 3) ---
 
     /// Batch insert parsed positions (async via spawn_blocking).
-    pub async fn insert_batch(&self, positions: Vec<AircraftPosition>) -> Result<(), StorageError> {
+    pub async fn insert_batch(
+        &self,
+        positions: Vec<AircraftPosition>,
+        tz: String,
+    ) -> Result<(), StorageError> {
         let handle = self.clone();
-        tokio::task::spawn_blocking(move || handle.insert_batch_sync(&positions))
+        tokio::task::spawn_blocking(move || handle.insert_batch_sync(&positions, &tz))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
@@ -435,15 +443,49 @@ impl StorageHandle {
     }
 }
 
-/// Parse an SBS-1 timestamp string ("YYYY/MM/DD HH:MM:SS.mmm") to epoch milliseconds.
+/// Parse an SBS-1 timestamp string ("YYYY/MM/DD HH:MM:SS.mmm") to UTC epoch milliseconds.
 ///
-/// Falls back to current time if parsing fails.
-fn parse_timestamp_to_ms(timestamp: &str) -> i64 {
-    // Try parsing "YYYY/MM/DD HH:MM:SS.mmm"
-    chrono::NaiveDateTime::parse_from_str(timestamp, "%Y/%m/%d %H:%M:%S%.3f")
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(timestamp, "%Y/%m/%d %H:%M:%S"))
-        .map(|dt| dt.and_utc().timestamp_millis())
-        .unwrap_or_else(|_| chrono::Utc::now().timestamp_millis())
+/// `tz` controls how the naive datetime is interpreted:
+/// - `"Local"` — machine's local timezone (default; preserves previous behaviour)
+/// - `"UTC"`   — explicit UTC
+/// - any other string — IANA timezone name (e.g. `"Europe/Paris"`);
+///   falls back to local with a warning if unrecognised
+///
+/// The returned `i64` is always a true UTC epoch millisecond value.
+fn parse_timestamp_to_ms(timestamp: &str, tz: &str) -> i64 {
+    use std::str::FromStr;
+
+    let naive = chrono::NaiveDateTime::parse_from_str(timestamp, "%Y/%m/%d %H:%M:%S%.3f")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(timestamp, "%Y/%m/%d %H:%M:%S"));
+
+    let naive = match naive {
+        Ok(dt) => dt,
+        Err(_) => return chrono::Utc::now().timestamp_millis(),
+    };
+
+    match tz {
+        "UTC" => naive.and_utc().timestamp_millis(),
+        "Local" => naive
+            .and_local_timezone(chrono::Local)
+            .single()
+            .map(|dt| dt.timestamp_millis())
+            .unwrap_or_else(|| naive.and_utc().timestamp_millis()),
+        iana => match chrono_tz::Tz::from_str(iana) {
+            Ok(resolved) => naive
+                .and_local_timezone(resolved)
+                .single()
+                .map(|dt| dt.timestamp_millis())
+                .unwrap_or_else(|| naive.and_utc().timestamp_millis()),
+            Err(_) => {
+                tracing::warn!("Unknown timezone '{}', falling back to Local", iana);
+                naive
+                    .and_local_timezone(chrono::Local)
+                    .single()
+                    .map(|dt| dt.timestamp_millis())
+                    .unwrap_or_else(|| naive.and_utc().timestamp_millis())
+            }
+        },
+    }
 }
 
 #[cfg(test)]
@@ -487,6 +529,27 @@ mod tests {
     }
 
     #[test]
+    fn test_insert_batch_uses_tz_for_parsing() {
+        // Europe/Paris in January = UTC+1.
+        // Wall-clock "10:30:00" in Paris = "09:30:00" UTC.
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let pos = sample_position("A1B2C3", Some(45.5), Some(-73.5), "2024/01/15 10:30:00.000");
+        handle.insert_batch_sync(&[pos], "Europe/Paris").unwrap();
+
+        let utc_ms = parse_timestamp_to_ms("2024/01/15 10:30:00.000", "UTC");
+        let expected_ms = utc_ms - 3600 * 1000; // 09:30 UTC = 10:30 Paris
+
+        let storage = handle.inner.lock().unwrap();
+        let stored_ms: i64 = storage
+            .conn
+            .query_row("SELECT timestamp_ms FROM positions LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(stored_ms, expected_ms);
+    }
+
+    #[test]
     fn test_insert_batch_and_count() {
         let handle = StorageHandle::open(test_config()).unwrap();
 
@@ -495,7 +558,7 @@ mod tests {
             sample_position("D4E5F6", Some(46.0), Some(-74.0), "2024/01/15 10:30:01.000"),
         ];
 
-        handle.insert_batch_sync(&positions).unwrap();
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
 
         let stats = handle.get_stats_sync().unwrap();
         assert_eq!(stats.row_count, 2);
@@ -504,7 +567,7 @@ mod tests {
     #[test]
     fn test_insert_empty_batch() {
         let handle = StorageHandle::open(test_config()).unwrap();
-        handle.insert_batch_sync(&[]).unwrap();
+        handle.insert_batch_sync(&[], "UTC").unwrap();
         let stats = handle.get_stats_sync().unwrap();
         assert_eq!(stats.row_count, 0);
     }
@@ -518,7 +581,7 @@ mod tests {
             sample_position("D4E5F6", Some(46.0), Some(-74.0), "2024/01/15 10:30:01.000"),
             sample_position("G7H8I9", Some(50.0), Some(-80.0), "2024/01/15 10:30:02.000"), // outside bbox
         ];
-        handle.insert_batch_sync(&positions).unwrap();
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
 
         let results = handle
             .query_bbox_sync(BboxQuery {
@@ -547,24 +610,13 @@ mod tests {
             sample_position("A1B2C3", Some(45.6), Some(-73.6), "2024/01/15 10:31:00.000"),
             sample_position("A1B2C3", Some(45.7), Some(-73.7), "2024/01/15 10:32:00.000"),
         ];
-        handle.insert_batch_sync(&positions).unwrap();
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
 
-        // Query only the middle timestamp
-        let ts_start = chrono::NaiveDateTime::parse_from_str(
-            "2024/01/15 10:30:30.000",
-            "%Y/%m/%d %H:%M:%S%.3f",
-        )
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
-
-        let ts_end = chrono::NaiveDateTime::parse_from_str(
-            "2024/01/15 10:31:30.000",
-            "%Y/%m/%d %H:%M:%S%.3f",
-        )
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
+        // Query only the middle timestamp.
+        // Use parse_timestamp_to_ms with "UTC" so query bounds match the UTC interpretation
+        // used when storing — keeps the test timezone-agnostic.
+        let ts_start = parse_timestamp_to_ms("2024/01/15 10:30:30.000", "UTC");
+        let ts_end = parse_timestamp_to_ms("2024/01/15 10:31:30.000", "UTC");
 
         let results = handle
             .query_bbox_sync(BboxQuery {
@@ -590,7 +642,7 @@ mod tests {
             sample_position("A1B2C3", Some(45.5), Some(-73.5), "2024/01/15 10:30:00.000"),
             sample_position("D4E5F6", None, None, "2024/01/15 10:30:01.000"), // no coords
         ];
-        handle.insert_batch_sync(&positions).unwrap();
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
 
         let results = handle
             .query_bbox_sync(BboxQuery {
@@ -617,7 +669,7 @@ mod tests {
             sample_position("A1B2C3", Some(45.6), Some(-73.6), "2024/01/15 10:31:00.000"),
             sample_position("D4E5F6", Some(46.0), Some(-74.0), "2024/01/15 10:30:00.000"), // different aircraft
         ];
-        handle.insert_batch_sync(&positions).unwrap();
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
 
         let results = handle
             .get_trajectory_sync(TrajectoryQuery {
@@ -646,7 +698,9 @@ mod tests {
         pos2.altitude = Some(35000.0);
         let pos3 = sample_position("D4E5F6", Some(46.0), Some(-74.0), "2024/01/15 10:30:00.000");
 
-        handle.insert_batch_sync(&[pos1, pos2, pos3]).unwrap();
+        handle
+            .insert_batch_sync(&[pos1, pos2, pos3], "UTC")
+            .unwrap();
 
         let summaries = handle.get_aircraft_summary_sync(None, None).unwrap();
 
@@ -667,7 +721,7 @@ mod tests {
             sample_position("A1B2C3", Some(45.5), Some(-73.5), "2024/01/15 10:30:00.000"),
             sample_position("A1B2C3", Some(45.6), Some(-73.6), "2024/01/15 10:35:00.000"),
         ];
-        handle.insert_batch_sync(&positions).unwrap();
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
 
         let stats = handle.get_stats_sync().unwrap();
         assert_eq!(stats.row_count, 2);
@@ -684,7 +738,7 @@ mod tests {
             sample_position("OLD", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000"),
             sample_position("NEW", Some(45.6), Some(-73.6), "2024/06/15 10:00:00.000"),
         ];
-        handle.insert_batch_sync(&positions).unwrap();
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
 
         // Prune anything before 2024/03/01
         let cutoff = chrono::NaiveDateTime::parse_from_str(
@@ -704,8 +758,44 @@ mod tests {
 
     #[test]
     fn test_parse_timestamp_to_ms_valid() {
-        let ms = parse_timestamp_to_ms("2024/01/15 10:30:00.000");
-        // 2024-01-15 10:30:00 UTC in millis
+        let ms = parse_timestamp_to_ms("2024/01/15 10:30:00.000", "Local");
+        // SBS-1 timestamps carry no timezone; interpret as local time, not UTC.
+        let expected = chrono::NaiveDateTime::parse_from_str(
+            "2024/01/15 10:30:00.000",
+            "%Y/%m/%d %H:%M:%S%.3f",
+        )
+        .unwrap()
+        .and_local_timezone(chrono::Local)
+        .single()
+        .unwrap()
+        .timestamp_millis();
+        assert_eq!(ms, expected);
+    }
+
+    #[test]
+    fn test_parse_timestamp_to_ms_no_millis() {
+        let ms = parse_timestamp_to_ms("2024/01/15 10:30:00", "Local");
+        let expected =
+            chrono::NaiveDateTime::parse_from_str("2024/01/15 10:30:00", "%Y/%m/%d %H:%M:%S")
+                .unwrap()
+                .and_local_timezone(chrono::Local)
+                .single()
+                .unwrap()
+                .timestamp_millis();
+        assert_eq!(ms, expected);
+    }
+
+    #[test]
+    fn test_parse_timestamp_to_ms_invalid_uses_current() {
+        let before = chrono::Utc::now().timestamp_millis();
+        let ms = parse_timestamp_to_ms("invalid", "UTC");
+        let after = chrono::Utc::now().timestamp_millis();
+        assert!(ms >= before && ms <= after);
+    }
+
+    #[test]
+    fn test_parse_timestamp_to_ms_utc() {
+        let ms = parse_timestamp_to_ms("2024/01/15 10:30:00.000", "UTC");
         let expected = chrono::NaiveDateTime::parse_from_str(
             "2024/01/15 10:30:00.000",
             "%Y/%m/%d %H:%M:%S%.3f",
@@ -717,22 +807,19 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_timestamp_to_ms_no_millis() {
-        let ms = parse_timestamp_to_ms("2024/01/15 10:30:00");
-        let expected =
-            chrono::NaiveDateTime::parse_from_str("2024/01/15 10:30:00", "%Y/%m/%d %H:%M:%S")
-                .unwrap()
-                .and_utc()
-                .timestamp_millis();
-        assert_eq!(ms, expected);
+    fn test_parse_timestamp_to_ms_iana_paris() {
+        // Europe/Paris = UTC+1 in January (no DST)
+        // Local 10:30 Paris = 09:30 UTC → 1 hour before the UTC reading
+        let utc_ms = parse_timestamp_to_ms("2024/01/15 10:30:00.000", "UTC");
+        let paris_ms = parse_timestamp_to_ms("2024/01/15 10:30:00.000", "Europe/Paris");
+        assert_eq!(paris_ms, utc_ms - 3600 * 1000);
     }
 
     #[test]
-    fn test_parse_timestamp_to_ms_invalid_uses_current() {
-        let before = chrono::Utc::now().timestamp_millis();
-        let ms = parse_timestamp_to_ms("invalid");
-        let after = chrono::Utc::now().timestamp_millis();
-        assert!(ms >= before && ms <= after);
+    fn test_parse_timestamp_to_ms_unknown_tz_does_not_panic() {
+        // Unknown TZ must fall back gracefully — no panic
+        let ms = parse_timestamp_to_ms("2024/01/15 10:30:00.000", "Not/A/TZ");
+        assert!(ms > 0);
     }
 
     #[test]
@@ -749,7 +836,7 @@ mod tests {
             Some(-73.5),
             "2024/01/15 10:30:00.000",
         )];
-        handle.insert_batch_sync(&positions).unwrap();
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
 
         // Query source_id from raw SQL
         let storage = handle.inner.lock().unwrap();
@@ -773,7 +860,7 @@ mod tests {
             Some(-73.5),
             "2024/01/15 10:30:00.000",
         )];
-        handle.insert_batch_sync(&positions).unwrap();
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
 
         // Clone should see the same data
         let stats = handle2.get_stats_sync().unwrap();
@@ -789,7 +876,10 @@ mod tests {
             sample_position("D4E5F6", Some(46.0), Some(-74.0), "2024/01/15 10:30:01.000"),
         ];
 
-        handle.insert_batch(positions).await.unwrap();
+        handle
+            .insert_batch(positions, "UTC".to_string())
+            .await
+            .unwrap();
 
         let stats = handle.get_stats().await.unwrap();
         assert_eq!(stats.row_count, 2);
@@ -817,7 +907,10 @@ mod tests {
             sample_position("A1B2C3", Some(45.5), Some(-73.5), "2024/01/15 10:30:00.000"),
             sample_position("A1B2C3", Some(45.6), Some(-73.6), "2024/01/15 10:31:00.000"),
         ];
-        handle.insert_batch(positions).await.unwrap();
+        handle
+            .insert_batch(positions, "UTC".to_string())
+            .await
+            .unwrap();
 
         let trajectory = handle
             .get_trajectory(TrajectoryQuery {
@@ -840,7 +933,10 @@ mod tests {
             sample_position("OLD", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000"),
             sample_position("NEW", Some(45.6), Some(-73.6), "2024/06/15 10:00:00.000"),
         ];
-        handle.insert_batch(positions).await.unwrap();
+        handle
+            .insert_batch(positions, "UTC".to_string())
+            .await
+            .unwrap();
 
         let cutoff = chrono::NaiveDateTime::parse_from_str(
             "2024/03/01 00:00:00.000",

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { timeAgo, formatBytes } from "../format";
+import { timeAgo, formatBytes, formatWithTz } from "../format";
 
 describe("timeAgo", () => {
   afterEach(() => {
@@ -33,5 +33,32 @@ describe("formatBytes", () => {
 
   it("formats megabytes", () => {
     expect(formatBytes(5000000)).toBe("4.77 MB");
+  });
+});
+
+// A fixed UTC instant: 2026-02-23 15:30:45 UTC
+const FIXED_MS = new Date("2026-02-23T15:30:45Z").getTime();
+
+describe("formatWithTz", () => {
+  it("utc mode contains 15:30:45 for a 15:30:45 UTC instant", () => {
+    const result = formatWithTz(FIXED_MS, "utc");
+    expect(result).toContain("15:30:45");
+  });
+
+  it("source mode with 'UTC' shows UTC time", () => {
+    const result = formatWithTz(FIXED_MS, "source", "UTC");
+    expect(result).toContain("15:30:45");
+  });
+
+  it("source mode with 'Local' returns a non-empty string without throwing", () => {
+    const result = formatWithTz(FIXED_MS, "source", "Local");
+    expect(typeof result).toBe("string");
+    expect(result.length).toBeGreaterThan(0);
+  });
+
+  it("local mode returns a non-empty string", () => {
+    const result = formatWithTz(FIXED_MS, "local");
+    expect(typeof result).toBe("string");
+    expect(result.length).toBeGreaterThan(0);
   });
 });

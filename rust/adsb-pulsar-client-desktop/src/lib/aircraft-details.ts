@@ -38,15 +38,25 @@ export function altitudeRange(altitudes: number[]): { min: number; max: number }
 }
 
 /**
- * Format a ms-since-epoch timestamp as a local HH:MM string.
- * Used for sparkline time axis labels.
+ * Format a ms-since-epoch timestamp as HH:MM:SS.
+ * Optional tzName: IANA timezone name; omit (or pass "Local") for machine local time.
  */
-export function formatTrackTime(ms: number): string {
-  const d = new Date(ms);
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  const ss = String(d.getSeconds()).padStart(2, "0");
-  return `${hh}:${mm}:${ss}`;
+export function formatTrackTime(ms: number, tzName?: string): string {
+  if (!tzName || tzName === "Local") {
+    const d = new Date(ms);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    return `${hh}:${mm}:${ss}`;
+  }
+  // Use Intl for explicit non-local TZ
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: tzName,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(ms));
 }
 
 /**

@@ -26,6 +26,7 @@ pub fn start_feed(
 ) -> Result<FeedHandle, String> {
     let test_mode = config.test_mode;
     let socket_read_timeout_secs = config.socket_read_timeout_secs;
+    let dump1090_tz = config.dump1090_tz.clone();
     let mut client =
         ADSBFeedClient::new(config, vec![Box::new(NoopForwarder)]).map_err(|e| e.to_string())?;
 
@@ -101,7 +102,14 @@ pub fn start_feed(
 
     // Task 2: Relay messages to frontend (throttled) + persist to DuckDB
     let message_task = tokio::spawn(async move {
-        relay_messages(app_for_messages, message_rx, last_message_time, storage).await;
+        relay_messages(
+            app_for_messages,
+            message_rx,
+            last_message_time,
+            storage,
+            dump1090_tz,
+        )
+        .await;
     });
 
     // Task 3: Relay metrics to frontend
@@ -146,6 +154,7 @@ async fn relay_messages(
     mut rx: broadcast::Receiver<Vec<u8>>,
     last_message_time: Arc<RwLock<Instant>>,
     storage: Option<StorageHandle>,
+    dump1090_tz: String,
 ) {
     let mut flush_interval = interval(Duration::from_millis(500));
     let mut buffer: HashMap<String, AircraftPosition> = HashMap::new();
@@ -177,7 +186,7 @@ async fn relay_messages(
                                     pos.message_count = count;
                                 }
                             }
-                            persist_batch(&storage, &batch).await;
+                            persist_batch(&storage, &batch, &dump1090_tz).await;
                             let _ = app.emit("adsb:message", &batch);
                         }
                         break;
@@ -192,7 +201,7 @@ async fn relay_messages(
                             pos.message_count = count;
                         }
                     }
-                    persist_batch(&storage, &batch).await;
+                    persist_batch(&storage, &batch, &dump1090_tz).await;
                     let _ = app.emit("adsb:message", &batch);
                 }
             }
@@ -201,9 +210,9 @@ async fn relay_messages(
 }
 
 /// Persist a batch of positions to DuckDB (non-fatal on failure).
-async fn persist_batch(storage: &Option<StorageHandle>, batch: &[AircraftPosition]) {
+async fn persist_batch(storage: &Option<StorageHandle>, batch: &[AircraftPosition], tz: &str) {
     if let Some(ref storage) = storage {
-        if let Err(e) = storage.insert_batch(batch.to_vec()).await {
+        if let Err(e) = storage.insert_batch(batch.to_vec(), tz.to_string()).await {
             warn!("Storage insert failed: {e}");
         }
     }

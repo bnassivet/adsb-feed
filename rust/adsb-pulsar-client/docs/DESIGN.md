@@ -177,6 +177,7 @@ Key fields relevant to multi-forwarder operation:
 | `pulsar_topic` | `String` | `persistent://kradsb/adsb/sbs-topic` | Pulsar topic |
 | `test_mode` | `bool` | `false` | Skip all forwarder I/O (count-only) |
 | `connection_mode` | `ConnectionMode` | `Client` | TCP client or server |
+| `dump1090_tz` | `String` | `"Local"` | IANA timezone for interpreting SBS-1 timestamps (`"Local"`, `"UTC"`, or IANA name e.g. `"Europe/Paris"`) |
 
 `ForwarderKind` enum: `Pulsar`, `File`, `Noop`.
 

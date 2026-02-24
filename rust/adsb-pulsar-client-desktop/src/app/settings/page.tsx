@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { getConfig, saveConfig, validateConfig } from "@/lib/commands";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
+import { useDisplayTz } from "@/hooks/useDisplayTz";
 import type { Config } from "@/lib/types";
 import Link from "next/link";
 
@@ -13,6 +14,7 @@ export default function SettingsPage() {
   } | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [trajectoryStyle, setTrajectoryStyle] = useLocalStorage<"line" | "dots">("adsb-trajectory-style", "line");
+  const { tzMode, setTzMode } = useDisplayTz();
 
   useEffect(() => {
     getConfig()
@@ -90,6 +92,19 @@ export default function SettingsPage() {
               <Field label="Socket Host" value={config.socket_host} onChange={(v) => update({ socket_host: v })} />
               <Field label="Socket Port" type="number" value={String(config.socket_port)} onChange={(v) => update({ socket_port: Number(v) })} />
               <Field label="Connection Mode" value={config.connection_mode} onChange={(v) => update({ connection_mode: v })} />
+              <div className="col-span-2">
+                <Field
+                  label="Source Timezone"
+                  value={config.dump1090_tz}
+                  onChange={(v) => update({ dump1090_tz: v })}
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  Timezone of dump1090 timestamps. Use{" "}
+                  <code className="text-slate-400">Local</code>,{" "}
+                  <code className="text-slate-400">UTC</code>, or an IANA name like{" "}
+                  <code className="text-slate-400">Europe/Paris</code>.
+                </p>
+              </div>
             </div>
           </section>
 
@@ -146,6 +161,28 @@ export default function SettingsPage() {
               </div>
               <p className="text-xs text-slate-500 mt-2">
                 How aircraft trajectories are drawn on the map. Saved automatically.
+              </p>
+            </div>
+            <div className="mt-4">
+              <label className="block text-xs text-slate-400 mb-1">Time Display</label>
+              <div className="flex gap-2">
+                {(["local", "utc", "source"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setTzMode(mode)}
+                    className={`px-3 py-1.5 text-sm rounded capitalize transition ${
+                      tzMode === mode
+                        ? "bg-blue-600 text-white"
+                        : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                    }`}
+                  >
+                    {mode === "source" ? "Source" : mode === "utc" ? "UTC" : "Local"}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500 mt-2">
+                Timezone for displaying stored timestamps. &ldquo;Source&rdquo; uses the
+                Source Timezone above. Saved automatically.
               </p>
             </div>
           </section>

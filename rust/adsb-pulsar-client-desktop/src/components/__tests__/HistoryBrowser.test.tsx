@@ -12,12 +12,14 @@ vi.mock("@/lib/commands", async (importOriginal) => {
     getStorageStats: vi.fn(),
     getAircraftSummary: vi.fn(),
     getTrajectory: vi.fn(),
+    getConfig: vi.fn().mockResolvedValue({ dump1090_tz: "Local" }),
   };
 });
 import {
   getStorageStats,
   getAircraftSummary,
   getTrajectory,
+  getConfig,
 } from "@/lib/commands";
 
 const STATS = {
@@ -127,6 +129,25 @@ describe("HistoryBrowser", () => {
       expect(screen.getByLabelText(/start/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/end/i)).toBeInTheDocument();
     });
+  });
+
+  it("re-fetches storage stats when the refresh button is clicked", async () => {
+    const updatedStats = {
+      ...STATS,
+      row_count: 50_000,
+      newest_timestamp_ms: new Date("2026-02-23T14:00:00Z").getTime(),
+    };
+    vi.mocked(getStorageStats)
+      .mockResolvedValueOnce(STATS)
+      .mockResolvedValueOnce(updatedStats);
+
+    render(<HistoryBrowser onImportTracks={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText(/42,000/)).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: /refresh stats/i }));
+
+    await waitFor(() => expect(screen.getByText(/50,000/)).toBeInTheDocument());
+    expect(getStorageStats).toHaveBeenCalledTimes(2);
   });
 
   it("queries with stats-based default times on first browse", async () => {

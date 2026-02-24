@@ -176,4 +176,12 @@ describe("formatTrackTime", () => {
     // In any timezone, 1-hour difference means at least one digit must differ
     expect(r1).not.toBe(r2);
   });
+
+  it("with tzName='UTC' returns HH:MM:SS in UTC", () => {
+    // 2026-02-23T15:30:45Z — UTC hour is 15
+    const ms = new Date("2026-02-23T15:30:45Z").getTime();
+    const result = formatTrackTime(ms, "UTC");
+    expect(result).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+    expect(result).toBe("15:30:45");
+  });
 });

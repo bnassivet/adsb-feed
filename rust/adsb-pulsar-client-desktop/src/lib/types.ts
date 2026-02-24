@@ -84,6 +84,7 @@ export interface Config {
   test_mode: boolean;
   log_level: string;
   connection_mode: string;
+  dump1090_tz: string;
 }
 
 /** Filter state for the UI. */

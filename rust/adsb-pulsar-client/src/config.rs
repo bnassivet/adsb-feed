@@ -293,6 +293,23 @@ pub struct Config {
     #[serde(default = "default_connection_mode")]
     pub connection_mode: String,
 
+    /// IANA timezone name for interpreting dump1090 SBS-1 timestamps.
+    ///
+    /// `"Local"` (default) uses the machine's local timezone.
+    /// `"UTC"` forces UTC. Any IANA name (e.g. `"Europe/Paris"`) is accepted.
+    /// An unrecognised name logs a warning at runtime and falls back to Local.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "dump1090-tz",
+            default_value = "Local",
+            hide = true,
+            help = "Timezone for dump1090 timestamps (Local, UTC, or IANA name e.g. Europe/Paris)"
+        )
+    )]
+    #[serde(default = "default_dump1090_tz")]
+    pub dump1090_tz: String,
+
     /// Forwarder backends to use (can be specified multiple times)
     #[cfg_attr(
         feature = "cli",
@@ -370,6 +387,9 @@ fn default_log_level() -> String {
 fn default_connection_mode() -> String {
     "client".to_string()
 }
+fn default_dump1090_tz() -> String {
+    "Local".to_string()
+}
 fn default_forwarders() -> Vec<ForwarderKind> {
     vec![ForwarderKind::Pulsar]
 }
@@ -401,6 +421,7 @@ impl Default for Config {
             test_mode: false,
             log_level: default_log_level(),
             connection_mode: default_connection_mode(),
+            dump1090_tz: default_dump1090_tz(),
             forwarders: default_forwarders(),
             file_path: default_file_path(),
         }
@@ -495,6 +516,30 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_dump1090_tz_defaults_to_local() {
+        let config = Config::default();
+        assert_eq!(config.dump1090_tz, "Local");
+    }
+
+    #[test]
+    fn test_dump1090_tz_serializes() {
+        let config = Config {
+            dump1090_tz: "Europe/Paris".to_string(),
+            ..Config::default()
+        };
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["dump1090_tz"], "Europe/Paris");
+    }
+
+    #[test]
+    fn test_dump1090_tz_deserializes_default_when_missing() {
+        // Old configs without the field should deserialize to "Local"
+        let json = serde_json::json!({ "source_id": "test" });
+        let config: Config = serde_json::from_value(json).unwrap();
+        assert_eq!(config.dump1090_tz, "Local");
+    }
 
     #[test]
     fn test_default_config_is_valid() {

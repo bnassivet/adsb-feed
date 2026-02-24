@@ -10,6 +10,7 @@ import {
   formatTrackTime,
 } from "@/lib/aircraft-details";
 import { timeAgo } from "@/lib/format";
+import { useDisplayTz } from "@/hooks/useDisplayTz";
 
 const MIN_PANEL_WIDTH = 200;
 const MAX_PANEL_WIDTH = 480;
@@ -84,6 +85,7 @@ function ExpandedPanel({
   onWidthChange: (w: number) => void;
   isImported?: boolean;
 }) {
+  const { resolvedTzName } = useDisplayTz();
   const lastX = useRef(0);
   const isDragging = useRef(false);
 
@@ -266,14 +268,14 @@ function ExpandedPanel({
                   className="text-slate-500 leading-none"
                   style={{ fontSize: 9 }}
                 >
-                  {formatTrackTime(track.first_seen)}
+                  {formatTrackTime(track.first_seen, resolvedTzName)}
                 </span>
                 <span
                   data-testid="sparkline-time-end"
                   className="text-slate-500 leading-none"
                   style={{ fontSize: 9 }}
                 >
-                  {formatTrackTime(track.last_seen)}
+                  {formatTrackTime(track.last_seen, resolvedTzName)}
                 </span>
               </div>
             </div>
