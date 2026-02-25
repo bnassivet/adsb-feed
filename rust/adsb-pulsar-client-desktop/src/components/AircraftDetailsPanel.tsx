@@ -69,7 +69,7 @@ function CollapsedStrip({ onToggle }: { onToggle: () => void }) {
         title="Unfold panel"
         className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded transition text-xs font-mono"
       >
-        {">>"}
+        {"<<"}
       </button>
     </div>
   );
@@ -167,7 +167,7 @@ function ExpandedPanel({
             title="Fold panel"
             className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded transition text-xs font-mono"
           >
-            {"<<"}
+            {">>"}
           </button>
         </div>
 
