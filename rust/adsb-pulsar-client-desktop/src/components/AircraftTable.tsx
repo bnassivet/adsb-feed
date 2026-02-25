@@ -16,15 +16,17 @@ type SortKey =
 interface Props {
   tracks: AircraftTrack[];
   historyTracks?: AircraftTrack[];
+  dbHistoryTracks?: AircraftTrack[];
   importedTracks?: AircraftTrack[];
   selectedHexIdent?: string | null;
   onSelectTrack?: (hex: string) => void;
 }
 
-export function AircraftTable({ tracks, historyTracks = [], importedTracks = [], selectedHexIdent, onSelectTrack }: Props) {
+export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = [], importedTracks = [], selectedHexIdent, onSelectTrack }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("callsign");
   const [sortAsc, setSortAsc] = useState(true);
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
+  const [dbHistoryCollapsed, setDbHistoryCollapsed] = useState(false);
   const [importedCollapsed, setImportedCollapsed] = useState(false);
 
   function sortTracks(list: AircraftTrack[]) {
@@ -41,6 +43,7 @@ export function AircraftTable({ tracks, historyTracks = [], importedTracks = [],
 
   const sorted = sortTracks(tracks);
   const sortedHistory = sortTracks(historyTracks);
+  const sortedDbHistory = sortTracks(dbHistoryTracks);
   const sortedImported = sortTracks(importedTracks);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -219,6 +222,53 @@ export function AircraftTable({ tracks, historyTracks = [], importedTracks = [],
             );
           })}
 
+          {/* DB History header — collapsible */}
+          {sortedDbHistory.length > 0 && (
+            <tr
+              data-testid="dbhistory-section-header"
+              className="cursor-pointer select-none"
+              onClick={() => setDbHistoryCollapsed(prev => !prev)}
+            >
+              <td colSpan={11} className="px-3 py-1 bg-cyan-900/20">
+                <span className="text-[10px] text-cyan-500 uppercase tracking-wider">
+                  {dbHistoryCollapsed ? "\u25B8" : "\u25BE"} DB History ({sortedDbHistory.length})
+                </span>
+              </td>
+            </tr>
+          )}
+
+          {/* DB History rows — cyan tint */}
+          {!dbHistoryCollapsed && sortedDbHistory.map((t) => {
+            const isSelected = t.hex_ident === selectedHexIdent;
+            return (
+            <tr
+              key={`dbhist-${t.hex_ident}`}
+              data-testid={`row-dbhist-${t.hex_ident}`}
+              data-hex={t.hex_ident}
+              onClick={() => onSelectTrack?.(t.hex_ident)}
+              className={`border-b border-slate-800 ${
+                isSelected
+                  ? "bg-cyan-900/40 hover:bg-cyan-900/50"
+                  : "hover:bg-slate-800/50 opacity-60"
+              }${onSelectTrack ? " cursor-pointer" : ""}`}
+            >
+              <td className="px-3 py-1.5 font-mono font-semibold text-cyan-300">{t.callsign ?? "—"}</td>
+              <td className="px-3 py-1.5 font-mono text-cyan-400/60">{t.hex_ident}</td>
+              <td className="px-3 py-1.5 font-mono">
+                <span style={{ color: altitudeToColor(t.altitude) }}>{t.altitude?.toLocaleString() ?? "—"}</span>
+              </td>
+              <td className="px-3 py-1.5 font-mono">{t.ground_speed?.toFixed(0) ?? "—"}</td>
+              <td className="px-3 py-1.5 font-mono">{t.track?.toFixed(0) ?? "—"}{t.track !== null ? "\u00B0" : ""}</td>
+              <td className="px-3 py-1.5 font-mono">{t.vertical_rate?.toFixed(0) ?? "—"}</td>
+              <td className="px-3 py-1.5 font-mono text-slate-400">{t.squawk ?? "—"}</td>
+              <td className="px-3 py-1.5 font-mono text-slate-500">{t.latitude?.toFixed(4) ?? "—"}</td>
+              <td className="px-3 py-1.5 font-mono text-slate-500">{t.longitude?.toFixed(4) ?? "—"}</td>
+              <td className="px-3 py-1.5 font-mono text-slate-500">{timeAgo(t.last_seen)}</td>
+              <td className="px-3 py-1.5 font-mono text-slate-400">{t.message_count.toLocaleString()}</td>
+            </tr>
+            );
+          })}
+
           {/* Imported header — collapsible */}
           {sortedImported.length > 0 && (
             <tr
@@ -266,7 +316,7 @@ export function AircraftTable({ tracks, historyTracks = [], importedTracks = [],
             );
           })}
 
-          {sorted.length === 0 && sortedHistory.length === 0 && sortedImported.length === 0 && (
+          {sorted.length === 0 && sortedHistory.length === 0 && sortedDbHistory.length === 0 && sortedImported.length === 0 && (
             <tr>
               <td
                 colSpan={11}

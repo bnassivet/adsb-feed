@@ -10,9 +10,10 @@
 7. [Global Context Manager Pattern](#global-context-manager-pattern)
 8. [In-Memory Aircraft History](#in-memory-aircraft-history)
 9. [DuckDB Persistent History](#duckdb-persistent-history)
-10. [GeoJSON Export/Import](#geojson-exportimport)
-11. [Imported Tracks Selection](#imported-tracks-selection)
-12. [Simulated Flights (Demo Mode)](#simulated-flights-demo-mode)
+10. [DB History Panel](#db-history-panel)
+11. [GeoJSON Export/Import](#geojson-exportimport)
+12. [Imported Tracks Selection](#imported-tracks-selection)
+13. [Simulated Flights (Demo Mode)](#simulated-flights-demo-mode)
 
 ---
 
@@ -80,7 +81,18 @@ The application maintains **two complementary history layers**:
 | Layer | Scope | Implementation | Query API |
 |-------|-------|---------------|-----------|
 | **In-Memory** | Current session (6h TTL) | React `useRef` Maps in `AircraftTrackingContext` | Filter toggle in UI |
-| **DuckDB** | Persistent (across restarts) | `adsb-data-engine` StorageHandle | Tauri commands: `query_bbox`, `get_trajectory`, etc. |
+| **DuckDB** | Persistent (across restarts) | `adsb-data-engine` StorageHandle | Tauri commands: `query_bbox`, `get_trajectory`, `get_time_distribution`, etc. |
+
+### Four Track Categories
+
+The application maintains four independent track categories in `AircraftTrackingContext`:
+
+| Category | Source | Color | Filtered by Filters? |
+|----------|--------|-------|---------------------|
+| **tracks** (live) | Real-time SBS-1 via Tauri events | Altitude-based jet colormap | Yes |
+| **history** | TTL-expired live tracks | Altitude-based (configurable mode) | Yes |
+| **imported** | GeoJSON file import | Indigo | Optional (`includeImportedInFilter`) |
+| **dbHistory** | DuckDB queries via DB History panel | Cyan | No (controlled by panel) |
 
 ### Key Design Principles
 
@@ -161,6 +173,9 @@ src/
 │   ├── AircraftTable.tsx    # Tabular data display
 │   ├── AltitudeLegend.tsx   # Floating altitude-to-color gradient bar on map
 │   ├── ConnectionStatus.tsx # Connection indicator badges
+│   ├── DBHistoryAnalytics.tsx # recharts-based analytics (time distribution, altitude histogram)
+│   ├── DBHistoryContent.tsx # DB History panel inner content (stats, browse, load, analytics)
+│   ├── DBHistoryPanel.tsx   # Dockable/floating DB History panel shell
 │   ├── Filters.tsx          # Filter controls (callsign, altitude, speed, toggles)
 │   ├── LeftPanel.tsx        # Collapsible resizable left panel wrapping Filters
 │   ├── Map.tsx              # Map wrapper (SSR bypass)
@@ -184,6 +199,7 @@ src/
 │   ├── aircraft-icon.ts     # Pure SVG/HTML generation for aircraft map icons
 │   ├── colors.ts            # Altitude-based color mapping + ALTITUDE_SCALE_STOPS
 │   ├── commands.ts          # Tauri command wrappers
+│   ├── db-history-analytics.ts # Pure analytics utilities (altitude bins, summary stats, time chart data)
 │   ├── file-io.ts           # Tauri native dialog integration for export/import
 │   ├── format.ts            # Pure format helpers (timeAgo, formatBytes, formatWithTz)
 │   ├── geojson.ts           # Bidirectional AircraftTrack ↔ GeoJSON conversion
@@ -227,9 +243,11 @@ graph TD
     Dashboard --> Header[Header Bar]
     Dashboard --> MainContent[Main Content]
     Dashboard --> Footer[MetricsBar]
+    Dashboard --> FloatingDBHistory[DBHistoryPanel<br/>floating mode]
 
     Header --> StatusIndicators[ConnectionStatusIndicator x2]
     Header --> Controls[Export/Import/Start/Stop/Settings]
+    Header --> DBHistoryToggle[DB History toggle]
 
     MainContent --> LeftPanel[LeftPanel<br/>Collapsible]
     LeftPanel --> FiltersPanel[FiltersPanel]
@@ -239,6 +257,11 @@ graph TD
 
     MapRow --> Map[Map]
     MapRow --> DetailsPanel[AircraftDetailsPanel]
+    MapRow --> DockedDBHistory[DBHistoryPanel<br/>docked mode]
+
+    DockedDBHistory --> DBHistoryContent
+    FloatingDBHistory --> DBHistoryContent2[DBHistoryContent]
+    DBHistoryContent --> DBHistoryAnalytics
 
     Map --> MapInner[MapInner]
     MapInner --> MapTileToggle
@@ -251,6 +274,8 @@ graph TD
     style LeftPanel fill:#E57373
     style Footer fill:#BA68C8
     style DetailsPanel fill:#CE93D8
+    style DockedDBHistory fill:#06b6d4
+    style FloatingDBHistory fill:#06b6d4
 ```
 
 ### Component Details
@@ -304,7 +329,7 @@ accumulation even when users navigate to Settings or other pages.
 - Persist UI preferences to localStorage
 
 **Custom Hooks Used**:
-- `useAircraftTracks(filters)`: Track state with filtering (returns `{ tracks, history, imported, importTracks, clearImported }`)
+- `useAircraftTracks(filters)`: Track state with filtering (returns `{ tracks, history, imported, dbHistory, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory }`)
 - `useSimulatedTracks(enabled)`: Self-animating demo flight tracks
 - `useMetrics()`: Performance metrics polling
 - `useConnectionStatus()`: Connection status polling
@@ -329,19 +354,27 @@ accumulation even when users navigate to Settings or other pages.
 - `selectedHexIdent: string | null`: Currently selected aircraft (toggle behavior: click same to deselect)
 - `detailsPanelOpen: boolean`: Whether the details panel is expanded or collapsed (persisted)
 - `detailsPanelWidth: number`: Width of the expanded details panel in px, clamped 200–480 (persisted)
+- `dbHistoryOpen: boolean`: DB History panel visible (persisted)
+- `dbHistoryDockedExpanded: boolean`: Docked panel expanded vs collapsed strip (persisted)
+- `dbHistoryWidth: number`: Docked panel width in px, 240–560 (persisted)
+- `dbHistoryFloating: boolean`: Floating mode vs docked mode (persisted)
+- `dbHistoryFloatX/Y/W/H: number`: Floating panel position and size (persisted)
+- `showDbHistory: boolean`: Visibility of DB History tracks on map/table (persisted)
 
 **Derived State**:
 - `allTracks`: Merge of live `tracks` + `simulatedTracks`
 - `visibleHistory`: `showHistory ? history : []`
 - `visibleImported`: `showImported ? imported : []`
-- `selectedTrack`: Resolved from `selectedHexIdent` against `allTracks`, then `visibleHistory`, then `visibleImported`; `null` when no aircraft is selected
+- `visibleDbHistory`: `showDbHistory ? dbHistory : []`
+- `selectedTrack`: Resolved from `selectedHexIdent` against `allTracks`, then `visibleHistory`, then `visibleDbHistory`, then `visibleImported`; `null` when no aircraft is selected
 - `isImportedSelection`: Whether the selected track came from the imported collection (drives `IMPORTED` badge in details panel)
+- `isDbHistorySelection`: Whether the selected track came from DB History (drives `DB HISTORY` badge in details panel)
 - `densityTracks`: Computed from `allTracks + history + (imported if includeImportedInDensity)` when density overlay is enabled
 
 **Layout Structure**:
 ```tsx
 <div className="h-screen flex flex-col">
-  <header> {/* Header bar: status, sidebar toggle, export/import/clear, start/stop, settings */} </header>
+  <header> {/* Header bar: status, sidebar toggle, DB History toggle, export/import/clear, start/stop, settings */} </header>
   <div className="flex flex-1 overflow-hidden">
     <LeftPanel isOpen={sidebarOpen} width={sidebarWidth} ... />
     <main className="flex-1 flex flex-col overflow-hidden">
@@ -350,19 +383,29 @@ accumulation even when users navigate to Settings or other pages.
         {selectedTrack && (
           <AircraftDetailsPanel
             track={selectedTrack}
-            isOpen={detailsPanelOpen}
-            width={detailsPanelWidth}
-            onToggle={...}
-            onWidthChange={...}
             isImported={isImportedSelection}
+            isDbHistory={isDbHistorySelection}
+            ...
           />
+        )}
+        {/* DB History panel — docked mode (flex sibling of map) */}
+        {dbHistoryOpen && !dbHistoryFloating && (
+          <DBHistoryPanel floating={false} ...>
+            <DBHistoryContent onLoadTracks={loadDbHistoryTracks} onClearTracks={clearDbHistory} ... />
+          </DBHistoryPanel>
         )}
       </div>
       <ResizeHandle />
-      <div> {/* AircraftTable */} </div>
+      <div> {/* AircraftTable with dbHistoryTracks */} </div>
     </main>
   </div>
   <MetricsBar />
+  {/* DB History panel — floating mode (fixed overlay) */}
+  {dbHistoryOpen && dbHistoryFloating && (
+    <DBHistoryPanel floating={true} ...>
+      <DBHistoryContent ... />
+    </DBHistoryPanel>
+  )}
 </div>
 ```
 
@@ -664,7 +707,7 @@ DotsLayer({ tracks, colorMode, type: "history" | "live" })
 - `width: number`: Panel width in px (clamped 180–400, persisted)
 - `onToggle: () => void`: Toggle expanded/collapsed
 - `onWidthChange: (w: number) => void`: Called during drag resize
-- Plus all `FiltersPanel` props: `filters`, `onChange`, `trackCount`, `showHistory`, `onToggleHistory`, `historyCount`, `showDensity`, `onToggleDensity`, `densityMetric`, `onDensityMetricChange`, `showSimulation`, `onToggleSimulation`, `simulationCount`, `liveColorMode`, `onLiveColorModeChange`, `historyColorMode`, `onHistoryColorModeChange`, `importedCount`, `showImported`, `onToggleImported`, `onClearImported`, `includeImportedInDensity`, `onToggleIncludeImportedInDensity`
+- Plus all `FiltersPanel` props: `filters`, `onChange`, `trackCount`, `showHistory`, `onToggleHistory`, `historyCount`, `showDensity`, `onToggleDensity`, `densityMetric`, `onDensityMetricChange`, `showSimulation`, `onToggleSimulation`, `simulationCount`, `liveColorMode`, `onLiveColorModeChange`, `historyColorMode`, `onHistoryColorModeChange`, `importedCount`, `showImported`, `onToggleImported`, `onClearImported`, `includeImportedInDensity`, `onToggleIncludeImportedInDensity` (note: `onImportTracks` removed — DB History browsing moved to `DBHistoryPanel`)
 
 **Two States**:
 1. **Collapsed** — 32px strip with `>>` button ("Show filters panel")
@@ -707,6 +750,7 @@ DotsLayer({ tracks, colorMode, type: "history" | "live" })
 - `onToggle: () => void`: Called when fold/unfold button is clicked
 - `onWidthChange: (w: number) => void`: Called during drag resize
 - `isImported?: boolean`: When `true`, displays an indigo `IMPORTED` badge in the header (defaults to `false`)
+- `isDbHistory?: boolean`: When `true`, displays a cyan `DB HISTORY` badge in the header (defaults to `false`)
 
 **Three States**:
 1. **Hidden** — `track === null`: renders nothing; map fills full width
@@ -714,7 +758,7 @@ DotsLayer({ tracks, colorMode, type: "history" | "live" })
 3. **Expanded** — `isOpen === true`: full-width panel with content and `<<` button (title "Fold panel")
 
 **Content Sections** (expanded state):
-1. **Header**: "Aircraft Details" label + optional `IMPORTED` badge (indigo, shown when `isImported === true`) + fold button `<<`
+1. **Header**: "Aircraft Details" label + optional `IMPORTED` badge (indigo, shown when `isImported === true`) + optional `DB HISTORY` badge (cyan, shown when `isDbHistory === true`) + fold button `<<`
 2. **Identity**: ICAO hex (monospace, prominent), callsign (or "—")
 3. **Altitude / Speed / Heading**: altitude ft, ground_speed kts, track °, on-ground badge
 4. **Vertical Tendency**: arrow icon (▲ green / ▼ red / → slate) + formatted rate; SVG sparkline with axes:
@@ -750,29 +794,29 @@ DotsLayer({ tracks, colorMode, type: "history" | "live" })
 
 **Parameters**: `filters: Filters`
 
-**Returns**: `{ tracks: AircraftTrack[], history: AircraftTrack[] }`
+**Returns**: `{ tracks, history, imported, dbHistory, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory }`
 
 **Responsibilities**:
-- Read raw track and history Maps from `AircraftTrackingContext`
-- Apply callsign/altitude/speed filters to both active and history
-- Return filtered arrays for rendering
+- Read raw track, history, imported, and dbHistory Maps from `AircraftTrackingContext`
+- Apply callsign/altitude/speed filters to active and history tracks
+- Apply optional filter to imported tracks (when `includeImportedInFilter` is set)
+- Return dbHistory unfiltered (controlled by the DB History panel, not live filters)
+- Expose `loadDbHistoryTracks` and `clearDbHistory` for the DB History panel
 
 **Implementation**:
 ```typescript
 export function useAircraftTracks(filters: Filters) {
-  const { tracks: tracksMap, history: historyMap } = useAircraftTrackingContext();
+  const {
+    tracks: tracksMap, history: historyMap, imported: importedMap, dbHistory: dbHistoryMap,
+    version, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory,
+  } = useAircraftTrackingContext();
 
-  const tracks = useMemo(
-    () => Array.from(tracksMap.values()).filter(t => matchesFilters(t, filters)),
-    [tracksMap, filters]
-  );
+  const tracks = useMemo(() => Array.from(tracksMap.values()).filter(t => matchesFilters(t, filters)), [version, filters]);
+  const history = useMemo(() => Array.from(historyMap.values()).filter(t => matchesFilters(t, filters)), [version, filters]);
+  const imported = useMemo(() => { /* optional filter */ }, [version, filters]);
+  const dbHistory = useMemo(() => Array.from(dbHistoryMap.values()), [version]); // NOT filtered
 
-  const history = useMemo(
-    () => Array.from(historyMap.values()).filter(t => matchesFilters(t, filters)),
-    [historyMap, filters]
-  );
-
-  return { tracks, history };
+  return { tracks, history, imported, dbHistory, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory };
 }
 ```
 
@@ -975,6 +1019,7 @@ useTauriEvent<AircraftPosition[]>("adsb:message", (batch) => {
 - `getTrajectory(query: TrajectoryQuery): Promise<PositionRecord[]>`: Full position history for a single aircraft
 - `getAircraftSummary(startMs?: number, endMs?: number): Promise<AircraftSummary[]>`: All aircraft seen with stats
 - `getStorageStats(): Promise<StorageStats>`: Database row count, size, age
+- `getTimeDistribution(query: TimeDistributionQuery): Promise<TimeDistributionBucket[]>`: Bucketed message counts over a time range for analytics charts
 
 **Implementation**:
 ```typescript
@@ -1547,8 +1592,11 @@ let config = state.config.lock().map_err(|e| e.to_string())?;
 |-------|----------|-------------|
 | `tracks: Map<string, AircraftTrack>` | `AircraftTrackingProvider` (global context) | In-memory (5 min active TTL) |
 | `history: Map<string, AircraftTrack>` | `AircraftTrackingProvider` (global context) | In-memory (6 hour history TTL) |
+| `imported: Map<string, AircraftTrack>` | `AircraftTrackingProvider` (global context) | In-memory (until cleared) |
+| `dbHistory: Map<string, AircraftTrack>` | `AircraftTrackingProvider` (global context) | In-memory (until cleared, populated from DuckDB queries) |
 | `tracks: AircraftTrack[]` (filtered) | `useAircraftTracks` hook (derived from context) | Computed on each render |
 | `history: AircraftTrack[]` (filtered) | `useAircraftTracks` hook (derived from context) | Computed on each render |
+| `dbHistory: AircraftTrack[]` (unfiltered) | `useAircraftTracks` hook (derived from context) | Computed on each render |
 | `filters: Filters` | `Dashboard` component | None |
 | `isRunning: boolean` | `Dashboard` component | None |
 | `selectedHexIdent: string \| null` | `Dashboard` component | None (auto-deselects on track disappear) |
@@ -2046,7 +2094,7 @@ npm run test:watch  # Watch mode (TDD)
 
 ### Planned Features
 
-1. **Historical Query UI** ✅ Implemented: `HistoryBrowser` component provides time-range pickers, bounding-box query, storage stats, and trajectory display using `query_bbox`, `get_trajectory`, `get_aircraft_summary` commands
+1. **Historical Query UI** ✅ Implemented: `DBHistoryPanel` (dockable/floating) with `DBHistoryContent` provides stats, time-range browsing, trajectory loading, and recharts analytics (time distribution + altitude histogram) using `get_aircraft_summary`, `get_trajectory`, `get_time_distribution`, `get_storage_stats` commands. Tracks load into dedicated `dbHistory` category (cyan styling).
 2. **KML Export**: Export tracks to KML format (GeoJSON export/import is already implemented — see [GeoJSON Export/Import](#geojson-exportimport))
 3. **Alerts**: Configurable alerts for specific aircraft (e.g., "notify when AAL123 appears")
 4. **Performance Dashboard**: More detailed metrics visualization (charts)
@@ -2230,6 +2278,7 @@ CREATE INDEX idx_positions_hex_ts ON positions(hex_ident, timestamp_ms);
 | `get_trajectory` | `TrajectoryQuery` | `Vec<PositionRecord>` | Full path for one aircraft |
 | `get_aircraft_summary` | `start_ms?`, `end_ms?` | `Vec<AircraftSummary>` | Stats for all aircraft seen |
 | `get_storage_stats` | — | `StorageStats` | Row count, DB size, age |
+| `get_time_distribution` | `TimeDistributionQuery` | `Vec<TimeDistributionBucket>` | Bucketed message counts over time range |
 | `prune` | `older_than_ms` | deleted row count | Delete old data |
 
 ### Data Flow
@@ -2248,7 +2297,7 @@ CREATE INDEX idx_positions_hex_ts ON positions(hex_ident, timestamp_ms);
   ~/.config/adsb-pulsar-client-desktop/adsb_history.db
         ↓
   [Frontend query via invoke()]
-  queryBbox / getTrajectory / getAircraftSummary / getStorageStats
+  queryBbox / getTrajectory / getAircraftSummary / getStorageStats / getTimeDistribution
 ```
 
 ### Accessing DuckDB Data from the Frontend
@@ -2278,9 +2327,14 @@ const positions = await queryBbox({
 });
 ```
 
-### Current Limitation: No UI for Historical Queries
+### UI: DB History Panel
 
-The `HistoryBrowser` component (`src/components/HistoryBrowser.tsx`) provides the UI for historical queries: time-range pickers (datetime-local inputs, always machine-local time), bounding-box query, storage stats (oldest/newest timestamps displayed in the user's selected display timezone via `useDisplayTz`), and trajectory results rendered as `AircraftTrack` entries on the map and in the table.
+Historical queries are surfaced through the **DB History Panel** — a first-class dockable/floating panel (see [DB History Panel](#db-history-panel)). The panel provides:
+- **Stats strip**: Row count, DB size, oldest/newest timestamps (via `getStorageStats`)
+- **Time range picker**: Uncontrolled `datetime-local` inputs (WKWebView-safe pattern)
+- **Aircraft list**: Browse results from `getAircraftSummary`, load trajectories via `getTrajectory`
+- **Analytics**: recharts-based time distribution bar chart + altitude histogram (via `getTimeDistribution`)
+- **Track management**: Loaded tracks go into the `dbHistory` category (cyan, independent from `imported`)
 
 ### Design Decisions
 
@@ -2299,12 +2353,88 @@ Isolating parser + storage in a shared workspace crate lets the data engine be t
 
 **Files**:
 - `adsb-data-engine/src/storage.rs` — `StorageHandle`, `StorageConfig`, all query methods
-- `adsb-data-engine/src/types.rs` — `PositionRecord`, `BboxQuery`, `TrajectoryQuery`, `AircraftSummary`, `StorageStats`
+- `adsb-data-engine/src/types.rs` — `PositionRecord`, `BboxQuery`, `TrajectoryQuery`, `AircraftSummary`, `StorageStats`, `TimeDistributionBucket`, `TimeDistributionQuery`
 - `src-tauri/src/lib.rs` — `init_storage()`, storage injected into `AppState`
 - `src-tauri/src/bridge.rs` — `persist_batch()` called on every 500ms flush
-- `src-tauri/src/commands.rs` — four historical query command handlers
-- `src/lib/commands.ts` — TypeScript wrappers: `queryBbox`, `getTrajectory`, `getAircraftSummary`, `getStorageStats`
+- `src-tauri/src/commands.rs` — five historical query command handlers (including `get_time_distribution`)
+- `src/lib/commands.ts` — TypeScript wrappers: `queryBbox`, `getTrajectory`, `getAircraftSummary`, `getStorageStats`, `getTimeDistribution`
 - `src/lib/types.ts` — TypeScript mirrors of all DuckDB types
+
+---
+
+## DB History Panel
+
+### Overview
+
+The DB History Panel is a **first-class dockable/floating panel** that provides rich browsing, loading, and analytics for DuckDB-persisted aircraft history. It replaces the previous `HistoryBrowser` component (which was a cramped `<details>` section inside `Filters.tsx` that loaded tracks into the `imported` category).
+
+### Architecture
+
+The panel consists of three components:
+
+| Component | Purpose |
+|-----------|---------|
+| `DBHistoryPanel` | Panel shell — docked (right-side flex sibling) or floating (fixed overlay), with resize/drag/pin/unpin |
+| `DBHistoryContent` | Inner content — stats strip, time range picker, aircraft list, load/clear buttons |
+| `DBHistoryAnalytics` | recharts-based analytics — time distribution bar chart (cyan), altitude histogram (indigo), summary stats |
+
+### Panel Modes
+
+**Docked mode** (`floating === false`): Renders as a flex sibling of the map in the map row (right side). Three sub-states:
+1. **Hidden**: `dbHistoryOpen === false` — panel not rendered at all
+2. **Collapsed**: 32px strip with `<<` expand button (cyan-tinted)
+3. **Expanded**: Full panel (240–560px) with left-edge resize handle, content, and unpin button
+
+**Floating mode** (`floating === true`): Renders at the document root with `position: fixed; z-index: 50`. Draggable via title bar, resizable via bottom-right corner handle. Close button (x) hides, pin button docks.
+
+When switching docked to floating, position/size come from persisted localStorage values.
+
+### Track Category: `dbHistory`
+
+Loaded trajectories go into the `dbHistory` track category (4th category in `AircraftTrackingContext`), separate from `imported`:
+
+- **Color**: Cyan (`#06b6d4`) on map and in table
+- **Filtering**: NOT filtered by live Filters — controlled entirely by the DB History panel
+- **Map layer**: Renders between history and imported layers
+- **Table section**: Dedicated "DB History" collapsible section (cyan-900/20 background)
+- **Selection**: `isDbHistorySelection` drives a cyan "DB HISTORY" badge in `AircraftDetailsPanel`
+
+### Analytics (recharts)
+
+When "Browse" runs, `getAircraftSummary` and `getTimeDistribution` are fetched in parallel. The analytics are displayed in a collapsible `<details>` section:
+
+1. **Summary stats**: Total tracks, total positions, average duration (plain flex, no charting library)
+2. **Time distribution**: `<BarChart>` with cyan bars, ~120px tall, labels formatted as HH:MM in the user's display timezone
+3. **Altitude histogram**: `<BarChart>` with indigo bars, ~100px tall, 10 bins of 5000ft each (0–50k ft)
+
+Pure utility functions in `src/lib/db-history-analytics.ts`:
+- `buildAltitudeBins(summaries)` — 10 bins, places each aircraft by `max_altitude`
+- `computeDbHistorySummary(summaries)` — totals + weighted average duration
+- `formatTimeChartData(buckets, tzName?)` — formats bucket timestamps as HH:MM labels
+
+### Design Decisions
+
+**Why a separate `dbHistory` category instead of reusing `imported`?**
+The old `HistoryBrowser` loaded tracks into `imported`, conflating file imports with DB queries. This made it impossible to distinguish track sources in the UI, and clearing imported tracks also cleared DB history results. A separate category enables independent lifecycle, styling, and selection behavior.
+
+**Why docked/floating dual mode?**
+The panel can be large (analytics charts, aircraft list) but users also need full map visibility during live tracking. Floating mode gives maximum map area; docked mode keeps the panel always visible and spatially stable.
+
+**Why recharts?**
+React-native SVG charting (~45KB gzipped), composable with existing React patterns, no D3 dependency management. The two charts (time distribution + altitude histogram) use simple `<BarChart>` with minimal configuration.
+
+**Why uncontrolled datetime inputs?**
+Tauri's WKWebView on macOS has a bug where controlled React inputs (`value + onChange`) interfere with the native datetime segment picker. Using `defaultValue + ref` (uncontrolled) avoids this. Values are read imperatively from `ref.current.value` when "Browse" or "Refresh" is clicked.
+
+### Files
+
+- `src/components/DBHistoryPanel.tsx` — Panel shell (docked/floating)
+- `src/components/DBHistoryContent.tsx` — Inner content (stats, browse, load, clear)
+- `src/components/DBHistoryAnalytics.tsx` — recharts analytics (time distribution, altitude histogram)
+- `src/lib/db-history-analytics.ts` — Pure analytics utilities
+- `src/contexts/AircraftTrackingContext.tsx` — `dbHistoryRef`, `loadDbHistoryTracks`, `clearDbHistory`
+- `src/hooks/useAircraftTracks.ts` — Exposes `dbHistory` array (unfiltered)
+- `src/app/page.tsx` — 10 localStorage state variables, header toggle, dual-mode rendering
 
 ---
 
@@ -2479,11 +2609,11 @@ Imported tracks (loaded via GeoJSON import) participate fully in the bidirection
 
 ### Design Decisions
 
-#### 1. Three-Source `selectedTrack` Lookup
+#### 1. Four-Source `selectedTrack` Lookup
 
-**Decision**: The `selectedTrack` memo in `page.tsx` searches three collections in order: `allTracks` → `visibleHistory` → `visibleImported`.
+**Decision**: The `selectedTrack` memo in `page.tsx` searches four collections in order: `allTracks` → `visibleHistory` → `visibleDbHistory` → `visibleImported`.
 
-**Rationale**: Live tracks take priority (an aircraft transmitting live should always "win" over a stale import). History is next. Imported is last. This ordering also applies to the auto-deselect `useEffect`.
+**Rationale**: Live tracks take priority (an aircraft transmitting live should always "win" over a stale import). History is next, then DB history queries, then file imports. This ordering also applies to the auto-deselect `useEffect`.
 
 #### 2. `isImported` Prop (Not Type Field)
 
@@ -2509,8 +2639,8 @@ Imported tracks (loaded via GeoJSON import) participate fully in the bidirection
 
 | File | Change |
 |------|--------|
-| `src/app/page.tsx` | `selectedTrack` lookup includes `visibleImported`; auto-deselect checks all three; `isImportedSelection` derived; `isImported` prop passed to panel |
-| `src/components/AircraftDetailsPanel.tsx` | `isImported` prop; indigo `IMPORTED` badge in header |
+| `src/app/page.tsx` | `selectedTrack` lookup includes `visibleDbHistory` and `visibleImported`; auto-deselect checks all four; `isImportedSelection` and `isDbHistorySelection` derived; `isImported` and `isDbHistory` props passed to panel |
+| `src/components/AircraftDetailsPanel.tsx` | `isImported` prop (indigo `IMPORTED` badge) + `isDbHistory` prop (cyan `DB HISTORY` badge) in header |
 | `src/components/MapInner.tsx` | DotsLayer `selectedHexIdent` forwarded; Polyline `onClick` + selection emphasis |
 | `src/components/AircraftTable.tsx` | Imported row `bg-indigo-900/40` selection highlight |
 
@@ -2569,6 +2699,15 @@ The application includes a built-in simulation mode that animates 20 aircraft al
 | `adsb-include-imported-density` | `boolean` | `false` | Include imported in H3 density |
 | `adsb-details-panel-open` | `boolean` | `true` | Details panel expanded vs. collapsed |
 | `adsb-details-panel-width` | `number` | `280` | Details panel width in px (200–480) |
+| `adsb-dbhistory-open` | `boolean` | `false` | DB History panel visible |
+| `adsb-dbhistory-docked-expanded` | `boolean` | `true` | DB History docked panel expanded vs collapsed |
+| `adsb-dbhistory-width` | `number` | `360` | DB History docked panel width in px (240–560) |
+| `adsb-dbhistory-floating` | `boolean` | `false` | DB History floating mode vs docked |
+| `adsb-dbhistory-float-x` | `number` | `100` | DB History floating panel left position |
+| `adsb-dbhistory-float-y` | `number` | `80` | DB History floating panel top position |
+| `adsb-dbhistory-float-w` | `number` | `400` | DB History floating panel width |
+| `adsb-dbhistory-float-h` | `number` | `600` | DB History floating panel height |
+| `adsb-show-dbhistory` | `boolean` | `true` | Toggle visibility of DB History tracks |
 
 ---
 
@@ -2589,4 +2728,4 @@ This design prioritizes developer experience (hot reload, TypeScript, TDD), user
 
 ---
 
-*Last updated: February 2026 — Added `adsb-data-engine` workspace crate (DuckDB persistent history), dual history system, 4 historical query Tauri commands, and TypeScript wrappers. Added `HistoryBrowser` UI component. Added configurable source timezone (`Config.dump1090_tz`, IANA-aware, UTC-only storage) and display timezone preference (`useDisplayTz` hook, localStorage-backed Local/UTC/Source toggle in Settings).*
+*Last updated: February 2026 — Added `adsb-data-engine` workspace crate (DuckDB persistent history), dual history system, 5 historical query Tauri commands (`query_bbox`, `get_trajectory`, `get_aircraft_summary`, `get_storage_stats`, `get_time_distribution`), and TypeScript wrappers. Promoted DB History from embedded `HistoryBrowser` into a first-class `DBHistoryPanel` (docked/floating, recharts analytics, `dbHistory` cyan track category). Added configurable source timezone (`Config.dump1090_tz`, IANA-aware, UTC-only storage) and display timezone preference (`useDisplayTz` hook, localStorage-backed Local/UTC/Source toggle in Settings).*

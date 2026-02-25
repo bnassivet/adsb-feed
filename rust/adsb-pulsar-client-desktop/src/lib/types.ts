@@ -162,6 +162,19 @@ export interface AircraftSummary {
   max_altitude: number | null;
 }
 
+/** A single bucket in a time distribution histogram. */
+export interface TimeDistributionBucket {
+  bucket_ms: number;
+  count: number;
+}
+
+/** Query parameters for time distribution (histogram). */
+export interface TimeDistributionQuery {
+  start_ms: number;
+  end_ms: number;
+  num_buckets: number;
+}
+
 /** Storage statistics. */
 export interface StorageStats {
   row_count: number;

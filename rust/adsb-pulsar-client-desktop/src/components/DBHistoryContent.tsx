@@ -1,18 +1,20 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { getStorageStats, getAircraftSummary, getTrajectory } from "@/lib/commands";
+import { getStorageStats, getAircraftSummary, getTrajectory, getTimeDistribution } from "@/lib/commands";
 import { recordsToTrack } from "@/lib/history-convert";
-import type { AircraftSummary, AircraftTrack, StorageStats } from "@/lib/types";
+import type { AircraftSummary, AircraftTrack, StorageStats, TimeDistributionBucket } from "@/lib/types";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
+import { formatBytes } from "@/lib/format";
+import { DBHistoryAnalytics } from "./DBHistoryAnalytics";
 
 interface Props {
-  onImportTracks: (tracks: AircraftTrack[]) => void;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  onLoadTracks: (tracks: AircraftTrack[]) => void;
+  onClearTracks: () => void;
+  dbHistoryCount: number;
+  /** Called when summaries are fetched (for analytics) */
+  onSummariesLoaded?: (summaries: AircraftSummary[]) => void;
+  /** Called with time range when browse is triggered (for time distribution query) */
+  onBrowse?: (startMs: number, endMs: number) => void;
 }
 
 /** Returns a datetime-local string (YYYY-MM-DDTHH:MM) from ms epoch. */
@@ -22,18 +24,22 @@ function toDatetimeLocal(ms: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export function HistoryBrowser({ onImportTracks }: Props) {
-  const { formatTime } = useDisplayTz();
+export function DBHistoryContent({
+  onLoadTracks,
+  onClearTracks,
+  dbHistoryCount,
+  onSummariesLoaded,
+  onBrowse,
+}: Props) {
+  const { formatTime, resolvedTzName } = useDisplayTz();
   const [stats, setStats] = useState<StorageStats | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [browsing, setBrowsing] = useState(false);
   const [summaries, setSummaries] = useState<AircraftSummary[]>([]);
+  const [timeBuckets, setTimeBuckets] = useState<TimeDistributionBucket[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Time range — stored as default values for uncontrolled inputs (set once from stats).
-  // Using uncontrolled inputs avoids Tauri/WKWebView's controlled-input re-render issue
-  // where each onChange → setState → re-render interrupts the native segment-picker editing.
   const now = Date.now();
   const [startDefault, setStartDefault] = useState(() => toDatetimeLocal(now - 24 * 60 * 60 * 1000));
   const [endDefault, setEndDefault] = useState(() => toDatetimeLocal(now));
@@ -47,8 +53,6 @@ export function HistoryBrowser({ onImportTracks }: Props) {
       } else {
         const s = result as StorageStats;
         setStats(s);
-        // Pre-fill the time range to span all available data so Browse shows results immediately.
-        // These only affect the defaultValue on first mount of the inputs (before Browse is opened).
         if (s.oldest_timestamp_ms !== null) {
           setStartDefault(toDatetimeLocal(s.oldest_timestamp_ms));
         }
@@ -59,7 +63,6 @@ export function HistoryBrowser({ onImportTracks }: Props) {
     });
   }, []);
 
-  /** Read current values from the uncontrolled inputs, falling back to defaults. */
   function getTimeRange(): [number, number] {
     const startStr = startRef.current?.value ?? startDefault;
     const endStr = endRef.current?.value ?? endDefault;
@@ -78,13 +81,21 @@ export function HistoryBrowser({ onImportTracks }: Props) {
   }
 
   async function handleBrowse() {
-    if (!browsing) {
-      setBrowsing(true);
-    }
+    if (!browsing) setBrowsing(true);
     setLoading(true);
     const [startMs, endMs] = getTimeRange();
-    const results = await getAircraftSummary(startMs, endMs);
-    setSummaries(typeof results === "string" ? [] : (results as AircraftSummary[]));
+    onBrowse?.(startMs, endMs);
+
+    const [summaryResults, timeResults] = await Promise.all([
+      getAircraftSummary(startMs, endMs),
+      getTimeDistribution({ start_ms: startMs, end_ms: endMs, num_buckets: 24 }),
+    ]);
+
+    const sums = typeof summaryResults === "string" ? [] : (summaryResults as AircraftSummary[]);
+    const buckets = typeof timeResults === "string" ? [] : (timeResults as TimeDistributionBucket[]);
+    setSummaries(sums);
+    setTimeBuckets(buckets);
+    onSummariesLoaded?.(sums);
     setLoading(false);
   }
 
@@ -97,21 +108,19 @@ export function HistoryBrowser({ onImportTracks }: Props) {
     });
     if (typeof records === "string" || !Array.isArray(records) || records.length === 0) return;
     const track = recordsToTrack(records);
-    onImportTracks([track]);
+    onLoadTracks([track]);
   }
 
   if (unavailable) {
     return (
-      <div className="px-3 py-2 text-xs text-slate-500 italic">
+      <div className="px-3 py-2 text-xs text-slate-500 italic" data-testid="dbhist-unavailable">
         History unavailable
       </div>
     );
   }
 
   if (!stats) {
-    return (
-      <div className="px-3 py-2 text-xs text-slate-500">Loading…</div>
-    );
+    return <div className="px-3 py-2 text-xs text-slate-500">Loading…</div>;
   }
 
   return (
@@ -130,11 +139,11 @@ export function HistoryBrowser({ onImportTracks }: Props) {
             {refreshing ? "…" : "↻"}
           </button>
         </div>
-        <div className="flex justify-between">
+        <div className="flex justify-between" data-testid="dbhist-row-count">
           <span>Records</span>
           <span className="text-slate-300">{stats.row_count.toLocaleString()}</span>
         </div>
-        <div className="flex justify-between">
+        <div className="flex justify-between" data-testid="dbhist-db-size">
           <span>Size</span>
           <span className="text-slate-300">{formatBytes(stats.db_size_bytes)}</span>
         </div>
@@ -152,7 +161,8 @@ export function HistoryBrowser({ onImportTracks }: Props) {
       <div className="px-3 py-1">
         <button
           onClick={handleBrowse}
-          className="w-full px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition"
+          data-testid="dbhist-browse-btn"
+          className="w-full px-2 py-1 text-xs bg-cyan-800/40 hover:bg-cyan-700/40 text-cyan-200 rounded transition border border-cyan-700/30"
         >
           Browse DB History
         </button>
@@ -182,7 +192,7 @@ export function HistoryBrowser({ onImportTracks }: Props) {
           <button
             onClick={handleBrowse}
             disabled={loading}
-            className="px-2 py-0.5 text-xs bg-blue-700 hover:bg-blue-600 text-white rounded transition disabled:opacity-50"
+            className="px-2 py-0.5 text-xs bg-cyan-700 hover:bg-cyan-600 text-white rounded transition disabled:opacity-50"
           >
             {loading ? "Loading…" : "Refresh"}
           </button>
@@ -196,18 +206,49 @@ export function HistoryBrowser({ onImportTracks }: Props) {
               <button
                 key={s.hex_ident}
                 onClick={() => handleLoadTrajectory(s)}
-                className="text-left px-2 py-1 text-xs rounded hover:bg-slate-700 transition"
+                data-testid={`dbhist-load-${s.hex_ident}`}
+                className="text-left px-2 py-1.5 text-xs rounded hover:bg-cyan-900/30 transition border border-transparent hover:border-cyan-800/40"
                 title={`Load trajectory for ${s.hex_ident}`}
               >
-                <span className="text-slate-200 font-mono">
-                  {s.callsign ?? s.hex_ident}
-                </span>
-                <span className="text-slate-500 ml-1">
-                  ({s.position_count} pts)
-                </span>
+                <div className="flex justify-between items-center">
+                  <span className="text-cyan-200 font-mono font-semibold">
+                    {s.callsign ?? s.hex_ident}
+                  </span>
+                  <span className="text-slate-500 text-[10px]">
+                    {s.position_count} pts
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-500 mt-0.5">
+                  {s.hex_ident}
+                  {s.min_altitude !== null && s.max_altitude !== null && (
+                    <span className="ml-2">
+                      {s.min_altitude.toLocaleString()}-{s.max_altitude.toLocaleString()} ft
+                    </span>
+                  )}
+                </div>
               </button>
             ))}
           </div>
+
+          {/* Analytics charts */}
+          {(summaries.length > 0 || timeBuckets.length > 0) && (
+            <DBHistoryAnalytics
+              summaries={summaries}
+              timeBuckets={timeBuckets}
+              tzName={resolvedTzName}
+            />
+          )}
+
+          {/* Clear DB History button */}
+          {dbHistoryCount > 0 && (
+            <button
+              onClick={onClearTracks}
+              data-testid="dbhist-clear-btn"
+              className="mt-1 px-2 py-0.5 text-xs text-slate-500 hover:text-red-400 hover:bg-red-900/20 rounded transition"
+            >
+              Clear DB History ({dbHistoryCount})
+            </button>
+          )}
         </div>
       )}
     </div>

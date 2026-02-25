@@ -47,6 +47,7 @@ pub fn run() {
             commands::query_bbox,
             commands::get_trajectory,
             commands::get_aircraft_summary,
+            commands::get_time_distribution,
             commands::get_storage_stats,
         ])
         .run(tauri::generate_context!())

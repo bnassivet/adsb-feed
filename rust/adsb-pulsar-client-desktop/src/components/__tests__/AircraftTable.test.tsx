@@ -204,6 +204,45 @@ describe("imported row selection", () => {
   });
 });
 
+describe("DB History section", () => {
+  it("renders dbhistory section header when dbHistoryTracks exist", () => {
+    render(<AircraftTable tracks={[]} dbHistoryTracks={[makeTrack("DB01")]} />);
+    expect(screen.getByTestId("dbhistory-section-header")).toBeInTheDocument();
+    expect(screen.getByText(/DB History/)).toBeInTheDocument();
+  });
+
+  it("hides dbhistory section when no dbHistoryTracks", () => {
+    render(<AircraftTable tracks={[]} dbHistoryTracks={[]} />);
+    expect(screen.queryByTestId("dbhistory-section-header")).not.toBeInTheDocument();
+  });
+
+  it("collapses/expands dbhistory rows on header click", async () => {
+    const user = userEvent.setup();
+    render(<AircraftTable tracks={[]} dbHistoryTracks={[makeTrack("DB01")]} />);
+
+    expect(screen.getByTestId("row-dbhist-DB01")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("dbhistory-section-header"));
+    expect(screen.queryByTestId("row-dbhist-DB01")).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("dbhistory-section-header"));
+    expect(screen.getByTestId("row-dbhist-DB01")).toBeInTheDocument();
+  });
+
+  it("highlights selected dbhistory row with cyan background", () => {
+    render(
+      <AircraftTable
+        tracks={[]}
+        dbHistoryTracks={[makeTrack("DB01")]}
+        selectedHexIdent="DB01"
+        onSelectTrack={vi.fn()}
+      />,
+    );
+    const row = screen.getByTestId("row-dbhist-DB01");
+    expect(row.className).toContain("bg-cyan-900/40");
+  });
+});
+
 describe("AircraftTable columns", () => {
   it("renders RxTS column header", () => {
     render(<AircraftTable tracks={[makeTrack("ABC123")]} />);

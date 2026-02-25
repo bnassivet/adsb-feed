@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useRef } from "react";
 import { FiltersPanel } from "@/components/Filters";
-import type { Filters, DensityMetric, AltitudeColorMode, AircraftTrack } from "@/lib/types";
+import type { Filters, DensityMetric, AltitudeColorMode } from "@/lib/types";
 
 const MIN_PANEL_WIDTH = 180;
 const MAX_PANEL_WIDTH = 400;
@@ -36,7 +36,6 @@ interface LeftPanelProps {
   onClearImported: () => void;
   includeImportedInDensity: boolean;
   onToggleIncludeImportedInDensity: () => void;
-  onImportTracks: (tracks: AircraftTrack[]) => void;
 }
 
 export function LeftPanel({ isOpen, width, onToggle, onWidthChange, ...filterProps }: LeftPanelProps) {

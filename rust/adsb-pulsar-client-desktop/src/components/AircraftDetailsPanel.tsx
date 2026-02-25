@@ -30,6 +30,7 @@ interface Props {
   onToggle: () => void;
   onWidthChange: (w: number) => void;
   isImported?: boolean;
+  isDbHistory?: boolean;
 }
 
 export function AircraftDetailsPanel({
@@ -39,6 +40,7 @@ export function AircraftDetailsPanel({
   onToggle,
   onWidthChange,
   isImported = false,
+  isDbHistory = false,
 }: Props) {
   if (track === null) return null;
 
@@ -49,6 +51,7 @@ export function AircraftDetailsPanel({
       onToggle={onToggle}
       onWidthChange={onWidthChange}
       isImported={isImported}
+      isDbHistory={isDbHistory}
     />
   ) : (
     <CollapsedStrip onToggle={onToggle} />
@@ -78,12 +81,14 @@ function ExpandedPanel({
   onToggle,
   onWidthChange,
   isImported = false,
+  isDbHistory = false,
 }: {
   track: AircraftTrack;
   width: number;
   onToggle: () => void;
   onWidthChange: (w: number) => void;
   isImported?: boolean;
+  isDbHistory?: boolean;
 }) {
   const { resolvedTzName } = useDisplayTz();
   const lastX = useRef(0);
@@ -149,6 +154,11 @@ function ExpandedPanel({
             {isImported && (
               <span className="px-1 py-0.5 text-[9px] font-bold rounded bg-indigo-800/60 text-indigo-300 leading-none uppercase tracking-wide">
                 IMPORTED
+              </span>
+            )}
+            {isDbHistory && (
+              <span className="px-1 py-0.5 text-[9px] font-bold rounded bg-cyan-800/60 text-cyan-300 leading-none uppercase tracking-wide">
+                DB HISTORY
               </span>
             )}
           </div>

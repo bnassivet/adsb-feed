@@ -12,9 +12,12 @@ interface AircraftTrackingContextValue {
   tracks: Map<string, AircraftTrack>;
   history: Map<string, AircraftTrack>;
   imported: Map<string, AircraftTrack>;
+  dbHistory: Map<string, AircraftTrack>;
   version: number;
   importTracks: (tracks: AircraftTrack[]) => void;
   clearImported: () => void;
+  loadDbHistoryTracks: (tracks: AircraftTrack[]) => void;
+  clearDbHistory: () => void;
 }
 
 const AircraftTrackingContext = createContext<AircraftTrackingContextValue | null>(null);
@@ -55,6 +58,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
   const tracksRef = useRef<Map<string, AircraftTrack>>(new Map());
   const historyRef = useRef<Map<string, AircraftTrack>>(new Map());
   const importedRef = useRef<Map<string, AircraftTrack>>(new Map());
+  const dbHistoryRef = useRef<Map<string, AircraftTrack>>(new Map());
   const [updateCounter, setUpdateCounter] = useState(0);
 
   const importTracks = useCallback((tracks: AircraftTrack[]) => {
@@ -68,6 +72,20 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
 
   const clearImported = useCallback(() => {
     importedRef.current.clear();
+    setUpdateCounter((c) => c + 1);
+  }, []);
+
+  const loadDbHistoryTracks = useCallback((tracks: AircraftTrack[]) => {
+    const map = dbHistoryRef.current;
+    map.clear();
+    for (const t of tracks) {
+      map.set(t.hex_ident, t);
+    }
+    setUpdateCounter((c) => c + 1);
+  }, []);
+
+  const clearDbHistory = useCallback(() => {
+    dbHistoryRef.current.clear();
     setUpdateCounter((c) => c + 1);
   }, []);
 
@@ -158,11 +176,14 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
       tracks: tracksRef.current,
       history: historyRef.current,
       imported: importedRef.current,
+      dbHistory: dbHistoryRef.current,
       version: updateCounter,
       importTracks,
       clearImported,
+      loadDbHistoryTracks,
+      clearDbHistory,
     }),
-    [updateCounter, importTracks, clearImported],
+    [updateCounter, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory],
   );
 
   return (

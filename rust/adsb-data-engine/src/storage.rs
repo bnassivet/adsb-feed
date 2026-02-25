@@ -7,7 +7,8 @@
 use crate::error::StorageError;
 use crate::sbs_parser::AircraftPosition;
 use crate::types::{
-    AircraftSummary, BboxQuery, PositionRecord, StorageConfig, StorageStats, TrajectoryQuery,
+    AircraftSummary, BboxQuery, PositionRecord, StorageConfig, StorageStats,
+    TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
 };
 use duckdb::{params, Connection};
 use std::sync::{Arc, Mutex};
@@ -381,6 +382,51 @@ impl StorageHandle {
         Ok(deleted as u64)
     }
 
+    /// Get time distribution as bucketed histogram (synchronous).
+    ///
+    /// Divides the `[start_ms, end_ms]` range into `num_buckets` equal-width buckets
+    /// and returns the count of positions in each non-empty bucket.
+    pub fn get_time_distribution_sync(
+        &self,
+        query: TimeDistributionQuery,
+    ) -> Result<Vec<TimeDistributionBucket>, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let range = query.end_ms - query.start_ms;
+        let bucket_width = if query.num_buckets == 0 || range <= 0 {
+            return Ok(Vec::new());
+        } else {
+            range / query.num_buckets as i64
+        };
+        if bucket_width == 0 {
+            return Ok(Vec::new());
+        }
+
+        let sql = "SELECT CAST(timestamp_ms / ? AS BIGINT) * ? AS bucket_ms, COUNT(*) AS count
+                   FROM positions
+                   WHERE timestamp_ms BETWEEN ? AND ?
+                   GROUP BY bucket_ms
+                   ORDER BY bucket_ms";
+
+        let mut stmt = storage.conn.prepare(sql)?;
+        let rows = stmt
+            .query_map(
+                params![bucket_width, bucket_width, query.start_ms, query.end_ms],
+                |row| {
+                    Ok(TimeDistributionBucket {
+                        bucket_ms: row.get(0)?,
+                        count: row.get::<_, i64>(1)? as u64,
+                    })
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
     // --- Async wrappers (Step 3) ---
 
     /// Batch insert parsed positions (async via spawn_blocking).
@@ -438,6 +484,17 @@ impl StorageHandle {
     pub async fn prune(&self, older_than_ms: i64) -> Result<u64, StorageError> {
         let handle = self.clone();
         tokio::task::spawn_blocking(move || handle.prune_sync(older_than_ms))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Get time distribution histogram (async via spawn_blocking).
+    pub async fn get_time_distribution(
+        &self,
+        query: TimeDistributionQuery,
+    ) -> Result<Vec<TimeDistributionBucket>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.get_time_distribution_sync(query))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
@@ -847,6 +904,107 @@ mod tests {
             })
             .unwrap();
         assert_eq!(source, "my-receiver");
+    }
+
+    #[test]
+    fn test_time_distribution_empty() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let buckets = handle
+            .get_time_distribution_sync(crate::types::TimeDistributionQuery {
+                start_ms: 1000,
+                end_ms: 2000,
+                num_buckets: 10,
+            })
+            .unwrap();
+        assert!(buckets.is_empty());
+    }
+
+    #[test]
+    fn test_time_distribution_buckets() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        // Insert positions spread across multiple buckets
+        let positions = vec![
+            sample_position("A1", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000"),
+            sample_position("A2", Some(45.6), Some(-73.6), "2024/01/15 10:00:30.000"),
+            sample_position("A3", Some(45.7), Some(-73.7), "2024/01/15 10:01:00.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let ts_start = parse_timestamp_to_ms("2024/01/15 10:00:00.000", "UTC");
+        let ts_end = parse_timestamp_to_ms("2024/01/15 10:02:00.000", "UTC");
+
+        let buckets = handle
+            .get_time_distribution_sync(crate::types::TimeDistributionQuery {
+                start_ms: ts_start,
+                end_ms: ts_end,
+                num_buckets: 4,
+            })
+            .unwrap();
+
+        // Should have at least 1 bucket with data
+        assert!(!buckets.is_empty());
+        // Total count across all buckets should equal 3
+        let total: u64 = buckets.iter().map(|b| b.count).sum();
+        assert_eq!(total, 3);
+        // Buckets should be ordered by bucket_ms
+        for w in buckets.windows(2) {
+            assert!(w[0].bucket_ms < w[1].bucket_ms);
+        }
+    }
+
+    #[test]
+    fn test_time_distribution_same_bucket() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        // Two positions very close together should fall in same bucket with a large bucket width
+        let positions = vec![
+            sample_position("A1", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000"),
+            sample_position("A2", Some(45.6), Some(-73.6), "2024/01/15 10:00:01.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let ts_start = parse_timestamp_to_ms("2024/01/15 09:00:00.000", "UTC");
+        let ts_end = parse_timestamp_to_ms("2024/01/15 11:00:00.000", "UTC");
+
+        let buckets = handle
+            .get_time_distribution_sync(crate::types::TimeDistributionQuery {
+                start_ms: ts_start,
+                end_ms: ts_end,
+                num_buckets: 2,
+            })
+            .unwrap();
+
+        // With 2 buckets over 2 hours, bucket_width = 1 hour
+        // Both positions are at ~10:00:00, so they fall in the same second-half bucket
+        let total: u64 = buckets.iter().map(|b| b.count).sum();
+        assert_eq!(total, 2);
+        // They should be in a single bucket since they are only 1 second apart
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0].count, 2);
+    }
+
+    #[test]
+    fn test_time_distribution_respects_range() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let positions = vec![
+            sample_position("A1", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000"),
+            sample_position("A2", Some(45.6), Some(-73.6), "2024/01/15 12:00:00.000"), // 2 hours later
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        // Query a range that only covers the first position
+        let ts_start = parse_timestamp_to_ms("2024/01/15 09:59:00.000", "UTC");
+        let ts_end = parse_timestamp_to_ms("2024/01/15 10:01:00.000", "UTC");
+
+        let buckets = handle
+            .get_time_distribution_sync(crate::types::TimeDistributionQuery {
+                start_ms: ts_start,
+                end_ms: ts_end,
+                num_buckets: 4,
+            })
+            .unwrap();
+
+        let total: u64 = buckets.iter().map(|b| b.count).sum();
+        assert_eq!(total, 1); // Only the first position falls in range
     }
 
     #[test]

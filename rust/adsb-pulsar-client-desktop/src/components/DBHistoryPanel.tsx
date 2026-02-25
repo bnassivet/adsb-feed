@@ -1,0 +1,335 @@
+"use client";
+import { useCallback, useRef, type ReactNode } from "react";
+
+const MIN_DOCKED_WIDTH = 240;
+const MAX_DOCKED_WIDTH = 560;
+const COLLAPSED_WIDTH = 32;
+
+interface Props {
+  isOpen: boolean;
+  onToggle: () => void;
+  /** Docked mode: expanded width */
+  width: number;
+  onWidthChange: (w: number) => void;
+  /** Docked expanded vs collapsed */
+  dockedExpanded: boolean;
+  onDockedExpandedChange: (v: boolean) => void;
+  /** Floating mode */
+  floating: boolean;
+  onFloatingChange: (v: boolean) => void;
+  /** Floating position/size */
+  floatX: number;
+  floatY: number;
+  floatW: number;
+  floatH: number;
+  onFloatPosChange: (x: number, y: number) => void;
+  onFloatSizeChange: (w: number, h: number) => void;
+  children?: ReactNode;
+}
+
+export function DBHistoryPanel({
+  isOpen,
+  onToggle,
+  width,
+  onWidthChange,
+  dockedExpanded,
+  onDockedExpandedChange,
+  floating,
+  onFloatingChange,
+  floatX,
+  floatY,
+  floatW,
+  floatH,
+  onFloatPosChange,
+  onFloatSizeChange,
+  children,
+}: Props) {
+  if (!isOpen) return null;
+
+  if (floating) {
+    return (
+      <FloatingPanel
+        x={floatX}
+        y={floatY}
+        w={floatW}
+        h={floatH}
+        onPosChange={onFloatPosChange}
+        onSizeChange={onFloatSizeChange}
+        onClose={onToggle}
+        onPin={() => onFloatingChange(false)}
+      >
+        {children}
+      </FloatingPanel>
+    );
+  }
+
+  if (!dockedExpanded) {
+    return (
+      <div
+        data-testid="dbhistory-panel-docked"
+        className="flex flex-col items-center justify-center bg-slate-900 border-l border-slate-700 flex-shrink-0"
+        style={{ width: COLLAPSED_WIDTH }}
+      >
+        <button
+          onClick={() => onDockedExpandedChange(true)}
+          title="Expand DB History"
+          className="p-1 text-cyan-400 hover:text-cyan-200 hover:bg-slate-700 rounded transition text-xs font-mono"
+        >
+          {"<<"}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <DockedPanel
+      width={width}
+      onWidthChange={onWidthChange}
+      onCollapse={() => onDockedExpandedChange(false)}
+      onUnpin={() => onFloatingChange(true)}
+    >
+      {children}
+    </DockedPanel>
+  );
+}
+
+function DockedPanel({
+  width,
+  onWidthChange,
+  onCollapse,
+  onUnpin,
+  children,
+}: {
+  width: number;
+  onWidthChange: (w: number) => void;
+  onCollapse: () => void;
+  onUnpin: () => void;
+  children?: ReactNode;
+}) {
+  const lastX = useRef(0);
+  const isDragging = useRef(false);
+  const widthRef = useRef(width);
+  widthRef.current = width;
+
+  const handleMouseMove = useCallback(
+    (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      const delta = lastX.current - e.clientX;
+      lastX.current = e.clientX;
+      onWidthChange(Math.max(MIN_DOCKED_WIDTH, Math.min(MAX_DOCKED_WIDTH, widthRef.current + delta)));
+    },
+    [onWidthChange],
+  );
+
+  const handleMouseUp = useCallback(() => {
+    isDragging.current = false;
+    document.body.style.userSelect = "";
+    document.body.style.cursor = "";
+    document.removeEventListener("mousemove", handleMouseMove);
+    document.removeEventListener("mouseup", handleMouseUp);
+  }, [handleMouseMove]);
+
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      isDragging.current = true;
+      lastX.current = e.clientX;
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+    },
+    [handleMouseMove, handleMouseUp],
+  );
+
+  return (
+    <div
+      data-testid="dbhistory-panel-docked"
+      className="flex flex-row bg-slate-900 border-l border-slate-700 flex-shrink-0 overflow-hidden"
+      style={{ width }}
+    >
+      {/* Left edge: draggable resize strip */}
+      <div
+        onMouseDown={handleMouseDown}
+        className="w-1 cursor-col-resize bg-slate-700 hover:bg-cyan-500 transition-colors flex-shrink-0"
+      />
+
+      {/* Panel content */}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden flex flex-col min-w-0">
+        {/* Header */}
+        <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700 flex-shrink-0">
+          <span className="text-xs font-semibold text-cyan-400 uppercase tracking-wide">
+            DB History
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={onUnpin}
+              title="Undock to floating window"
+              className="p-1 text-slate-400 hover:text-cyan-300 hover:bg-slate-700 rounded transition"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" strokeDasharray="3 2" />
+              </svg>
+            </button>
+            <button
+              onClick={onCollapse}
+              title="Collapse panel"
+              className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded transition text-xs font-mono"
+            >
+              {">>"}
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function FloatingPanel({
+  x,
+  y,
+  w,
+  h,
+  onPosChange,
+  onSizeChange,
+  onClose,
+  onPin,
+  children,
+}: {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  onPosChange: (x: number, y: number) => void;
+  onSizeChange: (w: number, h: number) => void;
+  onClose: () => void;
+  onPin: () => void;
+  children?: ReactNode;
+}) {
+  const isDragging = useRef(false);
+  const isResizing = useRef(false);
+  const startPos = useRef({ mx: 0, my: 0, x: 0, y: 0, w: 0, h: 0 });
+
+  // --- Drag (title bar) ---
+  const handleDragMove = useCallback(
+    (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      const dx = e.clientX - startPos.current.mx;
+      const dy = e.clientY - startPos.current.my;
+      onPosChange(startPos.current.x + dx, startPos.current.y + dy);
+    },
+    [onPosChange],
+  );
+
+  const handleDragUp = useCallback(() => {
+    isDragging.current = false;
+    document.body.style.userSelect = "";
+    document.body.style.cursor = "";
+    document.removeEventListener("mousemove", handleDragMove);
+    document.removeEventListener("mouseup", handleDragUp);
+  }, [handleDragMove]);
+
+  const handleDragDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      isDragging.current = true;
+      startPos.current = { mx: e.clientX, my: e.clientY, x, y, w, h };
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "move";
+      document.addEventListener("mousemove", handleDragMove);
+      document.addEventListener("mouseup", handleDragUp);
+    },
+    [x, y, w, h, handleDragMove, handleDragUp],
+  );
+
+  // --- Resize (bottom-right corner) ---
+  const handleResizeMove = useCallback(
+    (e: MouseEvent) => {
+      if (!isResizing.current) return;
+      const dx = e.clientX - startPos.current.mx;
+      const dy = e.clientY - startPos.current.my;
+      onSizeChange(
+        Math.max(280, startPos.current.w + dx),
+        Math.max(200, startPos.current.h + dy),
+      );
+    },
+    [onSizeChange],
+  );
+
+  const handleResizeUp = useCallback(() => {
+    isResizing.current = false;
+    document.body.style.userSelect = "";
+    document.body.style.cursor = "";
+    document.removeEventListener("mousemove", handleResizeMove);
+    document.removeEventListener("mouseup", handleResizeUp);
+  }, [handleResizeMove]);
+
+  const handleResizeDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      isResizing.current = true;
+      startPos.current = { mx: e.clientX, my: e.clientY, x, y, w, h };
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "nwse-resize";
+      document.addEventListener("mousemove", handleResizeMove);
+      document.addEventListener("mouseup", handleResizeUp);
+    },
+    [x, y, w, h, handleResizeMove, handleResizeUp],
+  );
+
+  return (
+    <div
+      data-testid="dbhistory-panel-floating"
+      className="fixed z-50 flex flex-col bg-slate-900 border border-slate-600 rounded-lg shadow-2xl overflow-hidden"
+      style={{ left: x, top: y, width: w, height: h }}
+    >
+      {/* Title bar — draggable */}
+      <div
+        onMouseDown={handleDragDown}
+        className="flex items-center justify-between px-3 py-2 bg-slate-800 border-b border-slate-700 cursor-move flex-shrink-0"
+      >
+        <span className="text-xs font-semibold text-cyan-400 uppercase tracking-wide">
+          DB History
+        </span>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onPin}
+            title="Dock to right side"
+            className="p-1 text-slate-400 hover:text-cyan-300 hover:bg-slate-700 rounded transition"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <line x1="9" y1="1" x2="9" y2="13" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+          </button>
+          <button
+            onClick={onClose}
+            title="Close"
+            className="p-1 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded transition text-xs font-mono"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
+        {children}
+      </div>
+
+      {/* Bottom-right resize corner */}
+      <div
+        onMouseDown={handleResizeDown}
+        className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize"
+        style={{ touchAction: "none" }}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" className="text-slate-600">
+          <path d="M14 2L2 14M14 6L6 14M14 10L10 14" stroke="currentColor" strokeWidth="1" />
+        </svg>
+      </div>
+    </div>
+  );
+}

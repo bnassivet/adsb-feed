@@ -7,6 +7,7 @@ import {
   queryBbox,
   getTrajectory,
   getAircraftSummary,
+  getTimeDistribution,
   getStorageStats,
 } from "../commands";
 import type {
@@ -15,6 +16,8 @@ import type {
   PositionRecord,
   AircraftSummary,
   StorageStats,
+  TimeDistributionBucket,
+  TimeDistributionQuery,
 } from "../types";
 
 const samplePosition: PositionRecord = {
@@ -122,6 +125,38 @@ describe("Historical query commands", () => {
 
       const result = await getAircraftSummary(1705315000000, 1705316000000);
       expect(result).toHaveLength(1);
+    });
+  });
+
+  describe("getTimeDistribution", () => {
+    it("sends query and returns buckets", async () => {
+      const buckets: TimeDistributionBucket[] = [
+        { bucket_ms: 1705315800000, count: 5 },
+        { bucket_ms: 1705315860000, count: 3 },
+      ];
+      mockInvokeResponse("get_time_distribution", buckets);
+
+      const query: TimeDistributionQuery = {
+        start_ms: 1705315800000,
+        end_ms: 1705316100000,
+        num_buckets: 24,
+      };
+
+      const result = await getTimeDistribution(query);
+      expect(result).toHaveLength(2);
+      expect(result[0].bucket_ms).toBe(1705315800000);
+      expect(result[0].count).toBe(5);
+    });
+
+    it("returns empty array for no data", async () => {
+      mockInvokeResponse("get_time_distribution", []);
+
+      const result = await getTimeDistribution({
+        start_ms: 0,
+        end_ms: 1000,
+        num_buckets: 10,
+      });
+      expect(result).toEqual([]);
     });
   });
 

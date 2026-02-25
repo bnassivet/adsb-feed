@@ -8,6 +8,8 @@ import type {
   PositionRecord,
   StatusResponse,
   StorageStats,
+  TimeDistributionBucket,
+  TimeDistributionQuery,
   TrajectoryQuery,
 } from "./types";
 
@@ -61,6 +63,12 @@ export async function getAircraftSummary(
     startMs: startMs ?? null,
     endMs: endMs ?? null,
   });
+}
+
+export async function getTimeDistribution(
+  query: TimeDistributionQuery
+): Promise<TimeDistributionBucket[]> {
+  return invoke("get_time_distribution", { query });
 }
 
 export async function getStorageStats(): Promise<StorageStats> {

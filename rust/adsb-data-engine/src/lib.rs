@@ -15,5 +15,6 @@ pub use error::StorageError;
 pub use sbs_parser::{parse_sbs_message, AircraftPosition};
 pub use storage::StorageHandle;
 pub use types::{
-    AircraftSummary, BboxQuery, PositionRecord, StorageConfig, StorageStats, TrajectoryQuery,
+    AircraftSummary, BboxQuery, PositionRecord, StorageConfig, StorageStats,
+    TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
 };

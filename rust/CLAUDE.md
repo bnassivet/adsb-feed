@@ -1,6 +1,6 @@
 # CLAUDE.md - Rust Workspace
 
-Cargo workspace containing the ADS-B feed client library and Tauri desktop app.
+Cargo workspace containing the ADS-B feed client library, adsd-data-engine and Tauri desktop app.
 
 ## Workspace Members
 
@@ -47,6 +47,11 @@ cargo test --workspace -- --nocapture        # Show stdout
 cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --workspace --check
 ```
 
+### Documentation
+
+Save new feature development plan in adsb-pulsar-client-desktop/docs/plans before starting implementation.
+Update Design documentation (DESIGN.md, DOCUMENTATION.md) before proposing to commit a new feature implementation.
+
 ## Build Notes
 
 - `cli` feature (default-enabled on `adsb-pulsar-client`) gates `clap` dependency
@@ -54,3 +59,7 @@ cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt -
 - `[profile.release]` settings must be in this workspace root `Cargo.toml`, not member crates
 - `protoc` required at build time (Pulsar crate dependency)
 - `adsb-data-engine` uses `duckdb` crate (DuckDB 1.2) via C FFI — no extra system packages needed beyond Rust toolchain; DuckDB is statically linked
+
+## Continous improvement
+
+Update CLAUDE.md with pertinent lessons learned especially from feature or issue implementation failures

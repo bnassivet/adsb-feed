@@ -59,6 +59,21 @@ pub struct StorageStats {
     pub newest_timestamp_ms: Option<i64>,
 }
 
+/// A single bucket in a time distribution histogram.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeDistributionBucket {
+    pub bucket_ms: i64,
+    pub count: u64,
+}
+
+/// Query parameters for time distribution (histogram).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeDistributionQuery {
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub num_buckets: u32,
+}
+
 /// Configuration for opening a storage handle.
 #[derive(Debug, Clone)]
 pub struct StorageConfig {

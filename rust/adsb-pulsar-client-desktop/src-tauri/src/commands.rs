@@ -4,7 +4,10 @@
 
 use crate::bridge;
 use crate::state::{AppState, ConnectionStatus, StatusResponse};
-use adsb_data_engine::{AircraftSummary, BboxQuery, PositionRecord, StorageStats, TrajectoryQuery};
+use adsb_data_engine::{
+    AircraftSummary, BboxQuery, PositionRecord, StorageStats, TimeDistributionBucket,
+    TimeDistributionQuery, TrajectoryQuery,
+};
 use adsb_pulsar_client::{Config, MetricsSnapshot};
 use tauri::State;
 
@@ -172,6 +175,22 @@ pub async fn get_aircraft_summary(
         .ok_or_else(|| "Storage not available".to_string())?;
     storage
         .get_aircraft_summary(start_ms, end_ms)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Get time distribution histogram for a time range.
+#[tauri::command]
+pub async fn get_time_distribution(
+    query: TimeDistributionQuery,
+    state: State<'_, AppState>,
+) -> Result<Vec<TimeDistributionBucket>, String> {
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .get_time_distribution(query)
         .await
         .map_err(|e| e.to_string())
 }

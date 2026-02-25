@@ -7,6 +7,8 @@ import { ConnectionStatusIndicator } from "@/components/ConnectionStatus";
 import { ResizeHandle } from "@/components/ResizeHandle";
 import { LeftPanel } from "@/components/LeftPanel";
 import { AircraftDetailsPanel } from "@/components/AircraftDetailsPanel";
+import { DBHistoryPanel } from "@/components/DBHistoryPanel";
+import { DBHistoryContent } from "@/components/DBHistoryContent";
 import { useAircraftTracks } from "@/hooks/useAircraftTracks";
 import { useSimulatedTracks } from "@/hooks/useSimulatedTracks";
 import { useMetrics } from "@/hooks/useMetrics";
@@ -39,9 +41,20 @@ export default function Dashboard() {
   const [historyColorMode, setHistoryColorMode] = useLocalStorage<AltitudeColorMode>("adsb-history-color-mode", "track");
   const [includeImportedInDensity, setIncludeImportedInDensity] = useLocalStorage<boolean>("adsb-include-imported-density", false);
 
+  // DB History Panel state
+  const [dbHistoryOpen, setDbHistoryOpen] = useLocalStorage<boolean>("adsb-dbhistory-open", false);
+  const [dbHistoryDockedExpanded, setDbHistoryDockedExpanded] = useLocalStorage<boolean>("adsb-dbhistory-docked-expanded", true);
+  const [dbHistoryWidth, setDbHistoryWidth] = useLocalStorage<number>("adsb-dbhistory-width", 360);
+  const [dbHistoryFloating, setDbHistoryFloating] = useLocalStorage<boolean>("adsb-dbhistory-floating", false);
+  const [dbHistoryFloatX, setDbHistoryFloatX] = useLocalStorage<number>("adsb-dbhistory-float-x", 100);
+  const [dbHistoryFloatY, setDbHistoryFloatY] = useLocalStorage<number>("adsb-dbhistory-float-y", 80);
+  const [dbHistoryFloatW, setDbHistoryFloatW] = useLocalStorage<number>("adsb-dbhistory-float-w", 400);
+  const [dbHistoryFloatH, setDbHistoryFloatH] = useLocalStorage<number>("adsb-dbhistory-float-h", 600);
+  const [showDbHistory, setShowDbHistory] = useLocalStorage<boolean>("adsb-show-dbhistory", true);
+
   const [selectedHexIdent, setSelectedHexIdent] = useState<string | null>(null);
 
-  const { tracks, history, imported, importTracks, clearImported } = useAircraftTracks(filters);
+  const { tracks, history, imported, dbHistory, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory } = useAircraftTracks(filters);
   const [showImported, setShowImported] = useLocalStorage<boolean>("adsb-show-imported", true);
   const simulatedTracks = useSimulatedTracks(showSimulation);
   const allTracks = useMemo(() => [...tracks, ...simulatedTracks], [tracks, simulatedTracks]);
@@ -51,13 +64,15 @@ export default function Dashboard() {
 
   const visibleHistory = showHistory ? history : [];
   const visibleImported = showImported ? imported : [];
+  const visibleDbHistory = showDbHistory ? dbHistory : [];
   const selectedTrack = useMemo(
     () =>
       allTracks.find(t => t.hex_ident === selectedHexIdent) ??
       visibleHistory.find(t => t.hex_ident === selectedHexIdent) ??
+      visibleDbHistory.find(t => t.hex_ident === selectedHexIdent) ??
       visibleImported.find(t => t.hex_ident === selectedHexIdent) ??
       null,
-    [selectedHexIdent, allTracks, visibleHistory, visibleImported],
+    [selectedHexIdent, allTracks, visibleHistory, visibleDbHistory, visibleImported],
   );
 
   // Toggle selection: clicking same track deselects, clicking different selects
@@ -71,11 +86,13 @@ export default function Dashboard() {
     const exists =
       allTracks.some(t => t.hex_ident === selectedHexIdent) ||
       visibleHistory.some(t => t.hex_ident === selectedHexIdent) ||
+      visibleDbHistory.some(t => t.hex_ident === selectedHexIdent) ||
       visibleImported.some(t => t.hex_ident === selectedHexIdent);
     if (!exists) setSelectedHexIdent(null);
-  }, [selectedHexIdent, allTracks, visibleHistory, visibleImported]);
+  }, [selectedHexIdent, allTracks, visibleHistory, visibleDbHistory, visibleImported]);
 
   const isImportedSelection = visibleImported.some(t => t.hex_ident === selectedHexIdent);
+  const isDbHistorySelection = visibleDbHistory.some(t => t.hex_ident === selectedHexIdent);
 
   const densityTracks = useMemo(
     () => (showDensity ? [...allTracks, ...history, ...(includeImportedInDensity ? imported : [])] : []),
@@ -183,6 +200,13 @@ export default function Dashboard() {
               <line x1="6" y1="2" x2="6" y2="16" stroke="currentColor" strokeWidth="1.5" />
             </svg>
           </button>
+          <button
+            onClick={() => setDbHistoryOpen((prev: boolean) => !prev)}
+            className={`px-2 py-1 text-xs rounded transition ${dbHistoryOpen ? "bg-cyan-800/40 text-cyan-200 border border-cyan-700/30" : "text-slate-400 hover:text-slate-200 hover:bg-slate-700"}`}
+            title={dbHistoryOpen ? "Hide DB History panel" : "Show DB History panel"}
+          >
+            DB History
+          </button>
         </div>
         <div className="flex items-center gap-3">
           {error && (
@@ -268,7 +292,6 @@ export default function Dashboard() {
           onClearImported={clearImported}
           includeImportedInDensity={includeImportedInDensity}
           onToggleIncludeImportedInDensity={handleToggleIncludeImportedInDensity}
-          onImportTracks={importTracks}
         />
 
         {/* Map + Table */}
@@ -276,7 +299,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <Map tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} />
+              <Map tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} dbHistoryTracks={visibleDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel
@@ -286,7 +309,33 @@ export default function Dashboard() {
                 onToggle={() => setDetailsPanelOpen((p: boolean) => !p)}
                 onWidthChange={setDetailsPanelWidth}
                 isImported={isImportedSelection}
+                isDbHistory={isDbHistorySelection}
               />
+            )}
+            {/* DB History panel — docked mode (in flex row) */}
+            {dbHistoryOpen && !dbHistoryFloating && (
+              <DBHistoryPanel
+                isOpen={dbHistoryOpen}
+                onToggle={() => setDbHistoryOpen(false)}
+                width={dbHistoryWidth}
+                onWidthChange={setDbHistoryWidth}
+                dockedExpanded={dbHistoryDockedExpanded}
+                onDockedExpandedChange={setDbHistoryDockedExpanded}
+                floating={false}
+                onFloatingChange={setDbHistoryFloating}
+                floatX={dbHistoryFloatX}
+                floatY={dbHistoryFloatY}
+                floatW={dbHistoryFloatW}
+                floatH={dbHistoryFloatH}
+                onFloatPosChange={(x, y) => { setDbHistoryFloatX(x); setDbHistoryFloatY(y); }}
+                onFloatSizeChange={(w, h) => { setDbHistoryFloatW(w); setDbHistoryFloatH(h); }}
+              >
+                <DBHistoryContent
+                  onLoadTracks={loadDbHistoryTracks}
+                  onClearTracks={clearDbHistory}
+                  dbHistoryCount={dbHistory.length}
+                />
+              </DBHistoryPanel>
             )}
           </div>
 
@@ -298,13 +347,39 @@ export default function Dashboard() {
             className="bg-slate-900 overflow-hidden flex-shrink-0"
             style={{ height: tableHeight }}
           >
-            <AircraftTable tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} />
+            <AircraftTable tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} dbHistoryTracks={visibleDbHistory} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} />
           </div>
         </main>
       </div>
 
       {/* Footer metrics */}
       <MetricsBar metrics={metrics} />
+
+      {/* DB History panel — floating mode (portal-like, fixed position) */}
+      {dbHistoryOpen && dbHistoryFloating && (
+        <DBHistoryPanel
+          isOpen={dbHistoryOpen}
+          onToggle={() => setDbHistoryOpen(false)}
+          width={dbHistoryWidth}
+          onWidthChange={setDbHistoryWidth}
+          dockedExpanded={dbHistoryDockedExpanded}
+          onDockedExpandedChange={setDbHistoryDockedExpanded}
+          floating={true}
+          onFloatingChange={setDbHistoryFloating}
+          floatX={dbHistoryFloatX}
+          floatY={dbHistoryFloatY}
+          floatW={dbHistoryFloatW}
+          floatH={dbHistoryFloatH}
+          onFloatPosChange={(x, y) => { setDbHistoryFloatX(x); setDbHistoryFloatY(y); }}
+          onFloatSizeChange={(w, h) => { setDbHistoryFloatW(w); setDbHistoryFloatH(h); }}
+        >
+          <DBHistoryContent
+            onLoadTracks={loadDbHistoryTracks}
+            onClearTracks={clearDbHistory}
+            dbHistoryCount={dbHistory.length}
+          />
+        </DBHistoryPanel>
+      )}
     </div>
   );
 }

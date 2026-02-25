@@ -1,7 +1,6 @@
 "use client";
-import type { Filters, DensityMetric, AltitudeColorMode, AircraftTrack } from "@/lib/types";
+import type { Filters, DensityMetric, AltitudeColorMode } from "@/lib/types";
 import { RangeSlider } from "@/components/RangeSlider";
-import { HistoryBrowser } from "@/components/HistoryBrowser";
 import type { ReactNode } from "react";
 
 interface Props {
@@ -28,7 +27,6 @@ interface Props {
   onClearImported: () => void;
   includeImportedInDensity: boolean;
   onToggleIncludeImportedInDensity: () => void;
-  onImportTracks: (tracks: AircraftTrack[]) => void;
 }
 
 function Section({ title, defaultOpen, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
@@ -45,7 +43,7 @@ function Section({ title, defaultOpen, children }: { title: string; defaultOpen?
   );
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, onImportTracks }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity }: Props) {
   return (
     <div className="flex flex-col gap-2 p-4">
 
@@ -257,12 +255,6 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
         </label>
       </Section>
 
-      {/* ── DB History ── */}
-      <Section title="DB History">
-        <div className="-mx-4 px-0">
-          <HistoryBrowser onImportTracks={onImportTracks} />
-        </div>
-      </Section>
     </div>
   );
 }

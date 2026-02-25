@@ -77,6 +77,7 @@ function MapClickHandler({ onDeselect }: { onDeselect: () => void }) {
 interface Props {
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];
+  dbHistoryTracks?: AircraftTrack[];
   importedTracks?: AircraftTrack[];
   mapTheme: "light" | "dark";
   onToggleTheme: () => void;
@@ -163,15 +164,15 @@ function DotsLayer({
 }: {
   tracks: AircraftTrack[];
   colorMode: AltitudeColorMode;
-  type: "history" | "live" | "imported";
+  type: "history" | "live" | "imported" | "dbHistory";
   selectedHexIdent: string | null;
 }) {
   const map = useMap();
 
   useEffect(() => {
     const markers: L.CircleMarker[] = [];
-    const baseRadius = type === "history" ? 2 : type === "imported" ? 2.5 : 3;
-    const baseFillOpacity = type === "history" ? 0.2 : type === "imported" ? 0.35 : 0.6;
+    const baseRadius = type === "history" ? 2 : type === "imported" ? 2.5 : type === "dbHistory" ? 2.5 : 3;
+    const baseFillOpacity = type === "history" ? 0.2 : type === "imported" ? 0.35 : type === "dbHistory" ? 0.4 : 0.6;
 
     for (const t of tracks) {
       if (t.positions.length < 2) continue;
@@ -207,6 +208,10 @@ function DotsLayer({
             parts.push(`</div>`);
             return parts.join("");
           });
+        } else if (type === "dbHistory") {
+          marker.bindTooltip(() =>
+            `<div class="text-xs"><div class="font-bold">${label}</div><div>Hex: ${t.hex_ident}</div><div>Alt: ${formatAlt(pos[2])}</div><div class="text-cyan-400">DB History</div></div>`
+          );
         } else if (type === "imported") {
           marker.bindTooltip(() =>
             `<div class="text-xs"><div class="font-bold">${label}</div><div>Hex: ${t.hex_ident}</div><div>Alt: ${formatAlt(pos[2])}</div><div class="text-indigo-400">Imported</div></div>`
@@ -232,7 +237,7 @@ function DotsLayer({
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, liveColorMode, historyColorMode, selectedHexIdent, onSelectTrack }: Props) {
+export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, liveColorMode, historyColorMode, selectedHexIdent, onSelectTrack }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
 
   // Reorder tracks so selected renders on top (last in array = top layer)
@@ -294,6 +299,38 @@ export function MapInner({ tracks, historyTracks, importedTracks = [], mapTheme,
                   <div>Hex: {t.hex_ident}</div>
                   <div>Alt: {formatAlt(t.altitude)}</div>
                   <div>Last seen: {timeAgo(t.last_seen)}</div>
+                </div>
+              </Tooltip>
+            </Polyline>
+          );
+        })}
+
+        {/* DB History tracks — cyan polylines/dots */}
+        {trajectoryStyle === "dots" && dbHistoryTracks.length > 0 && (
+          <DotsLayer tracks={dbHistoryTracks} colorMode="plot" type="dbHistory" selectedHexIdent={selectedHexIdent} />
+        )}
+        {trajectoryStyle === "line" && dbHistoryTracks.map((t) => {
+          if (t.positions.length < 2) return null;
+          const isSelected = t.hex_ident === selectedHexIdent;
+          return (
+            <Polyline
+              key={`dbhist-${t.hex_ident}`}
+              positions={toLatLngs(t.positions)}
+              pathOptions={{
+                color: "#06b6d4",
+                weight: isSelected ? 3 : 2,
+                opacity: isSelected ? 0.8 : 0.5,
+              }}
+              eventHandlers={{ click: () => onSelectTrack(t.hex_ident) }}
+            >
+              <Tooltip sticky>
+                <div className="text-xs">
+                  <div className="font-bold">
+                    {t.callsign ?? t.hex_ident}
+                  </div>
+                  <div>Hex: {t.hex_ident}</div>
+                  <div>Alt: {formatAlt(t.altitude)}</div>
+                  <div className="text-cyan-400">DB History</div>
                 </div>
               </Tooltip>
             </Polyline>

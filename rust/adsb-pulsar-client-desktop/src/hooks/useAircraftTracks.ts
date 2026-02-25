@@ -42,7 +42,17 @@ export function matchesFilters(t: AircraftTrack, filters: Filters): boolean {
  * @returns Filtered active tracks and history tracks
  */
 export function useAircraftTracks(filters: Filters) {
-  const { tracks: tracksMap, history: historyMap, imported: importedMap, version, importTracks, clearImported } = useAircraftTrackingContext();
+  const {
+    tracks: tracksMap,
+    history: historyMap,
+    imported: importedMap,
+    dbHistory: dbHistoryMap,
+    version,
+    importTracks,
+    clearImported,
+    loadDbHistoryTracks,
+    clearDbHistory,
+  } = useAircraftTrackingContext();
 
   const tracks = useMemo(
     () => Array.from(tracksMap.values()).filter((t) => matchesFilters(t, filters)),
@@ -68,5 +78,12 @@ export function useAircraftTracks(filters: Filters) {
     [version, filters],
   );
 
-  return { tracks, history, imported, importTracks, clearImported };
+  // dbHistory is NOT filtered by live Filters — controlled by DBHistoryPanel
+  const dbHistory = useMemo(
+    () => Array.from(dbHistoryMap.values()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [version],
+  );
+
+  return { tracks, history, imported, dbHistory, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory };
 }

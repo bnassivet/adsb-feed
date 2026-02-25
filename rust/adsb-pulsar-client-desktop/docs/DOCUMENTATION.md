@@ -141,7 +141,8 @@ export function useYourData(filters: Filters) {
 
 **Rust backend (DuckDB)** — for streaming data that must survive restarts:
 - The Tauri bridge persists every 500ms position batch to `adsb_history.db` via `adsb-data-engine`
-- Frontend queries historical data via `queryBbox`, `getTrajectory`, `getAircraftSummary` commands
+- Frontend queries historical data via `queryBbox`, `getTrajectory`, `getAircraftSummary`, `getStorageStats`, `getTimeDistribution` commands
+- The `DBHistoryPanel` provides browsing + analytics UI for DuckDB queries
 - This is preferred over localStorage for high-volume streaming data (avoids browser storage limits and serialization overhead)
 
 **Don't add browser persistence for**:
@@ -245,7 +246,8 @@ src/
 | **Provider Component** | `{Name}Provider` | `AircraftTrackingProvider` |
 | **Context Hook** | `use{Name}Context` | `useAircraftTrackingContext` |
 | **Consumer Hook** | `use{Name}` | `useAircraftTracks` (filters + derives) |
-| **Component** | `PascalCase.tsx` | `MapInner.tsx` |
+| **Component** | `PascalCase.tsx` | `MapInner.tsx`, `DBHistoryPanel.tsx` |
+| **Analytics Utility** | `camelCase.ts` | `db-history-analytics.ts` |
 | **Utility** | `camelCase.ts` | `colors.ts`, `commands.ts` |
 
 ---
@@ -343,6 +345,76 @@ function mergePositionInto(track: AircraftTrack, pos: AircraftPosition, now: num
   track.last_seen = now;          // ✅ update last_seen
   // track.first_seen = now;      // ❌ never do this
 }
+```
+
+---
+
+### Pattern 5: Docked/Floating Dual-Mode Panel
+
+**Use Case**: A panel that can be docked as a flex sibling of the map (like AircraftDetailsPanel) or float as a draggable overlay.
+
+```typescript
+// State lives in parent (page.tsx); persisted via useLocalStorage
+const [isFloating, setIsFloating] = useLocalStorage<boolean>("key-floating", false);
+const [floatX, setFloatX] = useLocalStorage<number>("key-float-x", 100);
+const [floatY, setFloatY] = useLocalStorage<number>("key-float-y", 80);
+const [floatW, setFloatW] = useLocalStorage<number>("key-float-w", 400);
+const [floatH, setFloatH] = useLocalStorage<number>("key-float-h", 600);
+
+// Docked: rendered inside the map flex row (sibling of map + details panel)
+{panelOpen && !isFloating && (
+  <DockedPanel width={dockedWidth} onWidthChange={setDockedWidth}>
+    <PanelContent />
+  </DockedPanel>
+)}
+
+// Floating: rendered at document root with position: fixed
+{panelOpen && isFloating && (
+  <FloatingPanel x={floatX} y={floatY} w={floatW} h={floatH}>
+    <PanelContent />
+  </FloatingPanel>
+)}
+```
+
+**Two rendering locations**: The same content component renders in both modes, but the shell differs:
+1. **Docked**: Flex sibling in the map row. Resize handle on left edge. Three states: hidden/collapsed 32px/expanded.
+2. **Floating**: `position: fixed; z-index: 50`. Draggable via title bar. Resizable via corner handle. Close button (×).
+
+**Pin/unpin button** in the title bar toggles between modes. When switching docked→floating, position initializes to sensible defaults. Float position/size persisted in localStorage.
+
+**Extracting shared content**: The panel body (stats, controls, charts) lives in a separate `*Content` component that both docked and floating shells render, avoiding duplication.
+
+---
+
+### Pattern 6: Four Track Categories
+
+**Use Case**: Multiple independent collections of `AircraftTrack` objects, each with distinct lifecycle and visual identity.
+
+| Category | Ref | Source | Lifecycle | Color |
+|----------|-----|--------|-----------|-------|
+| `tracks` | `tracksRef` | Tauri `adsb:batch` events | Live, TTL-managed | Altitude-based |
+| `history` | `historyRef` | TTL expiry from `tracks` | Session-scoped | Altitude-based |
+| `imported` | `importedRef` | GeoJSON file import | Until cleared | Indigo |
+| `dbHistory` | `dbHistoryRef` | DuckDB query results | Until cleared | Cyan |
+
+**Key design decisions**:
+- Each category has its own `Map<string, AircraftTrack>` in `AircraftTrackingContext`
+- `tracks` and `history` are filtered by live `Filters` (callsign, altitude, speed)
+- `imported` and `dbHistory` are **not filtered** by live Filters — they have their own visibility toggles
+- `selectedTrack` lookup order: `allTracks` → `visibleHistory` → `visibleDbHistory` → `visibleImported` (live wins)
+- Visual identity carried by props (`isImported`, `isDbHistory`), not fields on `AircraftTrack`
+
+```typescript
+// useAircraftTracks returns all four categories
+const {
+  tracks, history, imported, dbHistory,
+  importTracks, clearImported,
+  loadDbHistoryTracks, clearDbHistory,
+} = useAircraftTracks(filters);
+
+// Visibility controlled independently
+const visibleDbHistory = showDbHistory ? dbHistory : [];
+const visibleImported = showImported ? imported : [];
 ```
 
 ---
@@ -584,3 +656,5 @@ The Global Context Manager pattern is the recommended approach for state that mu
 - Decouple TTL cleanup to a separate interval (not every data batch)
 - Default to in-memory, add persistence only when needed
 - Apply filters in consumer hooks, not in provider
+- Use separate Maps for distinct track categories (live, history, imported, dbHistory) — don't discriminate with fields
+- For docked/floating dual-mode panels, extract shared content into a separate component and render in two DOM locations
