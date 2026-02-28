@@ -5,7 +5,7 @@ import type { AircraftPosition, AircraftTrack } from "@/lib/types";
 
 const TRACK_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const HISTORY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const MAX_POSITIONS = 100; // Max position history per track
+const MAX_POSITIONS = 100_000; // Max position history per track
 const CLEANUP_INTERVAL_MS = 15_000; // TTL cleanup every 15 seconds
 
 interface AircraftTrackingContextValue {
