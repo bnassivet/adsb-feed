@@ -36,14 +36,16 @@ describe("appendPosition", () => {
     expect(track.positions).toEqual([[45.5, -73.5, null]]);
   });
 
-  it("caps positions at MAX_POSITIONS (100)", () => {
+  it("caps positions at MAX_POSITIONS (100_000)", () => {
     const track = makeTrack();
-    for (let i = 0; i < 105; i++) {
-      appendPosition(track, 45.0 + i * 0.01, -73.0, 30000 + i * 100);
+    const MAX = 100_000;
+    const OVER = 5;
+    for (let i = 0; i < MAX + OVER; i++) {
+      appendPosition(track, 45.0 + i * 0.0001, -73.0, 30000 + i);
     }
-    expect(track.positions.length).toBe(100);
-    // First position should be the 6th one added (indices 5-104)
-    expect(track.positions[0]).toEqual([45.05, -73.0, 30500]);
+    expect(track.positions.length).toBe(MAX);
+    // Oldest positions were shifted out — first position should be the (OVER+1)th added
+    expect(track.positions[0][0]).toBeCloseTo(45.0 + OVER * 0.0001);
   });
 });
 

@@ -1,6 +1,20 @@
 import type { AircraftTrack, PositionRecord } from "@/lib/types";
 
 /**
+ * Groups PositionRecord rows by hex_ident and converts each group into
+ * an AircraftTrack. Used to bulk-convert DuckDB query results into tracks.
+ */
+export function recordsToTracks(records: PositionRecord[]): AircraftTrack[] {
+  const groups = new Map<string, PositionRecord[]>();
+  for (const r of records) {
+    const arr = groups.get(r.hex_ident);
+    if (arr) arr.push(r);
+    else groups.set(r.hex_ident, [r]);
+  }
+  return Array.from(groups.values()).map(recordsToTrack);
+}
+
+/**
  * Converts DuckDB PositionRecord rows for a single aircraft into an AircraftTrack
  * suitable for injection into the existing imported-track pipeline.
  *

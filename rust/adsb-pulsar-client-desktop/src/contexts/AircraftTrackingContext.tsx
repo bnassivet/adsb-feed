@@ -1,6 +1,8 @@
 "use client";
 import { createContext, useContext, useCallback, useRef, useState, useMemo, useEffect, ReactNode } from "react";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
+import { queryBbox } from "@/lib/commands";
+import { recordsToTracks } from "@/lib/history-convert";
 import type { AircraftPosition, AircraftTrack } from "@/lib/types";
 
 const TRACK_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -167,6 +169,33 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
 
     return () => clearInterval(id);
   }, []);
+
+  // Auto-load last 24h of tracks from DuckDB on startup
+  useEffect(() => {
+    const now = Date.now();
+    queryBbox({
+      north: 90,
+      south: -90,
+      east: 180,
+      west: -180,
+      start_ms: now - HISTORY_TTL_MS,
+      end_ms: null,
+      limit: 1_000_000,
+    })
+      .then((records) => {
+        if (records.length > 0) {
+          const tracks = recordsToTracks(records);
+          const map = historyRef.current;
+          for (const t of tracks) {
+            map.set(t.hex_ident, t);
+          }
+          setUpdateCounter((c) => c + 1);
+        }
+      })
+      .catch(() => {
+        // DuckDB unavailable — graceful degradation, no-op
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useTauriEvent<AircraftPosition[]>("adsb:message", handleBatch);
 

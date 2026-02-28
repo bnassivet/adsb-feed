@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import React from "react";
 import { renderHook, act } from "@testing-library/react";
+import { mockInvokeResponse, clearMockResponses } from "@/test/mocks/tauri";
 import { AircraftTrackingProvider, useAircraftTrackingContext } from "../AircraftTrackingContext";
 import type { AircraftTrack } from "@/lib/types";
 
@@ -29,6 +30,12 @@ function wrapper({ children }: { children: React.ReactNode }) {
 }
 
 describe("dbHistory track category", () => {
+  beforeEach(() => {
+    clearMockResponses();
+    // Startup auto-load returns empty — tests control dbHistory explicitly
+    mockInvokeResponse("query_bbox", []);
+  });
+
   it("loadDbHistoryTracks populates dbHistory map and increments version", () => {
     const { result } = renderHook(() => useAircraftTrackingContext(), { wrapper });
 

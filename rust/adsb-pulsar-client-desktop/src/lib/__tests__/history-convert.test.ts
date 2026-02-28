@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { PositionRecord } from "@/lib/types";
-import { recordsToTrack } from "@/lib/history-convert";
+import { recordsToTrack, recordsToTracks } from "@/lib/history-convert";
 
 function makeRecord(overrides: Partial<PositionRecord> = {}): PositionRecord {
   return {
@@ -77,5 +77,41 @@ describe("recordsToTrack", () => {
     const record = makeRecord({ timestamp_ms: 0 });
     const track = recordsToTrack([record]);
     expect(track.timestamp).toBe(new Date(0).toISOString());
+  });
+});
+
+describe("recordsToTracks", () => {
+  it("returns empty array for empty input", () => {
+    expect(recordsToTracks([])).toEqual([]);
+  });
+
+  it("groups records by hex_ident into separate tracks", () => {
+    const records = [
+      makeRecord({ hex_ident: "AAA111", timestamp_ms: 1_000, latitude: 48.0 }),
+      makeRecord({ hex_ident: "BBB222", timestamp_ms: 2_000, latitude: 49.0 }),
+      makeRecord({ hex_ident: "AAA111", timestamp_ms: 3_000, latitude: 48.5 }),
+    ];
+    const tracks = recordsToTracks(records);
+    expect(tracks).toHaveLength(2);
+
+    const trackA = tracks.find((t) => t.hex_ident === "AAA111");
+    const trackB = tracks.find((t) => t.hex_ident === "BBB222");
+    expect(trackA).toBeDefined();
+    expect(trackB).toBeDefined();
+    expect(trackA!.positions).toHaveLength(2);
+    expect(trackB!.positions).toHaveLength(1);
+  });
+
+  it("preserves correct time ordering within each group", () => {
+    const records = [
+      makeRecord({ hex_ident: "AAA111", timestamp_ms: 5_000, latitude: 48.5 }),
+      makeRecord({ hex_ident: "AAA111", timestamp_ms: 1_000, latitude: 48.0 }),
+    ];
+    const tracks = recordsToTracks(records);
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0].first_seen).toBe(1_000);
+    expect(tracks[0].last_seen).toBe(5_000);
+    expect(tracks[0].positions[0][0]).toBe(48.0); // earlier record first
+    expect(tracks[0].positions[1][0]).toBe(48.5);
   });
 });
