@@ -35,6 +35,9 @@ function renderFilters(overrides = {}) {
     includeImportedInDensity: false,
     onToggleIncludeImportedInDensity: vi.fn(),
     onImportTracks: vi.fn(),
+    showReceiver: true,
+    onToggleReceiver: vi.fn(),
+    hasReceiverLocation: true,
     ...overrides,
   };
   return { ...render(<FiltersPanel {...defaultProps} />), props: defaultProps };

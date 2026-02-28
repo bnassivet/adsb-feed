@@ -40,6 +40,7 @@ export default function Dashboard() {
   const [liveColorMode, setLiveColorMode] = useLocalStorage<AltitudeColorMode>("adsb-live-color-mode", "track");
   const [historyColorMode, setHistoryColorMode] = useLocalStorage<AltitudeColorMode>("adsb-history-color-mode", "track");
   const [includeImportedInDensity, setIncludeImportedInDensity] = useLocalStorage<boolean>("adsb-include-imported-density", false);
+  const [showReceiver, setShowReceiver] = useLocalStorage<boolean>("adsb-show-receiver", true);
 
   // DB History Panel state
   const [dbHistoryOpen, setDbHistoryOpen] = useLocalStorage<boolean>("adsb-dbhistory-open", false);
@@ -132,6 +133,10 @@ export default function Dashboard() {
 
   function handleToggleIncludeImportedInDensity() {
     setIncludeImportedInDensity((prev: boolean) => !prev);
+  }
+
+  function handleToggleReceiver() {
+    setShowReceiver((prev: boolean) => !prev);
   }
 
   async function handleExport() {
@@ -303,6 +308,9 @@ export default function Dashboard() {
           onClearImported={clearImported}
           includeImportedInDensity={includeImportedInDensity}
           onToggleIncludeImportedInDensity={handleToggleIncludeImportedInDensity}
+          showReceiver={showReceiver}
+          onToggleReceiver={handleToggleReceiver}
+          hasReceiverLocation={receiverLocation != null}
         />
 
         {/* Map + Table */}
@@ -310,7 +318,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <Map tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} dbHistoryTracks={visibleDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} receiverLocation={receiverLocation} />
+              <Map tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} dbHistoryTracks={visibleDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel

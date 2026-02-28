@@ -27,6 +27,9 @@ interface Props {
   onClearImported: () => void;
   includeImportedInDensity: boolean;
   onToggleIncludeImportedInDensity: () => void;
+  showReceiver: boolean;
+  onToggleReceiver: () => void;
+  hasReceiverLocation: boolean;
 }
 
 function Section({ title, defaultOpen, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
@@ -43,7 +46,7 @@ function Section({ title, defaultOpen, children }: { title: string; defaultOpen?
   );
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation }: Props) {
   return (
     <div className="flex flex-col gap-2 p-4">
 
@@ -122,6 +125,20 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
             </span>
           </label>
         </div>
+
+        {hasReceiverLocation && (
+          <div>
+            <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showReceiver}
+                onChange={onToggleReceiver}
+                className="accent-pink-500"
+              />
+              <span>Show receiver</span>
+            </label>
+          </div>
+        )}
 
         {importedCount > 0 && (
           <div>

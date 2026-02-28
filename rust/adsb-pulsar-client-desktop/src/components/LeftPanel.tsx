@@ -36,6 +36,9 @@ interface LeftPanelProps {
   onClearImported: () => void;
   includeImportedInDensity: boolean;
   onToggleIncludeImportedInDensity: () => void;
+  showReceiver: boolean;
+  onToggleReceiver: () => void;
+  hasReceiverLocation: boolean;
 }
 
 export function LeftPanel({ isOpen, width, onToggle, onWidthChange, ...filterProps }: LeftPanelProps) {

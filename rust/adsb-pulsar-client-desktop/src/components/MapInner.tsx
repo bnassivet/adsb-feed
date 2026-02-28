@@ -388,7 +388,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
           <Marker
             position={[receiverLocation.lat, receiverLocation.lng]}
             icon={L.divIcon({
-              html: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4b5563" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="22"/><line x1="5" y1="5" x2="12" y2="10"/><line x1="19" y1="5" x2="12" y2="10"/><line x1="8" y1="3" x2="12" y2="7"/><line x1="16" y1="3" x2="12" y2="7"/></svg>`,
+              html: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e91e90" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="22"/><line x1="5" y1="5" x2="12" y2="10"/><line x1="19" y1="5" x2="12" y2="10"/><line x1="8" y1="3" x2="12" y2="7"/><line x1="16" y1="3" x2="12" y2="7"/></svg>`,
               className: "",
               iconSize: [16, 16],
               iconAnchor: [8, 16],
