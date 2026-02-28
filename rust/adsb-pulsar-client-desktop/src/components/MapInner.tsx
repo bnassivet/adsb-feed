@@ -383,7 +383,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         {receiverLocation && (
           <CircleMarker
             center={[receiverLocation.lat, receiverLocation.lng]}
-            radius={8}
+            radius={4}
             pathOptions={{ color: "#22d3ee", fillColor: "#22d3ee", fillOpacity: 0.6, weight: 2 }}
           >
             <Tooltip direction="top" offset={[0, -10]}>
