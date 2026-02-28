@@ -1,10 +1,10 @@
 "use client";
-import { ALTITUDE_SCALE_STOPS } from "@/lib/colors";
+import { altitudeScaleStops, type MapTheme } from "@/lib/colors";
 
 /** Vertical gradient bar showing the altitude-to-color mapping. */
-export function AltitudeLegend() {
+export function AltitudeLegend({ theme }: { theme: MapTheme }) {
   // Build CSS gradient: top = high altitude (red), bottom = low altitude (blue)
-  const stops = [...ALTITUDE_SCALE_STOPS].reverse();
+  const stops = [...altitudeScaleStops(theme)].reverse();
   const gradient = stops
     .map((s, i) => `${s.color} ${Math.round((i / (stops.length - 1)) * 100)}%`)
     .join(", ");

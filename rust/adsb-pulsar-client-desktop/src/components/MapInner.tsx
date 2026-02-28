@@ -4,7 +4,7 @@ import { MapContainer, TileLayer, Marker, Polyline, GeoJSON, Tooltip, CircleMark
 import L from "leaflet";
 import type { AircraftTrack, DensityMetric, AltitudeColorMode } from "@/lib/types";
 import { zoomToH3Resolution } from "@/lib/types";
-import { altitudeToColor, densityColor, cachedAltitudeToColor } from "@/lib/colors";
+import { altitudeToColor, densityColor, cachedAltitudeToColor, type MapTheme } from "@/lib/colors";
 import { computeH3Density } from "@/lib/h3-density";
 import type { DensityProperties } from "@/lib/h3-density";
 import { useMapZoom } from "@/hooks/useMapZoom";
@@ -97,10 +97,12 @@ function DensityLayer({
   showDensity,
   densityTracks,
   densityMetric,
+  theme,
 }: {
   showDensity: boolean;
   densityTracks: AircraftTrack[];
   densityMetric: DensityMetric;
+  theme: MapTheme;
 }) {
   const zoom = useMapZoom(300);
   const resolution = zoomToH3Resolution(zoom);
@@ -112,7 +114,7 @@ function DensityLayer({
 
   // react-leaflet's GeoJSON doesn't re-render on data change — use key to force remount
   const densityKey = densityGeoJson
-    ? `density-${densityMetric}-${resolution}-${densityGeoJson.features.length}-${densityTracks.length}`
+    ? `density-${densityMetric}-${resolution}-${densityGeoJson.features.length}-${densityTracks.length}-${theme}`
     : "density-off";
 
   if (!densityGeoJson || densityGeoJson.features.length === 0) return null;
@@ -124,10 +126,10 @@ function DensityLayer({
       style={(feature) => {
         const props = (feature?.properties ?? { normalized: 0, value: 0 }) as DensityProperties;
         if (densityMetric === "altitude") {
-          const c = altitudeToColor(props.value);
+          const c = altitudeToColor(props.value, theme);
           return { color: c, fillColor: c, fillOpacity: 0.08, weight: 1, opacity: 0.2 };
         }
-        const { color, fillOpacity } = densityColor(props.normalized);
+        const { color, fillOpacity } = densityColor(props.normalized, theme);
         return { color, fillColor: color, fillOpacity, weight: 1, opacity: 0.4 };
       }}
       onEachFeature={(feature, layer) => {
@@ -162,11 +164,13 @@ function DotsLayer({
   colorMode,
   type,
   selectedHexIdent,
+  theme,
 }: {
   tracks: AircraftTrack[];
   colorMode: AltitudeColorMode;
   type: "history" | "live" | "imported" | "dbHistory";
   selectedHexIdent: string | null;
+  theme: MapTheme;
 }) {
   const map = useMap();
 
@@ -177,14 +181,14 @@ function DotsLayer({
 
     for (const t of tracks) {
       if (t.positions.length < 2) continue;
-      const trackColor = cachedAltitudeToColor(t.altitude);
+      const trackColor = cachedAltitudeToColor(t.altitude, theme);
       const isSelected = t.hex_ident === selectedHexIdent;
       const radius = isSelected ? baseRadius + 2 : baseRadius;
       const fillOpacity = isSelected ? 0.9 : baseFillOpacity;
 
       for (let i = 0; i < t.positions.length; i++) {
         const pos = t.positions[i];
-        const dotColor = colorMode === "plot" ? cachedAltitudeToColor(pos[2]) : trackColor;
+        const dotColor = colorMode === "plot" ? cachedAltitudeToColor(pos[2], theme) : trackColor;
         const isLast = i === t.positions.length - 1;
 
         const marker = L.circleMarker([pos[0], pos[1]], {
@@ -233,7 +237,7 @@ function DotsLayer({
         m.remove();
       }
     };
-  }, [map, tracks, colorMode, type, selectedHexIdent]);
+  }, [map, tracks, colorMode, type, selectedHexIdent, theme]);
 
   return null;
 }
@@ -274,15 +278,15 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         />
 
         {/* Density hexagons — zoom-adaptive H3 resolution */}
-        <DensityLayer showDensity={showDensity} densityTracks={densityTracks} densityMetric={densityMetric} />
+        <DensityLayer showDensity={showDensity} densityTracks={densityTracks} densityMetric={densityMetric} theme={mapTheme} />
 
         {/* History tracks — rendered first so active tracks layer on top */}
         {trajectoryStyle === "dots" && historyTracks.length > 0 && (
-          <DotsLayer tracks={historyTracks} colorMode={historyColorMode} type="history" selectedHexIdent={selectedHexIdent} />
+          <DotsLayer tracks={historyTracks} colorMode={historyColorMode} type="history" selectedHexIdent={selectedHexIdent} theme={mapTheme} />
         )}
         {trajectoryStyle === "line" && orderedHistory.map((t) => {
           if (t.positions.length < 2) return null;
-          const trackColor = cachedAltitudeToColor(t.altitude);
+          const trackColor = cachedAltitudeToColor(t.altitude, mapTheme);
           const isSelected = t.hex_ident === selectedHexIdent;
 
           return (
@@ -311,7 +315,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
 
         {/* DB History tracks — cyan polylines/dots */}
         {trajectoryStyle === "dots" && dbHistoryTracks.length > 0 && (
-          <DotsLayer tracks={dbHistoryTracks} colorMode="plot" type="dbHistory" selectedHexIdent={selectedHexIdent} />
+          <DotsLayer tracks={dbHistoryTracks} colorMode="plot" type="dbHistory" selectedHexIdent={selectedHexIdent} theme={mapTheme} />
         )}
         {trajectoryStyle === "line" && dbHistoryTracks.map((t) => {
           if (t.positions.length < 2) return null;
@@ -343,7 +347,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
 
         {/* Imported tracks — dots or dashed indigo polylines */}
         {trajectoryStyle === "dots" && importedTracks.length > 0 && (
-          <DotsLayer tracks={importedTracks} colorMode="plot" type="imported" selectedHexIdent={selectedHexIdent} />
+          <DotsLayer tracks={importedTracks} colorMode="plot" type="imported" selectedHexIdent={selectedHexIdent} theme={mapTheme} />
         )}
         {trajectoryStyle === "line" && importedTracks.map((t) => {
           if (t.positions.length < 2) return null;
@@ -376,15 +380,19 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
 
         {/* Active track dots — imperative layer for performance */}
         {trajectoryStyle === "dots" && tracks.length > 0 && (
-          <DotsLayer tracks={tracks} colorMode={liveColorMode} type="live" selectedHexIdent={selectedHexIdent} />
+          <DotsLayer tracks={tracks} colorMode={liveColorMode} type="live" selectedHexIdent={selectedHexIdent} theme={mapTheme} />
         )}
 
         {/* Receiver location marker */}
         {receiverLocation && (
-          <CircleMarker
-            center={[receiverLocation.lat, receiverLocation.lng]}
-            radius={4}
-            pathOptions={{ color: "#22d3ee", fillColor: "#22d3ee", fillOpacity: 0.6, weight: 2 }}
+          <Marker
+            position={[receiverLocation.lat, receiverLocation.lng]}
+            icon={L.divIcon({
+              html: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4b5563" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="22"/><line x1="5" y1="5" x2="12" y2="10"/><line x1="19" y1="5" x2="12" y2="10"/><line x1="8" y1="3" x2="12" y2="7"/><line x1="16" y1="3" x2="12" y2="7"/></svg>`,
+              className: "",
+              iconSize: [16, 16],
+              iconAnchor: [8, 16],
+            })}
           >
             <Tooltip direction="top" offset={[0, -10]}>
               <div className="text-xs">
@@ -392,13 +400,13 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
                 {receiverLocation.alt != null && <div>Alt: {receiverLocation.alt.toLocaleString()} ft</div>}
               </div>
             </Tooltip>
-          </CircleMarker>
+          </Marker>
         )}
 
         {/* Active tracks — aircraft markers and line trajectories */}
         {orderedTracks.map((t) => {
           if (t.latitude === null || t.longitude === null) return null;
-          const trackColor = cachedAltitudeToColor(t.altitude);
+          const trackColor = cachedAltitudeToColor(t.altitude, mapTheme);
           const isSelected = t.hex_ident === selectedHexIdent;
           const icon = aircraftIcon(t.track ?? 0, trackColor, isSelected);
 
@@ -443,7 +451,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
       </MapContainer>
 
       <MapTileToggle theme={mapTheme} onToggle={onToggleTheme} />
-      <AltitudeLegend />
+      <AltitudeLegend theme={mapTheme} />
     </div>
   );
 }

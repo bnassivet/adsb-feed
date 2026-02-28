@@ -73,19 +73,19 @@ describe("ALTITUDE_SCALE_STOPS", () => {
 describe("densityColor", () => {
   it("returns low opacity for 0", () => {
     const { fillOpacity } = densityColor(0);
-    expect(fillOpacity).toBeCloseTo(0.08, 2);
+    expect(fillOpacity).toBeCloseTo(0.12, 2);
   });
 
   it("returns high opacity for 1", () => {
     const { fillOpacity } = densityColor(1);
-    expect(fillOpacity).toBeCloseTo(0.30, 2);
+    expect(fillOpacity).toBeCloseTo(0.34, 2);
   });
 
   it("returns mid-range values for 0.5", () => {
     const { color, fillOpacity } = densityColor(0.5);
     expect(color).toMatch(/^rgb\(\d+,\d+,\d+\)$/);
-    expect(fillOpacity).toBeGreaterThan(0.08);
-    expect(fillOpacity).toBeLessThan(0.30);
+    expect(fillOpacity).toBeGreaterThan(0.12);
+    expect(fillOpacity).toBeLessThan(0.34);
   });
 
   it("returns rgb string format", () => {
