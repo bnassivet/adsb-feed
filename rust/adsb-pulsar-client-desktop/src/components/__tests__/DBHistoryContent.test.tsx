@@ -116,6 +116,31 @@ describe("DBHistoryContent", () => {
     });
   });
 
+  it("wraps track list in a foldable details/summary element", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockInvokeResponse("get_aircraft_summary", [sampleSummary, { ...sampleSummary, hex_ident: "D4E5F6", callsign: "OTHER99", position_count: 10, min_altitude: 20000, max_altitude: 25000 }]);
+    mockInvokeResponse("get_time_distribution", []);
+
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-browse-btn")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("dbhist-browse-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-track-list")).toBeInTheDocument();
+    });
+
+    const details = screen.getByTestId("dbhist-track-list");
+    expect(details.tagName).toBe("DETAILS");
+    // Summary should show aircraft count
+    expect(details.querySelector("summary")).toHaveTextContent("Aircraft (2)");
+    // Should be open by default
+    expect(details).toHaveAttribute("open");
+  });
+
   it("clear button calls onClearTracks when dbHistoryCount > 0", async () => {
     mockInvokeResponse("get_storage_stats", sampleStats);
     mockInvokeResponse("get_aircraft_summary", [sampleSummary]);

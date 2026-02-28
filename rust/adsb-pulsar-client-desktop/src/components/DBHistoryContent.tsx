@@ -201,34 +201,42 @@ export function DBHistoryContent({
             <p className="text-xs text-slate-500 italic">No aircraft found.</p>
           )}
 
-          <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto">
-            {summaries.map((s) => (
-              <button
-                key={s.hex_ident}
-                onClick={() => handleLoadTrajectory(s)}
-                data-testid={`dbhist-load-${s.hex_ident}`}
-                className="text-left px-2 py-1.5 text-xs rounded hover:bg-cyan-900/30 transition border border-transparent hover:border-cyan-800/40"
-                title={`Load trajectory for ${s.hex_ident}`}
-              >
-                <div className="flex justify-between items-center">
-                  <span className="text-cyan-200 font-mono font-semibold">
-                    {s.callsign ?? s.hex_ident}
-                  </span>
-                  <span className="text-slate-500 text-[10px]">
-                    {s.position_count} pts
-                  </span>
-                </div>
-                <div className="text-[10px] text-slate-500 mt-0.5">
-                  {s.hex_ident}
-                  {s.min_altitude !== null && s.max_altitude !== null && (
-                    <span className="ml-2">
-                      {s.min_altitude.toLocaleString()}-{s.max_altitude.toLocaleString()} ft
-                    </span>
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
+          {summaries.length > 0 && (
+            <details open className="group" data-testid="dbhist-track-list">
+              <summary className="flex items-center gap-1.5 cursor-pointer select-none text-xs font-semibold text-slate-400 list-none [&::-webkit-details-marker]:hidden">
+                <span className="text-[10px] transition-transform duration-150 group-open:rotate-90">▶</span>
+                Aircraft ({summaries.length})
+              </summary>
+              <div className="mt-1 flex flex-col gap-0.5 max-h-48 overflow-y-auto">
+                {summaries.map((s) => (
+                  <button
+                    key={s.hex_ident}
+                    onClick={() => handleLoadTrajectory(s)}
+                    data-testid={`dbhist-load-${s.hex_ident}`}
+                    className="text-left px-2 py-1.5 text-xs rounded hover:bg-cyan-900/30 transition border border-transparent hover:border-cyan-800/40"
+                    title={`Load trajectory for ${s.hex_ident}`}
+                  >
+                    <div className="flex justify-between items-center">
+                      <span className="text-cyan-200 font-mono font-semibold">
+                        {s.callsign ?? s.hex_ident}
+                      </span>
+                      <span className="text-slate-500 text-[10px]">
+                        {s.position_count} pts
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">
+                      {s.hex_ident}
+                      {s.min_altitude !== null && s.max_altitude !== null && (
+                        <span className="ml-2">
+                          {s.min_altitude.toLocaleString()}-{s.max_altitude.toLocaleString()} ft
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </details>
+          )}
 
           {/* Analytics charts */}
           {(summaries.length > 0 || timeBuckets.length > 0) && (
