@@ -30,8 +30,9 @@ interface Props {
   dbHistoryTracks?: AircraftTrack[];
   selectedHexIdent: string | null;
   onSelectTrack: (hex: string | null) => void;
+  receiverLocation?: { lat: number; lng: number; alt: number | null };
 }
 
-export function Map({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, liveColorMode, historyColorMode, importedTracks, dbHistoryTracks, selectedHexIdent, onSelectTrack }: Props) {
-  return <MapInner tracks={tracks} historyTracks={historyTracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} showDensity={showDensity} densityMetric={densityMetric} densityTracks={densityTracks} liveColorMode={liveColorMode} historyColorMode={historyColorMode} importedTracks={importedTracks} dbHistoryTracks={dbHistoryTracks} selectedHexIdent={selectedHexIdent} onSelectTrack={onSelectTrack} />;
+export function Map({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, liveColorMode, historyColorMode, importedTracks, dbHistoryTracks, selectedHexIdent, onSelectTrack, receiverLocation }: Props) {
+  return <MapInner tracks={tracks} historyTracks={historyTracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} showDensity={showDensity} densityMetric={densityMetric} densityTracks={densityTracks} liveColorMode={liveColorMode} historyColorMode={historyColorMode} importedTracks={importedTracks} dbHistoryTracks={dbHistoryTracks} selectedHexIdent={selectedHexIdent} onSelectTrack={onSelectTrack} receiverLocation={receiverLocation} />;
 }

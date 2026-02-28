@@ -9,10 +9,15 @@ mod commands;
 mod state;
 
 use adsb_data_engine::{StorageConfig, StorageHandle};
+use adsb_pulsar_client::Config;
 use state::AppState;
 use tauri::Manager;
+use tauri_plugin_store::StoreExt;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
+
+const CONFIG_STORE_FILE: &str = "config.json";
+const CONFIG_STORE_KEY: &str = "config";
 
 /// Main entry point for the Tauri application.
 pub fn run() {
@@ -33,7 +38,11 @@ pub fn run() {
             // Initialize DuckDB storage in the app data directory.
             // Failure is non-fatal — the app continues in real-time-only mode.
             let storage = init_storage(app);
-            app.manage(AppState::new(storage));
+
+            // Load persisted config from Tauri store (falls back to defaults).
+            let config = load_config(app);
+            let state = AppState::with_config(config, storage);
+            app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -52,6 +61,45 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Load config from the Tauri store, falling back to defaults.
+fn load_config(app: &tauri::App) -> Config {
+    match app.store(CONFIG_STORE_FILE) {
+        Ok(store) => {
+            if let Some(value) = store.get(CONFIG_STORE_KEY) {
+                match serde_json::from_value::<Config>(value.clone()) {
+                    Ok(config) => {
+                        info!("Config loaded from store");
+                        return config;
+                    }
+                    Err(e) => {
+                        warn!("Failed to deserialize stored config (using defaults): {e}");
+                    }
+                }
+            } else {
+                info!("No saved config found, using defaults");
+            }
+        }
+        Err(e) => {
+            warn!("Failed to open config store (using defaults): {e}");
+        }
+    }
+    Config::default()
+}
+
+/// Save config to the Tauri store for persistence across restarts.
+pub fn persist_config(app: &tauri::AppHandle, config: &Config) -> Result<(), String> {
+    let store = app
+        .store(CONFIG_STORE_FILE)
+        .map_err(|e| format!("Failed to open config store: {e}"))?;
+    let value =
+        serde_json::to_value(config).map_err(|e| format!("Failed to serialize config: {e}"))?;
+    store.set(CONFIG_STORE_KEY.to_string(), value);
+    store
+        .save()
+        .map_err(|e| format!("Failed to save config store: {e}"))?;
+    Ok(())
 }
 
 /// Initialize DuckDB storage in the Tauri app data directory.

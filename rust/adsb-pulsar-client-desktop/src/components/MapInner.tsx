@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useCallback } from "react";
-import { MapContainer, TileLayer, Marker, Polyline, GeoJSON, Tooltip, useMap, useMapEvents } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Polyline, GeoJSON, Tooltip, CircleMarker, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import type { AircraftTrack, DensityMetric, AltitudeColorMode } from "@/lib/types";
 import { zoomToH3Resolution } from "@/lib/types";
@@ -89,6 +89,7 @@ interface Props {
   historyColorMode: AltitudeColorMode;
   selectedHexIdent: string | null;
   onSelectTrack: (hex: string | null) => void;
+  receiverLocation?: { lat: number; lng: number; alt: number | null };
 }
 
 /** Renders H3 density hexagons with zoom-adaptive resolution. */
@@ -237,8 +238,11 @@ function DotsLayer({
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, liveColorMode, historyColorMode, selectedHexIdent, onSelectTrack }: Props) {
+export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, liveColorMode, historyColorMode, selectedHexIdent, onSelectTrack, receiverLocation }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
+  const mapCenter: [number, number] = receiverLocation
+    ? [receiverLocation.lat, receiverLocation.lng]
+    : DEFAULT_CENTER;
 
   // Reorder tracks so selected renders on top (last in array = top layer)
   const orderedTracks = useMemo(
@@ -255,7 +259,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
   return (
     <div className="h-full w-full relative">
       <MapContainer
-        center={DEFAULT_CENTER}
+        center={mapCenter}
         zoom={DEFAULT_ZOOM}
         className="h-full w-full"
         zoomControl={true}
@@ -373,6 +377,22 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         {/* Active track dots — imperative layer for performance */}
         {trajectoryStyle === "dots" && tracks.length > 0 && (
           <DotsLayer tracks={tracks} colorMode={liveColorMode} type="live" selectedHexIdent={selectedHexIdent} />
+        )}
+
+        {/* Receiver location marker */}
+        {receiverLocation && (
+          <CircleMarker
+            center={[receiverLocation.lat, receiverLocation.lng]}
+            radius={8}
+            pathOptions={{ color: "#22d3ee", fillColor: "#22d3ee", fillOpacity: 0.6, weight: 2 }}
+          >
+            <Tooltip direction="top" offset={[0, -10]}>
+              <div className="text-xs">
+                <div className="font-bold">Receiver</div>
+                {receiverLocation.alt != null && <div>Alt: {receiverLocation.alt.toLocaleString()} ft</div>}
+              </div>
+            </Tooltip>
+          </CircleMarker>
         )}
 
         {/* Active tracks — aircraft markers and line trajectories */}

@@ -58,9 +58,14 @@ pub struct AppState {
 }
 
 impl AppState {
+    #[cfg(test)]
     pub fn new(storage: Option<StorageHandle>) -> Self {
+        Self::with_config(Config::default(), storage)
+    }
+
+    pub fn with_config(config: Config, storage: Option<StorageHandle>) -> Self {
         Self {
-            config: Mutex::new(Config::default()),
+            config: Mutex::new(config),
             feed_handle: Mutex::new(None),
             connection_status: Mutex::new(StatusResponse {
                 is_running: false,

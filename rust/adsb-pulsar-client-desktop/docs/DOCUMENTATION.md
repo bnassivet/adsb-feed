@@ -294,13 +294,17 @@ graph TD
    - Yes → Global Context
    - No → Component state
 
-4. **Persist to localStorage?** (for component state)
+4. **Persist to localStorage?** (for component state / UI preferences)
    - Yes → `useLocalStorage` hook
    - No → Plain `useState`
 
 5. **Persist to storage?** (for global context)
    - Yes → Context + localStorage sync in provider
    - No → In-memory context (recommended default)
+
+6. **Backend config that survives app restart?**
+   - Yes → `tauri-plugin-store` (`config.json` in app data dir). Loaded in `lib.rs::setup`, saved via `persist_config()` in `save_config` command.
+   - No → In-memory `Mutex<Config>` (lost on restart)
 
 ---
 

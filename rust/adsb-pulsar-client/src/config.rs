@@ -333,6 +333,21 @@ pub struct Config {
     )]
     #[serde(default = "default_file_path")]
     pub file_path: String,
+
+    /// Receiver antenna latitude (decimal degrees)
+    #[cfg_attr(feature = "cli", arg(skip))]
+    #[serde(default)]
+    pub receiver_latitude: Option<f64>,
+
+    /// Receiver antenna longitude (decimal degrees)
+    #[cfg_attr(feature = "cli", arg(skip))]
+    #[serde(default)]
+    pub receiver_longitude: Option<f64>,
+
+    /// Receiver antenna altitude (feet, for consistency with aircraft altitudes)
+    #[cfg_attr(feature = "cli", arg(skip))]
+    #[serde(default)]
+    pub receiver_altitude: Option<f64>,
 }
 
 // Default value functions for serde
@@ -424,6 +439,9 @@ impl Default for Config {
             dump1090_tz: default_dump1090_tz(),
             forwarders: default_forwarders(),
             file_path: default_file_path(),
+            receiver_latitude: None,
+            receiver_longitude: None,
+            receiver_altitude: None,
         }
     }
 }
@@ -733,6 +751,38 @@ mod tests {
             ForwarderKind::Pulsar
         );
         assert!("unknown".parse::<ForwarderKind>().is_err());
+    }
+
+    #[test]
+    fn test_receiver_location_defaults_to_none() {
+        let config = Config::default();
+        assert_eq!(config.receiver_latitude, None);
+        assert_eq!(config.receiver_longitude, None);
+        assert_eq!(config.receiver_altitude, None);
+    }
+
+    #[test]
+    fn test_receiver_location_serde_roundtrip() {
+        let config = Config {
+            receiver_latitude: Some(45.5),
+            receiver_longitude: Some(-73.6),
+            receiver_altitude: Some(100.0),
+            ..Config::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.receiver_latitude, Some(45.5));
+        assert_eq!(deserialized.receiver_longitude, Some(-73.6));
+        assert_eq!(deserialized.receiver_altitude, Some(100.0));
+    }
+
+    #[test]
+    fn test_receiver_location_deserializes_none_when_missing() {
+        let json = serde_json::json!({ "source_id": "test" });
+        let config: Config = serde_json::from_value(json).unwrap();
+        assert_eq!(config.receiver_latitude, None);
+        assert_eq!(config.receiver_longitude, None);
+        assert_eq!(config.receiver_altitude, None);
     }
 
     #[test]

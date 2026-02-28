@@ -14,10 +14,10 @@ import { useSimulatedTracks } from "@/hooks/useSimulatedTracks";
 import { useMetrics } from "@/hooks/useMetrics";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
-import { startFeed, stopFeed } from "@/lib/commands";
+import { startFeed, stopFeed, getConfig } from "@/lib/commands";
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
 import { DEFAULT_FILTERS } from "@/lib/types";
-import type { Filters, DensityMetric, AltitudeColorMode } from "@/lib/types";
+import type { Config, Filters, DensityMetric, AltitudeColorMode } from "@/lib/types";
 import Link from "next/link";
 
 const MIN_TABLE_HEIGHT = 150;
@@ -51,6 +51,17 @@ export default function Dashboard() {
   const [dbHistoryFloatW, setDbHistoryFloatW] = useLocalStorage<number>("adsb-dbhistory-float-w", 400);
   const [dbHistoryFloatH, setDbHistoryFloatH] = useLocalStorage<number>("adsb-dbhistory-float-h", 600);
   const [showDbHistory, setShowDbHistory] = useLocalStorage<boolean>("adsb-show-dbhistory", true);
+
+  const [appConfig, setAppConfig] = useState<Config | null>(null);
+  useEffect(() => {
+    getConfig().then(setAppConfig).catch(() => {});
+  }, []);
+  const receiverLocation = useMemo(() => {
+    if (appConfig?.receiver_latitude != null && appConfig?.receiver_longitude != null) {
+      return { lat: appConfig.receiver_latitude, lng: appConfig.receiver_longitude, alt: appConfig.receiver_altitude };
+    }
+    return undefined;
+  }, [appConfig]);
 
   const [selectedHexIdent, setSelectedHexIdent] = useState<string | null>(null);
 
@@ -299,7 +310,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <Map tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} dbHistoryTracks={visibleDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} />
+              <Map tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} dbHistoryTracks={visibleDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} receiverLocation={receiverLocation} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel

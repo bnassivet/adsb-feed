@@ -14,6 +14,7 @@
 11. [GeoJSON Export/Import](#geojson-exportimport)
 12. [Imported Tracks Selection](#imported-tracks-selection)
 13. [Simulated Flights (Demo Mode)](#simulated-flights-demo-mode)
+14. [Config Persistence & Receiver Location](#config-persistence--receiver-location)
 
 ---
 
@@ -157,6 +158,7 @@ The frontend uses **Next.js App Router** with:
 - **Static Site Generation (SSG)**: Output to `out/` directory for Tauri
 - **Client-Side Rendering (CSR)**: All interactivity happens in the Tauri webview
 - **No Server-Side Rendering**: App runs entirely offline
+- **`trailingSlash: true`**: Required for Tauri static file serving — generates `settings/index.html` instead of `settings.html`, allowing Tauri's webview to resolve `/settings/` correctly for both client-side navigation and hard reloads
 
 ### Directory Structure
 
@@ -1214,10 +1216,16 @@ graph TD
 **Responsibilities**:
 - Initialize `tracing` logger (configurable via `RUST_LOG` env var)
 - Register Tauri plugins:
-  - `tauri-plugin-store`: Persistent config storage
+  - `tauri-plugin-store`: Persistent config storage (backed by `config.json` in app data dir)
   - `tauri-plugin-shell`: Shell command execution
+- Load persisted config from Tauri store on startup (falls back to `Config::default()`)
+- Initialize DuckDB storage (non-fatal)
 - Manage `AppState` (shared state across commands)
 - Register Tauri command handlers
+
+**Config Persistence Functions**:
+- `load_config(app)`: Reads `config.json` store, deserializes to `Config`. Missing fields (e.g., after an upgrade) default to `None`/default via `#[serde(default)]`.
+- `persist_config(app, config)`: Serializes `Config` to `config.json` store and calls `store.save()` to flush to disk. Called by `save_config` command.
 
 **Command Handlers Registered**:
 ```rust
@@ -1288,10 +1296,11 @@ The `storage: Option<StorageHandle>` is stored in `AppState`. When `None`, all h
 ##### `get_config(state: State<AppState>) -> Result<Config, String>`
 - Returns current configuration
 
-##### `save_config(config: Config, state: State<AppState>) -> Result<(), String>`
-- Validates configuration
+##### `save_config(app: AppHandle, config: Config, state: State<AppState>) -> Result<(), String>`
 - Checks if feed is running (prevents config changes while running)
-- Saves new configuration to state
+- Validates configuration
+- Persists config to Tauri store (`config.json`) on disk via `persist_config()`
+- Updates in-memory `Mutex<Config>` state
 
 ##### `validate_config(config: Config) -> Result<(), String>`
 - Validates configuration without saving
@@ -1570,7 +1579,7 @@ sequenceDiagram
 **Concurrency**: `Mutex` for thread-safe access from command handlers
 
 **State Fields**:
-- `config: Mutex<Config>`: Current configuration (loaded from tauri-plugin-store)
+- `config: Mutex<Config>`: Current configuration (loaded from `config.json` Tauri store on startup; saved back on `save_config`)
 - `feed_handle: Mutex<Option<FeedHandle>>`: Handle to running feed (None when stopped)
 - `connection_status: Mutex<StatusResponse>`: Current connection status
 - `storage: Option<StorageHandle>`: DuckDB handle (None if init failed); set once at startup, never changes
@@ -2711,6 +2720,49 @@ The application includes a built-in simulation mode that animates 20 aircraft al
 
 ---
 
+## Config Persistence & Receiver Location
+
+### Config Persistence
+
+The application persists the full `Config` struct across restarts using `tauri-plugin-store`.
+
+**Store file**: `config.json` in the Tauri app data directory (e.g., `~/Library/Application Support/com.adsb.aircraft-tracker/config.json` on macOS).
+
+**Lifecycle**:
+1. **Startup** (`lib.rs::setup`): `load_config()` reads the store. If the file exists and deserializes successfully, that config is used. Otherwise, `Config::default()` is used. Missing fields (e.g., after an app upgrade adds new config fields) fall back to their serde defaults (`None` for `Option<T>`, type default for others).
+2. **Save** (`commands::save_config`): Validates the config, serializes to `serde_json::Value`, writes to the store, and calls `store.save()` to flush to disk. Then updates the in-memory `Mutex<Config>`.
+3. **No auto-save**: Config is only persisted when the user explicitly clicks "Save" in the Settings page.
+
+**Backward compatibility**: All `Config` fields use `#[serde(default)]` or `#[serde(default = "fn")]`, so old store files (missing new fields) deserialize cleanly.
+
+### Receiver Location
+
+The `Config` struct includes three optional fields for the receiver's physical location:
+
+| Field | Rust Type | TypeScript Type | Default |
+|-------|-----------|-----------------|---------|
+| `receiver_latitude` | `Option<f64>` | `number \| null` | `None` / `null` |
+| `receiver_longitude` | `Option<f64>` | `number \| null` | `None` / `null` |
+| `receiver_altitude` | `Option<f64>` | `number \| null` | `None` / `null` (feet) |
+
+**Settings page** (`src/app/settings/page.tsx`): A "Receiver Location" section between "Connection" and "Pulsar" with latitude, longitude, and altitude fields. Empty inputs map to `null` on save.
+
+**Map integration** (`src/components/MapInner.tsx`):
+- If `receiver_latitude` and `receiver_longitude` are both set, the map uses them as the initial center (replacing the hardcoded Montreal default).
+- A cyan `CircleMarker` (`#22d3ee`, 8px radius) marks the receiver location with a tooltip showing "Receiver" and altitude if set.
+- If no receiver location is configured, the map falls back to `DEFAULT_CENTER` (`[45.5, -73.6]`).
+
+**Data flow**: Dashboard (`page.tsx`) loads config on mount via `getConfig()`, derives a `receiverLocation` object, and passes it through `Map.tsx` → `MapInner.tsx`.
+
+### Design Decisions
+
+- **`Option<f64>` / `number | null`**: Backward-compatible — old configs without these fields deserialize to `None`/`null`. No validation needed (any float is a valid coordinate).
+- **`#[cfg_attr(feature = "cli", arg(skip))]`**: These fields are hidden from the CLI since they're only meaningful in the desktop app.
+- **`MapContainer` center is initial-only**: Leaflet's `center` prop only affects the first render. After that, user panning takes over, so the receiver location sets the starting view without fighting user interaction.
+- **Altitude in feet**: Consistent with SBS-1 aircraft altitude units used throughout the app.
+
+---
+
 ## Conclusion
 
 The ADS-B Aircraft Tracker desktop application demonstrates a modern, performant architecture:
@@ -2728,4 +2780,4 @@ This design prioritizes developer experience (hot reload, TypeScript, TDD), user
 
 ---
 
-*Last updated: February 2026 — Added `adsb-data-engine` workspace crate (DuckDB persistent history), dual history system, 5 historical query Tauri commands (`query_bbox`, `get_trajectory`, `get_aircraft_summary`, `get_storage_stats`, `get_time_distribution`), and TypeScript wrappers. Promoted DB History from embedded `HistoryBrowser` into a first-class `DBHistoryPanel` (docked/floating, recharts analytics, `dbHistory` cyan track category). Added configurable source timezone (`Config.dump1090_tz`, IANA-aware, UTC-only storage) and display timezone preference (`useDisplayTz` hook, localStorage-backed Local/UTC/Source toggle in Settings).*
+*Last updated: February 2026 — Added config persistence via `tauri-plugin-store` (`config.json` in app data dir, loaded on startup, saved on user action). Added receiver location fields (`receiver_latitude`, `receiver_longitude`, `receiver_altitude`) to `Config` with Settings UI, map center override, and cyan receiver marker. Added `trailingSlash: true` to `next.config.ts` for correct Tauri static file navigation. Previous: `adsb-data-engine` workspace crate (DuckDB persistent history), dual history system, 5 historical query Tauri commands, DB History panel (docked/floating, recharts analytics), configurable source/display timezone.*

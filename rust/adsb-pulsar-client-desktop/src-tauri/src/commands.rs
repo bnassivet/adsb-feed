@@ -103,8 +103,13 @@ pub fn get_config(state: State<'_, AppState>) -> Result<Config, String> {
 }
 
 /// Saves a new configuration. Cannot be changed while running.
+/// Persists to the Tauri store for restoration on next launch.
 #[tauri::command]
-pub fn save_config(config: Config, state: State<'_, AppState>) -> Result<(), String> {
+pub fn save_config(
+    app: tauri::AppHandle,
+    config: Config,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     // Prevent config changes while running
     {
         let handle = state.feed_handle.lock().map_err(|e| e.to_string())?;
@@ -118,7 +123,10 @@ pub fn save_config(config: Config, state: State<'_, AppState>) -> Result<(), Str
     // Validate
     config.validate().map_err(|e| e.to_string())?;
 
-    // Store
+    // Persist to disk
+    crate::persist_config(&app, &config)?;
+
+    // Update in-memory state
     let mut current = state.config.lock().map_err(|e| e.to_string())?;
     *current = config;
 

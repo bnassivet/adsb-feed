@@ -85,6 +85,9 @@ export interface Config {
   log_level: string;
   connection_mode: string;
   dump1090_tz: string;
+  receiver_latitude: number | null;
+  receiver_longitude: number | null;
+  receiver_altitude: number | null;
 }
 
 /** Filter state for the UI. */

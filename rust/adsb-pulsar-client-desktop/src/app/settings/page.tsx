@@ -108,6 +108,45 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          {/* Receiver Location */}
+          <section className="bg-slate-900 rounded-lg p-4 border border-slate-800">
+            <h2 className="text-sm font-semibold text-slate-300 mb-4">
+              Receiver Location
+            </h2>
+            <div className="grid grid-cols-3 gap-4">
+              <Field
+                label="Latitude"
+                type="number"
+                value={config.receiver_latitude != null ? String(config.receiver_latitude) : ""}
+                onChange={(v) => {
+                  const n = parseFloat(v);
+                  update({ receiver_latitude: isNaN(n) ? null : n });
+                }}
+              />
+              <Field
+                label="Longitude"
+                type="number"
+                value={config.receiver_longitude != null ? String(config.receiver_longitude) : ""}
+                onChange={(v) => {
+                  const n = parseFloat(v);
+                  update({ receiver_longitude: isNaN(n) ? null : n });
+                }}
+              />
+              <Field
+                label="Altitude (ft)"
+                type="number"
+                value={config.receiver_altitude != null ? String(config.receiver_altitude) : ""}
+                onChange={(v) => {
+                  const n = parseFloat(v);
+                  update({ receiver_altitude: isNaN(n) ? null : n });
+                }}
+              />
+            </div>
+            <p className="text-xs text-slate-500 mt-2">
+              Physical location of your ADS-B receiver antenna. Used as map center and for distance calculations.
+            </p>
+          </section>
+
           <section className="bg-slate-900 rounded-lg p-4 border border-slate-800">
             <h2 className="text-sm font-semibold text-slate-300 mb-4">
               Pulsar
