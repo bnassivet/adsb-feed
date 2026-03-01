@@ -4,6 +4,8 @@ import type {
   AircraftSummary,
   BboxQuery,
   Config,
+  DetectionRangeQuery,
+  DetectionRangeSector,
   MetricsSnapshot,
   PositionRecord,
   StatusResponse,
@@ -73,4 +75,10 @@ export async function getTimeDistribution(
 
 export async function getStorageStats(): Promise<StorageStats> {
   return invoke("get_storage_stats");
+}
+
+export async function getDetectionRange(
+  query: DetectionRangeQuery
+): Promise<DetectionRangeSector[]> {
+  return invoke("get_detection_range", { query });
 }

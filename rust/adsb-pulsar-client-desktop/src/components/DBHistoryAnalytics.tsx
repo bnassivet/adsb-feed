@@ -1,20 +1,22 @@
 "use client";
 import { useMemo } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
-import type { AircraftSummary, TimeDistributionBucket } from "@/lib/types";
+import type { AircraftSummary, DetectionRangeSector, TimeDistributionBucket } from "@/lib/types";
 import {
   buildAltitudeBins,
   computeDbHistorySummary,
   formatTimeChartData,
 } from "@/lib/db-history-analytics";
+import { DetectionRadar } from "./DetectionRadar";
 
 interface Props {
   summaries: AircraftSummary[];
   timeBuckets: TimeDistributionBucket[];
   tzName?: string;
+  detectionSectors?: DetectionRangeSector[];
 }
 
-export function DBHistoryAnalytics({ summaries, timeBuckets, tzName }: Props) {
+export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSectors }: Props) {
   const summary = useMemo(() => computeDbHistorySummary(summaries), [summaries]);
   const altBins = useMemo(() => buildAltitudeBins(summaries), [summaries]);
   const timeData = useMemo(() => formatTimeChartData(timeBuckets, tzName), [timeBuckets, tzName]);
@@ -107,6 +109,11 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName }: Props) {
               </BarChart>
             </ResponsiveContainer>
           </div>
+        )}
+
+        {/* Detection range radar */}
+        {detectionSectors && detectionSectors.some((s) => s.position_count > 0) && (
+          <DetectionRadar sectors={detectionSectors} />
         )}
       </div>
     </details>

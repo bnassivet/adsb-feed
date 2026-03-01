@@ -6,6 +6,7 @@
 //! - Domain types for positions, queries, and statistics (`types`)
 
 pub mod error;
+pub mod geo;
 pub mod sbs_parser;
 pub mod storage;
 pub mod types;
@@ -15,6 +16,6 @@ pub use error::StorageError;
 pub use sbs_parser::{parse_sbs_message, AircraftPosition};
 pub use storage::StorageHandle;
 pub use types::{
-    AircraftSummary, BboxQuery, PositionRecord, StorageConfig, StorageStats,
-    TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
+    AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, PositionRecord,
+    StorageConfig, StorageStats, TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
 };

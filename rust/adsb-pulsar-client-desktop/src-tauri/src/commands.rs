@@ -5,8 +5,8 @@
 use crate::bridge;
 use crate::state::{AppState, ConnectionStatus, StatusResponse};
 use adsb_data_engine::{
-    AircraftSummary, BboxQuery, PositionRecord, StorageStats, TimeDistributionBucket,
-    TimeDistributionQuery, TrajectoryQuery,
+    AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, PositionRecord,
+    StorageStats, TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
 };
 use adsb_pulsar_client::{Config, MetricsSnapshot};
 use tauri::State;
@@ -211,4 +211,20 @@ pub async fn get_storage_stats(state: State<'_, AppState>) -> Result<StorageStat
         .as_ref()
         .ok_or_else(|| "Storage not available".to_string())?;
     storage.get_stats().await.map_err(|e| e.to_string())
+}
+
+/// Get detection range by 10° azimuth sectors.
+#[tauri::command]
+pub async fn get_detection_range(
+    query: DetectionRangeQuery,
+    state: State<'_, AppState>,
+) -> Result<Vec<DetectionRangeSector>, String> {
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .get_detection_range(query)
+        .await
+        .map_err(|e| e.to_string())
 }

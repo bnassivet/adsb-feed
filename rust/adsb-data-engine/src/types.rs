@@ -74,6 +74,26 @@ pub struct TimeDistributionQuery {
     pub num_buckets: u32,
 }
 
+/// Query parameters for detection range analysis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetectionRangeQuery {
+    pub receiver_lat: f64,
+    pub receiver_lon: f64,
+    pub start_ms: Option<i64>,
+    pub end_ms: Option<i64>,
+}
+
+/// A single 10° azimuth sector in the detection range result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetectionRangeSector {
+    /// Center bearing of this sector: 0, 10, 20, ..., 350.
+    pub bearing_deg: u16,
+    /// Maximum distance detected in this sector (nautical miles).
+    pub max_distance_nm: f64,
+    /// Number of positions observed in this sector.
+    pub position_count: u64,
+}
+
 /// Configuration for opening a storage handle.
 #[derive(Debug, Clone)]
 pub struct StorageConfig {

@@ -1147,9 +1147,10 @@ export async function queryBbox(query: BboxQuery): Promise<PositionRecord[]> {
 ```
 ../adsb-data-engine/src/  # Workspace crate — shared by Tauri app
 ├── lib.rs                # Re-exports public API
+├── geo.rs                # Pure geodesic math (haversine, bearing, sector mapping)
 ├── sbs_parser.rs         # SBS-1 message parser (22-field CSV)
-├── storage.rs            # DuckDB StorageHandle (CRUD + queries)
-├── types.rs              # PositionRecord, BboxQuery, TrajectoryQuery, AircraftSummary, StorageStats
+├── storage.rs            # DuckDB StorageHandle (CRUD + queries + detection range)
+├── types.rs              # PositionRecord, BboxQuery, TrajectoryQuery, AircraftSummary, StorageStats, DetectionRange*
 └── error.rs              # StorageError types
 
 src-tauri/
@@ -1242,6 +1243,7 @@ graph TD
     commands::get_trajectory,
     commands::get_aircraft_summary,
     commands::get_storage_stats,
+    commands::get_detection_range,
 ])
 ```
 
@@ -2288,6 +2290,7 @@ CREATE INDEX idx_positions_hex_ts ON positions(hex_ident, timestamp_ms);
 | `get_aircraft_summary` | `start_ms?`, `end_ms?` | `Vec<AircraftSummary>` | Stats for all aircraft seen |
 | `get_storage_stats` | — | `StorageStats` | Row count, DB size, age |
 | `get_time_distribution` | `TimeDistributionQuery` | `Vec<TimeDistributionBucket>` | Bucketed message counts over time range |
+| `get_detection_range` | `DetectionRangeQuery` | `Vec<DetectionRangeSector>` | Max detection distance per 10-degree azimuth sector |
 | `prune` | `older_than_ms` | deleted row count | Delete old data |
 
 ### Data Flow
@@ -2361,8 +2364,9 @@ Isolating parser + storage in a shared workspace crate lets the data engine be t
 - Existing rows are not retroactively corrected when `dump1090_tz` changes
 
 **Files**:
-- `adsb-data-engine/src/storage.rs` — `StorageHandle`, `StorageConfig`, all query methods
-- `adsb-data-engine/src/types.rs` — `PositionRecord`, `BboxQuery`, `TrajectoryQuery`, `AircraftSummary`, `StorageStats`, `TimeDistributionBucket`, `TimeDistributionQuery`
+- `adsb-data-engine/src/geo.rs` — Pure geodesic math (haversine, bearing, sector mapping) for test validation
+- `adsb-data-engine/src/storage.rs` — `StorageHandle`, `StorageConfig`, all query methods including detection range
+- `adsb-data-engine/src/types.rs` — `PositionRecord`, `BboxQuery`, `TrajectoryQuery`, `AircraftSummary`, `StorageStats`, `TimeDistributionBucket`, `TimeDistributionQuery`, `DetectionRangeQuery`, `DetectionRangeSector`
 - `src-tauri/src/lib.rs` — `init_storage()`, storage injected into `AppState`
 - `src-tauri/src/bridge.rs` — `persist_batch()` called on every 500ms flush
 - `src-tauri/src/commands.rs` — five historical query command handlers (including `get_time_distribution`)
@@ -2408,18 +2412,29 @@ Loaded trajectories go into the `dbHistory` track category (4th category in `Air
 - **Table section**: Dedicated "DB History" collapsible section (cyan-900/20 background)
 - **Selection**: `isDbHistorySelection` drives a cyan "DB HISTORY" badge in `AircraftDetailsPanel`
 
-### Analytics (recharts)
+### Analytics (recharts + custom SVG)
 
-When "Browse" runs, `getAircraftSummary` and `getTimeDistribution` are fetched in parallel. The analytics are displayed in a collapsible `<details>` section:
+When "Browse" runs, `getAircraftSummary`, `getTimeDistribution`, and `getDetectionRange` (if receiver location is configured) are fetched in parallel. The analytics are displayed in a collapsible `<details>` section:
 
 1. **Summary stats**: Total tracks, total positions, average duration (plain flex, no charting library)
 2. **Time distribution**: `<BarChart>` with cyan bars, ~120px tall, labels formatted as HH:MM in the user's display timezone
 3. **Altitude histogram**: `<BarChart>` with indigo bars, ~100px tall, 10 bins of 5000ft each (0–50k ft)
+4. **Detection range radar**: Custom SVG polar chart showing max detection distance by 10-degree azimuth sector. Only shown when receiver location is configured and sectors have data.
 
 Pure utility functions in `src/lib/db-history-analytics.ts`:
 - `buildAltitudeBins(summaries)` — 10 bins, places each aircraft by `max_altitude`
 - `computeDbHistorySummary(summaries)` — totals + weighted average duration
 - `formatTimeChartData(buckets, tzName?)` — formats bucket timestamps as HH:MM labels
+
+Pure SVG geometry functions in `src/lib/detection-radar.ts`:
+- `computeMaxRange(sectors)` — max distance across all sectors (min 1)
+- `polarToCartesian(bearingDeg, normalizedRadius, center, maxRadius)` — aviation convention (0 = North/up)
+- `buildRadarPoints(sectors, config?)` — 36 cartesian points from sector data
+- `buildRadarPath(points)` — closed SVG path string
+- `buildDistanceRings(maxRange, config?)` — concentric NM rings
+- `buildCardinalLabels(config?)` — N, E, S, W label positions
+
+The detection range computation runs entirely in DuckDB (haversine + bearing trig in SQL), returning only up to 36 pre-bucketed sectors regardless of dataset size. The Rust `geo` module provides reference implementations for test validation.
 
 ### Design Decisions
 
@@ -2439,8 +2454,10 @@ Tauri's WKWebView on macOS has a bug where controlled React inputs (`value + onC
 
 - `src/components/DBHistoryPanel.tsx` — Panel shell (docked/floating)
 - `src/components/DBHistoryContent.tsx` — Inner content (stats, browse, load, clear)
-- `src/components/DBHistoryAnalytics.tsx` — recharts analytics (time distribution, altitude histogram)
+- `src/components/DBHistoryAnalytics.tsx` — recharts analytics (time distribution, altitude histogram) + detection radar
+- `src/components/DetectionRadar.tsx` — Custom SVG polar radar chart component
 - `src/lib/db-history-analytics.ts` — Pure analytics utilities
+- `src/lib/detection-radar.ts` — Pure SVG geometry utilities for radar chart
 - `src/contexts/AircraftTrackingContext.tsx` — `dbHistoryRef`, `loadDbHistoryTracks`, `clearDbHistory`
 - `src/hooks/useAircraftTracks.ts` — Exposes `dbHistory` array (unfiltered)
 - `src/app/page.tsx` — 10 localStorage state variables, header toggle, dual-mode rendering

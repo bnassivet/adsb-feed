@@ -7,8 +7,8 @@
 use crate::error::StorageError;
 use crate::sbs_parser::AircraftPosition;
 use crate::types::{
-    AircraftSummary, BboxQuery, PositionRecord, StorageConfig, StorageStats,
-    TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
+    AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, PositionRecord,
+    StorageConfig, StorageStats, TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
 };
 use duckdb::{params, Connection};
 use std::sync::{Arc, Mutex};
@@ -427,6 +427,84 @@ impl StorageHandle {
         Ok(rows)
     }
 
+    /// Compute detection range by 10° azimuth sectors (synchronous).
+    ///
+    /// All trig math runs inside DuckDB's vectorized engine. Only ≤36 result
+    /// rows cross the Mutex boundary regardless of dataset size.
+    /// Always returns exactly 36 sectors (filling missing ones with zero).
+    pub fn get_detection_range_sync(
+        &self,
+        query: DetectionRangeQuery,
+    ) -> Result<Vec<DetectionRangeSector>, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let sql = r#"
+            SELECT sector, MAX(distance_nm) AS max_distance_nm, COUNT(*) AS position_count
+            FROM (
+              SELECT
+                CAST(FLOOR(DEGREES(ATAN2(
+                  SIN(RADIANS(longitude - ?)) * COS(RADIANS(latitude)),
+                  COS(RADIANS(?)) * SIN(RADIANS(latitude))
+                    - SIN(RADIANS(?)) * COS(RADIANS(latitude)) * COS(RADIANS(longitude - ?))
+                )) + 365) AS INTEGER) % 360 / 10 AS sector,
+                2 * 3440.065 * ASIN(SQRT(
+                  POWER(SIN(RADIANS((latitude - ?) / 2)), 2) +
+                  COS(RADIANS(?)) * COS(RADIANS(latitude)) * POWER(SIN(RADIANS((longitude - ?) / 2)), 2)
+                )) AS distance_nm
+              FROM positions
+              WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+                AND timestamp_ms >= ? AND timestamp_ms <= ?
+            ) sub GROUP BY sector ORDER BY sector
+        "#;
+
+        let start_ms = query.start_ms.unwrap_or(0);
+        let end_ms = query.end_ms.unwrap_or(i64::MAX);
+
+        let mut stmt = storage.conn.prepare(sql)?;
+        let rows = stmt
+            .query_map(
+                params![
+                    query.receiver_lon, // bearing: longitude - ?
+                    query.receiver_lat, // bearing: COS(RADIANS(?))
+                    query.receiver_lat, // bearing: SIN(RADIANS(?))
+                    query.receiver_lon, // bearing: COS(RADIANS(longitude - ?))
+                    query.receiver_lat, // haversine: (latitude - ?) / 2
+                    query.receiver_lat, // haversine: COS(RADIANS(?))
+                    query.receiver_lon, // haversine: (longitude - ?) / 2
+                    start_ms,
+                    end_ms,
+                ],
+                |row| {
+                    let sector: i32 = row.get(0)?;
+                    let max_distance_nm: f64 = row.get(1)?;
+                    let position_count: i64 = row.get(2)?;
+                    Ok((sector, max_distance_nm, position_count))
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Build full 36-sector result, filling missing sectors with zero.
+        let mut sectors: Vec<DetectionRangeSector> = (0..36)
+            .map(|i| DetectionRangeSector {
+                bearing_deg: (i * 10) as u16,
+                max_distance_nm: 0.0,
+                position_count: 0,
+            })
+            .collect();
+
+        for (sector_idx, max_dist, count) in rows {
+            if (0..36).contains(&sector_idx) {
+                sectors[sector_idx as usize].max_distance_nm = max_dist;
+                sectors[sector_idx as usize].position_count = count as u64;
+            }
+        }
+
+        Ok(sectors)
+    }
+
     // --- Async wrappers (Step 3) ---
 
     /// Batch insert parsed positions (async via spawn_blocking).
@@ -495,6 +573,17 @@ impl StorageHandle {
     ) -> Result<Vec<TimeDistributionBucket>, StorageError> {
         let handle = self.clone();
         tokio::task::spawn_blocking(move || handle.get_time_distribution_sync(query))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Get detection range by azimuth sector (async via spawn_blocking).
+    pub async fn get_detection_range(
+        &self,
+        query: DetectionRangeQuery,
+    ) -> Result<Vec<DetectionRangeSector>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.get_detection_range_sync(query))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
@@ -1106,5 +1195,214 @@ mod tests {
 
         let deleted = handle.prune(cutoff).await.unwrap();
         assert_eq!(deleted, 1);
+    }
+
+    // --- Detection range tests ---
+
+    #[test]
+    fn test_detection_range_empty_db() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let sectors = handle
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                receiver_lat: 45.5,
+                receiver_lon: -73.5,
+                start_ms: Some(0),
+                end_ms: Some(i64::MAX),
+            })
+            .unwrap();
+
+        assert_eq!(sectors.len(), 36);
+        assert!(sectors.iter().all(|s| s.max_distance_nm == 0.0));
+        assert!(sectors.iter().all(|s| s.position_count == 0));
+    }
+
+    #[test]
+    fn test_detection_range_always_36_sectors() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        // Insert a single position
+        let positions = vec![sample_position(
+            "A1B2C3",
+            Some(46.0),
+            Some(-73.5),
+            "2024/01/15 10:30:00.000",
+        )];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let sectors = handle
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                receiver_lat: 45.5,
+                receiver_lon: -73.5,
+                start_ms: None,
+                end_ms: None,
+            })
+            .unwrap();
+
+        assert_eq!(sectors.len(), 36);
+        // Bearings should be 0, 10, 20, ..., 350
+        for (i, s) in sectors.iter().enumerate() {
+            assert_eq!(s.bearing_deg, (i * 10) as u16);
+        }
+    }
+
+    #[test]
+    fn test_detection_range_single_position_validates_against_geo() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let rx_lat = 45.5;
+        let rx_lon = -73.5;
+        let ac_lat = 46.0;
+        let ac_lon = -73.0;
+
+        let positions = vec![sample_position(
+            "A1B2C3",
+            Some(ac_lat),
+            Some(ac_lon),
+            "2024/01/15 10:30:00.000",
+        )];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let sectors = handle
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                receiver_lat: rx_lat,
+                receiver_lon: rx_lon,
+                start_ms: None,
+                end_ms: None,
+            })
+            .unwrap();
+
+        // Validate against reference geo functions
+        let expected_dist = crate::geo::haversine_nm(rx_lat, rx_lon, ac_lat, ac_lon);
+        let expected_bearing = crate::geo::initial_bearing_deg(rx_lat, rx_lon, ac_lat, ac_lon);
+        let expected_sector = crate::geo::bearing_to_sector(expected_bearing);
+
+        // Exactly one sector should have data
+        let non_zero: Vec<_> = sectors.iter().filter(|s| s.position_count > 0).collect();
+        assert_eq!(non_zero.len(), 1, "Expected exactly 1 non-zero sector");
+        assert_eq!(non_zero[0].bearing_deg, (expected_sector * 10) as u16);
+        assert_eq!(non_zero[0].position_count, 1);
+        // DuckDB and Rust haversine should agree within ~0.1 NM
+        assert!(
+            (non_zero[0].max_distance_nm - expected_dist).abs() < 0.1,
+            "DuckDB dist {} vs Rust dist {}: diff > 0.1 NM",
+            non_zero[0].max_distance_nm,
+            expected_dist
+        );
+    }
+
+    #[test]
+    fn test_detection_range_max_per_sector() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let rx_lat = 45.0;
+        let rx_lon = -73.0;
+
+        // Two positions due north at different distances
+        let positions = vec![
+            sample_position("A1", Some(45.5), Some(-73.0), "2024/01/15 10:00:00.000"),
+            sample_position("A2", Some(46.5), Some(-73.0), "2024/01/15 10:00:01.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let sectors = handle
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                receiver_lat: rx_lat,
+                receiver_lon: rx_lon,
+                start_ms: None,
+                end_ms: None,
+            })
+            .unwrap();
+
+        // Both should be in the same sector (roughly north)
+        let north_sectors: Vec<_> = sectors.iter().filter(|s| s.position_count > 0).collect();
+        assert_eq!(
+            north_sectors.len(),
+            1,
+            "Both positions should be in same sector"
+        );
+        assert_eq!(north_sectors[0].position_count, 2);
+
+        // Max distance should be the farther one
+        let far_dist = crate::geo::haversine_nm(rx_lat, rx_lon, 46.5, -73.0);
+        assert!(
+            (north_sectors[0].max_distance_nm - far_dist).abs() < 0.1,
+            "Max distance should be the farther position"
+        );
+    }
+
+    #[test]
+    fn test_detection_range_time_window_filtering() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        let positions = vec![
+            sample_position("OLD", Some(46.0), Some(-73.0), "2024/01/15 10:00:00.000"),
+            sample_position("NEW", Some(46.0), Some(-73.0), "2024/01/15 12:00:00.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        // Query only second half of the time range
+        let mid = parse_timestamp_to_ms("2024/01/15 11:00:00.000", "UTC");
+        let end = parse_timestamp_to_ms("2024/01/15 13:00:00.000", "UTC");
+
+        let sectors = handle
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                receiver_lat: 45.0,
+                receiver_lon: -73.0,
+                start_ms: Some(mid),
+                end_ms: Some(end),
+            })
+            .unwrap();
+
+        let total_count: u64 = sectors.iter().map(|s| s.position_count).sum();
+        assert_eq!(total_count, 1, "Only the NEW position should be included");
+    }
+
+    #[test]
+    fn test_detection_range_null_coords_excluded() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        let positions = vec![
+            sample_position("A1", Some(46.0), Some(-73.0), "2024/01/15 10:00:00.000"),
+            sample_position("A2", None, None, "2024/01/15 10:00:01.000"), // no coords
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let sectors = handle
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                receiver_lat: 45.0,
+                receiver_lon: -73.0,
+                start_ms: None,
+                end_ms: None,
+            })
+            .unwrap();
+
+        let total_count: u64 = sectors.iter().map(|s| s.position_count).sum();
+        assert_eq!(total_count, 1, "Null-coord position should be excluded");
+    }
+
+    #[tokio::test]
+    async fn test_detection_range_async() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let positions = vec![sample_position(
+            "A1",
+            Some(46.0),
+            Some(-73.0),
+            "2024/01/15 10:00:00.000",
+        )];
+        handle
+            .insert_batch(positions, "UTC".to_string())
+            .await
+            .unwrap();
+
+        let sectors = handle
+            .get_detection_range(crate::types::DetectionRangeQuery {
+                receiver_lat: 45.0,
+                receiver_lon: -73.0,
+                start_ms: None,
+                end_ms: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(sectors.len(), 36);
+        let total: u64 = sectors.iter().map(|s| s.position_count).sum();
+        assert_eq!(total, 1);
     }
 }

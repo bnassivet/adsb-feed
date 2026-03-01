@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { getStorageStats, getAircraftSummary, getTrajectory, getTimeDistribution } from "@/lib/commands";
+import { getStorageStats, getAircraftSummary, getTrajectory, getTimeDistribution, getDetectionRange } from "@/lib/commands";
 import { recordsToTrack } from "@/lib/history-convert";
-import type { AircraftSummary, AircraftTrack, StorageStats, TimeDistributionBucket } from "@/lib/types";
+import type { AircraftSummary, AircraftTrack, DetectionRangeSector, StorageStats, TimeDistributionBucket } from "@/lib/types";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
 import { formatBytes } from "@/lib/format";
 import { DBHistoryAnalytics } from "./DBHistoryAnalytics";
@@ -15,6 +15,9 @@ interface Props {
   onSummariesLoaded?: (summaries: AircraftSummary[]) => void;
   /** Called with time range when browse is triggered (for time distribution query) */
   onBrowse?: (startMs: number, endMs: number) => void;
+  /** Receiver location for detection range analysis. */
+  receiverLat?: number | null;
+  receiverLon?: number | null;
 }
 
 /** Returns a datetime-local string (YYYY-MM-DDTHH:MM) from ms epoch. */
@@ -30,6 +33,8 @@ export function DBHistoryContent({
   dbHistoryCount,
   onSummariesLoaded,
   onBrowse,
+  receiverLat,
+  receiverLon,
 }: Props) {
   const { formatTime, resolvedTzName } = useDisplayTz();
   const [stats, setStats] = useState<StorageStats | null>(null);
@@ -38,6 +43,7 @@ export function DBHistoryContent({
   const [browsing, setBrowsing] = useState(false);
   const [summaries, setSummaries] = useState<AircraftSummary[]>([]);
   const [timeBuckets, setTimeBuckets] = useState<TimeDistributionBucket[]>([]);
+  const [detectionSectors, setDetectionSectors] = useState<DetectionRangeSector[]>([]);
   const [loading, setLoading] = useState(false);
 
   const now = Date.now();
@@ -86,15 +92,33 @@ export function DBHistoryContent({
     const [startMs, endMs] = getTimeRange();
     onBrowse?.(startMs, endMs);
 
-    const [summaryResults, timeResults] = await Promise.all([
+    const hasReceiver = receiverLat != null && receiverLon != null;
+
+    const promises: [
+      Promise<AircraftSummary[] | string>,
+      Promise<TimeDistributionBucket[] | string>,
+      Promise<DetectionRangeSector[] | string>,
+    ] = [
       getAircraftSummary(startMs, endMs),
       getTimeDistribution({ start_ms: startMs, end_ms: endMs, num_buckets: 24 }),
-    ]);
+      hasReceiver
+        ? getDetectionRange({
+            receiver_lat: receiverLat!,
+            receiver_lon: receiverLon!,
+            start_ms: startMs,
+            end_ms: endMs,
+          })
+        : Promise.resolve([]),
+    ];
+
+    const [summaryResults, timeResults, rangeResults] = await Promise.all(promises);
 
     const sums = typeof summaryResults === "string" ? [] : (summaryResults as AircraftSummary[]);
     const buckets = typeof timeResults === "string" ? [] : (timeResults as TimeDistributionBucket[]);
+    const sectors = typeof rangeResults === "string" ? [] : (rangeResults as DetectionRangeSector[]);
     setSummaries(sums);
     setTimeBuckets(buckets);
+    setDetectionSectors(sectors);
     onSummariesLoaded?.(sums);
     setLoading(false);
   }
@@ -244,6 +268,7 @@ export function DBHistoryContent({
               summaries={summaries}
               timeBuckets={timeBuckets}
               tzName={resolvedTzName}
+              detectionSectors={detectionSectors}
             />
           )}
 

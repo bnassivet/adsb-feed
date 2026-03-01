@@ -9,6 +9,7 @@ import {
   getAircraftSummary,
   getTimeDistribution,
   getStorageStats,
+  getDetectionRange,
 } from "../commands";
 import type {
   BboxQuery,
@@ -18,6 +19,8 @@ import type {
   StorageStats,
   TimeDistributionBucket,
   TimeDistributionQuery,
+  DetectionRangeQuery,
+  DetectionRangeSector,
 } from "../types";
 
 const samplePosition: PositionRecord = {
@@ -169,6 +172,39 @@ describe("Historical query commands", () => {
       expect(result.db_size_bytes).toBe(128000);
       expect(result.oldest_timestamp_ms).toBe(1705315800000);
       expect(result.newest_timestamp_ms).toBe(1705316100000);
+    });
+  });
+
+  describe("getDetectionRange", () => {
+    it("sends query params and returns sectors", async () => {
+      const sectors: DetectionRangeSector[] = [
+        { bearing_deg: 0, max_distance_nm: 120.5, position_count: 42 },
+        { bearing_deg: 90, max_distance_nm: 85.2, position_count: 18 },
+      ];
+      mockInvokeResponse("get_detection_range", sectors);
+
+      const query: DetectionRangeQuery = {
+        receiver_lat: 45.5,
+        receiver_lon: -73.5,
+        start_ms: 1705315800000,
+        end_ms: 1705316100000,
+      };
+
+      const result = await getDetectionRange(query);
+      expect(result).toHaveLength(2);
+      expect(result[0].bearing_deg).toBe(0);
+      expect(result[0].max_distance_nm).toBe(120.5);
+      expect(result[0].position_count).toBe(42);
+    });
+
+    it("returns empty array for no data", async () => {
+      mockInvokeResponse("get_detection_range", []);
+
+      const result = await getDetectionRange({
+        receiver_lat: 0,
+        receiver_lon: 0,
+      });
+      expect(result).toEqual([]);
     });
   });
 });

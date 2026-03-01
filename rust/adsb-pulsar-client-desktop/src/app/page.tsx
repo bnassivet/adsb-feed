@@ -353,6 +353,8 @@ export default function Dashboard() {
                   onLoadTracks={loadDbHistoryTracks}
                   onClearTracks={clearDbHistory}
                   dbHistoryCount={dbHistory.length}
+                  receiverLat={receiverLocation?.lat}
+                  receiverLon={receiverLocation?.lng}
                 />
               </DBHistoryPanel>
             )}
@@ -396,6 +398,8 @@ export default function Dashboard() {
             onLoadTracks={loadDbHistoryTracks}
             onClearTracks={clearDbHistory}
             dbHistoryCount={dbHistory.length}
+            receiverLat={receiverLocation?.lat}
+            receiverLon={receiverLocation?.lng}
           />
         </DBHistoryPanel>
       )}

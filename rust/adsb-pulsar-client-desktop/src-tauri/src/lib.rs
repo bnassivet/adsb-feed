@@ -58,6 +58,7 @@ pub fn run() {
             commands::get_aircraft_summary,
             commands::get_time_distribution,
             commands::get_storage_stats,
+            commands::get_detection_range,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

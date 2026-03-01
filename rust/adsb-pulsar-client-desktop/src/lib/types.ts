@@ -178,6 +178,24 @@ export interface TimeDistributionQuery {
   num_buckets: number;
 }
 
+/** Query parameters for detection range analysis. */
+export interface DetectionRangeQuery {
+  receiver_lat: number;
+  receiver_lon: number;
+  start_ms?: number | null;
+  end_ms?: number | null;
+}
+
+/** A single 10° azimuth sector in the detection range result. */
+export interface DetectionRangeSector {
+  /** Center bearing: 0, 10, 20, ..., 350. */
+  bearing_deg: number;
+  /** Maximum distance detected in this sector (nautical miles). */
+  max_distance_nm: number;
+  /** Number of positions observed in this sector. */
+  position_count: number;
+}
+
 /** Storage statistics. */
 export interface StorageStats {
   row_count: number;
