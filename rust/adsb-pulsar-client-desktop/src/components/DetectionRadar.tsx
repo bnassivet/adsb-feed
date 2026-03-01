@@ -1,7 +1,7 @@
 "use client";
-import { useMemo } from "react";
+import { useMemo, useRef, useState, useCallback } from "react";
 import type { DetectionRangeSector } from "@/lib/types";
-import type { RadarMode } from "@/lib/detection-radar";
+import type { RadarMode, SectorWedge } from "@/lib/detection-radar";
 import {
   computeMaxRange,
   buildRadarPoints,
@@ -19,10 +19,37 @@ interface Props {
 const CONFIG = { size: 300, padding: 24 };
 const SECTOR_ANGLE_DEG = 10;
 
+/** Compass direction label for a bearing (e.g. 0→N, 45→NE, 90→E). */
+function bearingToCompass(deg: number): string {
+  const dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+                "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  const idx = Math.round(((deg % 360) + 360) % 360 / 22.5) % 16;
+  return dirs[idx];
+}
+
 export function DetectionRadar({ sectors, mode }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [hovered, setHovered] = useState<SectorWedge | null>(null);
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+
   const maxRange = useMemo(() => computeMaxRange(sectors), [sectors]);
   const rings = useMemo(() => buildDistanceRings(maxRange, CONFIG), [maxRange]);
   const cardinals = useMemo(() => buildCardinalLabels(CONFIG), []);
+
+  const handleWedgeEnter = useCallback((wedge: SectorWedge) => {
+    setHovered(wedge);
+  }, []);
+
+  const handleWedgeMove = useCallback((e: React.MouseEvent) => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (rect) {
+      setMousePos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    }
+  }, []);
+
+  const handleWedgeLeave = useCallback(() => {
+    setHovered(null);
+  }, []);
 
   // Polygon mode data
   const polygonPath = useMemo(() => {
@@ -30,11 +57,11 @@ export function DetectionRadar({ sectors, mode }: Props) {
     return buildRadarPath(buildRadarPoints(sectors, CONFIG));
   }, [sectors, mode]);
 
-  // Polar mode data
-  const wedges = useMemo(() => {
-    if (mode !== "polar") return [];
-    return buildSectorWedges(sectors, CONFIG);
-  }, [sectors, mode]);
+  // Sector wedges (used for rendering in polar mode + hit zones in both modes)
+  const wedges = useMemo(
+    () => buildSectorWedges(sectors, CONFIG),
+    [sectors],
+  );
 
   const center = CONFIG.size / 2;
   const maxRadius = center - CONFIG.padding;
@@ -56,7 +83,7 @@ export function DetectionRadar({ sectors, mode }: Props) {
   }, [mode, center, maxRadius]);
 
   return (
-    <div data-testid="detection-radar">
+    <div data-testid="detection-radar" ref={containerRef} className="relative">
       <svg
         viewBox={`0 0 ${CONFIG.size} ${CONFIG.size}`}
         className="w-full"
@@ -136,10 +163,30 @@ export function DetectionRadar({ sectors, mode }: Props) {
               key={w.bearingDeg}
               d={w.path}
               fill="#06b6d4"
-              fillOpacity={0.35}
+              fillOpacity={hovered?.bearingDeg === w.bearingDeg ? 0.6 : 0.35}
               stroke="#06b6d4"
-              strokeWidth={0.5}
+              strokeWidth={hovered?.bearingDeg === w.bearingDeg ? 1 : 0.5}
               data-testid="radar-wedge"
+              onMouseEnter={() => handleWedgeEnter(w)}
+              onMouseMove={handleWedgeMove}
+              onMouseLeave={handleWedgeLeave}
+              style={{ cursor: "crosshair" }}
+            />
+          ))}
+
+        {/* Polygon mode: invisible sector hit zones for tooltips */}
+        {mode === "polygon" &&
+          wedges.map((w) => (
+            <path
+              key={w.bearingDeg}
+              d={w.path}
+              fill="transparent"
+              stroke="none"
+              data-testid="sector-hit-zone"
+              onMouseEnter={() => handleWedgeEnter(w)}
+              onMouseMove={handleWedgeMove}
+              onMouseLeave={handleWedgeLeave}
+              style={{ cursor: "crosshair" }}
             />
           ))}
 
@@ -160,6 +207,28 @@ export function DetectionRadar({ sectors, mode }: Props) {
           </text>
         ))}
       </svg>
+
+      {/* Sector tooltip */}
+      {hovered && (
+        <div
+          data-testid="sector-tooltip"
+          className="absolute pointer-events-none z-10 rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-[11px] leading-tight text-slate-200 shadow-lg"
+          style={{
+            left: mousePos.x + 12,
+            top: mousePos.y - 8,
+          }}
+        >
+          <div className="font-semibold text-cyan-400">
+            {hovered.bearingDeg}° {bearingToCompass(hovered.bearingDeg)}
+          </div>
+          <div className="mt-0.5">
+            Range: <span className="text-white">{Math.round(hovered.distanceNm)} NM</span>
+          </div>
+          <div>
+            Positions: <span className="text-white">{hovered.positionCount.toLocaleString()}</span>
+          </div>
+        </div>
+      )}
 
       {/* Max range label */}
       <div className="text-center text-[10px] text-slate-500 mt-0.5">

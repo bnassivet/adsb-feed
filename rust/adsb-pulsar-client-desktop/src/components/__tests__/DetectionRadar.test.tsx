@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { DetectionRadar } from "../DetectionRadar";
 import type { DetectionRangeSector } from "@/lib/types";
 
@@ -80,6 +81,87 @@ describe("DetectionRadar", () => {
     it("renders polygon even when all sectors are zero (points at center)", () => {
       render(<DetectionRadar sectors={makeSectors()} mode="polygon" />);
       expect(screen.getByTestId("radar-polygon")).toBeTruthy();
+    });
+  });
+
+  describe("sector tooltips (polar mode)", () => {
+    it("shows tooltip on wedge hover with bearing, distance, and count", async () => {
+      const user = userEvent.setup();
+      render(<DetectionRadar sectors={nonZeroSectors} mode="polar" />);
+
+      const wedges = screen.getAllByTestId("radar-wedge");
+      await user.hover(wedges[0]); // 0° sector: 100 NM, 10 positions
+
+      const tooltip = screen.getByTestId("sector-tooltip");
+      expect(tooltip).toBeTruthy();
+      expect(tooltip.textContent).toContain("0°");
+      expect(tooltip.textContent).toContain("100");
+      expect(tooltip.textContent).toContain("10");
+    });
+
+    it("hides tooltip when mouse leaves wedge", async () => {
+      const user = userEvent.setup();
+      render(<DetectionRadar sectors={nonZeroSectors} mode="polar" />);
+
+      const wedges = screen.getAllByTestId("radar-wedge");
+      await user.hover(wedges[0]);
+      expect(screen.getByTestId("sector-tooltip")).toBeTruthy();
+
+      await user.unhover(wedges[0]);
+      expect(screen.queryByTestId("sector-tooltip")).toBeNull();
+    });
+
+    it("updates tooltip content when hovering a different wedge", async () => {
+      const user = userEvent.setup();
+      render(<DetectionRadar sectors={nonZeroSectors} mode="polar" />);
+
+      const wedges = screen.getAllByTestId("radar-wedge");
+      await user.hover(wedges[1]); // 90° sector: 50 NM, 5 positions
+
+      const tooltip = screen.getByTestId("sector-tooltip");
+      expect(tooltip.textContent).toContain("90°");
+      expect(tooltip.textContent).toContain("50");
+      expect(tooltip.textContent).toContain("5");
+    });
+
+  });
+
+  describe("sector tooltips (polygon mode)", () => {
+    it("renders invisible hit zones over the polygon", () => {
+      render(<DetectionRadar sectors={nonZeroSectors} mode="polygon" />);
+      const hitZones = screen.getAllByTestId("sector-hit-zone");
+      expect(hitZones).toHaveLength(2); // only non-zero sectors
+    });
+
+    it("shows tooltip on hit zone hover with bearing, distance, and count", async () => {
+      const user = userEvent.setup();
+      render(<DetectionRadar sectors={nonZeroSectors} mode="polygon" />);
+
+      const hitZones = screen.getAllByTestId("sector-hit-zone");
+      await user.hover(hitZones[0]); // 0° sector: 100 NM, 10 positions
+
+      const tooltip = screen.getByTestId("sector-tooltip");
+      expect(tooltip).toBeTruthy();
+      expect(tooltip.textContent).toContain("0°");
+      expect(tooltip.textContent).toContain("100");
+      expect(tooltip.textContent).toContain("10");
+    });
+
+    it("hides tooltip when mouse leaves hit zone", async () => {
+      const user = userEvent.setup();
+      render(<DetectionRadar sectors={nonZeroSectors} mode="polygon" />);
+
+      const hitZones = screen.getAllByTestId("sector-hit-zone");
+      await user.hover(hitZones[0]);
+      expect(screen.getByTestId("sector-tooltip")).toBeTruthy();
+
+      await user.unhover(hitZones[0]);
+      expect(screen.queryByTestId("sector-tooltip")).toBeNull();
+    });
+
+    it("does not render hit zones in polar mode", () => {
+      render(<DetectionRadar sectors={nonZeroSectors} mode="polar" />);
+      expect(screen.queryAllByTestId("sector-hit-zone")).toHaveLength(0);
     });
   });
 });
