@@ -1,32 +1,62 @@
 "use client";
 import { useMemo } from "react";
 import type { DetectionRangeSector } from "@/lib/types";
+import type { RadarMode } from "@/lib/detection-radar";
 import {
   computeMaxRange,
   buildRadarPoints,
   buildRadarPath,
+  buildSectorWedges,
   buildDistanceRings,
   buildCardinalLabels,
 } from "@/lib/detection-radar";
 
 interface Props {
   sectors: DetectionRangeSector[];
+  mode: RadarMode;
 }
 
 const CONFIG = { size: 300, padding: 24 };
+const SECTOR_ANGLE_DEG = 10;
 
-export function DetectionRadar({ sectors }: Props) {
+export function DetectionRadar({ sectors, mode }: Props) {
   const maxRange = useMemo(() => computeMaxRange(sectors), [sectors]);
-  const points = useMemo(() => buildRadarPoints(sectors, CONFIG), [sectors]);
-  const path = useMemo(() => buildRadarPath(points), [points]);
   const rings = useMemo(() => buildDistanceRings(maxRange, CONFIG), [maxRange]);
   const cardinals = useMemo(() => buildCardinalLabels(CONFIG), []);
 
+  // Polygon mode data
+  const polygonPath = useMemo(() => {
+    if (mode !== "polygon") return "";
+    return buildRadarPath(buildRadarPoints(sectors, CONFIG));
+  }, [sectors, mode]);
+
+  // Polar mode data
+  const wedges = useMemo(() => {
+    if (mode !== "polar") return [];
+    return buildSectorWedges(sectors, CONFIG);
+  }, [sectors, mode]);
+
   const center = CONFIG.size / 2;
+  const maxRadius = center - CONFIG.padding;
+
+  // Sector grid lines at every 10° boundary (polar mode only)
+  const sectorLines = useMemo(() => {
+    if (mode !== "polar") return [];
+    const lines: { x1: number; y1: number; x2: number; y2: number }[] = [];
+    for (let deg = 0; deg < 360; deg += SECTOR_ANGLE_DEG) {
+      const rad = (deg * Math.PI) / 180;
+      lines.push({
+        x1: center,
+        y1: center,
+        x2: center + maxRadius * Math.sin(rad),
+        y2: center - maxRadius * Math.cos(rad),
+      });
+    }
+    return lines;
+  }, [mode, center, maxRadius]);
 
   return (
     <div data-testid="detection-radar">
-      <div className="text-[10px] text-slate-500 uppercase mb-1">Detection Range</div>
       <svg
         viewBox={`0 0 ${CONFIG.size} ${CONFIG.size}`}
         className="w-full"
@@ -56,6 +86,19 @@ export function DetectionRadar({ sectors }: Props) {
           </g>
         ))}
 
+        {/* 10° sector grid lines (polar mode) */}
+        {sectorLines.map((l, i) => (
+          <line
+            key={i}
+            x1={l.x1}
+            y1={l.y1}
+            x2={l.x2}
+            y2={l.y2}
+            stroke="#1e293b"
+            strokeWidth={0.3}
+          />
+        ))}
+
         {/* Crosshair lines (N-S, E-W) */}
         <line
           x1={center}
@@ -74,10 +117,10 @@ export function DetectionRadar({ sectors }: Props) {
           strokeWidth={0.5}
         />
 
-        {/* Filled radar polygon */}
-        {path && (
+        {/* Polygon mode: single filled polygon */}
+        {mode === "polygon" && polygonPath && (
           <path
-            d={path}
+            d={polygonPath}
             fill="#06b6d4"
             fillOpacity={0.3}
             stroke="#06b6d4"
@@ -85,6 +128,20 @@ export function DetectionRadar({ sectors }: Props) {
             data-testid="radar-polygon"
           />
         )}
+
+        {/* Polar mode: individual sector wedges */}
+        {mode === "polar" &&
+          wedges.map((w) => (
+            <path
+              key={w.bearingDeg}
+              d={w.path}
+              fill="#06b6d4"
+              fillOpacity={0.35}
+              stroke="#06b6d4"
+              strokeWidth={0.5}
+              data-testid="radar-wedge"
+            />
+          ))}
 
         {/* Cardinal direction labels */}
         {cardinals.map((c) => (

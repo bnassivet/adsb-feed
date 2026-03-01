@@ -15,11 +15,24 @@ export interface RadarConfig {
   padding: number;
 }
 
+export type RadarMode = "polygon" | "polar";
+
 export interface RadarPoint {
   x: number;
   y: number;
   bearingDeg: number;
   distanceNm: number;
+}
+
+export interface SectorWedge {
+  /** SVG path string for the wedge arc. */
+  path: string;
+  /** Center bearing of this sector in degrees. */
+  bearingDeg: number;
+  /** Maximum detection distance in this sector (NM). */
+  distanceNm: number;
+  /** Number of positions observed in this sector. */
+  positionCount: number;
 }
 
 export interface DistanceRing {
@@ -77,11 +90,46 @@ export function buildRadarPoints(
   });
 }
 
-/** Build a closed SVG path string from radar points. */
+/** Build a closed SVG path string from radar points (polygon mode). */
 export function buildRadarPath(points: RadarPoint[]): string {
   if (points.length === 0) return "";
   const parts = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`);
   return parts.join("") + "Z";
+}
+
+/** Build SVG arc wedge paths for each non-zero sector (polar area chart). */
+export function buildSectorWedges(
+  sectors: DetectionRangeSector[],
+  config: RadarConfig = DEFAULT_CONFIG,
+): SectorWedge[] {
+  const maxRange = computeMaxRange(sectors);
+  const center = config.size / 2;
+  const maxRadius = center - config.padding;
+  const halfAngle = 5; // 10° sectors → ±5° from center bearing
+
+  return sectors
+    .filter((s) => s.max_distance_nm > 0)
+    .map((s) => {
+      const normalized = s.max_distance_nm / maxRange;
+      const r = normalized * maxRadius;
+      const start = polarToCartesian(s.bearing_deg - halfAngle, normalized, center, maxRadius);
+      const end = polarToCartesian(s.bearing_deg + halfAngle, normalized, center, maxRadius);
+
+      // M center → L arc start → A (arc to end) → Z (close to center)
+      const path = [
+        `M${center.toFixed(1)},${center.toFixed(1)}`,
+        `L${start.x.toFixed(1)},${start.y.toFixed(1)}`,
+        `A${r.toFixed(1)},${r.toFixed(1)} 0 0 1 ${end.x.toFixed(1)},${end.y.toFixed(1)}`,
+        "Z",
+      ].join("");
+
+      return {
+        path,
+        bearingDeg: s.bearing_deg,
+        distanceNm: s.max_distance_nm,
+        positionCount: s.position_count,
+      };
+    });
 }
 
 /** Build concentric distance rings with labels. */

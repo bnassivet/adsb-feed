@@ -4,6 +4,7 @@ import {
   polarToCartesian,
   buildRadarPoints,
   buildRadarPath,
+  buildSectorWedges,
   buildDistanceRings,
   buildCardinalLabels,
 } from "../detection-radar";
@@ -114,6 +115,55 @@ describe("buildRadarPath", () => {
     );
     const path = buildRadarPath(points);
     expect(path).toContain("L");
+  });
+});
+
+describe("buildSectorWedges", () => {
+  const config = { size: 300, padding: 24 };
+
+  it("returns empty array when all sectors have zero distance", () => {
+    const wedges = buildSectorWedges(makeSectors(), config);
+    expect(wedges).toHaveLength(0);
+  });
+
+  it("filters out zero-distance sectors", () => {
+    const sectors = makeSectors([
+      { bearing_deg: 0, max_distance_nm: 100, position_count: 5 },
+      { bearing_deg: 90, max_distance_nm: 50, position_count: 3 },
+    ]);
+    const wedges = buildSectorWedges(sectors, config);
+    expect(wedges).toHaveLength(2);
+    expect(wedges[0].bearingDeg).toBe(0);
+    expect(wedges[1].bearingDeg).toBe(90);
+  });
+
+  it("wedge path starts with M (center), contains A (arc), ends with Z", () => {
+    const sectors = makeSectors([
+      { bearing_deg: 0, max_distance_nm: 100, position_count: 5 },
+    ]);
+    const wedges = buildSectorWedges(sectors, config);
+    expect(wedges[0].path).toMatch(/^M/);
+    expect(wedges[0].path).toContain("A");
+    expect(wedges[0].path).toMatch(/Z$/);
+  });
+
+  it("preserves distance and position count in wedge data", () => {
+    const sectors = makeSectors([
+      { bearing_deg: 180, max_distance_nm: 75, position_count: 42 },
+    ]);
+    const wedges = buildSectorWedges(sectors, config);
+    expect(wedges[0].distanceNm).toBe(75);
+    expect(wedges[0].positionCount).toBe(42);
+  });
+
+  it("returns wedges for all non-zero sectors", () => {
+    const overrides = Array.from({ length: 36 }, (_, i) => ({
+      bearing_deg: i * 10,
+      max_distance_nm: (i + 1) * 5,
+      position_count: 1,
+    }));
+    const wedges = buildSectorWedges(makeSectors(overrides), config);
+    expect(wedges).toHaveLength(36);
   });
 });
 

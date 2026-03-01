@@ -1,7 +1,8 @@
 "use client";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import type { AircraftSummary, DetectionRangeSector, TimeDistributionBucket } from "@/lib/types";
+import type { RadarMode } from "@/lib/detection-radar";
 import {
   buildAltitudeBins,
   computeDbHistorySummary,
@@ -113,9 +114,42 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSe
 
         {/* Detection range radar */}
         {detectionSectors && detectionSectors.some((s) => s.position_count > 0) && (
-          <DetectionRadar sectors={detectionSectors} />
+          <DetectionRangeSection sectors={detectionSectors} />
         )}
       </div>
     </details>
+  );
+}
+
+const RADAR_MODES: { value: RadarMode; label: string }[] = [
+  { value: "polar", label: "Polar" },
+  { value: "polygon", label: "Polygon" },
+];
+
+function DetectionRangeSection({ sectors }: { sectors: DetectionRangeSector[] }) {
+  const [mode, setMode] = useState<RadarMode>("polar");
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-[10px] text-slate-500 uppercase">Detection Range</div>
+        <div className="flex gap-0.5" data-testid="radar-mode-toggle">
+          {RADAR_MODES.map((m) => (
+            <button
+              key={m.value}
+              onClick={() => setMode(m.value)}
+              className={`px-1.5 py-0.5 text-[9px] rounded transition-colors ${
+                mode === m.value
+                  ? "bg-cyan-900/60 text-cyan-300"
+                  : "text-slate-500 hover:text-slate-400"
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <DetectionRadar sectors={sectors} mode={mode} />
+    </div>
   );
 }
