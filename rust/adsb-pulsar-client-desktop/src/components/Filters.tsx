@@ -14,6 +14,9 @@ interface Props {
   onToggleDensity: () => void;
   densityMetric: DensityMetric;
   onDensityMetricChange: (metric: DensityMetric) => void;
+  densityAltitudeMin: number;
+  densityAltitudeMax: number;
+  onDensityAltitudeChange: (min: number, max: number) => void;
   showSimulation: boolean;
   onToggleSimulation: () => void;
   simulationCount: number;
@@ -46,7 +49,7 @@ function Section({ title, defaultOpen, children }: { title: string; defaultOpen?
   );
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation }: Props) {
   return (
     <div className="flex flex-col gap-2 p-4">
 
@@ -238,6 +241,37 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
                 />
                 Mean altitude
               </label>
+              <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer">
+                <input
+                  type="radio"
+                  name="density-metric"
+                  checked={densityMetric === "altitude_min"}
+                  onChange={() => onDensityMetricChange("altitude_min")}
+                  className="accent-purple-500"
+                />
+                Min altitude
+              </label>
+              <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer">
+                <input
+                  type="radio"
+                  name="density-metric"
+                  checked={densityMetric === "altitude_max"}
+                  onChange={() => onDensityMetricChange("altitude_max")}
+                  className="accent-purple-500"
+                />
+                Max altitude
+              </label>
+              <div className="mt-1 pt-1 border-t border-slate-700/50">
+                <RangeSlider
+                  min={0}
+                  max={50000}
+                  step={1000}
+                  valueMin={densityAltitudeMin}
+                  valueMax={densityAltitudeMax}
+                  onChange={onDensityAltitudeChange}
+                  formatLabel={(v) => `${v.toLocaleString()} ft`}
+                />
+              </div>
               {importedCount > 0 && (
                 <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer mt-1 pt-1 border-t border-slate-700/50">
                   <input

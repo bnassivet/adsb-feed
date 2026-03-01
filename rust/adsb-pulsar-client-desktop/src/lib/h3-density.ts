@@ -7,12 +7,19 @@ interface CellAgg {
   aircraft: Set<string>;
   altitudeSum: number;
   altitudeCount: number;
+  altitudeMin: number;
+  altitudeMax: number;
 }
 
 export interface DensityProperties {
   cell: string;
   value: number;
   normalized: number;
+}
+
+export interface DensityAltitudeRange {
+  altitudeMin: number;
+  altitudeMax: number;
 }
 
 /**
@@ -25,23 +32,33 @@ export function computeH3Density(
   tracks: AircraftTrack[],
   metric: DensityMetric,
   resolution: number,
+  altitudeRange?: DensityAltitudeRange,
 ): FeatureCollection<Polygon, DensityProperties> {
   // Aggregate positions into H3 cells
   const cells = new Map<string, CellAgg>();
 
   for (const track of tracks) {
-    for (const [lat, lng] of track.positions) {
+    for (const [lat, lng, alt] of track.positions) {
+      // Filter by altitude range if specified
+      if (altitudeRange) {
+        if (alt == null || alt < altitudeRange.altitudeMin || alt > altitudeRange.altitudeMax) {
+          continue;
+        }
+      }
+
       const cell = latLngToCell(lat, lng, resolution);
       let agg = cells.get(cell);
       if (!agg) {
-        agg = { count: 0, aircraft: new Set(), altitudeSum: 0, altitudeCount: 0 };
+        agg = { count: 0, aircraft: new Set(), altitudeSum: 0, altitudeCount: 0, altitudeMin: Infinity, altitudeMax: -Infinity };
         cells.set(cell, agg);
       }
       agg.count++;
       agg.aircraft.add(track.hex_ident);
-      if (track.altitude !== null) {
-        agg.altitudeSum += track.altitude;
+      if (alt !== null && alt !== undefined) {
+        agg.altitudeSum += alt;
         agg.altitudeCount++;
+        if (alt < agg.altitudeMin) agg.altitudeMin = alt;
+        if (alt > agg.altitudeMax) agg.altitudeMax = alt;
       }
     }
   }
@@ -50,13 +67,15 @@ export function computeH3Density(
   function cellValue(agg: CellAgg): number {
     if (metric === "positions") return agg.count;
     if (metric === "aircraft") return agg.aircraft.size;
+    if (metric === "altitude_min") return agg.altitudeCount > 0 ? agg.altitudeMin : 0;
+    if (metric === "altitude_max") return agg.altitudeCount > 0 ? agg.altitudeMax : 0;
     // altitude: mean altitude in feet (0 if no altitude data)
     return agg.altitudeCount > 0 ? agg.altitudeSum / agg.altitudeCount : 0;
   }
 
-  // Find max for normalization (altitude uses fixed 0-50000 ft range)
+  // Find max for normalization (altitude metrics use fixed 0-50000 ft range)
   let max = 0;
-  if (metric === "altitude") {
+  if (metric === "altitude" || metric === "altitude_min" || metric === "altitude_max") {
     max = 50000;
   } else {
     for (const agg of cells.values()) {

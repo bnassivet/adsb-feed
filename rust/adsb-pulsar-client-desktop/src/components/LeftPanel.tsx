@@ -23,6 +23,9 @@ interface LeftPanelProps {
   onToggleDensity: () => void;
   densityMetric: DensityMetric;
   onDensityMetricChange: (metric: DensityMetric) => void;
+  densityAltitudeMin: number;
+  densityAltitudeMax: number;
+  onDensityAltitudeChange: (min: number, max: number) => void;
   showSimulation: boolean;
   onToggleSimulation: () => void;
   simulationCount: number;

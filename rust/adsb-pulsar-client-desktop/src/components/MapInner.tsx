@@ -6,7 +6,7 @@ import type { AircraftTrack, DensityMetric, AltitudeColorMode } from "@/lib/type
 import { zoomToH3Resolution } from "@/lib/types";
 import { altitudeToColor, densityColor, cachedAltitudeToColor, type MapTheme } from "@/lib/colors";
 import { computeH3Density } from "@/lib/h3-density";
-import type { DensityProperties } from "@/lib/h3-density";
+import type { DensityProperties, DensityAltitudeRange } from "@/lib/h3-density";
 import { useMapZoom } from "@/hooks/useMapZoom";
 import { aircraftIconHtml } from "@/lib/aircraft-icon";
 import { orderTracksWithSelectedLast } from "@/lib/track-ordering";
@@ -85,6 +85,8 @@ interface Props {
   showDensity: boolean;
   densityMetric: DensityMetric;
   densityTracks: AircraftTrack[];
+  densityAltitudeMin: number;
+  densityAltitudeMax: number;
   liveColorMode: AltitudeColorMode;
   historyColorMode: AltitudeColorMode;
   selectedHexIdent: string | null;
@@ -97,24 +99,36 @@ function DensityLayer({
   showDensity,
   densityTracks,
   densityMetric,
+  densityAltitudeMin,
+  densityAltitudeMax,
   theme,
 }: {
   showDensity: boolean;
   densityTracks: AircraftTrack[];
   densityMetric: DensityMetric;
+  densityAltitudeMin: number;
+  densityAltitudeMax: number;
   theme: MapTheme;
 }) {
   const zoom = useMapZoom(300);
   const resolution = zoomToH3Resolution(zoom);
 
+  // Only pass altitude range filter when it's not the full default range
+  const altitudeRange = useMemo<DensityAltitudeRange | undefined>(
+    () => densityAltitudeMin > 0 || densityAltitudeMax < 50000
+      ? { altitudeMin: densityAltitudeMin, altitudeMax: densityAltitudeMax }
+      : undefined,
+    [densityAltitudeMin, densityAltitudeMax],
+  );
+
   const densityGeoJson = useMemo(
-    () => (showDensity ? computeH3Density(densityTracks, densityMetric, resolution) : null),
-    [showDensity, densityTracks, densityMetric, resolution],
+    () => (showDensity ? computeH3Density(densityTracks, densityMetric, resolution, altitudeRange) : null),
+    [showDensity, densityTracks, densityMetric, resolution, altitudeRange],
   );
 
   // react-leaflet's GeoJSON doesn't re-render on data change — use key to force remount
   const densityKey = densityGeoJson
-    ? `density-${densityMetric}-${resolution}-${densityGeoJson.features.length}-${densityTracks.length}-${theme}`
+    ? `density-${densityMetric}-${resolution}-${densityGeoJson.features.length}-${densityTracks.length}-${theme}-${densityAltitudeMin}-${densityAltitudeMax}`
     : "density-off";
 
   if (!densityGeoJson || densityGeoJson.features.length === 0) return null;
@@ -125,7 +139,7 @@ function DensityLayer({
       data={densityGeoJson}
       style={(feature) => {
         const props = (feature?.properties ?? { normalized: 0, value: 0 }) as DensityProperties;
-        if (densityMetric === "altitude") {
+        if (densityMetric === "altitude" || densityMetric === "altitude_min" || densityMetric === "altitude_max") {
           const c = altitudeToColor(props.value, theme);
           return { color: c, fillColor: c, fillOpacity: 0.08, weight: 1, opacity: 0.2 };
         }
@@ -137,6 +151,10 @@ function DensityLayer({
         let text: string;
         if (densityMetric === "altitude") {
           text = `Mean alt: ${Math.round(props.value).toLocaleString()} ft`;
+        } else if (densityMetric === "altitude_min") {
+          text = `Min alt: ${Math.round(props.value).toLocaleString()} ft`;
+        } else if (densityMetric === "altitude_max") {
+          text = `Max alt: ${Math.round(props.value).toLocaleString()} ft`;
         } else {
           const label = densityMetric === "positions" ? "Positions" : "Aircraft";
           text = `${label}: ${props.value}`;
@@ -242,7 +260,7 @@ function DotsLayer({
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, liveColorMode, historyColorMode, selectedHexIdent, onSelectTrack, receiverLocation }: Props) {
+export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, liveColorMode, historyColorMode, selectedHexIdent, onSelectTrack, receiverLocation }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
@@ -278,7 +296,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         />
 
         {/* Density hexagons — zoom-adaptive H3 resolution */}
-        <DensityLayer showDensity={showDensity} densityTracks={densityTracks} densityMetric={densityMetric} theme={mapTheme} />
+        <DensityLayer showDensity={showDensity} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} theme={mapTheme} />
 
         {/* History tracks — rendered first so active tracks layer on top */}
         {trajectoryStyle === "dots" && historyTracks.length > 0 && (

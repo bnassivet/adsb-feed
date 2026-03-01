@@ -103,7 +103,7 @@ export interface Filters {
 }
 
 /** Which metric the H3 density overlay displays. */
-export type DensityMetric = "positions" | "aircraft" | "altitude";
+export type DensityMetric = "positions" | "aircraft" | "altitude" | "altitude_min" | "altitude_max";
 
 /** How trajectory positions are colored: by each position's altitude or the track's latest altitude. */
 export type AltitudeColorMode = "plot" | "track";

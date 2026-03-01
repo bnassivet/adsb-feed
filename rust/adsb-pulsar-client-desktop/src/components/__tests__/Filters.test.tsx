@@ -21,6 +21,9 @@ function renderFilters(overrides = {}) {
     onToggleDensity: vi.fn(),
     densityMetric: "positions" as const,
     onDensityMetricChange: vi.fn(),
+    densityAltitudeMin: 0,
+    densityAltitudeMax: 50000,
+    onDensityAltitudeChange: vi.fn(),
     showSimulation: false,
     onToggleSimulation: vi.fn(),
     simulationCount: 0,
@@ -95,6 +98,30 @@ describe("FiltersPanel", () => {
     const checkbox = screen.getByText("H3 density heatmap").closest("label")!.querySelector("input")!;
     await user.click(checkbox);
     expect(onToggleDensity).toHaveBeenCalledTimes(1);
+  });
+
+  it("density metric radio buttons include min/max altitude options", () => {
+    renderFilters({ showDensity: true });
+    expect(screen.getByText("Min altitude")).toBeInTheDocument();
+    expect(screen.getByText("Max altitude")).toBeInTheDocument();
+  });
+
+  it("selecting min altitude metric calls handler", async () => {
+    const user = userEvent.setup();
+    const onDensityMetricChange = vi.fn();
+    renderFilters({ showDensity: true, onDensityMetricChange });
+    const radio = screen.getByText("Min altitude").closest("label")!.querySelector("input")!;
+    await user.click(radio);
+    expect(onDensityMetricChange).toHaveBeenCalledWith("altitude_min");
+  });
+
+  it("selecting max altitude metric calls handler", async () => {
+    const user = userEvent.setup();
+    const onDensityMetricChange = vi.fn();
+    renderFilters({ showDensity: true, onDensityMetricChange });
+    const radio = screen.getByText("Max altitude").closest("label")!.querySelector("input")!;
+    await user.click(radio);
+    expect(onDensityMetricChange).toHaveBeenCalledWith("altitude_max");
   });
 
   it("renders color coding section with live and history selects", () => {
@@ -237,5 +264,31 @@ describe("include imported in density", () => {
     const checkbox = screen.getByText(/Include imported/).closest("label")!.querySelector("input")!;
     await user.click(checkbox);
     expect(onToggle).toHaveBeenCalledOnce();
+  });
+});
+
+describe("density altitude range", () => {
+  it("shows altitude range slider when density is ON", () => {
+    renderFilters({ showDensity: true });
+    // The density altitude slider shows "0 ft – 50,000 ft" label inside the density section
+    // There are TWO altitude sliders: one in Search & Filters, one in Density Overlay
+    const labels = screen.getAllByText("0 ft – 50,000 ft");
+    expect(labels.length).toBe(2);
+  });
+
+  it("hides altitude range slider when density is OFF", () => {
+    renderFilters({ showDensity: false });
+    // Only one altitude slider (in Search & Filters)
+    const labels = screen.getAllByText("0 ft – 50,000 ft");
+    expect(labels.length).toBe(1);
+  });
+
+  it("shows custom range when min/max are non-default", () => {
+    renderFilters({
+      showDensity: true,
+      densityAltitudeMin: 10000,
+      densityAltitudeMax: 40000,
+    });
+    expect(screen.getByText("10,000 ft – 40,000 ft")).toBeInTheDocument();
   });
 });

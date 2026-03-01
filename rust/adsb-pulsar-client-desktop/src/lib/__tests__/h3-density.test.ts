@@ -127,4 +127,167 @@ describe("computeH3Density", () => {
       expect(ring[0]).toEqual(ring[ring.length - 1]);
     }
   });
+
+  describe("altitude_min metric", () => {
+    it("computes min altitude per cell", () => {
+      const track1 = makeTrack({
+        hex_ident: "AAA",
+        positions: [[45.5, -73.5, 30000]],
+      });
+      const track2 = makeTrack({
+        hex_ident: "BBB",
+        positions: [[45.5, -73.5, 10000]],
+      });
+      const result = computeH3Density([track1, track2], "altitude_min", 5);
+      // Min of 30000 and 10000 = 10000
+      for (const f of result.features) {
+        if (f.properties.value > 0) {
+          expect(f.properties.value).toBe(10000);
+        }
+      }
+    });
+
+    it("excludes null altitude from min", () => {
+      const trackWithAlt = makeTrack({
+        hex_ident: "AAA",
+        positions: [[45.5, -73.5, 25000]],
+      });
+      const trackNoAlt = makeTrack({
+        hex_ident: "BBB",
+        positions: [[45.5, -73.5, null]],
+      });
+      const result = computeH3Density([trackWithAlt, trackNoAlt], "altitude_min", 5);
+      for (const f of result.features) {
+        if (f.properties.value > 0) {
+          expect(f.properties.value).toBe(25000);
+        }
+      }
+    });
+
+    it("uses fixed 0-50000 normalization for altitude_min", () => {
+      const track = makeTrack({ positions: [[45.5, -73.5, 25000]] });
+      const result = computeH3Density([track], "altitude_min", 5);
+      expect(result.features[0].properties.normalized).toBeCloseTo(0.5, 1);
+    });
+  });
+
+  describe("altitude_max metric", () => {
+    it("computes max altitude per cell", () => {
+      const track1 = makeTrack({
+        hex_ident: "AAA",
+        positions: [[45.5, -73.5, 30000]],
+      });
+      const track2 = makeTrack({
+        hex_ident: "BBB",
+        positions: [[45.5, -73.5, 42000]],
+      });
+      const result = computeH3Density([track1, track2], "altitude_max", 5);
+      // Max of 30000 and 42000 = 42000
+      for (const f of result.features) {
+        if (f.properties.value > 0) {
+          expect(f.properties.value).toBe(42000);
+        }
+      }
+    });
+
+    it("excludes null altitude from max", () => {
+      const trackWithAlt = makeTrack({
+        hex_ident: "AAA",
+        positions: [[45.5, -73.5, 38000]],
+      });
+      const trackNoAlt = makeTrack({
+        hex_ident: "BBB",
+        positions: [[45.5, -73.5, null]],
+      });
+      const result = computeH3Density([trackWithAlt, trackNoAlt], "altitude_max", 5);
+      for (const f of result.features) {
+        if (f.properties.value > 0) {
+          expect(f.properties.value).toBe(38000);
+        }
+      }
+    });
+
+    it("uses fixed 0-50000 normalization for altitude_max", () => {
+      const track = makeTrack({ positions: [[45.5, -73.5, 40000]] });
+      const result = computeH3Density([track], "altitude_max", 5);
+      expect(result.features[0].properties.normalized).toBeCloseTo(0.8, 1);
+    });
+  });
+
+  describe("altitude range filtering", () => {
+    it("excludes positions below altitudeMin", () => {
+      const track = makeTrack({
+        positions: [
+          [45.5, -73.5, 5000],   // below min
+          [45.51, -73.51, 20000], // within range
+        ],
+      });
+      const result = computeH3Density([track], "positions", 5, { altitudeMin: 10000, altitudeMax: 50000 });
+      // Only the 20000 ft position should be included
+      const totalPositions = result.features.reduce((sum, f) => sum + f.properties.value, 0);
+      expect(totalPositions).toBe(1);
+    });
+
+    it("excludes positions above altitudeMax", () => {
+      const track = makeTrack({
+        positions: [
+          [45.5, -73.5, 20000],  // within range
+          [45.51, -73.51, 45000], // above max
+        ],
+      });
+      const result = computeH3Density([track], "positions", 5, { altitudeMin: 0, altitudeMax: 30000 });
+      const totalPositions = result.features.reduce((sum, f) => sum + f.properties.value, 0);
+      expect(totalPositions).toBe(1);
+    });
+
+    it("excludes positions with null altitude when range is set", () => {
+      const track = makeTrack({
+        positions: [
+          [45.5, -73.5, null],    // no altitude — excluded
+          [45.51, -73.51, 20000], // within range
+        ],
+      });
+      const result = computeH3Density([track], "positions", 5, { altitudeMin: 10000, altitudeMax: 50000 });
+      const totalPositions = result.features.reduce((sum, f) => sum + f.properties.value, 0);
+      expect(totalPositions).toBe(1);
+    });
+
+    it("includes all positions when no altitude range is specified", () => {
+      const track = makeTrack({
+        positions: [
+          [45.5, -73.5, 5000],
+          [45.51, -73.51, 20000],
+        ],
+      });
+      const withRange = computeH3Density([track], "positions", 5);
+      const totalPositions = withRange.features.reduce((sum, f) => sum + f.properties.value, 0);
+      expect(totalPositions).toBe(2);
+    });
+
+    it("returns empty features when all positions are filtered out", () => {
+      const track = makeTrack({
+        positions: [[45.5, -73.5, 5000]],
+      });
+      const result = computeH3Density([track], "positions", 5, { altitudeMin: 10000, altitudeMax: 50000 });
+      expect(result.features).toHaveLength(0);
+    });
+
+    it("filters altitude metric correctly with altitude range", () => {
+      const track1 = makeTrack({
+        hex_ident: "AAA",
+        positions: [[45.5, -73.5, 30000]],
+      });
+      const track2 = makeTrack({
+        hex_ident: "BBB",
+        positions: [[45.5, -73.5, 5000]], // below min — excluded
+      });
+      const result = computeH3Density([track1, track2], "altitude", 5, { altitudeMin: 10000, altitudeMax: 50000 });
+      // Only track1's 30000 ft should contribute to mean
+      for (const f of result.features) {
+        if (f.properties.value > 0) {
+          expect(f.properties.value).toBe(30000);
+        }
+      }
+    });
+  });
 });
