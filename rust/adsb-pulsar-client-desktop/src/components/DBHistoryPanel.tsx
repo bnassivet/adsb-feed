@@ -283,7 +283,7 @@ function FloatingPanel({
   return (
     <div
       data-testid="dbhistory-panel-floating"
-      className="fixed z-50 flex flex-col bg-slate-900 border border-slate-600 rounded-lg shadow-2xl overflow-hidden"
+      className="fixed z-[1100] flex flex-col bg-slate-900 border border-slate-600 rounded-lg shadow-2xl overflow-hidden"
       style={{ left: x, top: y, width: w, height: h }}
     >
       {/* Title bar — draggable */}
