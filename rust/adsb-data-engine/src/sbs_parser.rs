@@ -66,7 +66,7 @@ pub fn parse_sbs_message(line: &str) -> Option<AircraftPosition> {
     }
 
     let hex_ident = fields[4].trim().to_string();
-    if hex_ident.is_empty() {
+    if hex_ident.is_empty() || hex_ident == "000000" {
         return None;
     }
 
@@ -162,6 +162,13 @@ mod tests {
     #[test]
     fn test_empty_hex_ident_returns_none() {
         let line = "MSG,3,1,1,,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,35000,,,45.5,-73.5,,,,,,0";
+        assert!(parse_sbs_message(line).is_none());
+    }
+
+    #[test]
+    fn test_receiver_heartbeat_000000_filtered() {
+        // hex_ident 000000 is a receiver heartbeat sent every ~60s, not a real aircraft
+        let line = "MSG,3,1,1,000000,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,35000,,,45.5,-73.5,,,,,,0";
         assert!(parse_sbs_message(line).is_none());
     }
 
