@@ -1,4 +1,4 @@
-import type { AircraftSummary, TimeDistributionBucket, TimeGranularity } from "./types";
+import type { AircraftSummary, HourlyHeatmapCell, TimeDistributionBucket, TimeGranularity } from "./types";
 
 /** A single bin in an altitude histogram. */
 export interface AltitudeBin {
@@ -161,4 +161,88 @@ export function formatTimeChartData(
     count: b.count,
     bucketMs: b.bucket_ms,
   }));
+}
+
+// --- Hourly heatmap grid ---
+
+/** A single row in the heatmap grid (one calendar day, 24 hour values). */
+export interface HeatmapRow {
+  dayLabel: string;
+  dayMs: number;
+  /** Array of 24 values (index = hour 0–23), representing the selected metric. */
+  hours: number[];
+}
+
+const MS_DAY = 24 * MS_1H;
+
+/**
+ * Build a 2D heatmap grid from sparse heatmap cells.
+ *
+ * Zero-fills all (day, hour) pairs within [startMs, endMs].
+ * Rows are sorted most-recent-day first.
+ *
+ * @param metric — which field to use as the cell value: `"aircraft"` or `"messages"`.
+ */
+export function buildHeatmapGrid(
+  cells: HourlyHeatmapCell[],
+  startMs: number,
+  endMs: number,
+  metric: "aircraft" | "messages" = "aircraft",
+  tzName?: string,
+): HeatmapRow[] {
+  if (startMs >= endMs) return [];
+
+  // Round start down to midnight, end to midnight of the last day with potential data.
+  // Subtract 1ms from endMs to avoid including an empty next-day row at exact midnight boundaries.
+  const startDay = floorToDay(startMs);
+  const endDay = floorToDay(Math.max(endMs - 1, startMs));
+
+  // Build a map of day_ms → Map<hour, value> from sparse cells.
+  const cellMap = new Map<number, Map<number, number>>();
+  for (const c of cells) {
+    let hourMap = cellMap.get(c.day_ms);
+    if (!hourMap) {
+      hourMap = new Map();
+      cellMap.set(c.day_ms, hourMap);
+    }
+    hourMap.set(c.hour, metric === "aircraft" ? c.aircraft_count : c.message_count);
+  }
+
+  // Generate rows for each day in range, most recent first.
+  const rows: HeatmapRow[] = [];
+  for (let dayMs = endDay; dayMs >= startDay; dayMs -= MS_DAY) {
+    const hourMap = cellMap.get(dayMs);
+    const hours = new Array<number>(24);
+    for (let h = 0; h < 24; h++) {
+      hours[h] = hourMap?.get(h) ?? 0;
+    }
+    rows.push({
+      dayLabel: formatDayLabel(dayMs, tzName),
+      dayMs,
+      hours,
+    });
+  }
+
+  return rows;
+}
+
+/** Floor a timestamp to midnight UTC of that day. */
+function floorToDay(ms: number): number {
+  return Math.floor(ms / MS_DAY) * MS_DAY;
+}
+
+/** Format a midnight epoch ms to a short day label like "Mon 1/15". */
+function formatDayLabel(dayMs: number, tzName?: string): string {
+  const d = new Date(dayMs);
+  const tz = tzName ?? "UTC";
+  try {
+    const weekday = d.toLocaleDateString("en-US", { weekday: "short", timeZone: tz });
+    const month = d.toLocaleDateString("en-US", { month: "numeric", timeZone: tz });
+    const day = d.toLocaleDateString("en-US", { day: "numeric", timeZone: tz });
+    return `${weekday} ${month}/${day}`;
+  } catch {
+    // Fallback for invalid timezone
+    const iso = d.toISOString();
+    return iso.slice(5, 10);
+  }
 }

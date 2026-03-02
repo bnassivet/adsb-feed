@@ -1,10 +1,11 @@
 "use client";
-import { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from "recharts";
-import type { AircraftSummary, DetectionRangeSector, TimeDistributionBucket, TimeGranularity } from "@/lib/types";
+import type { AircraftSummary, DetectionRangeSector, HeatmapMetric, HourlyHeatmapCell, TimeDistributionBucket, TimeGranularity } from "@/lib/types";
 import type { RadarMode } from "@/lib/detection-radar";
 import {
   buildAltitudeBins,
+  buildHeatmapGrid,
   computeDbHistorySummary,
   formatTimeChartData,
   formatAdaptiveTimeLabel,
@@ -24,6 +25,12 @@ interface Props {
   granularity?: TimeGranularity;
   /** Called when user selects a different granularity. */
   onGranularityChange?: (g: TimeGranularity) => void;
+  /** Heatmap cells from the backend query. */
+  heatmapCells?: HourlyHeatmapCell[];
+  /** Start of the queried time range (ms). */
+  startMs?: number;
+  /** End of the queried time range (ms). */
+  endMs?: number;
 }
 
 const GRANULARITIES: { value: TimeGranularity; label: string }[] = [
@@ -34,7 +41,7 @@ const GRANULARITIES: { value: TimeGranularity; label: string }[] = [
   { value: "month", label: "Month" },
 ];
 
-export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSectors, rangeMs, onZoom, granularity, onGranularityChange }: Props) {
+export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSectors, rangeMs, onZoom, granularity, onGranularityChange, heatmapCells, startMs, endMs }: Props) {
   const summary = useMemo(() => computeDbHistorySummary(summaries), [summaries]);
   const altBins = useMemo(() => buildAltitudeBins(summaries), [summaries]);
   const timeData = useMemo(() => formatTimeChartData(timeBuckets, tzName, rangeMs), [timeBuckets, tzName, rangeMs]);
@@ -83,6 +90,11 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSe
             granularity={granularity}
             onGranularityChange={onGranularityChange}
           />
+        )}
+
+        {/* Activity heatmap */}
+        {heatmapCells && heatmapCells.length > 0 && startMs != null && endMs != null && (
+          <ActivityHeatmap cells={heatmapCells} startMs={startMs} endMs={endMs} tzName={tzName} />
         )}
 
         {/* Altitude histogram */}
@@ -277,3 +289,133 @@ function DetectionRangeSection({ sectors }: { sectors: DetectionRangeSector[] })
     </div>
   );
 }
+
+// --- Activity heatmap ---
+
+const HEATMAP_METRICS: { value: HeatmapMetric; label: string }[] = [
+  { value: "aircraft", label: "Aircraft" },
+  { value: "messages", label: "Messages" },
+];
+
+const HOUR_LABELS = Array.from({ length: 24 }, (_, i) => i);
+
+/** Interpolate a value [0, 1] into a color from transparent dark → cyan → amber. */
+function heatmapColor(t: number): string {
+  if (t === 0) return "transparent";
+  // 0→0.5: dark-slate → cyan
+  if (t <= 0.5) {
+    const s = t * 2; // 0→1
+    const r = Math.round(15 + s * (6 - 15));
+    const g = Math.round(23 + s * (182 - 23));
+    const b = Math.round(42 + s * (212 - 42));
+    return `rgba(${r}, ${g}, ${b}, ${0.3 + s * 0.5})`;
+  }
+  // 0.5→1: cyan → amber
+  const s = (t - 0.5) * 2; // 0→1
+  const r = Math.round(6 + s * (245 - 6));
+  const g = Math.round(182 + s * (158 - 182));
+  const b = Math.round(212 + s * (11 - 212));
+  return `rgba(${r}, ${g}, ${b}, ${0.8 + s * 0.2})`;
+}
+
+function ActivityHeatmap({
+  cells,
+  startMs,
+  endMs,
+  tzName,
+}: {
+  cells: HourlyHeatmapCell[];
+  startMs: number;
+  endMs: number;
+  tzName?: string;
+}) {
+  const [metric, setMetric] = useState<HeatmapMetric>("aircraft");
+  const [hoveredCell, setHoveredCell] = useState<{ row: number; col: number } | null>(null);
+
+  const grid = useMemo(
+    () => buildHeatmapGrid(cells, startMs, endMs, metric, tzName),
+    [cells, startMs, endMs, metric, tzName],
+  );
+
+  // Compute max value for normalisation
+  const maxVal = useMemo(() => {
+    let max = 0;
+    for (const row of grid) {
+      for (const v of row.hours) {
+        if (v > max) max = v;
+      }
+    }
+    return max;
+  }, [grid]);
+
+  if (grid.length === 0) return null;
+
+  return (
+    <div data-testid="heatmap-section">
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-[10px] text-slate-500 uppercase">Activity Heatmap</div>
+        <div className="flex gap-0.5" data-testid="heatmap-metric-toggle">
+          {HEATMAP_METRICS.map((m) => (
+            <button
+              key={m.value}
+              onClick={() => setMetric(m.value)}
+              data-testid={`heatmap-metric-${m.value}`}
+              className={`px-1.5 py-0.5 text-[9px] rounded transition-colors ${
+                metric === m.value
+                  ? "bg-cyan-900/60 text-cyan-300"
+                  : "text-slate-500 hover:text-slate-400"
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="overflow-x-auto overflow-y-auto max-h-[280px]">
+        {/* CSS grid: 1 label column + 24 hour columns */}
+        <div
+          className="inline-grid gap-px"
+          style={{
+            gridTemplateColumns: `48px repeat(24, 12px)`,
+          }}
+        >
+          {/* Header row */}
+          <div className="text-[8px] text-slate-600" />
+          {HOUR_LABELS.map((h) => (
+            <div key={h} className="text-[7px] text-slate-600 text-center leading-tight">
+              {h}
+            </div>
+          ))}
+
+          {/* Data rows */}
+          {grid.map((row, ri) => (
+            <React.Fragment key={row.dayMs}>
+              <div className="text-[8px] text-slate-500 truncate pr-1 leading-[14px]">
+                {row.dayLabel}
+              </div>
+              {row.hours.map((val, hi) => {
+                const t = maxVal > 0 ? val / maxVal : 0;
+                const isHovered = hoveredCell?.row === ri && hoveredCell?.col === hi;
+                return (
+                  <div
+                    key={hi}
+                    className="w-3 h-[14px] rounded-[1px] cursor-pointer transition-opacity"
+                    style={{
+                      backgroundColor: heatmapColor(t),
+                      outline: isHovered ? "1px solid #94a3b8" : "none",
+                    }}
+                    title={`${row.dayLabel} ${hi}:00–${hi}:59 — ${val.toLocaleString()} ${metric === "aircraft" ? "aircraft" : "messages"}`}
+                    onMouseEnter={() => setHoveredCell({ row: ri, col: hi })}
+                    onMouseLeave={() => setHoveredCell(null)}
+                  />
+                );
+              })}
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+

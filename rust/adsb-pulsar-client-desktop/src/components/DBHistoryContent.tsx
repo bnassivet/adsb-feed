@@ -1,8 +1,8 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { getStorageStats, getAircraftSummary, getTrajectory, getTimeDistribution, getDetectionRange } from "@/lib/commands";
+import { getStorageStats, getAircraftSummary, getTrajectory, getTimeDistribution, getDetectionRange, getHourlyHeatmap } from "@/lib/commands";
 import { recordsToTrack } from "@/lib/history-convert";
-import type { AircraftSummary, AircraftTrack, DetectionRangeSector, StorageStats, TimeDistributionBucket, TimeGranularity, TimeRangePreset } from "@/lib/types";
+import type { AircraftSummary, AircraftTrack, DetectionRangeSector, HourlyHeatmapCell, StorageStats, TimeDistributionBucket, TimeGranularity, TimeRangePreset } from "@/lib/types";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
 import { formatBytes } from "@/lib/format";
 import { granularityToNumBuckets } from "@/lib/db-history-analytics";
@@ -57,6 +57,7 @@ export function DBHistoryContent({
   const [summaries, setSummaries] = useState<AircraftSummary[]>([]);
   const [timeBuckets, setTimeBuckets] = useState<TimeDistributionBucket[]>([]);
   const [detectionSectors, setDetectionSectors] = useState<DetectionRangeSector[]>([]);
+  const [heatmapCells, setHeatmapCells] = useState<HourlyHeatmapCell[]>([]);
   const [loading, setLoading] = useState(false);
 
   // Controlled time range state
@@ -88,6 +89,7 @@ export function DBHistoryContent({
       Promise<AircraftSummary[] | string>,
       Promise<TimeDistributionBucket[] | string>,
       Promise<DetectionRangeSector[] | string>,
+      Promise<HourlyHeatmapCell[] | string>,
     ] = [
       getAircraftSummary(start, end),
       getTimeDistribution({ start_ms: start, end_ms: end, num_buckets: numBuckets }),
@@ -99,16 +101,19 @@ export function DBHistoryContent({
             end_ms: end,
           })
         : Promise.resolve([]),
+      getHourlyHeatmap({ start_ms: start, end_ms: end }),
     ];
 
-    const [summaryResults, timeResults, rangeResults] = await Promise.all(promises);
+    const [summaryResults, timeResults, rangeResults, heatmapResults] = await Promise.all(promises);
 
     const sums = typeof summaryResults === "string" ? [] : (summaryResults as AircraftSummary[]);
     const buckets = typeof timeResults === "string" ? [] : (timeResults as TimeDistributionBucket[]);
     const sectors = typeof rangeResults === "string" ? [] : (rangeResults as DetectionRangeSector[]);
+    const heatmap = typeof heatmapResults === "string" ? [] : (heatmapResults as HourlyHeatmapCell[]);
     setSummaries(sums);
     setTimeBuckets(buckets);
     setDetectionSectors(sectors);
+    setHeatmapCells(heatmap);
     onSummariesLoaded?.(sums);
     setLoading(false);
   }, [browsing, granularity, onBrowse, onSummariesLoaded, receiverLat, receiverLon]);
@@ -126,6 +131,19 @@ export function DBHistoryContent({
 
   function handleBrowse() {
     doBrowse(startMs, endMs);
+  }
+
+  function handleRefreshBrowse() {
+    if (preset !== "custom") {
+      // Re-anchor to "now" so the window slides forward
+      const newEnd = Date.now();
+      const newStart = newEnd - PRESET_DURATIONS[preset];
+      setStartMs(newStart);
+      setEndMs(newEnd);
+      doBrowse(newStart, newEnd);
+    } else {
+      doBrowse(startMs, endMs);
+    }
   }
 
   function handleZoom(zoomStart: number, zoomEnd: number) {
@@ -212,7 +230,21 @@ export function DBHistoryContent({
 
       {/* Preset time range pills */}
       <div className="px-3 py-1">
-        <div className="text-[10px] text-slate-500 uppercase mb-1">Time Range</div>
+        <div className="flex justify-between items-center mb-1">
+          <span className="text-[10px] text-slate-500 uppercase">Time Range</span>
+          {browsing && (
+            <button
+              onClick={handleRefreshBrowse}
+              disabled={loading}
+              data-testid="dbhist-refresh-btn"
+              aria-label="Refresh time range"
+              title="Refresh time range"
+              className="text-slate-500 hover:text-slate-300 transition disabled:opacity-40 text-xs leading-none"
+            >
+              {loading ? "…" : "↻"}
+            </button>
+          )}
+        </div>
         <div className="flex flex-wrap gap-0.5" data-testid="dbhist-presets">
           {PRESETS.map((p) => (
             <button
@@ -320,6 +352,9 @@ export function DBHistoryContent({
               onZoom={handleZoom}
               granularity={granularity}
               onGranularityChange={handleGranularityChange}
+              heatmapCells={heatmapCells}
+              startMs={startMs}
+              endMs={endMs}
             />
           )}
 

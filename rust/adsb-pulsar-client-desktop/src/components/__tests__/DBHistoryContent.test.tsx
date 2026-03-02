@@ -28,10 +28,11 @@ const baseProps = {
   dbHistoryCount: 0,
 };
 
-/** Set up mocks for a successful browse (summaries + time distribution). */
+/** Set up mocks for a successful browse (summaries + time distribution + heatmap). */
 function mockBrowseResponses(summaries: AircraftSummary[] = [sampleSummary]) {
   mockInvokeResponse("get_aircraft_summary", summaries);
   mockInvokeResponse("get_time_distribution", []);
+  mockInvokeResponse("get_hourly_heatmap", []);
 }
 
 beforeEach(() => {
@@ -260,6 +261,51 @@ describe("DBHistoryContent", () => {
     for (const preset of ["24h", "48h", "1w", "2w", "1m", "3m", "custom"]) {
       expect(screen.getByTestId(`dbhist-preset-${preset}`)).toBeInTheDocument();
     }
+  });
+
+  it("shows refresh button after browsing that re-triggers query", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockBrowseResponses();
+
+    const onBrowse = vi.fn();
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} onBrowse={onBrowse} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument();
+    });
+
+    // Click 24h to trigger initial browse
+    await user.click(screen.getByTestId("dbhist-preset-24h"));
+
+    await waitFor(() => {
+      expect(onBrowse).toHaveBeenCalledTimes(1);
+    });
+
+    // Refresh button should now be visible
+    const refreshBtn = screen.getByTestId("dbhist-refresh-btn");
+    expect(refreshBtn).toBeInTheDocument();
+
+    // Set up mocks for the refresh query
+    mockBrowseResponses();
+
+    // Click refresh — should trigger another browse
+    await user.click(refreshBtn);
+
+    await waitFor(() => {
+      expect(onBrowse).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("refresh button is not visible before browsing", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    render(<DBHistoryContent {...baseProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-presets")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId("dbhist-refresh-btn")).not.toBeInTheDocument();
   });
 
   it("uses granularity to compute num_buckets in time distribution query", async () => {

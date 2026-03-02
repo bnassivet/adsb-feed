@@ -98,6 +98,26 @@ pub struct DetectionRangeSector {
     pub max_altitude: Option<f64>,
 }
 
+/// Query parameters for hourly activity heatmap.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HourlyHeatmapQuery {
+    pub start_ms: i64,
+    pub end_ms: i64,
+}
+
+/// A single cell in the hourly activity heatmap (one day × one hour).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HourlyHeatmapCell {
+    /// Midnight epoch ms of the calendar day (UTC).
+    pub day_ms: i64,
+    /// Hour of day (0–23).
+    pub hour: u8,
+    /// Number of distinct aircraft seen in this cell.
+    pub aircraft_count: u64,
+    /// Total number of position messages in this cell.
+    pub message_count: u64,
+}
+
 /// Configuration for opening a storage handle.
 #[derive(Debug, Clone)]
 pub struct StorageConfig {

@@ -7,8 +7,9 @@
 use crate::error::StorageError;
 use crate::sbs_parser::AircraftPosition;
 use crate::types::{
-    AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, PositionRecord,
-    StorageConfig, StorageStats, TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
+    AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, HourlyHeatmapCell,
+    HourlyHeatmapQuery, PositionRecord, StorageConfig, StorageStats, TimeDistributionBucket,
+    TimeDistributionQuery, TrajectoryQuery,
 };
 use duckdb::{params, Connection};
 use std::sync::{Arc, Mutex};
@@ -520,6 +521,47 @@ impl StorageHandle {
         Ok(sectors)
     }
 
+    /// Get hourly activity heatmap grouped by (date, hour) (synchronous).
+    ///
+    /// Returns one cell per (day, hour) pair that has data. `day_ms` is the
+    /// midnight UTC epoch of each calendar day. The caller is responsible for
+    /// zero-filling missing cells on the frontend.
+    pub fn get_hourly_heatmap_sync(
+        &self,
+        query: HourlyHeatmapQuery,
+    ) -> Result<Vec<HourlyHeatmapCell>, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let sql = r#"
+            SELECT
+                CAST(epoch_ms(CAST(epoch_ms(timestamp_ms) AS DATE)) AS BIGINT) AS day_ms,
+                EXTRACT(HOUR FROM epoch_ms(timestamp_ms)) AS hour,
+                COUNT(DISTINCT hex_ident) AS aircraft_count,
+                COUNT(*) AS message_count
+            FROM positions
+            WHERE timestamp_ms BETWEEN ? AND ?
+            GROUP BY day_ms, hour
+            ORDER BY day_ms, hour
+        "#;
+
+        let mut stmt = storage.conn.prepare(sql)?;
+        let rows = stmt
+            .query_map(params![query.start_ms, query.end_ms], |row| {
+                Ok(HourlyHeatmapCell {
+                    day_ms: row.get(0)?,
+                    hour: row.get::<_, i32>(1)? as u8,
+                    aircraft_count: row.get::<_, i64>(2)? as u64,
+                    message_count: row.get::<_, i64>(3)? as u64,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
     // --- Async wrappers (Step 3) ---
 
     /// Batch insert parsed positions (async via spawn_blocking).
@@ -599,6 +641,17 @@ impl StorageHandle {
     ) -> Result<Vec<DetectionRangeSector>, StorageError> {
         let handle = self.clone();
         tokio::task::spawn_blocking(move || handle.get_detection_range_sync(query))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Get hourly activity heatmap (async via spawn_blocking).
+    pub async fn get_hourly_heatmap(
+        &self,
+        query: HourlyHeatmapQuery,
+    ) -> Result<Vec<HourlyHeatmapCell>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.get_hourly_heatmap_sync(query))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
@@ -1539,5 +1592,92 @@ mod tests {
         assert_eq!(sectors.len(), 36);
         let total: u64 = sectors.iter().map(|s| s.position_count).sum();
         assert_eq!(total, 1);
+    }
+
+    // --- Hourly heatmap tests ---
+
+    #[test]
+    fn test_hourly_heatmap_groups_by_day_and_hour() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        // Insert positions across 2 different days and different hours (UTC).
+        // Day 1: Jan 15 2024, hours 10 and 14
+        // Day 2: Jan 16 2024, hour 10
+        let positions = vec![
+            sample_position("A1", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000"),
+            sample_position("A2", Some(45.6), Some(-73.6), "2024/01/15 10:30:00.000"),
+            sample_position("A1", Some(45.7), Some(-73.7), "2024/01/15 14:00:00.000"),
+            sample_position("A3", Some(45.8), Some(-73.8), "2024/01/16 10:00:00.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let start = parse_timestamp_to_ms("2024/01/15 00:00:00.000", "UTC");
+        let end = parse_timestamp_to_ms("2024/01/16 23:59:59.000", "UTC");
+
+        let cells = handle
+            .get_hourly_heatmap_sync(crate::types::HourlyHeatmapQuery {
+                start_ms: start,
+                end_ms: end,
+            })
+            .unwrap();
+
+        // Should have 3 cells: (Jan15, 10), (Jan15, 14), (Jan16, 10)
+        assert_eq!(cells.len(), 3);
+
+        // All ordered by day_ms, then hour
+        assert!(cells[0].day_ms <= cells[1].day_ms);
+        assert!(cells[1].day_ms <= cells[2].day_ms);
+
+        // Jan 15, hour 10: 2 messages, 2 distinct aircraft (A1, A2)
+        assert_eq!(cells[0].hour, 10);
+        assert_eq!(cells[0].aircraft_count, 2);
+        assert_eq!(cells[0].message_count, 2);
+
+        // Jan 15, hour 14: 1 message, 1 aircraft (A1)
+        assert_eq!(cells[1].hour, 14);
+        assert_eq!(cells[1].aircraft_count, 1);
+        assert_eq!(cells[1].message_count, 1);
+
+        // Jan 16, hour 10: 1 message, 1 aircraft (A3)
+        assert_eq!(cells[2].hour, 10);
+        assert_eq!(cells[2].aircraft_count, 1);
+        assert_eq!(cells[2].message_count, 1);
+    }
+
+    #[test]
+    fn test_hourly_heatmap_empty_db() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let cells = handle
+            .get_hourly_heatmap_sync(crate::types::HourlyHeatmapQuery {
+                start_ms: 0,
+                end_ms: i64::MAX,
+            })
+            .unwrap();
+        assert!(cells.is_empty());
+    }
+
+    #[test]
+    fn test_hourly_heatmap_respects_time_window() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        let positions = vec![
+            sample_position("A1", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000"),
+            sample_position("A2", Some(45.6), Some(-73.6), "2024/01/16 10:00:00.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        // Query only Jan 15
+        let start = parse_timestamp_to_ms("2024/01/15 00:00:00.000", "UTC");
+        let end = parse_timestamp_to_ms("2024/01/15 23:59:59.000", "UTC");
+
+        let cells = handle
+            .get_hourly_heatmap_sync(crate::types::HourlyHeatmapQuery {
+                start_ms: start,
+                end_ms: end,
+            })
+            .unwrap();
+
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].aircraft_count, 1);
     }
 }

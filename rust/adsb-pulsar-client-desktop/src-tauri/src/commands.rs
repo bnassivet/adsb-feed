@@ -5,8 +5,9 @@
 use crate::bridge;
 use crate::state::{AppState, ConnectionStatus, StatusResponse};
 use adsb_data_engine::{
-    AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, PositionRecord,
-    StorageStats, TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
+    AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, HourlyHeatmapCell,
+    HourlyHeatmapQuery, PositionRecord, StorageStats, TimeDistributionBucket,
+    TimeDistributionQuery, TrajectoryQuery,
 };
 use adsb_pulsar_client::{Config, MetricsSnapshot};
 use tauri::State;
@@ -225,6 +226,22 @@ pub async fn get_detection_range(
         .ok_or_else(|| "Storage not available".to_string())?;
     storage
         .get_detection_range(query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Get hourly activity heatmap grouped by (day, hour).
+#[tauri::command]
+pub async fn get_hourly_heatmap(
+    query: HourlyHeatmapQuery,
+    state: State<'_, AppState>,
+) -> Result<Vec<HourlyHeatmapCell>, String> {
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .get_hourly_heatmap(query)
         .await
         .map_err(|e| e.to_string())
 }

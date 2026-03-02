@@ -6,6 +6,8 @@ import type {
   Config,
   DetectionRangeQuery,
   DetectionRangeSector,
+  HourlyHeatmapCell,
+  HourlyHeatmapQuery,
   MetricsSnapshot,
   PositionRecord,
   StatusResponse,
@@ -81,4 +83,10 @@ export async function getDetectionRange(
   query: DetectionRangeQuery
 ): Promise<DetectionRangeSector[]> {
   return invoke("get_detection_range", { query });
+}
+
+export async function getHourlyHeatmap(
+  query: HourlyHeatmapQuery
+): Promise<HourlyHeatmapCell[]> {
+  return invoke("get_hourly_heatmap", { query });
 }

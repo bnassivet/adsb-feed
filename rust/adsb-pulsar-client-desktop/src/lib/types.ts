@@ -209,6 +209,27 @@ export interface DetectionRangeSector {
   max_altitude: number | null;
 }
 
+/** Query parameters for hourly activity heatmap. */
+export interface HourlyHeatmapQuery {
+  start_ms: number;
+  end_ms: number;
+}
+
+/** A single cell in the hourly activity heatmap (one day × one hour). */
+export interface HourlyHeatmapCell {
+  /** Midnight epoch ms of the calendar day (UTC). */
+  day_ms: number;
+  /** Hour of day (0–23). */
+  hour: number;
+  /** Number of distinct aircraft seen in this cell. */
+  aircraft_count: number;
+  /** Total number of position messages in this cell. */
+  message_count: number;
+}
+
+/** Which metric the activity heatmap displays. */
+export type HeatmapMetric = "aircraft" | "messages";
+
 /** Storage statistics. */
 export interface StorageStats {
   row_count: number;

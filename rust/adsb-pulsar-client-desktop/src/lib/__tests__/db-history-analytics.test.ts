@@ -1,12 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
   buildAltitudeBins,
+  buildHeatmapGrid,
   computeDbHistorySummary,
   formatTimeChartData,
   formatAdaptiveTimeLabel,
   granularityToNumBuckets,
 } from "../db-history-analytics";
-import type { AircraftSummary, TimeDistributionBucket } from "../types";
+import type { AircraftSummary, HourlyHeatmapCell, TimeDistributionBucket } from "../types";
 
 function makeSummary(overrides: Partial<AircraftSummary> = {}): AircraftSummary {
   return {
@@ -192,5 +193,82 @@ describe("formatTimeChartData", () => {
     ];
     const data = formatTimeChartData(buckets, "UTC");
     expect(data[0].bucketMs).toBe(1705315200000);
+  });
+});
+
+// --- buildHeatmapGrid ---
+
+describe("buildHeatmapGrid", () => {
+  // Midnight UTC for Jan 15, 16, 17 2024
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const JAN15 = Date.UTC(2024, 0, 15); // 1705276800000
+  const JAN16 = JAN15 + DAY_MS;
+  const JAN17 = JAN16 + DAY_MS;
+
+  function makeCell(day_ms: number, hour: number, aircraft: number, messages: number): HourlyHeatmapCell {
+    return { day_ms, hour, aircraft_count: aircraft, message_count: messages };
+  }
+
+  it("returns empty grid for empty input", () => {
+    const grid = buildHeatmapGrid([], JAN15, JAN16);
+    // Even with valid range, 1 day row is generated (all zeros)
+    expect(grid.length).toBeGreaterThanOrEqual(1);
+    expect(grid[0].hours.every((v) => v === 0)).toBe(true);
+  });
+
+  it("returns empty grid when startMs >= endMs", () => {
+    const grid = buildHeatmapGrid([], JAN16, JAN15);
+    expect(grid).toEqual([]);
+  });
+
+  it("zero-fills all 24 hours per row", () => {
+    const cells = [makeCell(JAN15, 10, 5, 100)];
+    const grid = buildHeatmapGrid(cells, JAN15, JAN15 + DAY_MS);
+    expect(grid).toHaveLength(1);
+    expect(grid[0].hours).toHaveLength(24);
+    expect(grid[0].hours[10]).toBe(5); // aircraft_count by default
+    expect(grid[0].hours[0]).toBe(0);
+    expect(grid[0].hours[23]).toBe(0);
+  });
+
+  it("uses message_count when metric is 'messages'", () => {
+    const cells = [makeCell(JAN15, 10, 5, 100)];
+    const grid = buildHeatmapGrid(cells, JAN15, JAN15 + DAY_MS, "messages");
+    expect(grid[0].hours[10]).toBe(100);
+  });
+
+  it("generates rows for each day in range, most recent first", () => {
+    const cells = [
+      makeCell(JAN15, 10, 3, 50),
+      makeCell(JAN16, 14, 7, 200),
+    ];
+    const grid = buildHeatmapGrid(cells, JAN15, JAN17);
+    // JAN15 and JAN16 should be present — JAN17 is the endDay (floored)
+    expect(grid.length).toBeGreaterThanOrEqual(2);
+    // Most recent first
+    expect(grid[0].dayMs).toBeGreaterThanOrEqual(grid[1].dayMs);
+  });
+
+  it("includes day labels with weekday and date", () => {
+    const cells = [makeCell(JAN15, 10, 1, 1)];
+    const grid = buildHeatmapGrid(cells, JAN15, JAN15 + DAY_MS, "aircraft", "UTC");
+    // Jan 15 2024 is a Monday
+    expect(grid[0].dayLabel).toMatch(/Mon/);
+    expect(grid[0].dayLabel).toMatch(/1\/15/);
+  });
+
+  it("handles multiple cells on the same day", () => {
+    const cells = [
+      makeCell(JAN15, 8, 2, 20),
+      makeCell(JAN15, 14, 5, 80),
+      makeCell(JAN15, 22, 1, 10),
+    ];
+    const grid = buildHeatmapGrid(cells, JAN15, JAN15 + DAY_MS);
+    expect(grid[0].hours[8]).toBe(2);
+    expect(grid[0].hours[14]).toBe(5);
+    expect(grid[0].hours[22]).toBe(1);
+    // Other hours should be 0
+    expect(grid[0].hours[0]).toBe(0);
+    expect(grid[0].hours[12]).toBe(0);
   });
 });
