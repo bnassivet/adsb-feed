@@ -98,11 +98,12 @@ interface Props {
 
 /** Build compact (single-line) tooltip for density cell. */
 function buildCompactTooltip(props: DensityProperties, metric: DensityMetric): string {
-  if (metric === "altitude") return `Mean alt: ${Math.round(props.value).toLocaleString()} ft`;
-  if (metric === "altitude_min") return `Min alt: ${Math.round(props.value).toLocaleString()} ft`;
-  if (metric === "altitude_max") return `Max alt: ${Math.round(props.value).toLocaleString()} ft`;
+  const val = `<span style="color:#fff">${Math.round(props.value).toLocaleString()}</span>`;
+  if (metric === "altitude") return `Mean alt: ${val} ft`;
+  if (metric === "altitude_min") return `Min alt: ${val} ft`;
+  if (metric === "altitude_max") return `Max alt: ${val} ft`;
   const label = metric === "positions" ? "Positions" : "Aircraft";
-  return `${label}: ${props.value}`;
+  return `${label}: ${val}`;
 }
 
 /** Build extended (multi-line) tooltip showing all metrics + distance from receiver. */
@@ -110,11 +111,13 @@ function buildExtendedTooltip(
   props: DensityProperties,
   receiverLocation?: { lat: number; lng: number; alt: number | null },
 ): string {
-  const fmtAlt = (v: number | null) => v != null ? `${Math.round(v).toLocaleString()} ft` : "N/A";
+  const w = (v: string) => `<span style="color:#fff">${v}</span>`;
+  const fmtAlt = (v: number | null) => v != null ? w(`${Math.round(v).toLocaleString()} ft`) : "N/A";
 
   const lines: string[] = [
-    `Positions: ${props.positions.toLocaleString()}`,
-    `Aircraft: ${props.aircraftCount.toLocaleString()}`,
+    `<div style="font-weight:600;color:#22d3ee;margin-bottom:2px">H3 Cell</div>`,
+    `Positions: ${w(props.positions.toLocaleString())}`,
+    `Aircraft: ${w(props.aircraftCount.toLocaleString())}`,
     `Mean alt: ${fmtAlt(props.meanAlt)}`,
     `Min alt: ${fmtAlt(props.minAlt)}`,
     `Max alt: ${fmtAlt(props.maxAlt)}`,
@@ -125,7 +128,7 @@ function buildExtendedTooltip(
       receiverLocation.lat, receiverLocation.lng,
       props.cellCenter[0], props.cellCenter[1],
     );
-    lines.push(`Distance: ${d.toFixed(1)} NM`);
+    lines.push(`Distance: ${w(`${d.toFixed(1)} NM`)}`);
   }
 
   return lines.join("<br>");
@@ -255,26 +258,24 @@ function DotsLayer({
         if (type === "history") {
           marker.bindTooltip(() => {
             const parts = [
-              `<div class="text-xs">`,
-              `<div class="font-bold">${label}</div>`,
+              `<div style="font-weight:600;color:#fff">${label}</div>`,
               `<div>Hex: ${t.hex_ident}</div>`,
-              `<div>Alt: ${formatAlt(pos[2])}</div>`,
+              `<div>Alt: <span style="color:#fff">${formatAlt(pos[2])}</span></div>`,
             ];
             if (isLast) parts.push(`<div>Last seen: ${timeAgo(t.last_seen)}</div>`);
-            parts.push(`</div>`);
             return parts.join("");
           });
         } else if (type === "dbHistory") {
           marker.bindTooltip(() =>
-            `<div class="text-xs"><div class="font-bold">${label}</div><div>Hex: ${t.hex_ident}</div><div>Alt: ${formatAlt(pos[2])}</div><div class="text-cyan-400">DB History</div></div>`
+            `<div style="font-weight:600;color:#fff">${label}</div><div>Hex: ${t.hex_ident}</div><div>Alt: <span style="color:#fff">${formatAlt(pos[2])}</span></div><div style="color:#22d3ee;margin-top:2px">DB History</div>`
           );
         } else if (type === "imported") {
           marker.bindTooltip(() =>
-            `<div class="text-xs"><div class="font-bold">${label}</div><div>Hex: ${t.hex_ident}</div><div>Alt: ${formatAlt(pos[2])}</div><div class="text-indigo-400">Imported</div></div>`
+            `<div style="font-weight:600;color:#fff">${label}</div><div>Hex: ${t.hex_ident}</div><div>Alt: <span style="color:#fff">${formatAlt(pos[2])}</span></div><div style="color:#818cf8;margin-top:2px">Imported</div>`
           );
         } else {
           marker.bindTooltip(() =>
-            `<div class="text-xs"><div class="font-bold">${label}</div><div>Alt: ${formatAlt(pos[2])}</div></div>`
+            `<div style="font-weight:600;color:#fff">${label}</div><div>Alt: <span style="color:#fff">${formatAlt(pos[2])}</span></div>`
           );
         }
 
@@ -351,12 +352,12 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
               }}
             >
               <Tooltip sticky>
-                <div className="text-xs">
-                  <div className="font-bold">
+                <div style={{ fontSize: 11 }}>
+                  <div style={{ fontWeight: 600, color: "#fff" }}>
                     {t.callsign ?? t.hex_ident}
                   </div>
                   <div>Hex: {t.hex_ident}</div>
-                  <div>Alt: {formatAlt(t.altitude)}</div>
+                  <div>Alt: <span style={{ color: "#fff" }}>{formatAlt(t.altitude)}</span></div>
                   <div>Last seen: {timeAgo(t.last_seen)}</div>
                 </div>
               </Tooltip>
@@ -383,13 +384,13 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
               eventHandlers={{ click: () => onSelectTrack(t.hex_ident) }}
             >
               <Tooltip sticky>
-                <div className="text-xs">
-                  <div className="font-bold">
+                <div style={{ fontSize: 11 }}>
+                  <div style={{ fontWeight: 600, color: "#fff" }}>
                     {t.callsign ?? t.hex_ident}
                   </div>
                   <div>Hex: {t.hex_ident}</div>
-                  <div>Alt: {formatAlt(t.altitude)}</div>
-                  <div className="text-cyan-400">DB History</div>
+                  <div>Alt: <span style={{ color: "#fff" }}>{formatAlt(t.altitude)}</span></div>
+                  <div style={{ color: "#22d3ee", marginTop: 2 }}>DB History</div>
                 </div>
               </Tooltip>
             </Polyline>
@@ -416,13 +417,13 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
               eventHandlers={{ click: () => onSelectTrack(t.hex_ident) }}
             >
               <Tooltip sticky>
-                <div className="text-xs">
-                  <div className="font-bold">
+                <div style={{ fontSize: 11 }}>
+                  <div style={{ fontWeight: 600, color: "#fff" }}>
                     {t.callsign ?? t.hex_ident}
                   </div>
                   <div>Hex: {t.hex_ident}</div>
-                  <div>Alt: {formatAlt(t.altitude)}</div>
-                  <div className="text-indigo-400">Imported</div>
+                  <div>Alt: <span style={{ color: "#fff" }}>{formatAlt(t.altitude)}</span></div>
+                  <div style={{ color: "#818cf8", marginTop: 2 }}>Imported</div>
                 </div>
               </Tooltip>
             </Polyline>
@@ -446,9 +447,9 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
             })}
           >
             <Tooltip direction="top" offset={[0, -10]}>
-              <div className="text-xs">
-                <div className="font-bold">Receiver</div>
-                {receiverLocation.alt != null && <div>Alt: {receiverLocation.alt.toLocaleString()} ft</div>}
+              <div style={{ fontSize: 11 }}>
+                <div style={{ fontWeight: 600, color: "#e91e90" }}>Receiver</div>
+                {receiverLocation.alt != null && <div>Alt: <span style={{ color: "#fff" }}>{receiverLocation.alt.toLocaleString()} ft</span></div>}
               </div>
             </Tooltip>
           </Marker>
@@ -469,18 +470,18 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
                 eventHandlers={{ click: () => onSelectTrack(t.hex_ident) }}
               >
                 <Tooltip direction="top" offset={[0, -12]}>
-                  <div className="text-xs">
-                    <div className="font-bold">
+                  <div style={{ fontSize: 11 }}>
+                    <div style={{ fontWeight: 600, color: "#22d3ee" }}>
                       {t.callsign ?? t.hex_ident}
                     </div>
                     <div>Hex: {t.hex_ident}</div>
                     {t.altitude !== null && (
-                      <div>Alt: {t.altitude.toLocaleString()} ft</div>
+                      <div>Alt: <span style={{ color: "#fff" }}>{t.altitude.toLocaleString()} ft</span></div>
                     )}
                     {t.ground_speed !== null && (
-                      <div>Spd: {t.ground_speed.toFixed(0)} kts</div>
+                      <div>Spd: <span style={{ color: "#fff" }}>{t.ground_speed.toFixed(0)} kts</span></div>
                     )}
-                    {t.squawk !== null && <div>Sqk: {t.squawk}</div>}
+                    {t.squawk !== null && <div>Sqk: <span style={{ color: "#fff" }}>{t.squawk}</span></div>}
                   </div>
                 </Tooltip>
               </Marker>

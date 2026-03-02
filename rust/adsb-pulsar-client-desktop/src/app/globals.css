@@ -22,6 +22,32 @@
   background: #64748b;
 }
 
+/* Dark-themed Leaflet tooltips — matches DetectionRadar / Recharts style */
+.leaflet-tooltip {
+  background-color: rgba(30, 41, 59, 0.92); /* slate-800 + slight transparency */
+  border: 1px solid #334155; /* slate-700 */
+  border-radius: 4px;
+  color: #e2e8f0; /* slate-200 */
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 6px 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* Tooltip arrows — match dark background */
+.leaflet-tooltip-top::before {
+  border-top-color: rgba(30, 41, 59, 0.92);
+}
+.leaflet-tooltip-bottom::before {
+  border-bottom-color: rgba(30, 41, 59, 0.92);
+}
+.leaflet-tooltip-left::before {
+  border-left-color: rgba(30, 41, 59, 0.92);
+}
+.leaflet-tooltip-right::before {
+  border-right-color: rgba(30, 41, 59, 0.92);
+}
+
 /* Selected aircraft marker — renders above other markers */
 .selected-marker {
   z-index: 1000 !important;
