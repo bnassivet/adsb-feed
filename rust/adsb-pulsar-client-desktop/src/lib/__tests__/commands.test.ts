@@ -178,8 +178,8 @@ describe("Historical query commands", () => {
   describe("getDetectionRange", () => {
     it("sends query params and returns sectors", async () => {
       const sectors: DetectionRangeSector[] = [
-        { bearing_deg: 0, max_distance_nm: 120.5, position_count: 42 },
-        { bearing_deg: 90, max_distance_nm: 85.2, position_count: 18 },
+        { bearing_deg: 0, max_distance_nm: 120.5, position_count: 42, min_altitude: 1000, max_altitude: 40000 },
+        { bearing_deg: 90, max_distance_nm: 85.2, position_count: 18, min_altitude: null, max_altitude: null },
       ];
       mockInvokeResponse("get_detection_range", sectors);
 

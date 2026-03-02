@@ -33,6 +33,10 @@ export interface SectorWedge {
   distanceNm: number;
   /** Number of positions observed in this sector. */
   positionCount: number;
+  /** Minimum altitude in this sector (feet), or null if no altitude data. */
+  minAltitude: number | null;
+  /** Maximum altitude in this sector (feet), or null if no altitude data. */
+  maxAltitude: number | null;
 }
 
 export interface DistanceRing {
@@ -128,6 +132,8 @@ export function buildSectorWedges(
         bearingDeg: s.bearing_deg,
         distanceNm: s.max_distance_nm,
         positionCount: s.position_count,
+        minAltitude: s.min_altitude,
+        maxAltitude: s.max_altitude,
       };
     });
 }

@@ -442,7 +442,8 @@ impl StorageHandle {
             .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
 
         let sql = r#"
-            SELECT sector, MAX(distance_nm) AS max_distance_nm, COUNT(*) AS position_count
+            SELECT sector, MAX(distance_nm) AS max_distance_nm, COUNT(*) AS position_count,
+                   MIN(altitude) AS min_altitude, MAX(altitude) AS max_altitude
             FROM (
               SELECT
                 CAST(FLOOR(DEGREES(ATAN2(
@@ -453,7 +454,8 @@ impl StorageHandle {
                 2 * 3440.065 * ASIN(SQRT(
                   POWER(SIN(RADIANS((latitude - ?) / 2)), 2) +
                   COS(RADIANS(?)) * COS(RADIANS(latitude)) * POWER(SIN(RADIANS((longitude - ?) / 2)), 2)
-                )) AS distance_nm
+                )) AS distance_nm,
+                altitude
               FROM positions
               WHERE latitude IS NOT NULL AND longitude IS NOT NULL
                 AND timestamp_ms >= ? AND timestamp_ms <= ?
@@ -481,7 +483,15 @@ impl StorageHandle {
                     let sector: i32 = row.get(0)?;
                     let max_distance_nm: f64 = row.get(1)?;
                     let position_count: i64 = row.get(2)?;
-                    Ok((sector, max_distance_nm, position_count))
+                    let min_altitude: Option<f64> = row.get(3)?;
+                    let max_altitude: Option<f64> = row.get(4)?;
+                    Ok((
+                        sector,
+                        max_distance_nm,
+                        position_count,
+                        min_altitude,
+                        max_altitude,
+                    ))
                 },
             )?
             .collect::<Result<Vec<_>, _>>()?;
@@ -492,13 +502,18 @@ impl StorageHandle {
                 bearing_deg: (i * 10) as u16,
                 max_distance_nm: 0.0,
                 position_count: 0,
+                min_altitude: None,
+                max_altitude: None,
             })
             .collect();
 
-        for (sector_idx, max_dist, count) in rows {
+        for (sector_idx, max_dist, count, min_alt, max_alt) in rows {
             if (0..36).contains(&sector_idx) {
-                sectors[sector_idx as usize].max_distance_nm = max_dist;
-                sectors[sector_idx as usize].position_count = count as u64;
+                let s = &mut sectors[sector_idx as usize];
+                s.max_distance_nm = max_dist;
+                s.position_count = count as u64;
+                s.min_altitude = min_alt;
+                s.max_altitude = max_alt;
             }
         }
 
@@ -1375,6 +1390,126 @@ mod tests {
 
         let total_count: u64 = sectors.iter().map(|s| s.position_count).sum();
         assert_eq!(total_count, 1, "Null-coord position should be excluded");
+    }
+
+    fn sample_position_with_altitude(
+        hex: &str,
+        lat: Option<f64>,
+        lon: Option<f64>,
+        altitude: Option<f64>,
+        ts: &str,
+    ) -> AircraftPosition {
+        let mut pos = sample_position(hex, lat, lon, ts);
+        pos.altitude = altitude;
+        pos
+    }
+
+    #[test]
+    fn test_detection_range_altitude_single_position() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let positions = vec![sample_position_with_altitude(
+            "A1",
+            Some(46.0),
+            Some(-73.0),
+            Some(35000.0),
+            "2024/01/15 10:00:00.000",
+        )];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let sectors = handle
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                receiver_lat: 45.0,
+                receiver_lon: -73.0,
+                start_ms: None,
+                end_ms: None,
+            })
+            .unwrap();
+
+        let non_zero: Vec<_> = sectors.iter().filter(|s| s.position_count > 0).collect();
+        assert_eq!(non_zero.len(), 1);
+        assert_eq!(non_zero[0].min_altitude, Some(35000.0));
+        assert_eq!(non_zero[0].max_altitude, Some(35000.0));
+    }
+
+    #[test]
+    fn test_detection_range_altitude_min_max_per_sector() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        // Two positions due north at different altitudes
+        let positions = vec![
+            sample_position_with_altitude(
+                "A1",
+                Some(45.5),
+                Some(-73.0),
+                Some(5000.0),
+                "2024/01/15 10:00:00.000",
+            ),
+            sample_position_with_altitude(
+                "A2",
+                Some(45.6),
+                Some(-73.0),
+                Some(40000.0),
+                "2024/01/15 10:00:01.000",
+            ),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let sectors = handle
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                receiver_lat: 45.0,
+                receiver_lon: -73.0,
+                start_ms: None,
+                end_ms: None,
+            })
+            .unwrap();
+
+        let non_zero: Vec<_> = sectors.iter().filter(|s| s.position_count > 0).collect();
+        assert_eq!(non_zero.len(), 1);
+        assert_eq!(non_zero[0].min_altitude, Some(5000.0));
+        assert_eq!(non_zero[0].max_altitude, Some(40000.0));
+    }
+
+    #[test]
+    fn test_detection_range_altitude_null_when_no_altitude_data() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        // Position with no altitude
+        let positions = vec![sample_position_with_altitude(
+            "A1",
+            Some(46.0),
+            Some(-73.0),
+            None,
+            "2024/01/15 10:00:00.000",
+        )];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let sectors = handle
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                receiver_lat: 45.0,
+                receiver_lon: -73.0,
+                start_ms: None,
+                end_ms: None,
+            })
+            .unwrap();
+
+        let non_zero: Vec<_> = sectors.iter().filter(|s| s.position_count > 0).collect();
+        assert_eq!(non_zero.len(), 1);
+        assert_eq!(non_zero[0].min_altitude, None);
+        assert_eq!(non_zero[0].max_altitude, None);
+    }
+
+    #[test]
+    fn test_detection_range_empty_sectors_have_null_altitude() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let sectors = handle
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                receiver_lat: 45.0,
+                receiver_lon: -73.0,
+                start_ms: None,
+                end_ms: None,
+            })
+            .unwrap();
+
+        assert!(sectors.iter().all(|s| s.min_altitude.is_none()));
+        assert!(sectors.iter().all(|s| s.max_altitude.is_none()));
     }
 
     #[tokio::test]

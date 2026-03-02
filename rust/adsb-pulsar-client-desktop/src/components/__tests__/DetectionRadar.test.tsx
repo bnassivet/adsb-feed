@@ -9,6 +9,8 @@ function makeSectors(overrides: Partial<DetectionRangeSector>[] = []): Detection
     bearing_deg: i * 10,
     max_distance_nm: 0,
     position_count: 0,
+    min_altitude: null,
+    max_altitude: null,
   }));
   for (const o of overrides) {
     const idx = (o.bearing_deg ?? 0) / 10;
@@ -18,8 +20,8 @@ function makeSectors(overrides: Partial<DetectionRangeSector>[] = []): Detection
 }
 
 const nonZeroSectors = makeSectors([
-  { bearing_deg: 0, max_distance_nm: 100, position_count: 10 },
-  { bearing_deg: 90, max_distance_nm: 50, position_count: 5 },
+  { bearing_deg: 0, max_distance_nm: 100, position_count: 10, min_altitude: 5000, max_altitude: 40000 },
+  { bearing_deg: 90, max_distance_nm: 50, position_count: 5, min_altitude: 10000, max_altitude: 35000 },
 ]);
 
 describe("DetectionRadar", () => {
@@ -122,6 +124,34 @@ describe("DetectionRadar", () => {
       expect(tooltip.textContent).toContain("90°");
       expect(tooltip.textContent).toContain("50");
       expect(tooltip.textContent).toContain("5");
+    });
+
+    it("shows min/max altitude in tooltip when available", async () => {
+      const user = userEvent.setup();
+      render(<DetectionRadar sectors={nonZeroSectors} mode="polar" />);
+
+      const wedges = screen.getAllByTestId("radar-wedge");
+      await user.hover(wedges[0]); // 0° sector: min 5000, max 40000
+
+      const tooltip = screen.getByTestId("sector-tooltip");
+      expect(tooltip.textContent).toContain("5,000");
+      expect(tooltip.textContent).toContain("40,000");
+      expect(tooltip.textContent).toContain("ft");
+    });
+
+    it("hides altitude line in tooltip when altitude is null", async () => {
+      const user = userEvent.setup();
+      const sectors = makeSectors([
+        { bearing_deg: 0, max_distance_nm: 100, position_count: 10, min_altitude: null, max_altitude: null },
+      ]);
+      render(<DetectionRadar sectors={sectors} mode="polar" />);
+
+      const wedges = screen.getAllByTestId("radar-wedge");
+      await user.hover(wedges[0]);
+
+      const tooltip = screen.getByTestId("sector-tooltip");
+      expect(tooltip.textContent).not.toContain("Alt:");
+      expect(tooltip.textContent).not.toContain("ft");
     });
 
   });

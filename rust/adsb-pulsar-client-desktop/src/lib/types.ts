@@ -194,6 +194,10 @@ export interface DetectionRangeSector {
   max_distance_nm: number;
   /** Number of positions observed in this sector. */
   position_count: number;
+  /** Minimum altitude observed in this sector (feet), or null if no altitude data. */
+  min_altitude: number | null;
+  /** Maximum altitude observed in this sector (feet), or null if no altitude data. */
+  max_altitude: number | null;
 }
 
 /** Storage statistics. */

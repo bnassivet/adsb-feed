@@ -92,6 +92,10 @@ pub struct DetectionRangeSector {
     pub max_distance_nm: f64,
     /// Number of positions observed in this sector.
     pub position_count: u64,
+    /// Minimum altitude observed in this sector (feet), if any.
+    pub min_altitude: Option<f64>,
+    /// Maximum altitude observed in this sector (feet), if any.
+    pub max_altitude: Option<f64>,
 }
 
 /// Configuration for opening a storage handle.

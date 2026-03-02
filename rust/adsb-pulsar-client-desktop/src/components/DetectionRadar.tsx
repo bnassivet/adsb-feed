@@ -224,6 +224,14 @@ export function DetectionRadar({ sectors, mode }: Props) {
           <div className="mt-0.5">
             Range: <span className="text-white">{Math.round(hovered.distanceNm)} NM</span>
           </div>
+          {(hovered.minAltitude != null || hovered.maxAltitude != null) && (
+            <div>
+              Alt: <span className="text-white">
+                {hovered.minAltitude != null ? hovered.minAltitude.toLocaleString() : "—"}
+                –{hovered.maxAltitude != null ? hovered.maxAltitude.toLocaleString() : "—"} ft
+              </span>
+            </div>
+          )}
           <div>
             Positions: <span className="text-white">{hovered.positionCount.toLocaleString()}</span>
           </div>

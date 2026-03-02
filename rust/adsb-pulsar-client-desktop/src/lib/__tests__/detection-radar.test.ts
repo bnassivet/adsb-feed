@@ -15,6 +15,8 @@ function makeSectors(overrides: Partial<DetectionRangeSector>[] = []): Detection
     bearing_deg: i * 10,
     max_distance_nm: 0,
     position_count: 0,
+    min_altitude: null,
+    max_altitude: null,
   }));
   for (const o of overrides) {
     const idx = (o.bearing_deg ?? 0) / 10;
@@ -154,6 +156,24 @@ describe("buildSectorWedges", () => {
     const wedges = buildSectorWedges(sectors, config);
     expect(wedges[0].distanceNm).toBe(75);
     expect(wedges[0].positionCount).toBe(42);
+  });
+
+  it("preserves min/max altitude in wedge data", () => {
+    const sectors = makeSectors([
+      { bearing_deg: 0, max_distance_nm: 100, position_count: 5, min_altitude: 1000, max_altitude: 40000 },
+    ]);
+    const wedges = buildSectorWedges(sectors, config);
+    expect(wedges[0].minAltitude).toBe(1000);
+    expect(wedges[0].maxAltitude).toBe(40000);
+  });
+
+  it("preserves null altitude in wedge data", () => {
+    const sectors = makeSectors([
+      { bearing_deg: 0, max_distance_nm: 100, position_count: 5, min_altitude: null, max_altitude: null },
+    ]);
+    const wedges = buildSectorWedges(sectors, config);
+    expect(wedges[0].minAltitude).toBeNull();
+    expect(wedges[0].maxAltitude).toBeNull();
   });
 
   it("returns wedges for all non-zero sectors", () => {
