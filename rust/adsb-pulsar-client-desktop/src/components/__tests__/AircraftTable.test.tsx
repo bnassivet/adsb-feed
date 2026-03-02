@@ -243,6 +243,38 @@ describe("DB History section", () => {
   });
 });
 
+describe("Live section fold/unfold", () => {
+  it("renders live section header with track count", () => {
+    render(<AircraftTable tracks={[makeTrack("A1"), makeTrack("A2")]} />);
+    expect(screen.getByTestId("live-section-header")).toBeInTheDocument();
+    expect(screen.getByText(/Live/)).toBeInTheDocument();
+    expect(screen.getByText(/\(2\)/)).toBeInTheDocument();
+  });
+
+  it("hides live section header when no live tracks", () => {
+    render(<AircraftTable tracks={[]} />);
+    expect(screen.queryByTestId("live-section-header")).not.toBeInTheDocument();
+  });
+
+  it("collapses/expands live rows on header click", async () => {
+    const user = userEvent.setup();
+    render(<AircraftTable tracks={[makeTrack("A1")]} />);
+
+    expect(screen.getByTestId("row-A1")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("live-section-header"));
+    expect(screen.queryByTestId("row-A1")).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("live-section-header"));
+    expect(screen.getByTestId("row-A1")).toBeInTheDocument();
+  });
+
+  it("keeps live rows expanded by default", () => {
+    render(<AircraftTable tracks={[makeTrack("A1")]} />);
+    expect(screen.getByTestId("row-A1")).toBeInTheDocument();
+  });
+});
+
 describe("AircraftTable columns", () => {
   it("renders RxTS column header", () => {
     render(<AircraftTable tracks={[makeTrack("ABC123")]} />);

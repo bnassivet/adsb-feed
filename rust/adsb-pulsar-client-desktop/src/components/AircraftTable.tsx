@@ -25,6 +25,7 @@ interface Props {
 export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = [], importedTracks = [], selectedHexIdent, onSelectTrack }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("callsign");
   const [sortAsc, setSortAsc] = useState(true);
+  const [liveCollapsed, setLiveCollapsed] = useState(false);
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
   const [dbHistoryCollapsed, setDbHistoryCollapsed] = useState(false);
   const [importedCollapsed, setImportedCollapsed] = useState(false);
@@ -96,7 +97,23 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
           </tr>
         </thead>
         <tbody className="text-slate-300">
-          {sorted.map((t) => {
+          {/* Live header — collapsible */}
+          {sorted.length > 0 && (
+            <tr
+              data-testid="live-section-header"
+              className="cursor-pointer select-none"
+              onClick={() => setLiveCollapsed(prev => !prev)}
+            >
+              <td colSpan={11} className="px-3 py-1 bg-slate-800/80">
+                <span className="text-[10px] text-green-500 uppercase tracking-wider">
+                  {liveCollapsed ? "\u25B8" : "\u25BE"} Live ({sorted.length})
+                </span>
+              </td>
+            </tr>
+          )}
+
+          {/* Live rows */}
+          {!liveCollapsed && sorted.map((t) => {
             const isSelected = t.hex_ident === selectedHexIdent;
             return (
             <tr
