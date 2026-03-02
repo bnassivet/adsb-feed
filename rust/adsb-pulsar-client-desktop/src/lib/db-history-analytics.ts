@@ -1,4 +1,4 @@
-import type { AircraftSummary, TimeDistributionBucket } from "./types";
+import type { AircraftSummary, TimeDistributionBucket, TimeGranularity } from "./types";
 
 /** A single bin in an altitude histogram. */
 export interface AltitudeBin {
@@ -20,6 +20,77 @@ export interface TimeChartDatum {
   label: string;
   count: number;
   bucketMs: number;
+}
+
+const MS_1H = 60 * 60 * 1000;
+const MS_48H = 48 * MS_1H;
+const MS_2W = 14 * 24 * MS_1H;
+
+/** Duration of each granularity level in ms. */
+const GRANULARITY_MS: Record<TimeGranularity, number> = {
+  "1h": MS_1H,
+  "4h": 4 * MS_1H,
+  "day": 24 * MS_1H,
+  "week": 7 * 24 * MS_1H,
+  "month": 30 * 24 * MS_1H,
+};
+
+const MAX_BUCKETS = 500;
+
+/**
+ * Compute the number of histogram buckets for a given granularity and time range.
+ * Floors the result, clamps to [1, 500].
+ */
+export function granularityToNumBuckets(granularity: TimeGranularity, rangeMs: number): number {
+  const raw = Math.floor(rangeMs / GRANULARITY_MS[granularity]);
+  return Math.max(1, Math.min(raw, MAX_BUCKETS));
+}
+
+/**
+ * Format a timestamp label that adapts to the queried time range:
+ * - ≤ 48h  → "HH:MM"
+ * - ≤ 2w   → "MMM DD HH:MM"
+ * - > 2w   → "MMM DD"
+ */
+export function formatAdaptiveTimeLabel(
+  timestampMs: number,
+  rangeMs: number,
+  tzName?: string,
+): string {
+  const d = new Date(timestampMs);
+  const tz = tzName ?? "UTC";
+
+  try {
+    if (rangeMs <= MS_48H) {
+      return d.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: tz,
+      });
+    }
+    if (rangeMs <= MS_2W) {
+      const month = d.toLocaleDateString("en-US", { month: "short", timeZone: tz });
+      const day = d.toLocaleDateString("en-US", { day: "numeric", timeZone: tz });
+      const time = d.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: tz,
+      });
+      return `${month} ${day} ${time}`;
+    }
+    // > 2 weeks
+    const month = d.toLocaleDateString("en-US", { month: "short", timeZone: tz });
+    const day = d.toLocaleDateString("en-US", { day: "numeric", timeZone: tz });
+    return `${month} ${day}`;
+  } catch {
+    // Fallback for invalid timezone
+    const iso = d.toISOString();
+    if (rangeMs <= MS_48H) return iso.slice(11, 16);
+    if (rangeMs <= MS_2W) return `${iso.slice(5, 10)} ${iso.slice(11, 16)}`;
+    return iso.slice(5, 10);
+  }
 }
 
 const BIN_SIZE_FT = 5000;
@@ -77,26 +148,17 @@ export function computeDbHistorySummary(summaries: AircraftSummary[]): DbHistory
 
 /**
  * Format time distribution buckets for the bar chart.
- * Labels are formatted as HH:MM using the given timezone.
+ * When rangeMs is provided, labels adapt to the time span; otherwise defaults to HH:MM.
  */
 export function formatTimeChartData(
   buckets: TimeDistributionBucket[],
   tzName?: string,
+  rangeMs?: number,
 ): TimeChartDatum[] {
-  return buckets.map((b) => {
-    const d = new Date(b.bucket_ms);
-    let label: string;
-    try {
-      label = d.toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-        timeZone: tzName ?? "UTC",
-      });
-    } catch {
-      // Fallback for invalid timezone
-      label = d.toISOString().slice(11, 16);
-    }
-    return { label, count: b.count, bucketMs: b.bucket_ms };
-  });
+  const effectiveRange = rangeMs ?? 0; // 0 → falls into ≤ 48h branch (HH:MM)
+  return buckets.map((b) => ({
+    label: formatAdaptiveTimeLabel(b.bucket_ms, effectiveRange, tzName),
+    count: b.count,
+    bucketMs: b.bucket_ms,
+  }));
 }

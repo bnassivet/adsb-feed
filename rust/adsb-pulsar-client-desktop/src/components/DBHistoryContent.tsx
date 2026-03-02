@@ -1,10 +1,11 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getStorageStats, getAircraftSummary, getTrajectory, getTimeDistribution, getDetectionRange } from "@/lib/commands";
 import { recordsToTrack } from "@/lib/history-convert";
-import type { AircraftSummary, AircraftTrack, DetectionRangeSector, StorageStats, TimeDistributionBucket } from "@/lib/types";
+import type { AircraftSummary, AircraftTrack, DetectionRangeSector, StorageStats, TimeDistributionBucket, TimeGranularity, TimeRangePreset } from "@/lib/types";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
 import { formatBytes } from "@/lib/format";
+import { granularityToNumBuckets } from "@/lib/db-history-analytics";
 import { DBHistoryAnalytics } from "./DBHistoryAnalytics";
 
 interface Props {
@@ -19,6 +20,18 @@ interface Props {
   receiverLat?: number | null;
   receiverLon?: number | null;
 }
+
+/** Preset durations in ms. */
+const PRESET_DURATIONS: Record<Exclude<TimeRangePreset, "custom">, number> = {
+  "24h": 24 * 60 * 60 * 1000,
+  "48h": 48 * 60 * 60 * 1000,
+  "1w": 7 * 24 * 60 * 60 * 1000,
+  "2w": 14 * 24 * 60 * 60 * 1000,
+  "1m": 30 * 24 * 60 * 60 * 1000,
+  "3m": 90 * 24 * 60 * 60 * 1000,
+};
+
+const PRESETS: TimeRangePreset[] = ["24h", "48h", "1w", "2w", "1m", "3m", "custom"];
 
 /** Returns a datetime-local string (YYYY-MM-DDTHH:MM) from ms epoch. */
 function toDatetimeLocal(ms: number): string {
@@ -46,52 +59,29 @@ export function DBHistoryContent({
   const [detectionSectors, setDetectionSectors] = useState<DetectionRangeSector[]>([]);
   const [loading, setLoading] = useState(false);
 
+  // Controlled time range state
   const now = Date.now();
-  const [startDefault, setStartDefault] = useState(() => toDatetimeLocal(now - 24 * 60 * 60 * 1000));
-  const [endDefault, setEndDefault] = useState(() => toDatetimeLocal(now));
-  const startRef = useRef<HTMLInputElement>(null);
-  const endRef = useRef<HTMLInputElement>(null);
+  const [preset, setPreset] = useState<TimeRangePreset>("24h");
+  const [startMs, setStartMs] = useState(() => now - PRESET_DURATIONS["24h"]);
+  const [endMs, setEndMs] = useState(() => now);
+  const [granularity, setGranularity] = useState<TimeGranularity>("1h");
 
   useEffect(() => {
     getStorageStats().then((result) => {
       if (typeof result === "string") {
         setUnavailable(true);
       } else {
-        const s = result as StorageStats;
-        setStats(s);
-        if (s.oldest_timestamp_ms !== null) {
-          setStartDefault(toDatetimeLocal(s.oldest_timestamp_ms));
-        }
-        if (s.newest_timestamp_ms !== null) {
-          setEndDefault(toDatetimeLocal(s.newest_timestamp_ms));
-        }
+        setStats(result as StorageStats);
       }
     });
   }, []);
 
-  function getTimeRange(): [number, number] {
-    const startStr = startRef.current?.value ?? startDefault;
-    const endStr = endRef.current?.value ?? endDefault;
-    return [new Date(startStr).getTime(), new Date(endStr).getTime()];
-  }
-
-  async function handleRefreshStats() {
-    setRefreshing(true);
-    const result = await getStorageStats();
-    if (typeof result === "string") {
-      setUnavailable(true);
-    } else {
-      setStats(result as StorageStats);
-    }
-    setRefreshing(false);
-  }
-
-  async function handleBrowse() {
+  const doBrowse = useCallback(async (start: number, end: number, gran: TimeGranularity = granularity) => {
     if (!browsing) setBrowsing(true);
     setLoading(true);
-    const [startMs, endMs] = getTimeRange();
-    onBrowse?.(startMs, endMs);
+    onBrowse?.(start, end);
 
+    const numBuckets = granularityToNumBuckets(gran, end - start);
     const hasReceiver = receiverLat != null && receiverLon != null;
 
     const promises: [
@@ -99,14 +89,14 @@ export function DBHistoryContent({
       Promise<TimeDistributionBucket[] | string>,
       Promise<DetectionRangeSector[] | string>,
     ] = [
-      getAircraftSummary(startMs, endMs),
-      getTimeDistribution({ start_ms: startMs, end_ms: endMs, num_buckets: 24 }),
+      getAircraftSummary(start, end),
+      getTimeDistribution({ start_ms: start, end_ms: end, num_buckets: numBuckets }),
       hasReceiver
         ? getDetectionRange({
             receiver_lat: receiverLat!,
             receiver_lon: receiverLon!,
-            start_ms: startMs,
-            end_ms: endMs,
+            start_ms: start,
+            end_ms: end,
           })
         : Promise.resolve([]),
     ];
@@ -121,10 +111,49 @@ export function DBHistoryContent({
     setDetectionSectors(sectors);
     onSummariesLoaded?.(sums);
     setLoading(false);
+  }, [browsing, granularity, onBrowse, onSummariesLoaded, receiverLat, receiverLon]);
+
+  function handlePresetClick(p: TimeRangePreset) {
+    setPreset(p);
+    if (p !== "custom") {
+      const newEnd = Date.now();
+      const newStart = newEnd - PRESET_DURATIONS[p];
+      setStartMs(newStart);
+      setEndMs(newEnd);
+      doBrowse(newStart, newEnd);
+    }
+  }
+
+  function handleBrowse() {
+    doBrowse(startMs, endMs);
+  }
+
+  function handleZoom(zoomStart: number, zoomEnd: number) {
+    setPreset("custom");
+    setStartMs(zoomStart);
+    setEndMs(zoomEnd);
+    doBrowse(zoomStart, zoomEnd);
+  }
+
+  function handleGranularityChange(g: TimeGranularity) {
+    setGranularity(g);
+    if (browsing) {
+      doBrowse(startMs, endMs, g);
+    }
+  }
+
+  async function handleRefreshStats() {
+    setRefreshing(true);
+    const result = await getStorageStats();
+    if (typeof result === "string") {
+      setUnavailable(true);
+    } else {
+      setStats(result as StorageStats);
+    }
+    setRefreshing(false);
   }
 
   async function handleLoadTrajectory(summary: AircraftSummary) {
-    const [startMs, endMs] = getTimeRange();
     const records = await getTrajectory({
       hex_ident: summary.hex_ident,
       start_ms: startMs,
@@ -181,46 +210,64 @@ export function DBHistoryContent({
         </div>
       </div>
 
-      {/* Browse button */}
+      {/* Preset time range pills */}
       <div className="px-3 py-1">
-        <button
-          onClick={handleBrowse}
-          data-testid="dbhist-browse-btn"
-          className="w-full px-2 py-1 text-xs bg-cyan-800/40 hover:bg-cyan-700/40 text-cyan-200 rounded transition border border-cyan-700/30"
-        >
-          Browse DB History
-        </button>
+        <div className="text-[10px] text-slate-500 uppercase mb-1">Time Range</div>
+        <div className="flex flex-wrap gap-0.5" data-testid="dbhist-presets">
+          {PRESETS.map((p) => (
+            <button
+              key={p}
+              onClick={() => handlePresetClick(p)}
+              data-testid={`dbhist-preset-${p}`}
+              className={`px-1.5 py-0.5 text-[10px] rounded transition-colors ${
+                preset === p
+                  ? "bg-cyan-900/60 text-cyan-300"
+                  : "text-slate-500 hover:text-slate-400"
+              }`}
+            >
+              {p === "custom" ? "Custom" : p}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Time range + aircraft list */}
-      {browsing && (
-        <div className="flex flex-col gap-1 px-3 pb-2">
-          <label className="text-xs text-slate-400">
-            Start
-            <input
-              type="datetime-local"
-              ref={startRef}
-              defaultValue={startDefault}
-              className="block w-full mt-0.5 px-1.5 py-0.5 text-xs bg-slate-800 border border-slate-600 rounded text-slate-200"
-            />
-          </label>
-          <label className="text-xs text-slate-400">
-            End
-            <input
-              type="datetime-local"
-              ref={endRef}
-              defaultValue={endDefault}
-              className="block w-full mt-0.5 px-1.5 py-0.5 text-xs bg-slate-800 border border-slate-600 rounded text-slate-200"
-            />
-          </label>
+      {/* Custom datetime inputs — only visible when preset is "custom" */}
+      {preset === "custom" && (
+        <div className="px-3 pb-1 flex flex-col gap-1" data-testid="dbhist-custom-inputs">
+          <div className="flex flex-wrap gap-1.5">
+            <label className="flex-1 min-w-[140px] text-xs text-slate-400">
+              Start
+              <input
+                type="datetime-local"
+                value={toDatetimeLocal(startMs)}
+                onChange={(e) => setStartMs(new Date(e.target.value).getTime())}
+                className="block w-full mt-0.5 px-1.5 py-0.5 text-xs bg-slate-800 border border-slate-600 rounded text-slate-200"
+              />
+            </label>
+            <label className="flex-1 min-w-[140px] text-xs text-slate-400">
+              End
+              <input
+                type="datetime-local"
+                value={toDatetimeLocal(endMs)}
+                onChange={(e) => setEndMs(new Date(e.target.value).getTime())}
+                className="block w-full mt-0.5 px-1.5 py-0.5 text-xs bg-slate-800 border border-slate-600 rounded text-slate-200"
+              />
+            </label>
+          </div>
           <button
             onClick={handleBrowse}
             disabled={loading}
+            data-testid="dbhist-browse-btn"
             className="px-2 py-0.5 text-xs bg-cyan-700 hover:bg-cyan-600 text-white rounded transition disabled:opacity-50"
           >
-            {loading ? "Loading…" : "Refresh"}
+            {loading ? "Loading…" : "Browse"}
           </button>
+        </div>
+      )}
 
+      {/* Results area */}
+      {browsing && (
+        <div className="flex flex-col gap-1 px-3 pb-2">
           {summaries.length === 0 && !loading && (
             <p className="text-xs text-slate-500 italic">No aircraft found.</p>
           )}
@@ -269,6 +316,10 @@ export function DBHistoryContent({
               timeBuckets={timeBuckets}
               tzName={resolvedTzName}
               detectionSectors={detectionSectors}
+              rangeMs={endMs - startMs}
+              onZoom={handleZoom}
+              granularity={granularity}
+              onGranularityChange={handleGranularityChange}
             />
           )}
 

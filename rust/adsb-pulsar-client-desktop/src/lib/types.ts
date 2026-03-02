@@ -102,6 +102,12 @@ export interface Filters {
   includeImportedInFilter: boolean;
 }
 
+/** Quick-select time range for DB History queries. */
+export type TimeRangePreset = "24h" | "48h" | "1w" | "2w" | "1m" | "3m" | "custom";
+
+/** Granularity for the time distribution histogram buckets. */
+export type TimeGranularity = "1h" | "4h" | "day" | "week" | "month";
+
 /** Which metric the H3 density overlay displays. */
 export type DensityMetric = "positions" | "aircraft" | "altitude" | "altitude_min" | "altitude_max";
 

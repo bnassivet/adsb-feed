@@ -3,6 +3,8 @@ import {
   buildAltitudeBins,
   computeDbHistorySummary,
   formatTimeChartData,
+  formatAdaptiveTimeLabel,
+  granularityToNumBuckets,
 } from "../db-history-analytics";
 import type { AircraftSummary, TimeDistributionBucket } from "../types";
 
@@ -85,6 +87,81 @@ describe("computeDbHistorySummary", () => {
     expect(result.totalTracks).toBe(2);
     expect(result.totalPositions).toBe(30);
     expect(result.avgDurationMs).toBe(7500); // (10000 + 5000) / 2
+  });
+});
+
+describe("granularityToNumBuckets", () => {
+  const MS_1H = 60 * 60 * 1000;
+  const MS_24H = 24 * MS_1H;
+  const MS_7D = 7 * MS_24H;
+  const MS_30D = 30 * MS_24H;
+
+  it("returns 24 buckets for 24h range with 1h granularity", () => {
+    expect(granularityToNumBuckets("1h", MS_24H)).toBe(24);
+  });
+
+  it("returns 6 buckets for 24h range with 4h granularity", () => {
+    expect(granularityToNumBuckets("4h", MS_24H)).toBe(6);
+  });
+
+  it("returns 7 buckets for 1 week range with day granularity", () => {
+    expect(granularityToNumBuckets("day", MS_7D)).toBe(7);
+  });
+
+  it("returns 4 buckets for 30 day range with week granularity", () => {
+    // 30 / 7 ≈ 4.28 → floors to 4
+    expect(granularityToNumBuckets("week", MS_30D)).toBe(4);
+  });
+
+  it("returns 3 buckets for 90 day range with month granularity", () => {
+    expect(granularityToNumBuckets("month", 90 * MS_24H)).toBe(3);
+  });
+
+  it("returns at least 1 bucket even for tiny ranges", () => {
+    expect(granularityToNumBuckets("month", MS_1H)).toBe(1);
+  });
+
+  it("caps at 500 buckets for very large ranges", () => {
+    // 365 days with 1h granularity = 8760, should cap
+    expect(granularityToNumBuckets("1h", 365 * MS_24H)).toBe(500);
+  });
+});
+
+describe("formatAdaptiveTimeLabel", () => {
+  // Jan 15 2024 14:30 UTC
+  const ts = Date.UTC(2024, 0, 15, 14, 30, 0);
+
+  it("returns HH:MM for range ≤ 48h", () => {
+    const rangeMs = 24 * 60 * 60 * 1000; // 24h
+    const label = formatAdaptiveTimeLabel(ts, rangeMs, "UTC");
+    expect(label).toMatch(/^14:30$/);
+  });
+
+  it("returns HH:MM for exactly 48h range", () => {
+    const rangeMs = 48 * 60 * 60 * 1000;
+    const label = formatAdaptiveTimeLabel(ts, rangeMs, "UTC");
+    expect(label).toMatch(/^14:30$/);
+  });
+
+  it("returns MMM DD HH:MM for range ≤ 2 weeks (> 48h)", () => {
+    const rangeMs = 7 * 24 * 60 * 60 * 1000; // 1 week
+    const label = formatAdaptiveTimeLabel(ts, rangeMs, "UTC");
+    expect(label).toMatch(/Jan 15 14:30/);
+  });
+
+  it("returns MMM DD for range > 2 weeks", () => {
+    const rangeMs = 30 * 24 * 60 * 60 * 1000; // ~1 month
+    const label = formatAdaptiveTimeLabel(ts, rangeMs, "UTC");
+    expect(label).toMatch(/Jan 15/);
+    // Should NOT contain time portion
+    expect(label).not.toMatch(/14:30/);
+  });
+
+  it("falls back gracefully for invalid timezone", () => {
+    const rangeMs = 24 * 60 * 60 * 1000;
+    const label = formatAdaptiveTimeLabel(ts, rangeMs, "Invalid/Zone");
+    // Should still return something parseable
+    expect(label).toMatch(/\d{2}:\d{2}/);
   });
 });
 
