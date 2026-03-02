@@ -1,5 +1,5 @@
 "use client";
-import type { Filters, DensityMetric, AltitudeColorMode } from "@/lib/types";
+import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode } from "@/lib/types";
 import { RangeSlider } from "@/components/RangeSlider";
 import type { ReactNode } from "react";
 
@@ -17,6 +17,8 @@ interface Props {
   densityAltitudeMin: number;
   densityAltitudeMax: number;
   onDensityAltitudeChange: (min: number, max: number) => void;
+  densityTooltipMode: DensityTooltipMode;
+  onDensityTooltipModeChange: (mode: DensityTooltipMode) => void;
   showSimulation: boolean;
   onToggleSimulation: () => void;
   simulationCount: number;
@@ -49,7 +51,7 @@ function Section({ title, defaultOpen, children }: { title: string; defaultOpen?
   );
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation }: Props) {
   return (
     <div className="flex flex-col gap-2 p-4">
 
@@ -271,6 +273,29 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
                   onChange={onDensityAltitudeChange}
                   formatLabel={(v) => `${v.toLocaleString()} ft`}
                 />
+              </div>
+              <div className="mt-1 pt-1 border-t border-slate-700/50 flex items-center gap-2">
+                <span className="text-[10px] text-slate-500">Tooltip:</span>
+                <label className="flex items-center gap-1 text-xs text-slate-500 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="density-tooltip-mode"
+                    checked={densityTooltipMode === "compact"}
+                    onChange={() => onDensityTooltipModeChange("compact")}
+                    className="accent-purple-500"
+                  />
+                  Compact
+                </label>
+                <label className="flex items-center gap-1 text-xs text-slate-500 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="density-tooltip-mode"
+                    checked={densityTooltipMode === "extended"}
+                    onChange={() => onDensityTooltipModeChange("extended")}
+                    className="accent-purple-500"
+                  />
+                  Extended
+                </label>
               </div>
               {importedCount > 0 && (
                 <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer mt-1 pt-1 border-t border-slate-700/50">

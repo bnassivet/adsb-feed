@@ -1,4 +1,4 @@
-import { latLngToCell, cellToBoundary } from "h3-js";
+import { latLngToCell, cellToBoundary, cellToLatLng } from "h3-js";
 import type { Feature, FeatureCollection, Polygon } from "geojson";
 import type { AircraftTrack, DensityMetric } from "@/lib/types";
 
@@ -15,6 +15,14 @@ export interface DensityProperties {
   cell: string;
   value: number;
   normalized: number;
+  /** All metrics for extended tooltip display. */
+  positions: number;
+  aircraftCount: number;
+  meanAlt: number | null;
+  minAlt: number | null;
+  maxAlt: number | null;
+  /** Cell center coordinates [lat, lng] for distance computation. */
+  cellCenter: [number, number];
 }
 
 export interface DensityAltitudeRange {
@@ -97,9 +105,22 @@ export function computeH3Density(
     // Close the ring (GeoJSON spec requires first === last)
     ring.push(ring[0]);
 
+    const center = cellToLatLng(cell);
+    const hasAlt = agg.altitudeCount > 0;
+
     features.push({
       type: "Feature",
-      properties: { cell, value, normalized },
+      properties: {
+        cell,
+        value,
+        normalized,
+        positions: agg.count,
+        aircraftCount: agg.aircraft.size,
+        meanAlt: hasAlt ? agg.altitudeSum / agg.altitudeCount : null,
+        minAlt: hasAlt ? agg.altitudeMin : null,
+        maxAlt: hasAlt ? agg.altitudeMax : null,
+        cellCenter: [center[0], center[1]],
+      },
       geometry: {
         type: "Polygon",
         coordinates: [ring],

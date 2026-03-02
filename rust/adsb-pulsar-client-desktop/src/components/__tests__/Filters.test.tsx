@@ -24,6 +24,8 @@ function renderFilters(overrides = {}) {
     densityAltitudeMin: 0,
     densityAltitudeMax: 50000,
     onDensityAltitudeChange: vi.fn(),
+    densityTooltipMode: "compact" as const,
+    onDensityTooltipModeChange: vi.fn(),
     showSimulation: false,
     onToggleSimulation: vi.fn(),
     simulationCount: 0,

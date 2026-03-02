@@ -290,4 +290,48 @@ describe("computeH3Density", () => {
       }
     });
   });
+
+  describe("extended properties", () => {
+    it("includes all metrics in each feature properties", () => {
+      const track1 = makeTrack({
+        hex_ident: "AAA",
+        positions: [[45.5, -73.5, 30000]],
+      });
+      const track2 = makeTrack({
+        hex_ident: "BBB",
+        positions: [[45.5, -73.5, 40000]],
+      });
+      const result = computeH3Density([track1, track2], "positions", 5);
+      const f = result.features[0];
+      expect(f.properties.positions).toBe(2);
+      expect(f.properties.aircraftCount).toBe(2);
+      expect(f.properties.meanAlt).toBe(35000);
+      expect(f.properties.minAlt).toBe(30000);
+      expect(f.properties.maxAlt).toBe(40000);
+    });
+
+    it("sets altitude metrics to null when no altitude data", () => {
+      const track = makeTrack({
+        positions: [[45.5, -73.5, null]],
+      });
+      const result = computeH3Density([track], "positions", 5);
+      const f = result.features[0];
+      expect(f.properties.positions).toBe(1);
+      expect(f.properties.meanAlt).toBeNull();
+      expect(f.properties.minAlt).toBeNull();
+      expect(f.properties.maxAlt).toBeNull();
+    });
+
+    it("includes cellCenter as [lat, lng] tuple", () => {
+      const track = makeTrack({
+        positions: [[45.5, -73.5, 35000]],
+      });
+      const result = computeH3Density([track], "positions", 5);
+      const center = result.features[0].properties.cellCenter;
+      expect(center).toHaveLength(2);
+      // Cell center should be near the input position
+      expect(center[0]).toBeCloseTo(45.5, 0);
+      expect(center[1]).toBeCloseTo(-73.5, 0);
+    });
+  });
 });

@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useRef } from "react";
 import { FiltersPanel } from "@/components/Filters";
-import type { Filters, DensityMetric, AltitudeColorMode } from "@/lib/types";
+import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode } from "@/lib/types";
 
 const MIN_PANEL_WIDTH = 180;
 const MAX_PANEL_WIDTH = 400;
@@ -26,6 +26,8 @@ interface LeftPanelProps {
   densityAltitudeMin: number;
   densityAltitudeMax: number;
   onDensityAltitudeChange: (min: number, max: number) => void;
+  densityTooltipMode: DensityTooltipMode;
+  onDensityTooltipModeChange: (mode: DensityTooltipMode) => void;
   showSimulation: boolean;
   onToggleSimulation: () => void;
   simulationCount: number;

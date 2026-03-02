@@ -2,13 +2,14 @@
 import { useEffect, useMemo, useCallback } from "react";
 import { MapContainer, TileLayer, Marker, Polyline, GeoJSON, Tooltip, CircleMarker, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
-import type { AircraftTrack, DensityMetric, AltitudeColorMode } from "@/lib/types";
+import type { AircraftTrack, DensityMetric, DensityTooltipMode, AltitudeColorMode } from "@/lib/types";
 import { zoomToH3Resolution } from "@/lib/types";
 import { altitudeToColor, densityColor, cachedAltitudeToColor, type MapTheme } from "@/lib/colors";
 import { computeH3Density } from "@/lib/h3-density";
 import type { DensityProperties, DensityAltitudeRange } from "@/lib/h3-density";
 import { useMapZoom } from "@/hooks/useMapZoom";
 import { aircraftIconHtml } from "@/lib/aircraft-icon";
+import { haversineDistanceNm } from "@/lib/geo";
 import { orderTracksWithSelectedLast } from "@/lib/track-ordering";
 import { MapTileToggle } from "./MapTileToggle";
 import { AltitudeLegend } from "./AltitudeLegend";
@@ -87,11 +88,47 @@ interface Props {
   densityTracks: AircraftTrack[];
   densityAltitudeMin: number;
   densityAltitudeMax: number;
+  densityTooltipMode: DensityTooltipMode;
   liveColorMode: AltitudeColorMode;
   historyColorMode: AltitudeColorMode;
   selectedHexIdent: string | null;
   onSelectTrack: (hex: string | null) => void;
   receiverLocation?: { lat: number; lng: number; alt: number | null };
+}
+
+/** Build compact (single-line) tooltip for density cell. */
+function buildCompactTooltip(props: DensityProperties, metric: DensityMetric): string {
+  if (metric === "altitude") return `Mean alt: ${Math.round(props.value).toLocaleString()} ft`;
+  if (metric === "altitude_min") return `Min alt: ${Math.round(props.value).toLocaleString()} ft`;
+  if (metric === "altitude_max") return `Max alt: ${Math.round(props.value).toLocaleString()} ft`;
+  const label = metric === "positions" ? "Positions" : "Aircraft";
+  return `${label}: ${props.value}`;
+}
+
+/** Build extended (multi-line) tooltip showing all metrics + distance from receiver. */
+function buildExtendedTooltip(
+  props: DensityProperties,
+  receiverLocation?: { lat: number; lng: number; alt: number | null },
+): string {
+  const fmtAlt = (v: number | null) => v != null ? `${Math.round(v).toLocaleString()} ft` : "N/A";
+
+  const lines: string[] = [
+    `Positions: ${props.positions.toLocaleString()}`,
+    `Aircraft: ${props.aircraftCount.toLocaleString()}`,
+    `Mean alt: ${fmtAlt(props.meanAlt)}`,
+    `Min alt: ${fmtAlt(props.minAlt)}`,
+    `Max alt: ${fmtAlt(props.maxAlt)}`,
+  ];
+
+  if (receiverLocation && props.cellCenter) {
+    const d = haversineDistanceNm(
+      receiverLocation.lat, receiverLocation.lng,
+      props.cellCenter[0], props.cellCenter[1],
+    );
+    lines.push(`Distance: ${d.toFixed(1)} NM`);
+  }
+
+  return lines.join("<br>");
 }
 
 /** Renders H3 density hexagons with zoom-adaptive resolution. */
@@ -101,6 +138,8 @@ function DensityLayer({
   densityMetric,
   densityAltitudeMin,
   densityAltitudeMax,
+  densityTooltipMode,
+  receiverLocation,
   theme,
 }: {
   showDensity: boolean;
@@ -108,6 +147,8 @@ function DensityLayer({
   densityMetric: DensityMetric;
   densityAltitudeMin: number;
   densityAltitudeMax: number;
+  densityTooltipMode: DensityTooltipMode;
+  receiverLocation?: { lat: number; lng: number; alt: number | null };
   theme: MapTheme;
 }) {
   const zoom = useMapZoom(300);
@@ -128,7 +169,7 @@ function DensityLayer({
 
   // react-leaflet's GeoJSON doesn't re-render on data change — use key to force remount
   const densityKey = densityGeoJson
-    ? `density-${densityMetric}-${resolution}-${densityGeoJson.features.length}-${densityTracks.length}-${theme}-${densityAltitudeMin}-${densityAltitudeMax}`
+    ? `density-${densityMetric}-${resolution}-${densityGeoJson.features.length}-${densityTracks.length}-${theme}-${densityAltitudeMin}-${densityAltitudeMax}-${densityTooltipMode}`
     : "density-off";
 
   if (!densityGeoJson || densityGeoJson.features.length === 0) return null;
@@ -148,17 +189,9 @@ function DensityLayer({
       }}
       onEachFeature={(feature, layer) => {
         const props = feature.properties as DensityProperties;
-        let text: string;
-        if (densityMetric === "altitude") {
-          text = `Mean alt: ${Math.round(props.value).toLocaleString()} ft`;
-        } else if (densityMetric === "altitude_min") {
-          text = `Min alt: ${Math.round(props.value).toLocaleString()} ft`;
-        } else if (densityMetric === "altitude_max") {
-          text = `Max alt: ${Math.round(props.value).toLocaleString()} ft`;
-        } else {
-          const label = densityMetric === "positions" ? "Positions" : "Aircraft";
-          text = `${label}: ${props.value}`;
-        }
+        const text = densityTooltipMode === "extended"
+          ? buildExtendedTooltip(props, receiverLocation)
+          : buildCompactTooltip(props, densityMetric);
         layer.bindTooltip(text, { sticky: true });
       }}
     />
@@ -260,7 +293,7 @@ function DotsLayer({
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, liveColorMode, historyColorMode, selectedHexIdent, onSelectTrack, receiverLocation }: Props) {
+export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdent, onSelectTrack, receiverLocation }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
@@ -296,7 +329,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         />
 
         {/* Density hexagons — zoom-adaptive H3 resolution */}
-        <DensityLayer showDensity={showDensity} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} theme={mapTheme} />
+        <DensityLayer showDensity={showDensity} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} receiverLocation={receiverLocation} theme={mapTheme} />
 
         {/* History tracks — rendered first so active tracks layer on top */}
         {trajectoryStyle === "dots" && historyTracks.length > 0 && (

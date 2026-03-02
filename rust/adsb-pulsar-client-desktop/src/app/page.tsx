@@ -17,7 +17,7 @@ import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { startFeed, stopFeed, getConfig } from "@/lib/commands";
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
 import { DEFAULT_FILTERS } from "@/lib/types";
-import type { Config, Filters, DensityMetric, AltitudeColorMode } from "@/lib/types";
+import type { Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode } from "@/lib/types";
 import Link from "next/link";
 
 const MIN_TABLE_HEIGHT = 150;
@@ -42,6 +42,7 @@ export default function Dashboard() {
   const [includeImportedInDensity, setIncludeImportedInDensity] = useLocalStorage<boolean>("adsb-include-imported-density", false);
   const [densityAltitudeMin, setDensityAltitudeMin] = useLocalStorage<number>("adsb-density-alt-min", 0);
   const [densityAltitudeMax, setDensityAltitudeMax] = useLocalStorage<number>("adsb-density-alt-max", 50000);
+  const [densityTooltipMode, setDensityTooltipMode] = useLocalStorage<DensityTooltipMode>("adsb-density-tooltip-mode", "compact");
   const [showReceiver, setShowReceiver] = useLocalStorage<boolean>("adsb-show-receiver", true);
 
   // DB History Panel state
@@ -305,6 +306,8 @@ export default function Dashboard() {
           densityAltitudeMin={densityAltitudeMin}
           densityAltitudeMax={densityAltitudeMax}
           onDensityAltitudeChange={handleDensityAltitudeChange}
+          densityTooltipMode={densityTooltipMode}
+          onDensityTooltipModeChange={setDensityTooltipMode}
           showSimulation={showSimulation}
           onToggleSimulation={handleToggleSimulation}
           simulationCount={simulatedTracks.length}
@@ -328,7 +331,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <Map tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} dbHistoryTracks={visibleDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} />
+              <Map tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} dbHistoryTracks={visibleDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel
