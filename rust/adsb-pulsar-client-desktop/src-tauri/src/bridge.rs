@@ -45,6 +45,12 @@ pub fn start_feed(
     let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
     let stop_tx = Arc::new(tokio::sync::Mutex::new(Some(stop_tx)));
 
+    // Alive signal: when client_task exits (for any reason), alive_tx is dropped.
+    // Background tasks (metrics, watchdog) receive watch::RecvError on their next
+    // changed() call and break their loops — no zombie tasks emitting stale status.
+    let (alive_tx, alive_rx_metrics) = tokio::sync::watch::channel(true);
+    let alive_rx_watchdog = alive_tx.subscribe();
+
     let app_for_client = app.clone();
     let app_for_messages = app.clone();
     let app_for_metrics = app.clone();
@@ -52,6 +58,10 @@ pub fn start_feed(
 
     // Task 1: Run the feed client
     let client_task = tokio::spawn(async move {
+        // alive_tx is moved here: dropping this task drops alive_tx,
+        // which signals metrics_task and watchdog_task to stop.
+        let _alive_tx = alive_tx;
+
         // Emit connecting status
         let _ = app_for_client.emit(
             "adsb:status",
@@ -98,6 +108,7 @@ pub fn start_feed(
                 pulsar_status: ConnectionStatus::Disconnected,
             },
         );
+        // _alive_tx is dropped here, signaling background tasks to exit
     });
 
     // Task 2: Relay messages to frontend (throttled) + persist to DuckDB
@@ -114,7 +125,7 @@ pub fn start_feed(
 
     // Task 3: Relay metrics to frontend
     let metrics_task = tokio::spawn(async move {
-        relay_metrics(app_for_metrics, metrics_for_relay).await;
+        relay_metrics(app_for_metrics, metrics_for_relay, alive_rx_metrics).await;
     });
 
     // Task 4: Socket watchdog - monitor message activity and emit periodic status
@@ -124,6 +135,7 @@ pub fn start_feed(
             last_message_time_watchdog,
             test_mode,
             socket_read_timeout_secs,
+            alive_rx_watchdog,
         )
         .await;
     });
@@ -219,14 +231,26 @@ async fn persist_batch(storage: &Option<StorageHandle>, batch: &[AircraftPositio
 }
 
 /// Emits metrics snapshots to the frontend every second.
-async fn relay_metrics(app: AppHandle, metrics: Metrics) {
+///
+/// Exits when the client task stops (alive_rx sender dropped) or when
+/// the app handle is no longer valid.
+async fn relay_metrics(
+    app: AppHandle,
+    metrics: Metrics,
+    mut alive_rx: tokio::sync::watch::Receiver<bool>,
+) {
     let mut tick = interval(Duration::from_secs(1));
 
     loop {
-        tick.tick().await;
-        let snapshot = metrics.snapshot();
-        if app.emit("adsb:metrics", &snapshot).is_err() {
-            break;
+        tokio::select! {
+            _ = tick.tick() => {
+                let snapshot = metrics.snapshot();
+                if app.emit("adsb:metrics", &snapshot).is_err() {
+                    break;
+                }
+            }
+            // alive_rx.changed() resolves when alive_tx is dropped (client task exited)
+            _ = alive_rx.changed() => { break; }
         }
     }
 }
@@ -243,11 +267,14 @@ async fn relay_metrics(app: AppHandle, metrics: Metrics) {
 ///
 /// If a message arrives again after Degraded/ConnectionLost the status
 /// switches back to Connected automatically.
+///
+/// Exits cleanly when the client task stops (alive_rx sender dropped).
 async fn socket_watchdog(
     app: AppHandle,
     last_message_time: Arc<RwLock<Instant>>,
     test_mode: bool,
     socket_read_timeout_secs: u64,
+    mut alive_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     let degraded_threshold = Duration::from_secs(socket_read_timeout_secs + 10);
     let lost_threshold = Duration::from_secs(socket_read_timeout_secs + 30);
@@ -319,6 +346,8 @@ async fn socket_watchdog(
                     break;
                 }
             }
+            // Client task exited: alive_tx dropped, stop watchdog
+            _ = alive_rx.changed() => { break; }
         }
     }
 }

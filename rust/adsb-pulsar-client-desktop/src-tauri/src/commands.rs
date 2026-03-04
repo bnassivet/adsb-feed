@@ -10,17 +10,28 @@ use adsb_data_engine::{
     TimeDistributionQuery, TrajectoryQuery,
 };
 use adsb_pulsar_client::{Config, MetricsSnapshot};
-use tauri::State;
+use tauri::{Emitter, State};
 
 /// Starts the ADS-B feed client with the current configuration.
 #[tauri::command]
 pub async fn start_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    // Check if already running
+    // Check if already running. If a handle exists but all its tasks have already
+    // finished (e.g. the client crashed with a fatal error), treat it as a stale
+    // handle and clean it up so the feed can be restarted.
     {
         let handle = state.feed_handle.lock().map_err(|e| e.to_string())?;
-        if handle.is_some() {
-            return Err("Feed is already running".to_string());
+        if let Some(ref h) = *handle {
+            let all_done = h.task_handles.iter().all(|t| t.is_finished());
+            if !all_done {
+                return Err("Feed is already running".to_string());
+            }
+            // else: stale handle — fall through to clean it up below
         }
+    }
+    // Remove stale handle (no-op if None)
+    {
+        let mut handle = state.feed_handle.lock().map_err(|e| e.to_string())?;
+        handle.take();
     }
 
     let config = { state.config.lock().map_err(|e| e.to_string())?.clone() };
@@ -50,31 +61,41 @@ pub async fn start_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
 
 /// Stops the running ADS-B feed client.
 #[tauri::command]
-pub async fn stop_feed(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn stop_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let feed_handle = {
         let mut handle = state.feed_handle.lock().map_err(|e| e.to_string())?;
         handle.take()
     };
 
     if let Some(handle) = feed_handle {
-        // Call shutdown
+        // Signal the client to shut down gracefully
         (handle.shutdown_fn)();
 
-        // Wait for tasks to complete (with timeout)
+        // Abort all background tasks immediately. This is safe because stop_feed
+        // emits the final status event itself (below), so we don't need to wait
+        // for client_task to emit it. The alive signal in bridge.rs would also
+        // cascade to watchdog/metrics, but abort() gives immediate cleanup.
         for task in handle.task_handles {
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), task).await;
+            task.abort();
         }
     }
 
-    // Update status
+    // Build the final "stopped" status
+    let status = StatusResponse {
+        is_running: false,
+        socket_status: ConnectionStatus::Disconnected,
+        pulsar_status: ConnectionStatus::Disconnected,
+    };
+
+    // Update in-memory state
     {
-        let mut status = state.connection_status.lock().map_err(|e| e.to_string())?;
-        *status = StatusResponse {
-            is_running: false,
-            socket_status: ConnectionStatus::Disconnected,
-            pulsar_status: ConnectionStatus::Disconnected,
-        };
+        let mut connection_status = state.connection_status.lock().map_err(|e| e.to_string())?;
+        *connection_status = status.clone();
     }
+
+    // Emit event directly so the frontend updates immediately, even though
+    // the aborted client_task never reached its own adsb:status emission.
+    let _ = app.emit("adsb:status", &status);
 
     Ok(())
 }

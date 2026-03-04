@@ -100,7 +100,9 @@ impl ClientError {
     /// ```
     pub fn is_recoverable(&self) -> bool {
         match self {
-            ClientError::Socket(_) | ClientError::Forwarder(_) => true,
+            ClientError::Socket(_)
+            | ClientError::Forwarder(_)
+            | ClientError::BufferOverflow { .. } => true,
             #[cfg(feature = "pulsar")]
             ClientError::Pulsar(_) => true,
             _ => false,
@@ -118,9 +120,10 @@ impl ClientError {
     /// * `false` - Should not retry (fatal or non-retriable)
     pub fn should_retry(&self) -> bool {
         match self {
-            ClientError::Socket(_) | ClientError::Forwarder(_) | ClientError::RetryQueueFull(_) => {
-                true
-            }
+            ClientError::Socket(_)
+            | ClientError::Forwarder(_)
+            | ClientError::RetryQueueFull(_)
+            | ClientError::BufferOverflow { .. } => true,
             #[cfg(feature = "pulsar")]
             ClientError::Pulsar(_) => true,
             _ => false,
@@ -148,12 +151,22 @@ mod tests {
     }
 
     #[test]
-    fn test_buffer_overflow_not_recoverable() {
+    fn test_buffer_overflow_is_recoverable() {
+        // Buffer overflow clears the buffer internally; reconnect can proceed
         let err = ClientError::BufferOverflow {
             current: 100,
             limit: 50,
         };
-        assert!(!err.is_recoverable());
+        assert!(err.is_recoverable());
+    }
+
+    #[test]
+    fn test_buffer_overflow_should_retry() {
+        let err = ClientError::BufferOverflow {
+            current: 100,
+            limit: 50,
+        };
+        assert!(err.should_retry());
     }
 
     #[test]
