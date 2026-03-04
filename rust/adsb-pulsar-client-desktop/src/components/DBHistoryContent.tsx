@@ -308,7 +308,17 @@ export function DBHistoryContent({
             <details open className="group" data-testid="dbhist-track-list">
               <summary className="flex items-center gap-1.5 cursor-pointer select-none text-xs font-semibold text-slate-400 list-none [&::-webkit-details-marker]:hidden">
                 <span className="text-[10px] transition-transform duration-150 group-open:rotate-90">▶</span>
-                Aircraft ({summaries.length})
+                <span className="flex-1">Aircraft ({summaries.length})</span>
+                {dbHistoryCount > 0 && (
+                  <button
+                    onClick={(e) => { e.preventDefault(); onClearTracks(); }}
+                    data-testid="dbhist-clear-btn"
+                    className="text-[10px] text-slate-500 hover:text-red-400 hover:bg-red-900/20 px-1.5 py-0.5 rounded transition"
+                    title="Clear loaded tracks from map"
+                  >
+                    Clear tracks ({dbHistoryCount})
+                  </button>
+                )}
               </summary>
               <div className="mt-1 flex flex-col gap-0.5 max-h-48 overflow-y-auto">
                 {summaries.map((s) => (
@@ -358,16 +368,6 @@ export function DBHistoryContent({
             />
           )}
 
-          {/* Clear DB History button */}
-          {dbHistoryCount > 0 && (
-            <button
-              onClick={onClearTracks}
-              data-testid="dbhist-clear-btn"
-              className="mt-1 px-2 py-0.5 text-xs text-slate-500 hover:text-red-400 hover:bg-red-900/20 rounded transition"
-            >
-              Clear DB History ({dbHistoryCount})
-            </button>
-          )}
         </div>
       )}
     </div>
