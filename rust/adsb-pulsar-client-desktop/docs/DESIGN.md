@@ -15,6 +15,7 @@
 12. [Imported Tracks Selection](#imported-tracks-selection)
 13. [Simulated Flights (Demo Mode)](#simulated-flights-demo-mode)
 14. [Config Persistence & Receiver Location](#config-persistence--receiver-location)
+15. [Analysis Mode](#analysis-mode)
 
 ---
 
@@ -84,9 +85,9 @@ The application maintains **two complementary history layers**:
 | **In-Memory** | Current session (6h TTL) | React `useRef` Maps in `AircraftTrackingContext` | Filter toggle in UI |
 | **DuckDB** | Persistent (across restarts) | `adsb-data-engine` StorageHandle | Tauri commands: `query_bbox`, `get_trajectory`, `get_time_distribution`, etc. |
 
-### Four Track Categories
+### Five Track Categories
 
-The application maintains four independent track categories in `AircraftTrackingContext`:
+The application maintains five independent track categories in `AircraftTrackingContext`:
 
 | Category | Source | Color | Filtered by Filters? |
 |----------|--------|-------|---------------------|
@@ -94,6 +95,7 @@ The application maintains four independent track categories in `AircraftTracking
 | **history** | TTL-expired live tracks | Altitude-based (configurable mode) | Yes |
 | **imported** | GeoJSON file import | Indigo | Optional (`includeImportedInFilter`) |
 | **dbHistory** | DuckDB queries via DB History panel | Cyan | No (controlled by panel) |
+| **analysis** | DuckDB queries loaded to Analysis mode | Cyan (via dbHistory styling) | Yes (independent filter state) |
 
 ### Key Design Principles
 
@@ -255,6 +257,7 @@ graph TD
     LeftPanel --> FiltersPanel[FiltersPanel]
     MainContent --> MapRow[Map Row]
     MainContent --> ResizeHandle
+    MainContent --> ModeTabs[ModeTabs<br/>Live / Analysis]
     MainContent --> Table[AircraftTable]
 
     MapRow --> Map[Map]
@@ -331,14 +334,17 @@ accumulation even when users navigate to Settings or other pages.
 - Persist UI preferences to localStorage
 
 **Custom Hooks Used**:
-- `useAircraftTracks(filters)`: Track state with filtering (returns `{ tracks, history, imported, dbHistory, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory }`)
+- `useAircraftTracks(activeFilters)`: Track state with filtering (returns `{ tracks, history, imported, dbHistory, analysis, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory, addAnalysisTracks, removeAnalysisTrack, clearAnalysis }`)
 - `useSimulatedTracks(enabled)`: Self-animating demo flight tracks
 - `useMetrics()`: Performance metrics polling
 - `useConnectionStatus()`: Connection status polling
 - `useLocalStorage(...)`: Persist map theme, table height, panel states, toggles, color modes
 
 **State Management**:
-- `filters: Filters`: Altitude/speed/callsign filters
+- `activeMode: ActiveMode`: `"live" | "analysis"` — which view mode is active (persisted)
+- `liveFilters: Filters`: Altitude/speed/callsign filters for Live mode
+- `analysisFilters: Filters`: Independent filters for Analysis mode
+- `activeFilters`: Derived — `liveFilters` or `analysisFilters` based on `activeMode`
 - `error: string | null`: Error messages
 - `mapTheme: "light" | "dark"`: Map tile style
 - `tableHeight: number`: Resizable table height in pixels
@@ -364,14 +370,17 @@ accumulation even when users navigate to Settings or other pages.
 - `showDbHistory: boolean`: Visibility of DB History tracks on map/table (persisted)
 
 **Derived State**:
+- `isLive`: `activeMode === "live"`
 - `allTracks`: Merge of live `tracks` + `simulatedTracks`
 - `visibleHistory`: `showHistory ? history : []`
 - `visibleImported`: `showImported ? imported : []`
 - `visibleDbHistory`: `showDbHistory ? dbHistory : []`
-- `selectedTrack`: Resolved from `selectedHexIdent` against `allTracks`, then `visibleHistory`, then `visibleDbHistory`, then `visibleImported`; `null` when no aircraft is selected
+- `mapTracks / mapHistory / mapImported / mapDbHistory`: Mode-conditional arrays — in Live mode, same as visible arrays; in Analysis mode, only `analysis` tracks (passed as `mapDbHistory` for cyan styling)
+- `tableTracks / tableHistory / tableImported / tableDbHistory`: Mode-conditional arrays for table sections
+- `selectedTrack`: Resolved from `selectedHexIdent` against mode-conditional arrays (`mapTracks` → `mapHistory` → `mapDbHistory` → `mapImported`); `null` when no aircraft is selected
 - `isImportedSelection`: Whether the selected track came from the imported collection (drives `IMPORTED` badge in details panel)
-- `isDbHistorySelection`: Whether the selected track came from DB History (drives `DB HISTORY` badge in details panel)
-- `densityTracks`: Computed from `allTracks + history + (imported if includeImportedInDensity)` when density overlay is enabled
+- `isDbHistorySelection`: Whether the selected track came from DB History or Analysis (drives `DB HISTORY` badge in details panel)
+- `densityTracks`: In Live mode, computed from `allTracks + history + (imported if includeImportedInDensity)`; in Analysis mode, uses `analysis` tracks
 
 **Layout Structure**:
 ```tsx
@@ -398,7 +407,8 @@ accumulation even when users navigate to Settings or other pages.
         )}
       </div>
       <ResizeHandle />
-      <div> {/* AircraftTable with dbHistoryTracks */} </div>
+      <ModeTabs activeMode={activeMode} onModeChange={setActiveMode} ... />
+      <div> {/* AircraftTable with mode-conditional tracks + onRemoveTrack in analysis mode */} </div>
     </main>
   </div>
   <MetricsBar />
@@ -439,14 +449,16 @@ accumulation even when users navigate to Settings or other pages.
 
 #### 4. **AircraftTable** (`src/components/AircraftTable.tsx`)
 
-**Purpose**: Tabular display of active, historical, and imported aircraft data
+**Purpose**: Tabular display of active, historical, imported, and DB History aircraft data
 
 **Props**:
-- `tracks: AircraftTrack[]`: Active aircraft tracks
+- `tracks: AircraftTrack[]`: Active aircraft tracks (or analysis tracks in Analysis mode)
 - `historyTracks?: AircraftTrack[]`: Optional expired aircraft tracks (defaults to `[]`)
+- `dbHistoryTracks?: AircraftTrack[]`: Optional DB History tracks (defaults to `[]`)
 - `importedTracks?: AircraftTrack[]`: Optional imported GeoJSON tracks (defaults to `[]`)
 - `selectedHexIdent?: string | null`: Currently selected aircraft hex_ident
 - `onSelectTrack?: (hex: string) => void`: Callback when a row is clicked
+- `onRemoveTrack?: (hexIdent: string) => void`: Optional callback for per-row remove button (used in Analysis mode)
 
 **Responsibilities**:
 - Render scrollable table with fixed header
@@ -454,18 +466,22 @@ accumulation even when users navigate to Settings or other pages.
 - **RxTS**: Relative time since last received message (e.g., "3s ago") via `timeAgo(last_seen)`
 - **Msg#**: Total SBS-1 messages received for this aircraft (pre-throttle cumulative count)
 - Handle null values gracefully (display "—")
-- Render three row sections: active, history, imported — each separated by a collapsible divider
+- Render four row sections: active/analysis, history, DB History, imported — each separated by a collapsible divider
 - History rows display with `opacity-40` for visual distinction (full opacity when selected)
 - History rows show relative "last seen" time (e.g., "23m ago") in place of heading/vertical rate
 - Imported rows display with `opacity-60` and indigo text tint for visual identity
+- DB History rows display with `opacity-60` and cyan text tint
+- When `onRemoveTrack` is provided, render a × button at the end of each Live/Analysis row (used in Analysis mode to remove individual tracks)
 - Highlight selected row and auto-scroll it into view
 
 **Row Sections**:
-1. **Active rows** — standard rendering, selected highlight: `bg-blue-900/40`
+1. **Active/Analysis rows** — standard rendering, selected highlight: `bg-blue-900/40`; × remove button when `onRemoveTrack` provided
 2. **History divider** — uppercase label with count (e.g., "HISTORY (12)"), collapsible
 3. **History rows** — dimmed via `opacity-40`, selected highlight: `bg-blue-900/40`
-4. **Imported divider** — uppercase label with count (e.g., "IMPORTED (5)"), collapsible
-5. **Imported rows** — dimmed via `opacity-60`, indigo text tint, selected highlight: `bg-indigo-900/40`
+4. **DB History divider** — uppercase label with count (e.g., "DB HISTORY (3)"), collapsible
+5. **DB History rows** — dimmed via `opacity-60`, cyan text tint, selected highlight: `bg-cyan-900/40`
+6. **Imported divider** — uppercase label with count (e.g., "IMPORTED (5)"), collapsible
+7. **Imported rows** — dimmed via `opacity-60`, indigo text tint, selected highlight: `bg-indigo-900/40`
 
 **Styling**:
 - Dark background (`bg-slate-900`)
@@ -1605,10 +1621,14 @@ let config = state.config.lock().map_err(|e| e.to_string())?;
 | `history: Map<string, AircraftTrack>` | `AircraftTrackingProvider` (global context) | In-memory (6 hour history TTL) |
 | `imported: Map<string, AircraftTrack>` | `AircraftTrackingProvider` (global context) | In-memory (until cleared) |
 | `dbHistory: Map<string, AircraftTrack>` | `AircraftTrackingProvider` (global context) | In-memory (until cleared, populated from DuckDB queries) |
+| `analysis: Map<string, AircraftTrack>` | `AircraftTrackingProvider` (global context) | In-memory (additive, until cleared) |
 | `tracks: AircraftTrack[]` (filtered) | `useAircraftTracks` hook (derived from context) | Computed on each render |
 | `history: AircraftTrack[]` (filtered) | `useAircraftTracks` hook (derived from context) | Computed on each render |
 | `dbHistory: AircraftTrack[]` (unfiltered) | `useAircraftTracks` hook (derived from context) | Computed on each render |
-| `filters: Filters` | `Dashboard` component | None |
+| `analysis: AircraftTrack[]` (filtered) | `useAircraftTracks` hook (derived from context) | Computed on each render |
+| `activeMode: ActiveMode` | `Dashboard` + `useLocalStorage` | localStorage |
+| `liveFilters: Filters` | `Dashboard` component | None |
+| `analysisFilters: Filters` | `Dashboard` component | None |
 | `isRunning: boolean` | `Dashboard` component | None |
 | `selectedHexIdent: string \| null` | `Dashboard` component | None (auto-deselects on track disappear) |
 | `selectedTrack: AircraftTrack \| null` | `Dashboard` component (derived) | None (useMemo from selectedHexIdent) |
@@ -2453,14 +2473,14 @@ Tauri's WKWebView on macOS has a bug where controlled React inputs (`value + onC
 ### Files
 
 - `src/components/DBHistoryPanel.tsx` — Panel shell (docked/floating)
-- `src/components/DBHistoryContent.tsx` — Inner content (stats, browse, load, clear)
+- `src/components/DBHistoryContent.tsx` — Inner content (stats, browse, load, clear, multi-select + batch load to Live/Analysis)
 - `src/components/DBHistoryAnalytics.tsx` — recharts analytics (time distribution, altitude histogram) + detection radar
 - `src/components/DetectionRadar.tsx` — Custom SVG polar radar chart component
 - `src/lib/db-history-analytics.ts` — Pure analytics utilities
 - `src/lib/detection-radar.ts` — Pure SVG geometry utilities for radar chart
-- `src/contexts/AircraftTrackingContext.tsx` — `dbHistoryRef`, `loadDbHistoryTracks`, `clearDbHistory`
-- `src/hooks/useAircraftTracks.ts` — Exposes `dbHistory` array (unfiltered)
-- `src/app/page.tsx` — 10 localStorage state variables, header toggle, dual-mode rendering
+- `src/contexts/AircraftTrackingContext.tsx` — `dbHistoryRef`, `loadDbHistoryTracks`, `clearDbHistory`, `analysisRef`, `addAnalysisTracks`, `removeAnalysisTrack`, `clearAnalysis`
+- `src/hooks/useAircraftTracks.ts` — Exposes `dbHistory` array (unfiltered) + `analysis` array (filtered)
+- `src/app/page.tsx` — 10 localStorage state variables, header toggle, dual-mode rendering, mode-conditional props
 
 ---
 
@@ -2734,6 +2754,7 @@ The application includes a built-in simulation mode that animates 20 aircraft al
 | `adsb-dbhistory-float-w` | `number` | `400` | DB History floating panel width |
 | `adsb-dbhistory-float-h` | `number` | `600` | DB History floating panel height |
 | `adsb-show-dbhistory` | `boolean` | `true` | Toggle visibility of DB History tracks |
+| `adsb-active-mode` | `ActiveMode` | `"live"` | Active dashboard mode: Live or Analysis |
 
 ---
 
@@ -2777,6 +2798,94 @@ The `Config` struct includes three optional fields for the receiver's physical l
 - **`#[cfg_attr(feature = "cli", arg(skip))]`**: These fields are hidden from the CLI since they're only meaningful in the desktop app.
 - **`MapContainer` center is initial-only**: Leaflet's `center` prop only affects the first render. After that, user panning takes over, so the receiver location sets the starting view without fighting user interaction.
 - **Altitude in feet**: Consistent with SBS-1 aircraft altitude units used throughout the app.
+
+---
+
+## Analysis Mode
+
+### Overview
+
+Analysis Mode provides a dedicated workspace for historical aircraft data exploration, separate from live monitoring. Users switch between **Live** and **Analysis** views via a tab bar above the track table. The map and table update to show whichever mode is active, while live data processing continues uninterrupted in the background.
+
+### Architecture
+
+The mode is implemented entirely in the UI layer with no backend changes. `page.tsx` acts as a multiplexer, selecting which data arrays flow to Map and Table based on `activeMode`.
+
+| Aspect | Live Mode | Analysis Mode |
+|--------|-----------|---------------|
+| Map tracks | `allTracks` (live + simulated) | `[]` |
+| Map history | `visibleHistory` | `[]` |
+| Map imported | `visibleImported` | `[]` |
+| Map dbHistory | `visibleDbHistory` | `analysis` (filtered) |
+| Density overlay | live + history + imported | analysis tracks |
+| Table tracks | `allTracks` | `analysis` |
+| Table remove button | Hidden | Visible (× per row) |
+| Filters | `liveFilters` | `analysisFilters` (independent) |
+
+### Components
+
+| Component | Role |
+|-----------|------|
+| `ModeTabs` | Tab bar between ResizeHandle and table — Live/Analysis tabs with counts, "Clear all" button on Analysis tab |
+| `AircraftTable` | `onRemoveTrack` prop — renders × button per row in Analysis mode |
+| `DBHistoryContent` | Multi-selection with checkboxes, "Select All", "→ Live" / "→ Analysis" batch action buttons |
+
+### Analysis Track Category
+
+The `analysis` ref in `AircraftTrackingContext` is a `Map<string, AircraftTrack>` with **additive** semantics:
+
+- `addAnalysisTracks(tracks)` — sets entries without clearing (accumulates multiple loads)
+- `removeAnalysisTrack(hexIdent)` — deletes a single entry
+- `clearAnalysis()` — empties the map
+
+This contrasts with `dbHistory` which clears before each load (`loadDbHistoryTracks` calls `map.clear()`).
+
+### DB History Multi-Selection
+
+The aircraft list in `DBHistoryContent` supports multi-selection:
+
+- **Checkboxes** on each aircraft row (`selectedAircraft: Set<string>`)
+- **Select All / Deselect All** toggle
+- **"→ Live" button** — batch loads selected trajectories to Live overlay (replaces, as before)
+- **"→ Analysis" button** — batch loads selected trajectories additively to Analysis mode, then switches to Analysis tab
+- Batch loading uses `Promise.all` for parallel trajectory fetching
+- Single-click on aircraft name still loads to Live overlay for quick preview
+
+### Independent Filters
+
+Each mode owns its own filter state:
+
+```typescript
+const [liveFilters, setLiveFilters] = useState<Filters>(DEFAULT_FILTERS);
+const [analysisFilters, setAnalysisFilters] = useState<Filters>(DEFAULT_FILTERS);
+const activeFilters = activeMode === "live" ? liveFilters : analysisFilters;
+```
+
+Switching modes swaps which filter set the `LeftPanel` and `useAircraftTracks` hook use. Analysis tracks are filtered by `analysisFilters` via the standard `matchesFilters()` logic.
+
+### Design Decisions
+
+**Why a separate `analysis` category instead of reusing `dbHistory`?**
+`dbHistory` clears on each load (replace semantics). Analysis mode needs additive loading — users load multiple trajectories that accumulate for comparative analysis. A separate ref with additive semantics avoids changing `dbHistory` behavior.
+
+**Why mode state in `page.tsx` instead of a new context?**
+The mode is purely a view concern — it determines which arrays flow to Map and Table. No data ownership changes. `page.tsx` already orchestrates these data flows, so a simple `useLocalStorage<ActiveMode>` string is sufficient.
+
+**Why independent filters per mode?**
+Analysis workflows (e.g., filtering historical data by altitude band) should not interfere with live monitoring filters. Each mode's filter state is independent so users can switch freely without losing their filter configuration.
+
+**Why zero changes to Map component?**
+The Map already renders whatever arrays it receives via props. The mode switch is implemented entirely by changing what `page.tsx` passes, demonstrating the value of keeping components as pure renderers of props.
+
+### Files
+
+- `src/lib/types.ts` — `ActiveMode` type
+- `src/contexts/AircraftTrackingContext.tsx` — `analysisRef`, `addAnalysisTracks`, `removeAnalysisTrack`, `clearAnalysis`
+- `src/hooks/useAircraftTracks.ts` — Exposes filtered `analysis` array + 3 functions
+- `src/components/ModeTabs.tsx` — Tab bar component
+- `src/components/AircraftTable.tsx` — `onRemoveTrack` prop + × button
+- `src/components/DBHistoryContent.tsx` — Multi-selection UI, batch loading
+- `src/app/page.tsx` — Mode state, independent filters, mode-conditional Map/Table props
 
 ---
 

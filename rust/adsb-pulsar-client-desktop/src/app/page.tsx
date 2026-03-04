@@ -17,14 +17,19 @@ import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { startFeed, stopFeed, getConfig } from "@/lib/commands";
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
 import { DEFAULT_FILTERS } from "@/lib/types";
-import type { Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode } from "@/lib/types";
+import type { ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode } from "@/lib/types";
+import { ModeTabs } from "@/components/ModeTabs";
 import Link from "next/link";
 
 const MIN_TABLE_HEIGHT = 150;
 const MAX_TABLE_HEIGHT_VH = 0.5; // 50vh
 
 export default function Dashboard() {
-  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [activeMode, setActiveMode] = useLocalStorage<ActiveMode>("adsb-active-mode", "live");
+  const [liveFilters, setLiveFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [analysisFilters, setAnalysisFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const activeFilters = activeMode === "live" ? liveFilters : analysisFilters;
+  const setActiveFilters = activeMode === "live" ? setLiveFilters : setAnalysisFilters;
   const [error, setError] = useState<string | null>(null);
   const [mapTheme, setMapTheme] = useLocalStorage<"light" | "dark">("adsb-map-theme", "dark");
   const [tableHeight, setTableHeight] = useLocalStorage<number>("adsb-table-height", 256);
@@ -69,7 +74,11 @@ export default function Dashboard() {
 
   const [selectedHexIdent, setSelectedHexIdent] = useState<string | null>(null);
 
-  const { tracks, history, imported, dbHistory, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory } = useAircraftTracks(filters);
+  const {
+    tracks, history, imported, dbHistory, analysis,
+    importTracks, clearImported, loadDbHistoryTracks, clearDbHistory,
+    addAnalysisTracks, removeAnalysisTrack, clearAnalysis,
+  } = useAircraftTracks(activeFilters);
   const [showImported, setShowImported] = useLocalStorage<boolean>("adsb-show-imported", true);
   const simulatedTracks = useSimulatedTracks(showSimulation);
   const allTracks = useMemo(() => [...tracks, ...simulatedTracks], [tracks, simulatedTracks]);
@@ -80,14 +89,26 @@ export default function Dashboard() {
   const visibleHistory = showHistory ? history : [];
   const visibleImported = showImported ? imported : [];
   const visibleDbHistory = showDbHistory ? dbHistory : [];
+
+  // Mode-conditional arrays for Map and Table
+  const isLive = activeMode === "live";
+  const mapTracks = isLive ? allTracks : [];
+  const mapHistory = isLive ? visibleHistory : [];
+  const mapImported = isLive ? visibleImported : [];
+  const mapDbHistory = isLive ? visibleDbHistory : analysis;
+  const tableTracks = isLive ? allTracks : analysis;
+  const tableHistory = isLive ? visibleHistory : [];
+  const tableImported = isLive ? visibleImported : [];
+  const tableDbHistory = isLive ? visibleDbHistory : [];
+
   const selectedTrack = useMemo(
     () =>
-      allTracks.find(t => t.hex_ident === selectedHexIdent) ??
-      visibleHistory.find(t => t.hex_ident === selectedHexIdent) ??
-      visibleDbHistory.find(t => t.hex_ident === selectedHexIdent) ??
-      visibleImported.find(t => t.hex_ident === selectedHexIdent) ??
+      mapTracks.find(t => t.hex_ident === selectedHexIdent) ??
+      mapHistory.find(t => t.hex_ident === selectedHexIdent) ??
+      mapDbHistory.find(t => t.hex_ident === selectedHexIdent) ??
+      mapImported.find(t => t.hex_ident === selectedHexIdent) ??
       null,
-    [selectedHexIdent, allTracks, visibleHistory, visibleDbHistory, visibleImported],
+    [selectedHexIdent, mapTracks, mapHistory, mapDbHistory, mapImported],
   );
 
   // Toggle selection: clicking same track deselects, clicking different selects
@@ -95,23 +116,27 @@ export default function Dashboard() {
     setSelectedHexIdent(prev => prev === hexIdent ? null : hexIdent);
   }, []);
 
-  // Auto-deselect when selected track disappears (TTL expiry)
+  // Auto-deselect when selected track disappears from current mode
   useEffect(() => {
     if (!selectedHexIdent) return;
     const exists =
-      allTracks.some(t => t.hex_ident === selectedHexIdent) ||
-      visibleHistory.some(t => t.hex_ident === selectedHexIdent) ||
-      visibleDbHistory.some(t => t.hex_ident === selectedHexIdent) ||
-      visibleImported.some(t => t.hex_ident === selectedHexIdent);
+      mapTracks.some(t => t.hex_ident === selectedHexIdent) ||
+      mapHistory.some(t => t.hex_ident === selectedHexIdent) ||
+      mapDbHistory.some(t => t.hex_ident === selectedHexIdent) ||
+      mapImported.some(t => t.hex_ident === selectedHexIdent);
     if (!exists) setSelectedHexIdent(null);
-  }, [selectedHexIdent, allTracks, visibleHistory, visibleDbHistory, visibleImported]);
+  }, [selectedHexIdent, mapTracks, mapHistory, mapDbHistory, mapImported]);
 
-  const isImportedSelection = visibleImported.some(t => t.hex_ident === selectedHexIdent);
-  const isDbHistorySelection = visibleDbHistory.some(t => t.hex_ident === selectedHexIdent);
+  const isImportedSelection = mapImported.some(t => t.hex_ident === selectedHexIdent);
+  const isDbHistorySelection = mapDbHistory.some(t => t.hex_ident === selectedHexIdent);
 
   const densityTracks = useMemo(
-    () => (showDensity ? [...allTracks, ...history, ...(includeImportedInDensity ? imported : [])] : []),
-    [showDensity, allTracks, history, includeImportedInDensity, imported],
+    () => {
+      if (!showDensity) return [];
+      if (isLive) return [...allTracks, ...history, ...(includeImportedInDensity ? imported : [])];
+      return analysis;
+    },
+    [showDensity, isLive, allTracks, history, includeImportedInDensity, imported, analysis],
   );
 
   function handleToggleTheme() {
@@ -293,9 +318,9 @@ export default function Dashboard() {
           width={sidebarWidth}
           onToggle={() => setSidebarOpen((prev: boolean) => !prev)}
           onWidthChange={setSidebarWidth}
-          filters={filters}
-          onChange={setFilters}
-          trackCount={allTracks.length}
+          filters={activeFilters}
+          onChange={setActiveFilters}
+          trackCount={isLive ? allTracks.length : analysis.length}
           showHistory={showHistory}
           onToggleHistory={handleToggleHistory}
           historyCount={history.length}
@@ -331,7 +356,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <Map tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} dbHistoryTracks={visibleDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} />
+              <Map tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel
@@ -368,6 +393,8 @@ export default function Dashboard() {
                   dbHistoryCount={dbHistory.length}
                   receiverLat={receiverLocation?.lat}
                   receiverLon={receiverLocation?.lng}
+                  onAddToAnalysis={addAnalysisTracks}
+                  onSwitchToAnalysis={() => setActiveMode("analysis")}
                 />
               </DBHistoryPanel>
             )}
@@ -376,12 +403,29 @@ export default function Dashboard() {
           {/* Resize handle */}
           <ResizeHandle onResize={handleResize} onResizeEnd={handleResizeEnd} />
 
+          {/* Mode tabs */}
+          <ModeTabs
+            activeMode={activeMode}
+            onModeChange={setActiveMode}
+            liveCount={allTracks.length}
+            analysisCount={analysis.length}
+            onClearAnalysis={clearAnalysis}
+          />
+
           {/* Table — explicit height, resizable */}
           <div
             className="bg-slate-900 overflow-hidden flex-shrink-0"
             style={{ height: tableHeight }}
           >
-            <AircraftTable tracks={allTracks} historyTracks={visibleHistory} importedTracks={visibleImported} dbHistoryTracks={visibleDbHistory} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} />
+            <AircraftTable
+              tracks={tableTracks}
+              historyTracks={tableHistory}
+              importedTracks={tableImported}
+              dbHistoryTracks={tableDbHistory}
+              selectedHexIdent={selectedHexIdent}
+              onSelectTrack={handleSelectTrack}
+              onRemoveTrack={!isLive ? removeAnalysisTrack : undefined}
+            />
           </div>
         </main>
       </div>

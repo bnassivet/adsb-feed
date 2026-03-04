@@ -117,6 +117,9 @@ export type DensityTooltipMode = "compact" | "extended";
 /** How trajectory positions are colored: by each position's altitude or the track's latest altitude. */
 export type AltitudeColorMode = "plot" | "track";
 
+/** Which view mode the dashboard is in: live monitoring or historical analysis. */
+export type ActiveMode = "live" | "analysis";
+
 /** Maps a Leaflet zoom level to the appropriate H3 resolution. */
 export function zoomToH3Resolution(zoom: number): number {
   if (zoom <= 5) return 3;

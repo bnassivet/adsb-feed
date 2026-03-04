@@ -20,9 +20,10 @@ interface Props {
   importedTracks?: AircraftTrack[];
   selectedHexIdent?: string | null;
   onSelectTrack?: (hex: string) => void;
+  onRemoveTrack?: (hexIdent: string) => void;
 }
 
-export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = [], importedTracks = [], selectedHexIdent, onSelectTrack }: Props) {
+export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = [], importedTracks = [], selectedHexIdent, onSelectTrack, onRemoveTrack }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("callsign");
   const [sortAsc, setSortAsc] = useState(true);
   const [liveCollapsed, setLiveCollapsed] = useState(false);
@@ -94,6 +95,7 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
             <th className="px-3 py-2 text-left">Lon</th>
             <SortHeader label="RxTS" field="last_seen" />
             <SortHeader label="Msg#" field="message_count" />
+            {onRemoveTrack && <th className="px-1 py-2 w-8" />}
           </tr>
         </thead>
         <tbody className="text-slate-300">
@@ -167,6 +169,18 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
               <td className="px-3 py-1.5 font-mono text-slate-400">
                 {t.message_count.toLocaleString()}
               </td>
+              {onRemoveTrack && (
+                <td className="px-1 py-1.5 text-center">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onRemoveTrack(t.hex_ident); }}
+                    data-testid={`remove-${t.hex_ident}`}
+                    className="text-slate-600 hover:text-red-400 transition text-xs leading-none"
+                    title={`Remove ${t.hex_ident}`}
+                  >
+                    ×
+                  </button>
+                </td>
+              )}
             </tr>
             );
           })}

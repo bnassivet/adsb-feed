@@ -390,7 +390,7 @@ const [floatH, setFloatH] = useLocalStorage<number>("key-float-h", 600);
 
 ---
 
-### Pattern 6: Four Track Categories
+### Pattern 6: Five Track Categories
 
 **Use Case**: Multiple independent collections of `AircraftTrack` objects, each with distinct lifecycle and visual identity.
 
@@ -399,26 +399,36 @@ const [floatH, setFloatH] = useLocalStorage<number>("key-float-h", 600);
 | `tracks` | `tracksRef` | Tauri `adsb:batch` events | Live, TTL-managed | Altitude-based |
 | `history` | `historyRef` | TTL expiry from `tracks` | Session-scoped | Altitude-based |
 | `imported` | `importedRef` | GeoJSON file import | Until cleared | Indigo |
-| `dbHistory` | `dbHistoryRef` | DuckDB query results | Until cleared | Cyan |
+| `dbHistory` | `dbHistoryRef` | DuckDB query results | Until cleared (replace on each load) | Cyan |
+| `analysis` | `analysisRef` | DuckDB queries via "→ Analysis" | Until cleared (additive loading) | Cyan (via dbHistory styling) |
 
 **Key design decisions**:
 - Each category has its own `Map<string, AircraftTrack>` in `AircraftTrackingContext`
-- `tracks` and `history` are filtered by live `Filters` (callsign, altitude, speed)
+- `tracks`, `history`, and `analysis` are filtered by Filters (callsign, altitude, speed)
 - `imported` and `dbHistory` are **not filtered** by live Filters — they have their own visibility toggles
-- `selectedTrack` lookup order: `allTracks` → `visibleHistory` → `visibleDbHistory` → `visibleImported` (live wins)
+- `analysis` uses independent `analysisFilters` (not the same Filters object as live)
+- `selectedTrack` lookup order: mode-conditional arrays (`mapTracks` → `mapHistory` → `mapDbHistory` → `mapImported`)
 - Visual identity carried by props (`isImported`, `isDbHistory`), not fields on `AircraftTrack`
+- `analysis` has **additive** semantics (`addAnalysisTracks` does not clear), while `dbHistory` has **replace** semantics (`loadDbHistoryTracks` clears first)
 
 ```typescript
-// useAircraftTracks returns all four categories
+// useAircraftTracks returns all five categories
 const {
-  tracks, history, imported, dbHistory,
+  tracks, history, imported, dbHistory, analysis,
   importTracks, clearImported,
   loadDbHistoryTracks, clearDbHistory,
-} = useAircraftTracks(filters);
+  addAnalysisTracks, removeAnalysisTrack, clearAnalysis,
+} = useAircraftTracks(activeFilters);
 
-// Visibility controlled independently
+// Visibility controlled independently (Live mode)
 const visibleDbHistory = showDbHistory ? dbHistory : [];
 const visibleImported = showImported ? imported : [];
+
+// Mode-conditional arrays for Map and Table
+const isLive = activeMode === "live";
+const mapTracks = isLive ? allTracks : [];
+const mapDbHistory = isLive ? visibleDbHistory : analysis;
+const tableTracks = isLive ? allTracks : analysis;
 ```
 
 ---

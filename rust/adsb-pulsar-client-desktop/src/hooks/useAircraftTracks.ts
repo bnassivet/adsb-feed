@@ -47,11 +47,15 @@ export function useAircraftTracks(filters: Filters) {
     history: historyMap,
     imported: importedMap,
     dbHistory: dbHistoryMap,
+    analysis: analysisMap,
     version,
     importTracks,
     clearImported,
     loadDbHistoryTracks,
     clearDbHistory,
+    addAnalysisTracks,
+    removeAnalysisTrack,
+    clearAnalysis,
   } = useAircraftTrackingContext();
 
   const tracks = useMemo(
@@ -85,5 +89,15 @@ export function useAircraftTracks(filters: Filters) {
     [version],
   );
 
-  return { tracks, history, imported, dbHistory, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory };
+  const analysis = useMemo(
+    () => Array.from(analysisMap.values()).filter((t) => matchesFilters(t, filters)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [version, filters],
+  );
+
+  return {
+    tracks, history, imported, dbHistory, analysis,
+    importTracks, clearImported, loadDbHistoryTracks, clearDbHistory,
+    addAnalysisTracks, removeAnalysisTrack, clearAnalysis,
+  };
 }

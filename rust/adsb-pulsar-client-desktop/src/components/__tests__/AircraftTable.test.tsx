@@ -297,3 +297,50 @@ describe("AircraftTable columns", () => {
     expect(screen.getByText("42")).toBeInTheDocument();
   });
 });
+
+describe("AircraftTable onRemoveTrack", () => {
+  it("renders × button per row when onRemoveTrack is provided", () => {
+    render(
+      <AircraftTable
+        tracks={[makeTrack("AAA111"), makeTrack("BBB222")]}
+        onRemoveTrack={vi.fn()}
+      />
+    );
+    expect(screen.getByTestId("remove-AAA111")).toBeInTheDocument();
+    expect(screen.getByTestId("remove-BBB222")).toBeInTheDocument();
+  });
+
+  it("does not render × button when onRemoveTrack is not provided", () => {
+    render(<AircraftTable tracks={[makeTrack("AAA111")]} />);
+    expect(screen.queryByTestId("remove-AAA111")).not.toBeInTheDocument();
+  });
+
+  it("clicking × calls onRemoveTrack with hex_ident", async () => {
+    const user = userEvent.setup();
+    const onRemove = vi.fn();
+    render(
+      <AircraftTable
+        tracks={[makeTrack("AAA111")]}
+        onRemoveTrack={onRemove}
+      />
+    );
+    await user.click(screen.getByTestId("remove-AAA111"));
+    expect(onRemove).toHaveBeenCalledWith("AAA111");
+  });
+
+  it("clicking × does not trigger row selection", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    const onRemove = vi.fn();
+    render(
+      <AircraftTable
+        tracks={[makeTrack("AAA111")]}
+        onSelectTrack={onSelect}
+        onRemoveTrack={onRemove}
+      />
+    );
+    await user.click(screen.getByTestId("remove-AAA111"));
+    expect(onRemove).toHaveBeenCalledWith("AAA111");
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+});

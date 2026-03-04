@@ -15,11 +15,15 @@ interface AircraftTrackingContextValue {
   history: Map<string, AircraftTrack>;
   imported: Map<string, AircraftTrack>;
   dbHistory: Map<string, AircraftTrack>;
+  analysis: Map<string, AircraftTrack>;
   version: number;
   importTracks: (tracks: AircraftTrack[]) => void;
   clearImported: () => void;
   loadDbHistoryTracks: (tracks: AircraftTrack[]) => void;
   clearDbHistory: () => void;
+  addAnalysisTracks: (tracks: AircraftTrack[]) => void;
+  removeAnalysisTrack: (hexIdent: string) => void;
+  clearAnalysis: () => void;
 }
 
 const AircraftTrackingContext = createContext<AircraftTrackingContextValue | null>(null);
@@ -61,6 +65,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
   const historyRef = useRef<Map<string, AircraftTrack>>(new Map());
   const importedRef = useRef<Map<string, AircraftTrack>>(new Map());
   const dbHistoryRef = useRef<Map<string, AircraftTrack>>(new Map());
+  const analysisRef = useRef<Map<string, AircraftTrack>>(new Map());
   const [updateCounter, setUpdateCounter] = useState(0);
 
   const importTracks = useCallback((tracks: AircraftTrack[]) => {
@@ -88,6 +93,24 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
 
   const clearDbHistory = useCallback(() => {
     dbHistoryRef.current.clear();
+    setUpdateCounter((c) => c + 1);
+  }, []);
+
+  const addAnalysisTracks = useCallback((tracks: AircraftTrack[]) => {
+    const map = analysisRef.current;
+    for (const t of tracks) {
+      map.set(t.hex_ident, t);
+    }
+    setUpdateCounter((c) => c + 1);
+  }, []);
+
+  const removeAnalysisTrack = useCallback((hexIdent: string) => {
+    analysisRef.current.delete(hexIdent);
+    setUpdateCounter((c) => c + 1);
+  }, []);
+
+  const clearAnalysis = useCallback(() => {
+    analysisRef.current.clear();
     setUpdateCounter((c) => c + 1);
   }, []);
 
@@ -206,13 +229,17 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
       history: historyRef.current,
       imported: importedRef.current,
       dbHistory: dbHistoryRef.current,
+      analysis: analysisRef.current,
       version: updateCounter,
       importTracks,
       clearImported,
       loadDbHistoryTracks,
       clearDbHistory,
+      addAnalysisTracks,
+      removeAnalysisTrack,
+      clearAnalysis,
     }),
-    [updateCounter, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory],
+    [updateCounter, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory, addAnalysisTracks, removeAnalysisTrack, clearAnalysis],
   );
 
   return (

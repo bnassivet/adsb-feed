@@ -19,6 +19,10 @@ interface Props {
   /** Receiver location for detection range analysis. */
   receiverLat?: number | null;
   receiverLon?: number | null;
+  /** Add selected tracks to analysis mode (additive). */
+  onAddToAnalysis?: (tracks: AircraftTrack[]) => void;
+  /** Switch the dashboard to analysis mode after loading. */
+  onSwitchToAnalysis?: () => void;
 }
 
 /** Preset durations in ms. */
@@ -48,6 +52,8 @@ export function DBHistoryContent({
   onBrowse,
   receiverLat,
   receiverLon,
+  onAddToAnalysis,
+  onSwitchToAnalysis,
 }: Props) {
   const { formatTime, resolvedTzName } = useDisplayTz();
   const [stats, setStats] = useState<StorageStats | null>(null);
@@ -59,6 +65,8 @@ export function DBHistoryContent({
   const [detectionSectors, setDetectionSectors] = useState<DetectionRangeSector[]>([]);
   const [heatmapCells, setHeatmapCells] = useState<HourlyHeatmapCell[]>([]);
   const [loading, setLoading] = useState(false);
+  const [selectedAircraft, setSelectedAircraft] = useState<Set<string>>(new Set());
+  const [batchLoading, setBatchLoading] = useState(false);
 
   // Controlled time range state
   const now = Date.now();
@@ -180,6 +188,56 @@ export function DBHistoryContent({
     if (typeof records === "string" || !Array.isArray(records) || records.length === 0) return;
     const track = recordsToTrack(records);
     onLoadTracks([track]);
+  }
+
+  function toggleSelection(hexIdent: string) {
+    setSelectedAircraft(prev => {
+      const next = new Set(prev);
+      if (next.has(hexIdent)) next.delete(hexIdent);
+      else next.add(hexIdent);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedAircraft.size === summaries.length) {
+      setSelectedAircraft(new Set());
+    } else {
+      setSelectedAircraft(new Set(summaries.map(s => s.hex_ident)));
+    }
+  }
+
+  async function fetchSelectedTracks(): Promise<AircraftTrack[]> {
+    const selected = summaries.filter(s => selectedAircraft.has(s.hex_ident));
+    const results = await Promise.all(
+      selected.map(s =>
+        getTrajectory({ hex_ident: s.hex_ident, start_ms: startMs, end_ms: endMs })
+      )
+    );
+    const tracks: AircraftTrack[] = [];
+    for (const records of results) {
+      if (typeof records === "string" || !Array.isArray(records) || records.length === 0) continue;
+      tracks.push(recordsToTrack(records));
+    }
+    return tracks;
+  }
+
+  async function handleBatchLoadToLive() {
+    setBatchLoading(true);
+    const tracks = await fetchSelectedTracks();
+    if (tracks.length > 0) onLoadTracks(tracks);
+    setBatchLoading(false);
+  }
+
+  async function handleBatchLoadToAnalysis() {
+    if (!onAddToAnalysis) return;
+    setBatchLoading(true);
+    const tracks = await fetchSelectedTracks();
+    if (tracks.length > 0) {
+      onAddToAnalysis(tracks);
+      onSwitchToAnalysis?.();
+    }
+    setBatchLoading(false);
   }
 
   if (unavailable) {
@@ -320,32 +378,82 @@ export function DBHistoryContent({
                   </button>
                 )}
               </summary>
+
+              {/* Select All / batch actions */}
+              <div className="mt-1 flex items-center gap-1.5 px-2">
+                <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer select-none" data-testid="dbhist-select-all">
+                  <input
+                    type="checkbox"
+                    checked={selectedAircraft.size === summaries.length && summaries.length > 0}
+                    onChange={toggleSelectAll}
+                    className="accent-cyan-500"
+                  />
+                  {selectedAircraft.size === summaries.length ? "Deselect all" : "Select all"}
+                </label>
+                {selectedAircraft.size > 0 && (
+                  <span className="text-[10px] text-slate-500">({selectedAircraft.size})</span>
+                )}
+                <div className="ml-auto flex gap-1">
+                  <button
+                    onClick={handleBatchLoadToLive}
+                    disabled={selectedAircraft.size === 0 || batchLoading}
+                    data-testid="dbhist-load-to-live"
+                    className="px-1.5 py-0.5 text-[10px] rounded transition disabled:opacity-30 text-blue-400 hover:bg-blue-900/30"
+                    title="Load selected trajectories to Live overlay"
+                  >
+                    {batchLoading ? "…" : "→ Live"}
+                  </button>
+                  {onAddToAnalysis && (
+                    <button
+                      onClick={handleBatchLoadToAnalysis}
+                      disabled={selectedAircraft.size === 0 || batchLoading}
+                      data-testid="dbhist-load-to-analysis"
+                      className="px-1.5 py-0.5 text-[10px] rounded transition disabled:opacity-30 text-cyan-400 hover:bg-cyan-900/30"
+                      title="Load selected trajectories to Analysis mode (additive)"
+                    >
+                      {batchLoading ? "…" : "→ Analysis"}
+                    </button>
+                  )}
+                </div>
+              </div>
+
               <div className="mt-1 flex flex-col gap-0.5 max-h-48 overflow-y-auto">
                 {summaries.map((s) => (
-                  <button
+                  <div
                     key={s.hex_ident}
-                    onClick={() => handleLoadTrajectory(s)}
-                    data-testid={`dbhist-load-${s.hex_ident}`}
-                    className="text-left px-2 py-1.5 text-xs rounded hover:bg-cyan-900/30 transition border border-transparent hover:border-cyan-800/40"
-                    title={`Load trajectory for ${s.hex_ident}`}
+                    className="flex items-start gap-1.5 px-2 py-1.5 text-xs rounded hover:bg-cyan-900/30 transition border border-transparent hover:border-cyan-800/40"
                   >
-                    <div className="flex justify-between items-center">
-                      <span className="text-cyan-200 font-mono font-semibold">
-                        {s.callsign ?? s.hex_ident}
-                      </span>
-                      <span className="text-slate-500 text-[10px]">
-                        {s.position_count} pts
-                      </span>
-                    </div>
-                    <div className="text-[10px] text-slate-500 mt-0.5">
-                      {s.hex_ident}
-                      {s.min_altitude !== null && s.max_altitude !== null && (
-                        <span className="ml-2">
-                          {s.min_altitude.toLocaleString()}-{s.max_altitude.toLocaleString()} ft
+                    <input
+                      type="checkbox"
+                      checked={selectedAircraft.has(s.hex_ident)}
+                      onChange={() => toggleSelection(s.hex_ident)}
+                      data-testid={`dbhist-check-${s.hex_ident}`}
+                      className="accent-cyan-500 mt-0.5 shrink-0"
+                    />
+                    <button
+                      onClick={() => handleLoadTrajectory(s)}
+                      data-testid={`dbhist-load-${s.hex_ident}`}
+                      className="text-left flex-1 min-w-0"
+                      title={`Load trajectory for ${s.hex_ident}`}
+                    >
+                      <div className="flex justify-between items-center">
+                        <span className="text-cyan-200 font-mono font-semibold">
+                          {s.callsign ?? s.hex_ident}
                         </span>
-                      )}
-                    </div>
-                  </button>
+                        <span className="text-slate-500 text-[10px]">
+                          {s.position_count} pts
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">
+                        {s.hex_ident}
+                        {s.min_altitude !== null && s.max_altitude !== null && (
+                          <span className="ml-2">
+                            {s.min_altitude.toLocaleString()}-{s.max_altitude.toLocaleString()} ft
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  </div>
                 ))}
               </div>
             </details>

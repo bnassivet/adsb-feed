@@ -333,3 +333,107 @@ describe("DBHistoryContent", () => {
     });
   });
 });
+
+describe("DBHistoryContent multi-selection", () => {
+  const twoSummaries: AircraftSummary[] = [
+    sampleSummary,
+    { ...sampleSummary, hex_ident: "D4E5F6", callsign: "OTHER99", position_count: 10, min_altitude: 20000, max_altitude: 25000 },
+  ];
+
+  async function renderWithSummaries(extraProps: Partial<typeof baseProps & { onAddToAnalysis: ReturnType<typeof vi.fn>; onSwitchToAnalysis: ReturnType<typeof vi.fn> }> = {}) {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockBrowseResponses(twoSummaries);
+
+    const user = userEvent.setup();
+    const result = render(<DBHistoryContent {...baseProps} {...extraProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("dbhist-preset-24h"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-track-list")).toBeInTheDocument();
+    });
+
+    return { user, ...result };
+  }
+
+  it("renders checkboxes per aircraft row", async () => {
+    await renderWithSummaries();
+    expect(screen.getByTestId("dbhist-check-A1B2C3")).toBeInTheDocument();
+    expect(screen.getByTestId("dbhist-check-D4E5F6")).toBeInTheDocument();
+  });
+
+  it("Select All toggles all checkboxes", async () => {
+    const { user } = await renderWithSummaries();
+
+    const selectAll = screen.getByTestId("dbhist-select-all").querySelector("input")!;
+    expect(selectAll.checked).toBe(false);
+
+    await user.click(selectAll);
+
+    const check1 = screen.getByTestId("dbhist-check-A1B2C3") as HTMLInputElement;
+    const check2 = screen.getByTestId("dbhist-check-D4E5F6") as HTMLInputElement;
+    expect(check1.checked).toBe(true);
+    expect(check2.checked).toBe(true);
+
+    // Click again to deselect all
+    await user.click(selectAll);
+    expect(check1.checked).toBe(false);
+    expect(check2.checked).toBe(false);
+  });
+
+  it("'→ Live' button disabled when none selected", async () => {
+    await renderWithSummaries();
+    const btn = screen.getByTestId("dbhist-load-to-live");
+    expect(btn).toBeDisabled();
+  });
+
+  it("'→ Analysis' button visible when onAddToAnalysis provided", async () => {
+    await renderWithSummaries({ onAddToAnalysis: vi.fn() });
+    expect(screen.getByTestId("dbhist-load-to-analysis")).toBeInTheDocument();
+  });
+
+  it("'→ Analysis' button hidden when onAddToAnalysis not provided", async () => {
+    await renderWithSummaries();
+    expect(screen.queryByTestId("dbhist-load-to-analysis")).not.toBeInTheDocument();
+  });
+
+  it("'→ Analysis' calls onAddToAnalysis with fetched tracks", async () => {
+    mockInvokeResponse("get_trajectory", [
+      {
+        hex_ident: "A1B2C3",
+        callsign: "TEST123",
+        latitude: 45.5,
+        longitude: -73.5,
+        altitude: 35000,
+        ground_speed: 450,
+        track: 90,
+        vertical_rate: 0,
+        squawk: "1200",
+        is_on_ground: false,
+        timestamp_ms: 1705315800000,
+      },
+    ]);
+
+    const onAdd = vi.fn();
+    const onSwitch = vi.fn();
+    const { user } = await renderWithSummaries({ onAddToAnalysis: onAdd, onSwitchToAnalysis: onSwitch });
+
+    // Select first aircraft
+    await user.click(screen.getByTestId("dbhist-check-A1B2C3"));
+
+    // Click "→ Analysis"
+    await user.click(screen.getByTestId("dbhist-load-to-analysis"));
+
+    await waitFor(() => {
+      expect(onAdd).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ hex_ident: "A1B2C3" }),
+        ]),
+      );
+    });
+    expect(onSwitch).toHaveBeenCalled();
+  });
+});
