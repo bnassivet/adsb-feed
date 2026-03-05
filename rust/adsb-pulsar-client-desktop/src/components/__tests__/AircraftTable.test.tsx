@@ -31,28 +31,32 @@ function makeTrack(hex: string, overrides?: Partial<AircraftTrack>): AircraftTra
 }
 
 describe("AircraftTable selection", () => {
-  it("calls onSelectTrack with hex_ident on row click", async () => {
+  it("calls onSelectTrack with hex_ident and modifier keys on row click", async () => {
     const onSelect = vi.fn();
     const user = userEvent.setup();
 
     render(
       <AircraftTable
         tracks={[makeTrack("ABC123")]}
-        selectedHexIdent={null}
+        selectedHexIdents={new Set()}
         onSelectTrack={onSelect}
       />,
     );
 
     const row = screen.getByTestId("row-ABC123");
     await user.click(row);
-    expect(onSelect).toHaveBeenCalledWith("ABC123");
+    expect(onSelect).toHaveBeenCalledWith("ABC123", expect.objectContaining({
+      shiftKey: false,
+      metaKey: false,
+      ctrlKey: false,
+    }));
   });
 
   it("highlights selected row with bg-blue-900/40", () => {
     render(
       <AircraftTable
         tracks={[makeTrack("ABC123"), makeTrack("DEF456")]}
-        selectedHexIdent="ABC123"
+        selectedHexIdents={new Set(["ABC123"])}
       />,
     );
 
@@ -62,12 +66,25 @@ describe("AircraftTable selection", () => {
     expect(otherRow.className).not.toContain("bg-blue-900/40");
   });
 
+  it("highlights multiple selected rows", () => {
+    render(
+      <AircraftTable
+        tracks={[makeTrack("AAA"), makeTrack("BBB"), makeTrack("CCC")]}
+        selectedHexIdents={new Set(["AAA", "CCC"])}
+      />,
+    );
+
+    expect(screen.getByTestId("row-AAA").className).toContain("bg-blue-900/40");
+    expect(screen.getByTestId("row-BBB").className).not.toContain("bg-blue-900/40");
+    expect(screen.getByTestId("row-CCC").className).toContain("bg-blue-900/40");
+  });
+
   it("highlights selected history row", () => {
     render(
       <AircraftTable
         tracks={[]}
         historyTracks={[makeTrack("HIST01")]}
-        selectedHexIdent="HIST01"
+        selectedHexIdents={new Set(["HIST01"])}
       />,
     );
 
@@ -83,21 +100,23 @@ describe("AircraftTable selection", () => {
       <AircraftTable
         tracks={[]}
         historyTracks={[makeTrack("HIST01")]}
-        selectedHexIdent={null}
+        selectedHexIdents={new Set()}
         onSelectTrack={onSelect}
       />,
     );
 
     const row = screen.getByTestId("row-hist-HIST01");
     await user.click(row);
-    expect(onSelect).toHaveBeenCalledWith("HIST01");
+    expect(onSelect).toHaveBeenCalledWith("HIST01", expect.objectContaining({
+      shiftKey: false,
+    }));
   });
 
   it("adds cursor-pointer to rows when onSelectTrack is provided", () => {
     render(
       <AircraftTable
         tracks={[makeTrack("ABC123")]}
-        selectedHexIdent={null}
+        selectedHexIdents={new Set()}
         onSelectTrack={() => {}}
       />,
     );
@@ -106,21 +125,21 @@ describe("AircraftTable selection", () => {
     expect(row.className).toContain("cursor-pointer");
   });
 
-  it("auto-scrolls selected row into view", () => {
+  it("auto-scrolls last-selected row into view", () => {
     const { rerender } = render(
       <AircraftTable
         tracks={[makeTrack("AAA"), makeTrack("BBB"), makeTrack("CCC")]}
-        selectedHexIdent={null}
+        selectedHexIdents={new Set()}
       />,
     );
 
-    // Clear any prior calls, then select BBB
     vi.mocked(Element.prototype.scrollIntoView).mockClear();
 
     rerender(
       <AircraftTable
         tracks={[makeTrack("AAA"), makeTrack("BBB"), makeTrack("CCC")]}
-        selectedHexIdent="BBB"
+        selectedHexIdents={new Set(["BBB"])}
+        lastSelectedHexIdent="BBB"
       />,
     );
 
@@ -179,7 +198,7 @@ describe("imported row selection", () => {
       <AircraftTable
         tracks={[]}
         importedTracks={[importedTrack]}
-        selectedHexIdent="IMP001"
+        selectedHexIdents={new Set(["IMP001"])}
         onSelectTrack={vi.fn()}
       />,
     );
@@ -194,7 +213,7 @@ describe("imported row selection", () => {
       <AircraftTable
         tracks={[]}
         importedTracks={[importedTrack]}
-        selectedHexIdent={null}
+        selectedHexIdents={new Set()}
         onSelectTrack={vi.fn()}
       />,
     );
@@ -234,7 +253,7 @@ describe("DB History section", () => {
       <AircraftTable
         tracks={[]}
         dbHistoryTracks={[makeTrack("DB01")]}
-        selectedHexIdent="DB01"
+        selectedHexIdents={new Set(["DB01"])}
         onSelectTrack={vi.fn()}
       />,
     );

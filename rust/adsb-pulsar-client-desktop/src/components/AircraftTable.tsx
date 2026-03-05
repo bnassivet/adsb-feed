@@ -1,29 +1,28 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import type { AircraftTrack } from "@/lib/types";
+import { sortTracks, type SortKey } from "@/lib/sort-tracks";
 import { altitudeToColor } from "@/lib/colors";
 import { timeAgo } from "@/lib/format";
 
-type SortKey =
-  | "callsign"
-  | "hex_ident"
-  | "altitude"
-  | "ground_speed"
-  | "squawk"
-  | "last_seen"
-  | "message_count";
+export interface SelectEvent {
+  shiftKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+}
 
 interface Props {
   tracks: AircraftTrack[];
   historyTracks?: AircraftTrack[];
   dbHistoryTracks?: AircraftTrack[];
   importedTracks?: AircraftTrack[];
-  selectedHexIdent?: string | null;
-  onSelectTrack?: (hex: string) => void;
+  selectedHexIdents?: Set<string>;
+  lastSelectedHexIdent?: string | null;
+  onSelectTrack?: (hex: string, event: SelectEvent) => void;
   onRemoveTrack?: (hexIdent: string) => void;
 }
 
-export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = [], importedTracks = [], selectedHexIdent, onSelectTrack, onRemoveTrack }: Props) {
+export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = [], importedTracks = [], selectedHexIdents, lastSelectedHexIdent, onSelectTrack, onRemoveTrack }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("callsign");
   const [sortAsc, setSortAsc] = useState(true);
   const [liveCollapsed, setLiveCollapsed] = useState(false);
@@ -31,30 +30,18 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
   const [dbHistoryCollapsed, setDbHistoryCollapsed] = useState(false);
   const [importedCollapsed, setImportedCollapsed] = useState(false);
 
-  function sortTracks(list: AircraftTrack[]) {
-    return [...list].sort((a, b) => {
-      const av = a[sortKey];
-      const bv = b[sortKey];
-      if (av === null && bv === null) return 0;
-      if (av === null) return 1;
-      if (bv === null) return -1;
-      const cmp = typeof av === "string" ? av.localeCompare(bv as string) : (av as number) - (bv as number);
-      return sortAsc ? cmp : -cmp;
-    });
-  }
-
-  const sorted = sortTracks(tracks);
-  const sortedHistory = sortTracks(historyTracks);
-  const sortedDbHistory = sortTracks(dbHistoryTracks);
-  const sortedImported = sortTracks(importedTracks);
+  const sorted = sortTracks(tracks, sortKey, sortAsc);
+  const sortedHistory = sortTracks(historyTracks, sortKey, sortAsc);
+  const sortedDbHistory = sortTracks(dbHistoryTracks, sortKey, sortAsc);
+  const sortedImported = sortTracks(importedTracks, sortKey, sortAsc);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll selected row into view
+  // Auto-scroll last-clicked row into view
   useEffect(() => {
-    if (!selectedHexIdent || !containerRef.current) return;
-    const row = containerRef.current.querySelector(`[data-hex="${selectedHexIdent}"]`);
+    if (!lastSelectedHexIdent || !containerRef.current) return;
+    const row = containerRef.current.querySelector(`[data-hex="${lastSelectedHexIdent}"]`);
     row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [selectedHexIdent]);
+  }, [lastSelectedHexIdent]);
 
   function handleSort(key: SortKey) {
     if (sortKey === key) {
@@ -116,13 +103,14 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
 
           {/* Live rows */}
           {!liveCollapsed && sorted.map((t) => {
-            const isSelected = t.hex_ident === selectedHexIdent;
+            const isSelected = selectedHexIdents?.has(t.hex_ident) ?? false;
             return (
             <tr
               key={t.hex_ident}
               data-testid={`row-${t.hex_ident}`}
               data-hex={t.hex_ident}
-              onClick={() => onSelectTrack?.(t.hex_ident)}
+              onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
+              onClick={(e) => onSelectTrack?.(t.hex_ident, { shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey })}
               className={`border-b border-slate-800 ${
                 isSelected
                   ? "bg-blue-900/40 hover:bg-blue-900/50"
@@ -202,13 +190,14 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
 
           {/* History rows — dimmed */}
           {!historyCollapsed && sortedHistory.map((t) => {
-            const isSelected = t.hex_ident === selectedHexIdent;
+            const isSelected = selectedHexIdents?.has(t.hex_ident) ?? false;
             return (
             <tr
               key={`hist-${t.hex_ident}`}
               data-testid={`row-hist-${t.hex_ident}`}
               data-hex={t.hex_ident}
-              onClick={() => onSelectTrack?.(t.hex_ident)}
+              onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
+              onClick={(e) => onSelectTrack?.(t.hex_ident, { shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey })}
               className={`border-b border-slate-800 ${
                 isSelected
                   ? "bg-blue-900/40 hover:bg-blue-900/50"
@@ -270,13 +259,14 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
 
           {/* DB History rows — cyan tint */}
           {!dbHistoryCollapsed && sortedDbHistory.map((t) => {
-            const isSelected = t.hex_ident === selectedHexIdent;
+            const isSelected = selectedHexIdents?.has(t.hex_ident) ?? false;
             return (
             <tr
               key={`dbhist-${t.hex_ident}`}
               data-testid={`row-dbhist-${t.hex_ident}`}
               data-hex={t.hex_ident}
-              onClick={() => onSelectTrack?.(t.hex_ident)}
+              onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
+              onClick={(e) => onSelectTrack?.(t.hex_ident, { shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey })}
               className={`border-b border-slate-800 ${
                 isSelected
                   ? "bg-cyan-900/40 hover:bg-cyan-900/50"
@@ -317,13 +307,14 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
 
           {/* Imported rows — indigo tint */}
           {!importedCollapsed && sortedImported.map((t) => {
-            const isSelected = t.hex_ident === selectedHexIdent;
+            const isSelected = selectedHexIdents?.has(t.hex_ident) ?? false;
             return (
             <tr
               key={`imported-${t.hex_ident}`}
               data-testid={`row-imported-${t.hex_ident}`}
               data-hex={t.hex_ident}
-              onClick={() => onSelectTrack?.(t.hex_ident)}
+              onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
+              onClick={(e) => onSelectTrack?.(t.hex_ident, { shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey })}
               className={`border-b border-slate-800 ${
                 isSelected
                   ? "bg-indigo-900/40 hover:bg-indigo-900/50"

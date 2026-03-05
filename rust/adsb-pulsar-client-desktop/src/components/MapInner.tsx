@@ -91,7 +91,7 @@ interface Props {
   densityTooltipMode: DensityTooltipMode;
   liveColorMode: AltitudeColorMode;
   historyColorMode: AltitudeColorMode;
-  selectedHexIdent: string | null;
+  selectedHexIdents: Set<string>;
   onSelectTrack: (hex: string | null) => void;
   receiverLocation?: { lat: number; lng: number; alt: number | null };
 }
@@ -217,13 +217,13 @@ function DotsLayer({
   tracks,
   colorMode,
   type,
-  selectedHexIdent,
+  selectedHexIdents,
   theme,
 }: {
   tracks: AircraftTrack[];
   colorMode: AltitudeColorMode;
   type: "history" | "live" | "imported" | "dbHistory";
-  selectedHexIdent: string | null;
+  selectedHexIdents: Set<string>;
   theme: MapTheme;
 }) {
   const map = useMap();
@@ -236,7 +236,7 @@ function DotsLayer({
     for (const t of tracks) {
       if (t.positions.length < 2) continue;
       const trackColor = cachedAltitudeToColor(t.altitude, theme);
-      const isSelected = t.hex_ident === selectedHexIdent;
+      const isSelected = selectedHexIdents.has(t.hex_ident);
       const radius = isSelected ? baseRadius + 2 : baseRadius;
       const fillOpacity = isSelected ? 0.9 : baseFillOpacity;
 
@@ -289,12 +289,12 @@ function DotsLayer({
         m.remove();
       }
     };
-  }, [map, tracks, colorMode, type, selectedHexIdent, theme]);
+  }, [map, tracks, colorMode, type, selectedHexIdents, theme]);
 
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdent, onSelectTrack, receiverLocation }: Props) {
+export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
@@ -302,12 +302,12 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
 
   // Reorder tracks so selected renders on top (last in array = top layer)
   const orderedTracks = useMemo(
-    () => orderTracksWithSelectedLast(tracks, selectedHexIdent),
-    [tracks, selectedHexIdent],
+    () => orderTracksWithSelectedLast(tracks, selectedHexIdents),
+    [tracks, selectedHexIdents],
   );
   const orderedHistory = useMemo(
-    () => orderTracksWithSelectedLast(historyTracks, selectedHexIdent),
-    [historyTracks, selectedHexIdent],
+    () => orderTracksWithSelectedLast(historyTracks, selectedHexIdents),
+    [historyTracks, selectedHexIdents],
   );
 
   const handleDeselect = useCallback(() => onSelectTrack(null), [onSelectTrack]);
@@ -334,12 +334,12 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
 
         {/* History tracks — rendered first so active tracks layer on top */}
         {trajectoryStyle === "dots" && historyTracks.length > 0 && (
-          <DotsLayer tracks={historyTracks} colorMode={historyColorMode} type="history" selectedHexIdent={selectedHexIdent} theme={mapTheme} />
+          <DotsLayer tracks={historyTracks} colorMode={historyColorMode} type="history" selectedHexIdents={selectedHexIdents} theme={mapTheme} />
         )}
         {trajectoryStyle === "line" && orderedHistory.map((t) => {
           if (t.positions.length < 2) return null;
           const trackColor = cachedAltitudeToColor(t.altitude, mapTheme);
-          const isSelected = t.hex_ident === selectedHexIdent;
+          const isSelected = selectedHexIdents.has(t.hex_ident);
 
           return (
             <Polyline
@@ -367,11 +367,11 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
 
         {/* DB History tracks — cyan polylines/dots */}
         {trajectoryStyle === "dots" && dbHistoryTracks.length > 0 && (
-          <DotsLayer tracks={dbHistoryTracks} colorMode="plot" type="dbHistory" selectedHexIdent={selectedHexIdent} theme={mapTheme} />
+          <DotsLayer tracks={dbHistoryTracks} colorMode="plot" type="dbHistory" selectedHexIdents={selectedHexIdents} theme={mapTheme} />
         )}
         {trajectoryStyle === "line" && dbHistoryTracks.map((t) => {
           if (t.positions.length < 2) return null;
-          const isSelected = t.hex_ident === selectedHexIdent;
+          const isSelected = selectedHexIdents.has(t.hex_ident);
           return (
             <Polyline
               key={`dbhist-${t.hex_ident}`}
@@ -399,11 +399,11 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
 
         {/* Imported tracks — dots or dashed indigo polylines */}
         {trajectoryStyle === "dots" && importedTracks.length > 0 && (
-          <DotsLayer tracks={importedTracks} colorMode="plot" type="imported" selectedHexIdent={selectedHexIdent} theme={mapTheme} />
+          <DotsLayer tracks={importedTracks} colorMode="plot" type="imported" selectedHexIdents={selectedHexIdents} theme={mapTheme} />
         )}
         {trajectoryStyle === "line" && importedTracks.map((t) => {
           if (t.positions.length < 2) return null;
-          const isSelected = t.hex_ident === selectedHexIdent;
+          const isSelected = selectedHexIdents.has(t.hex_ident);
           return (
             <Polyline
               key={`imported-${t.hex_ident}`}
@@ -432,7 +432,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
 
         {/* Active track dots — imperative layer for performance */}
         {trajectoryStyle === "dots" && tracks.length > 0 && (
-          <DotsLayer tracks={tracks} colorMode={liveColorMode} type="live" selectedHexIdent={selectedHexIdent} theme={mapTheme} />
+          <DotsLayer tracks={tracks} colorMode={liveColorMode} type="live" selectedHexIdents={selectedHexIdents} theme={mapTheme} />
         )}
 
         {/* Receiver location marker */}
@@ -459,7 +459,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         {orderedTracks.map((t) => {
           if (t.latitude === null || t.longitude === null) return null;
           const trackColor = cachedAltitudeToColor(t.altitude, mapTheme);
-          const isSelected = t.hex_ident === selectedHexIdent;
+          const isSelected = selectedHexIdents.has(t.hex_ident);
           const icon = aircraftIcon(t.track ?? 0, trackColor, isSelected);
 
           return (

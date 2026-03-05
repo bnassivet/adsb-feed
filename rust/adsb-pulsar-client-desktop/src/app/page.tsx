@@ -16,8 +16,10 @@ import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { startFeed, stopFeed, getConfig } from "@/lib/commands";
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
+import { sortTracks } from "@/lib/sort-tracks";
 import { DEFAULT_FILTERS } from "@/lib/types";
 import type { ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode } from "@/lib/types";
+import type { SelectEvent } from "@/components/AircraftTable";
 import { ModeTabs } from "@/components/ModeTabs";
 import Link from "next/link";
 
@@ -72,7 +74,10 @@ export default function Dashboard() {
     return undefined;
   }, [appConfig]);
 
-  const [selectedHexIdent, setSelectedHexIdent] = useState<string | null>(null);
+  const [selectedHexIdents, setSelectedHexIdents] = useState<Set<string>>(new Set());
+  const [lastSelectedHexIdent, setLastSelectedHexIdent] = useState<string | null>(null);
+  const [sortKey] = useState<"callsign">("callsign");
+  const [sortAsc] = useState(true);
 
   const {
     tracks, history, imported, dbHistory, analysis,
@@ -103,32 +108,85 @@ export default function Dashboard() {
 
   const selectedTrack = useMemo(
     () =>
-      mapTracks.find(t => t.hex_ident === selectedHexIdent) ??
-      mapHistory.find(t => t.hex_ident === selectedHexIdent) ??
-      mapDbHistory.find(t => t.hex_ident === selectedHexIdent) ??
-      mapImported.find(t => t.hex_ident === selectedHexIdent) ??
+      mapTracks.find(t => t.hex_ident === lastSelectedHexIdent) ??
+      mapHistory.find(t => t.hex_ident === lastSelectedHexIdent) ??
+      mapDbHistory.find(t => t.hex_ident === lastSelectedHexIdent) ??
+      mapImported.find(t => t.hex_ident === lastSelectedHexIdent) ??
       null,
-    [selectedHexIdent, mapTracks, mapHistory, mapDbHistory, mapImported],
+    [lastSelectedHexIdent, mapTracks, mapHistory, mapDbHistory, mapImported],
   );
 
-  // Toggle selection: clicking same track deselects, clicking different selects
-  const handleSelectTrack = useCallback((hexIdent: string | null) => {
-    setSelectedHexIdent(prev => prev === hexIdent ? null : hexIdent);
-  }, []);
+  // Flat visible order for shift-range selection — mirrors table section order
+  const flatVisibleOrder = useMemo(
+    () => [
+      ...sortTracks(tableTracks, sortKey, sortAsc),
+      ...sortTracks(tableHistory, sortKey, sortAsc),
+      ...sortTracks(tableDbHistory, sortKey, sortAsc),
+      ...sortTracks(tableImported, sortKey, sortAsc),
+    ].map(t => t.hex_ident),
+    [tableTracks, tableHistory, tableDbHistory, tableImported, sortKey, sortAsc],
+  );
 
-  // Auto-deselect when selected track disappears from current mode
+  // Multi-select handler: plain click = single, ctrl/cmd = toggle, shift = range
+  const handleSelectTrack = useCallback((hexIdent: string | null, event?: SelectEvent) => {
+    if (hexIdent === null) {
+      // Map click on empty space — deselect all
+      setSelectedHexIdents(new Set());
+      setLastSelectedHexIdent(null);
+      return;
+    }
+    if (event && (event.ctrlKey || event.metaKey)) {
+      // Toggle individual item
+      setSelectedHexIdents(prev => {
+        const next = new Set(prev);
+        if (next.has(hexIdent)) {
+          next.delete(hexIdent);
+        } else {
+          next.add(hexIdent);
+        }
+        return next;
+      });
+      setLastSelectedHexIdent(hexIdent);
+    } else if (event?.shiftKey && lastSelectedHexIdent) {
+      // Range selection
+      const anchorIdx = flatVisibleOrder.indexOf(lastSelectedHexIdent);
+      const targetIdx = flatVisibleOrder.indexOf(hexIdent);
+      if (anchorIdx !== -1 && targetIdx !== -1) {
+        const start = Math.min(anchorIdx, targetIdx);
+        const end = Math.max(anchorIdx, targetIdx);
+        setSelectedHexIdents(new Set(flatVisibleOrder.slice(start, end + 1)));
+      } else {
+        setSelectedHexIdents(new Set([hexIdent]));
+        setLastSelectedHexIdent(hexIdent);
+      }
+      // Keep lastSelectedHexIdent unchanged (anchor stays) for shift
+    } else {
+      // Plain click — single selection
+      setSelectedHexIdents(new Set([hexIdent]));
+      setLastSelectedHexIdent(hexIdent);
+    }
+  }, [lastSelectedHexIdent, flatVisibleOrder]);
+
+  // Auto-deselect when selected tracks disappear from current mode
   useEffect(() => {
-    if (!selectedHexIdent) return;
-    const exists =
-      mapTracks.some(t => t.hex_ident === selectedHexIdent) ||
-      mapHistory.some(t => t.hex_ident === selectedHexIdent) ||
-      mapDbHistory.some(t => t.hex_ident === selectedHexIdent) ||
-      mapImported.some(t => t.hex_ident === selectedHexIdent);
-    if (!exists) setSelectedHexIdent(null);
-  }, [selectedHexIdent, mapTracks, mapHistory, mapDbHistory, mapImported]);
+    if (selectedHexIdents.size === 0) return;
+    const allHexes = new Set([
+      ...mapTracks.map(t => t.hex_ident),
+      ...mapHistory.map(t => t.hex_ident),
+      ...mapDbHistory.map(t => t.hex_ident),
+      ...mapImported.map(t => t.hex_ident),
+    ]);
+    const remaining = new Set([...selectedHexIdents].filter(h => allHexes.has(h)));
+    if (remaining.size < selectedHexIdents.size) {
+      setSelectedHexIdents(remaining);
+    }
+    if (lastSelectedHexIdent && !allHexes.has(lastSelectedHexIdent)) {
+      setLastSelectedHexIdent(null);
+    }
+  }, [selectedHexIdents, lastSelectedHexIdent, mapTracks, mapHistory, mapDbHistory, mapImported]);
 
-  const isImportedSelection = mapImported.some(t => t.hex_ident === selectedHexIdent);
-  const isDbHistorySelection = mapDbHistory.some(t => t.hex_ident === selectedHexIdent);
+  const isImportedSelection = mapImported.some(t => t.hex_ident === lastSelectedHexIdent);
+  const isDbHistorySelection = mapDbHistory.some(t => t.hex_ident === lastSelectedHexIdent);
 
   const densityTracks = useMemo(
     () => {
@@ -356,7 +414,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <Map tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdent={selectedHexIdent} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} />
+              <Map tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel
@@ -422,7 +480,8 @@ export default function Dashboard() {
               historyTracks={tableHistory}
               importedTracks={tableImported}
               dbHistoryTracks={tableDbHistory}
-              selectedHexIdent={selectedHexIdent}
+              selectedHexIdents={selectedHexIdents}
+              lastSelectedHexIdent={lastSelectedHexIdent}
               onSelectTrack={handleSelectTrack}
               onRemoveTrack={!isLive ? removeAnalysisTrack : undefined}
             />
