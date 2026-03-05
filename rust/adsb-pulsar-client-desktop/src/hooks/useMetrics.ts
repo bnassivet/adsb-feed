@@ -1,6 +1,8 @@
 "use client";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useTauriEvent } from "./useTauriEvent";
+import { useWindowedRate } from "./useWindowedRate";
+import { useLocalStorage } from "./useLocalStorage";
 import type { MetricsSnapshot } from "@/lib/types";
 
 const EMPTY_METRICS: MetricsSnapshot = {
@@ -14,12 +16,22 @@ const EMPTY_METRICS: MetricsSnapshot = {
 };
 
 /**
- * Subscribes to `adsb:metrics` events and returns the latest snapshot.
+ * Subscribes to `adsb:metrics` events and returns the latest snapshot
+ * with throughput_msg_per_sec replaced by a sliding-window rate.
  */
 export function useMetrics(): MetricsSnapshot {
   const [metrics, setMetrics] = useState<MetricsSnapshot>(EMPTY_METRICS);
+  const [windowSecs] = useLocalStorage<number>("adsb-metrics-window-secs", 5);
 
   useTauriEvent<MetricsSnapshot>("adsb:metrics", setMetrics);
 
-  return metrics;
+  const windowedRate = useWindowedRate(
+    metrics.elapsed_secs > 0 ? metrics : null,
+    windowSecs,
+  );
+
+  return useMemo(
+    () => ({ ...metrics, throughput_msg_per_sec: windowedRate }),
+    [metrics, windowedRate],
+  );
 }

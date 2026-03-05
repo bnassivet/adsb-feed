@@ -15,6 +15,7 @@ export default function SettingsPage() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [trajectoryStyle, setTrajectoryStyle] = useLocalStorage<"line" | "dots">("adsb-trajectory-style", "line");
   const { tzMode, setTzMode } = useDisplayTz();
+  const [metricsWindowSecs, setMetricsWindowSecs] = useLocalStorage<number>("adsb-metrics-window-secs", 5);
 
   useEffect(() => {
     getConfig()
@@ -222,6 +223,20 @@ export default function SettingsPage() {
               <p className="text-xs text-slate-500 mt-2">
                 Timezone for displaying stored timestamps. &ldquo;Source&rdquo; uses the
                 Source Timezone above. Saved automatically.
+              </p>
+            </div>
+            <div className="mt-4">
+              <Field
+                label="Throughput Window (s)"
+                type="number"
+                value={String(metricsWindowSecs)}
+                onChange={(v) => {
+                  const n = parseInt(v, 10);
+                  if (!isNaN(n) && n >= 1 && n <= 60) setMetricsWindowSecs(n);
+                }}
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Sliding window for msgs/s calculation (1&ndash;60s). Saved automatically.
               </p>
             </div>
           </section>
