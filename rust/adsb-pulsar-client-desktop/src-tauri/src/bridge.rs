@@ -12,6 +12,7 @@ use adsb_data_engine::{
 use adsb_pulsar_client::forwarder::NoopForwarder;
 use adsb_pulsar_client::{ADSBFeedClient, Config, Metrics};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{broadcast, RwLock};
@@ -39,6 +40,11 @@ pub fn start_feed(
     // Get metrics handle before moving client
     let metrics = client.metrics();
     let metrics_for_relay = metrics.clone();
+
+    // Shared counter for total raw SBS-1 messages parsed (pre-throttle)
+    let messages_received = Arc::new(AtomicU64::new(0));
+    let messages_received_for_relay = messages_received.clone();
+    let messages_received_for_metrics = messages_received.clone();
 
     // Shared state for last message time (for socket watchdog)
     let last_message_time = Arc::new(RwLock::new(Instant::now()));
@@ -122,13 +128,14 @@ pub fn start_feed(
             last_message_time,
             storage,
             dump1090_tz,
+            messages_received_for_relay,
         )
         .await;
     });
 
     // Task 3: Relay metrics to frontend
     let metrics_task = tokio::spawn(async move {
-        relay_metrics(app_for_metrics, metrics_for_relay, alive_rx_metrics).await;
+        relay_metrics(app_for_metrics, metrics_for_relay, messages_received_for_metrics, alive_rx_metrics).await;
     });
 
     // Task 4: Socket watchdog - monitor message activity and emit periodic status
@@ -170,6 +177,7 @@ async fn relay_messages(
     last_message_time: Arc<RwLock<Instant>>,
     storage: Option<StorageHandle>,
     dump1090_tz: String,
+    messages_received: Arc<AtomicU64>,
 ) {
     let mut flush_interval = interval(Duration::from_millis(500));
     let mut buffer: HashMap<String, AircraftPosition> = HashMap::new();
@@ -201,6 +209,7 @@ async fn relay_messages(
                             }
 
                             if let Some(pos) = parse_sbs_message(&line) {
+                                messages_received.fetch_add(1, Ordering::Relaxed);
                                 *message_counts.entry(pos.hex_ident.clone()).or_insert(0) += 1;
                                 merge_into_buffer(&mut buffer, pos);
                             }
@@ -293,6 +302,15 @@ async fn persist_raw_batch(storage: &Option<StorageHandle>, batch: &[RawSbsRecor
     }
 }
 
+/// Extended metrics snapshot with bridge-level counters.
+#[derive(Debug, Clone, serde::Serialize)]
+struct DesktopMetrics {
+    #[serde(flatten)]
+    base: adsb_pulsar_client::MetricsSnapshot,
+    /// Total raw SBS-1 messages successfully parsed (pre-throttle).
+    messages_received: u64,
+}
+
 /// Emits metrics snapshots to the frontend every second.
 ///
 /// Exits when the client task stops (alive_rx sender dropped) or when
@@ -300,6 +318,7 @@ async fn persist_raw_batch(storage: &Option<StorageHandle>, batch: &[RawSbsRecor
 async fn relay_metrics(
     app: AppHandle,
     metrics: Metrics,
+    messages_received: Arc<AtomicU64>,
     mut alive_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     let mut tick = interval(Duration::from_secs(1));
@@ -307,8 +326,11 @@ async fn relay_metrics(
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                let snapshot = metrics.snapshot();
-                if app.emit("adsb:metrics", &snapshot).is_err() {
+                let desktop_metrics = DesktopMetrics {
+                    base: metrics.snapshot(),
+                    messages_received: messages_received.load(Ordering::Relaxed),
+                };
+                if app.emit("adsb:metrics", &desktop_metrics).is_err() {
                     break;
                 }
             }

@@ -40,6 +40,8 @@ export interface AircraftTrack {
 /** Metrics snapshot from the Rust backend (mirrors MetricsSnapshot). */
 export interface MetricsSnapshot {
   messages_sent: number;
+  /** Total raw SBS-1 messages successfully parsed (pre-throttle count from bridge). */
+  messages_received: number;
   errors: number;
   bytes_received: number;
   bytes_sent: number;

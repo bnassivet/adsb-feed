@@ -1,14 +1,20 @@
 "use client";
-import type { MetricsSnapshot } from "@/lib/types";
+import type { MetricsWithRates } from "@/hooks/useMetrics";
 import { formatBytes } from "@/lib/format";
 
 interface Props {
-  metrics: MetricsSnapshot;
+  metrics: MetricsWithRates;
 }
 
 export function MetricsBar({ metrics }: Props) {
   return (
     <div className="flex items-center gap-6 px-4 py-2 bg-slate-900 border-t border-slate-700 text-xs text-slate-400">
+      <span>
+        <span className="text-slate-500">hits/s:</span>{" "}
+        <span className="text-slate-200 font-mono">
+          {metrics.hits_per_sec.toFixed(1)}
+        </span>
+      </span>
       <span>
         <span className="text-slate-500">msgs/s:</span>{" "}
         <span className="text-slate-200 font-mono">

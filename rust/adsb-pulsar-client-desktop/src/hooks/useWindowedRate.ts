@@ -1,37 +1,38 @@
 "use client";
 import { useRef, useMemo } from "react";
-import type { MetricsSnapshot } from "@/lib/types";
 
 interface RateEntry {
-  messages_sent: number;
+  counter: number;
   elapsed_secs: number;
 }
 
 /**
- * Computes a sliding-window msgs/s rate from cumulative MetricsSnapshot data.
+ * Computes a sliding-window rate from a cumulative counter and elapsed time.
  *
- * Maintains a ring buffer of recent snapshots and returns:
- *   (newest.messages_sent - oldest.messages_sent) / (newest.elapsed_secs - oldest.elapsed_secs)
+ * Maintains a ring buffer of recent entries and returns:
+ *   (newest.counter - oldest.counter) / (newest.elapsed_secs - oldest.elapsed_secs)
  *
- * Falls back to cumulative throughput_msg_per_sec when fewer than 2 entries exist.
- * Returns 0 when metrics is null.
+ * Falls back to `fallbackRate` (default 0) when fewer than 2 entries exist.
+ * Returns 0 when counterValue is null.
  */
 export function useWindowedRate(
-  metrics: MetricsSnapshot | null,
+  counterValue: number | null,
+  elapsedSecs: number,
   windowSecs: number,
+  fallbackRate: number = 0,
 ): number {
   const bufferRef = useRef<RateEntry[]>([]);
 
   return useMemo(() => {
-    if (!metrics) {
+    if (counterValue === null) {
       bufferRef.current = [];
       return 0;
     }
 
     const buffer = bufferRef.current;
     const entry: RateEntry = {
-      messages_sent: metrics.messages_sent,
-      elapsed_secs: metrics.elapsed_secs,
+      counter: counterValue,
+      elapsed_secs: elapsedSecs,
     };
 
     // Only push if elapsed_secs advanced (avoid duplicates from React re-renders)
@@ -47,7 +48,7 @@ export function useWindowedRate(
 
     // Need at least 2 entries for a delta
     if (buffer.length < 2) {
-      return metrics.throughput_msg_per_sec;
+      return fallbackRate;
     }
 
     const oldest = buffer[0];
@@ -55,9 +56,9 @@ export function useWindowedRate(
     const dt = newest.elapsed_secs - oldest.elapsed_secs;
 
     if (dt <= 0) {
-      return metrics.throughput_msg_per_sec;
+      return fallbackRate;
     }
 
-    return (newest.messages_sent - oldest.messages_sent) / dt;
-  }, [metrics, windowSecs]);
+    return (newest.counter - oldest.counter) / dt;
+  }, [counterValue, elapsedSecs, windowSecs, fallbackRate]);
 }

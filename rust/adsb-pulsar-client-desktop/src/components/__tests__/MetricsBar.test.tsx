@@ -1,27 +1,35 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MetricsBar } from "../MetricsBar";
-import type { MetricsSnapshot } from "@/lib/types";
+import type { MetricsWithRates } from "@/hooks/useMetrics";
 
-function makeMetrics(overrides: Partial<MetricsSnapshot> = {}): MetricsSnapshot {
+function makeMetrics(overrides: Partial<MetricsWithRates> = {}): MetricsWithRates {
   return {
     messages_sent: 1000,
+    messages_received: 5000,
     errors: 0,
     bytes_received: 524288,
     bytes_sent: 262144,
     retry_queue_size: 0,
     elapsed_secs: 120,
     throughput_msg_per_sec: 8.3,
+    hits_per_sec: 41.7,
     ...overrides,
   };
 }
 
 describe("MetricsBar", () => {
-  it("renders all metric values", () => {
+  it("renders all metric values including hits/s", () => {
     render(<MetricsBar metrics={makeMetrics()} />);
     expect(screen.getByText("8.3")).toBeInTheDocument();
+    expect(screen.getByText("41.7")).toBeInTheDocument();
     expect(screen.getByText("1,000")).toBeInTheDocument();
     expect(screen.getByText("512.0 KB")).toBeInTheDocument();
+  });
+
+  it("renders hits/s label", () => {
+    render(<MetricsBar metrics={makeMetrics()} />);
+    expect(screen.getByText("hits/s:")).toBeInTheDocument();
   });
 
   it("shows errors in red when > 0", () => {
