@@ -665,6 +665,44 @@ impl StorageHandle {
         Ok(rows)
     }
 
+    /// Count raw messages, optionally filtered by time range (synchronous).
+    pub fn get_raw_message_count_sync(
+        &self,
+        start_ms: Option<i64>,
+        end_ms: Option<i64>,
+    ) -> Result<u64, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let mut sql = String::from("SELECT COUNT(*) FROM raw_messages");
+        let mut conditions = Vec::new();
+        if start_ms.is_some() {
+            conditions.push("timestamp_ms >= ?");
+        }
+        if end_ms.is_some() {
+            conditions.push("timestamp_ms <= ?");
+        }
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+
+        let mut stmt = storage.conn.prepare(&sql)?;
+        let mut params_vec: Vec<Box<dyn duckdb::ToSql>> = Vec::new();
+        if let Some(s) = start_ms {
+            params_vec.push(Box::new(s));
+        }
+        if let Some(e) = end_ms {
+            params_vec.push(Box::new(e));
+        }
+        let params_refs: Vec<&dyn duckdb::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let count: i64 = stmt.query_row(params_refs.as_slice(), |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
     // --- Async wrappers (Step 3) ---
 
     /// Batch insert parsed positions (async via spawn_blocking).
@@ -767,6 +805,18 @@ impl StorageHandle {
     ) -> Result<(), StorageError> {
         let handle = self.clone();
         tokio::task::spawn_blocking(move || handle.insert_raw_batch_sync(&records, &tz))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Count raw messages in a time range (async via spawn_blocking).
+    pub async fn get_raw_message_count(
+        &self,
+        start_ms: Option<i64>,
+        end_ms: Option<i64>,
+    ) -> Result<u64, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.get_raw_message_count_sync(start_ms, end_ms))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
@@ -1992,5 +2042,44 @@ mod tests {
         assert_eq!(stats.raw_message_count, 2);
         // Position count should still be zero
         assert_eq!(stats.row_count, 0);
+    }
+
+    #[test]
+    fn test_get_raw_message_count_no_filter() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let records = vec![
+            sample_raw_record("A1B2C3", "MSG,3", Some(3), "2024/01/15 10:30:00.000"),
+            sample_raw_record("A1B2C3", "MSG,1", Some(1), "2024/01/15 10:30:01.000"),
+            sample_raw_record("D4E5F6", "MSG,3", Some(3), "2024/01/15 10:30:02.000"),
+        ];
+        handle.insert_raw_batch_sync(&records, "UTC").unwrap();
+        let count = handle.get_raw_message_count_sync(None, None).unwrap();
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_get_raw_message_count_with_time_range() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let records = vec![
+            sample_raw_record("A1B2C3", "MSG,3", Some(3), "2024/01/15 10:00:00.000"),
+            sample_raw_record("A1B2C3", "MSG,1", Some(1), "2024/01/15 11:00:00.000"),
+            sample_raw_record("D4E5F6", "MSG,3", Some(3), "2024/01/15 12:00:00.000"),
+        ];
+        handle.insert_raw_batch_sync(&records, "UTC").unwrap();
+
+        let start = parse_timestamp_to_ms("2024/01/15 10:30:00.000", "UTC");
+        let end = parse_timestamp_to_ms("2024/01/15 11:30:00.000", "UTC");
+
+        let count = handle
+            .get_raw_message_count_sync(Some(start), Some(end))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_get_raw_message_count_empty() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let count = handle.get_raw_message_count_sync(None, None).unwrap();
+        assert_eq!(count, 0);
     }
 }

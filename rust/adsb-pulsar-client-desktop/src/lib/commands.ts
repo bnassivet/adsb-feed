@@ -93,6 +93,16 @@ export async function getHourlyHeatmap(
   return invoke("get_hourly_heatmap", { query });
 }
 
+export async function getRawMessageCount(
+  startMs?: number | null,
+  endMs?: number | null
+): Promise<number> {
+  return invoke("get_raw_message_count", {
+    startMs: startMs ?? null,
+    endMs: endMs ?? null,
+  });
+}
+
 export async function getRawMessages(
   query: RawMessageQuery
 ): Promise<RawSbsRecord[]> {

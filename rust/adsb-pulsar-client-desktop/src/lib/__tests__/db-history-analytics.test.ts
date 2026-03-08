@@ -68,6 +68,7 @@ describe("computeDbHistorySummary", () => {
     const result = computeDbHistorySummary([]);
     expect(result.totalTracks).toBe(0);
     expect(result.totalPositions).toBe(0);
+    expect(result.totalRawMessages).toBe(0);
     expect(result.avgDurationMs).toBe(0);
   });
 
@@ -87,7 +88,18 @@ describe("computeDbHistorySummary", () => {
     const result = computeDbHistorySummary(summaries);
     expect(result.totalTracks).toBe(2);
     expect(result.totalPositions).toBe(30);
+    expect(result.totalRawMessages).toBe(0);
     expect(result.avgDurationMs).toBe(7500); // (10000 + 5000) / 2
+  });
+
+  it("includes raw message count when provided", () => {
+    const summaries = [
+      makeSummary({ position_count: 5 }),
+    ];
+    const result = computeDbHistorySummary(summaries, 150);
+    expect(result.totalTracks).toBe(1);
+    expect(result.totalPositions).toBe(5);
+    expect(result.totalRawMessages).toBe(150);
   });
 });
 

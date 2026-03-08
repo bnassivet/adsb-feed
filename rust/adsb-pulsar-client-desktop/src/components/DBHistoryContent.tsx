@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { getStorageStats, getAircraftSummary, getTrajectory, getTimeDistribution, getDetectionRange, getHourlyHeatmap } from "@/lib/commands";
+import { getStorageStats, getAircraftSummary, getTrajectory, getTimeDistribution, getDetectionRange, getHourlyHeatmap, getRawMessageCount } from "@/lib/commands";
 import { recordsToTrack } from "@/lib/history-convert";
 import type { AircraftSummary, AircraftTrack, DetectionRangeSector, HourlyHeatmapCell, StorageStats, TimeDistributionBucket, TimeGranularity, TimeRangePreset } from "@/lib/types";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
@@ -64,6 +64,7 @@ export function DBHistoryContent({
   const [timeBuckets, setTimeBuckets] = useState<TimeDistributionBucket[]>([]);
   const [detectionSectors, setDetectionSectors] = useState<DetectionRangeSector[]>([]);
   const [heatmapCells, setHeatmapCells] = useState<HourlyHeatmapCell[]>([]);
+  const [rawMessageCount, setRawMessageCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [selectedAircraft, setSelectedAircraft] = useState<Set<string>>(new Set());
   const [batchLoading, setBatchLoading] = useState(false);
@@ -98,6 +99,7 @@ export function DBHistoryContent({
       Promise<TimeDistributionBucket[] | string>,
       Promise<DetectionRangeSector[] | string>,
       Promise<HourlyHeatmapCell[] | string>,
+      Promise<number | string>,
     ] = [
       getAircraftSummary(start, end),
       getTimeDistribution({ start_ms: start, end_ms: end, num_buckets: numBuckets }),
@@ -110,18 +112,21 @@ export function DBHistoryContent({
           })
         : Promise.resolve([]),
       getHourlyHeatmap({ start_ms: start, end_ms: end }),
+      getRawMessageCount(start, end),
     ];
 
-    const [summaryResults, timeResults, rangeResults, heatmapResults] = await Promise.all(promises);
+    const [summaryResults, timeResults, rangeResults, heatmapResults, rawCountResult] = await Promise.all(promises);
 
     const sums = typeof summaryResults === "string" ? [] : (summaryResults as AircraftSummary[]);
     const buckets = typeof timeResults === "string" ? [] : (timeResults as TimeDistributionBucket[]);
     const sectors = typeof rangeResults === "string" ? [] : (rangeResults as DetectionRangeSector[]);
     const heatmap = typeof heatmapResults === "string" ? [] : (heatmapResults as HourlyHeatmapCell[]);
+    const rawCount = typeof rawCountResult === "number" ? rawCountResult : 0;
     setSummaries(sums);
     setTimeBuckets(buckets);
     setDetectionSectors(sectors);
     setHeatmapCells(heatmap);
+    setRawMessageCount(rawCount);
     onSummariesLoaded?.(sums);
     setLoading(false);
   }, [browsing, granularity, onBrowse, onSummariesLoaded, receiverLat, receiverLon]);
@@ -481,6 +486,7 @@ export function DBHistoryContent({
               heatmapCells={heatmapCells}
               startMs={startMs}
               endMs={endMs}
+              rawMessageCount={rawMessageCount}
             />
           )}
 

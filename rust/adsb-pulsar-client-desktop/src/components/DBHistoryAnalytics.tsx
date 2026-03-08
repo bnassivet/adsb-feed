@@ -31,6 +31,8 @@ interface Props {
   startMs?: number;
   /** End of the queried time range (ms). */
   endMs?: number;
+  /** Total raw messages in the queried time range. */
+  rawMessageCount?: number;
 }
 
 const GRANULARITIES: { value: TimeGranularity; label: string }[] = [
@@ -41,8 +43,8 @@ const GRANULARITIES: { value: TimeGranularity; label: string }[] = [
   { value: "month", label: "Month" },
 ];
 
-export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSectors, rangeMs, onZoom, granularity, onGranularityChange, heatmapCells, startMs, endMs }: Props) {
-  const summary = useMemo(() => computeDbHistorySummary(summaries), [summaries]);
+export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSectors, rangeMs, onZoom, granularity, onGranularityChange, heatmapCells, startMs, endMs, rawMessageCount }: Props) {
+  const summary = useMemo(() => computeDbHistorySummary(summaries, rawMessageCount ?? 0), [summaries, rawMessageCount]);
   const altBins = useMemo(() => buildAltitudeBins(summaries), [summaries]);
   const timeData = useMemo(() => formatTimeChartData(timeBuckets, tzName, rangeMs), [timeBuckets, tzName, rangeMs]);
   const hasAltData = altBins.some((b) => b.count > 0);
@@ -74,6 +76,10 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSe
           <div className="flex-1 bg-slate-800/50 rounded px-2 py-1.5">
             <div className="text-[10px] text-slate-500 uppercase">Positions</div>
             <div className="text-cyan-300 font-mono font-semibold">{summary.totalPositions.toLocaleString()}</div>
+          </div>
+          <div className="flex-1 bg-slate-800/50 rounded px-2 py-1.5">
+            <div className="text-[10px] text-slate-500 uppercase">Raw Msgs</div>
+            <div className="text-cyan-300 font-mono font-semibold">{summary.totalRawMessages.toLocaleString()}</div>
           </div>
           <div className="flex-1 bg-slate-800/50 rounded px-2 py-1.5">
             <div className="text-[10px] text-slate-500 uppercase">Avg Duration</div>

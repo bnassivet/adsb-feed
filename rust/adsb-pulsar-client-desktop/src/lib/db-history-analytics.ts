@@ -12,6 +12,7 @@ export interface AltitudeBin {
 export interface DbHistorySummary {
   totalTracks: number;
   totalPositions: number;
+  totalRawMessages: number;
   avgDurationMs: number;
 }
 
@@ -126,10 +127,11 @@ export function buildAltitudeBins(summaries: AircraftSummary[]): AltitudeBin[] {
 
 /**
  * Compute aggregate summary from a list of aircraft summaries.
+ * @param rawMessageCount - total raw messages in the queried time range (from backend).
  */
-export function computeDbHistorySummary(summaries: AircraftSummary[]): DbHistorySummary {
+export function computeDbHistorySummary(summaries: AircraftSummary[], rawMessageCount: number = 0): DbHistorySummary {
   if (summaries.length === 0) {
-    return { totalTracks: 0, totalPositions: 0, avgDurationMs: 0 };
+    return { totalTracks: 0, totalPositions: 0, totalRawMessages: rawMessageCount, avgDurationMs: 0 };
   }
 
   let totalPositions = 0;
@@ -142,6 +144,7 @@ export function computeDbHistorySummary(summaries: AircraftSummary[]): DbHistory
   return {
     totalTracks: summaries.length,
     totalPositions,
+    totalRawMessages: rawMessageCount,
     avgDurationMs: totalDuration / summaries.length,
   };
 }

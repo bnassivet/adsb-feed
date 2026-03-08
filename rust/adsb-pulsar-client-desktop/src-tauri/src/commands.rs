@@ -267,6 +267,23 @@ pub async fn get_hourly_heatmap(
         .map_err(|e| e.to_string())
 }
 
+/// Count raw messages in an optional time range.
+#[tauri::command]
+pub async fn get_raw_message_count(
+    start_ms: Option<i64>,
+    end_ms: Option<i64>,
+    state: State<'_, AppState>,
+) -> Result<u64, String> {
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .get_raw_message_count(start_ms, end_ms)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Query raw SBS messages by hex_ident and time range.
 #[tauri::command]
 pub async fn get_raw_messages(

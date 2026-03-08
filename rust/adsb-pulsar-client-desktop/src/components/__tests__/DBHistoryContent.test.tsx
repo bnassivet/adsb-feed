@@ -30,11 +30,12 @@ const baseProps = {
   dbHistoryCount: 0,
 };
 
-/** Set up mocks for a successful browse (summaries + time distribution + heatmap). */
+/** Set up mocks for a successful browse (summaries + time distribution + heatmap + raw count). */
 function mockBrowseResponses(summaries: AircraftSummary[] = [sampleSummary]) {
   mockInvokeResponse("get_aircraft_summary", summaries);
   mockInvokeResponse("get_time_distribution", []);
   mockInvokeResponse("get_hourly_heatmap", []);
+  mockInvokeResponse("get_raw_message_count", 0);
 }
 
 beforeEach(() => {

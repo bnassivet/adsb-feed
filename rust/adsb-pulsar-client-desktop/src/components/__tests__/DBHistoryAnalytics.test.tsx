@@ -29,6 +29,31 @@ function makeCell(
   return { day_ms, hour, aircraft_count, message_count };
 }
 
+describe("DBHistoryAnalytics — Summary stats", () => {
+  const defaultProps = {
+    summaries: [makeSummary({ position_count: 42 })],
+    timeBuckets: [],
+    tzName: "UTC",
+  };
+
+  it("displays raw messages count when provided", () => {
+    render(<DBHistoryAnalytics {...defaultProps} rawMessageCount={1234} />);
+    const details = screen.getByTestId("dbhist-analytics");
+    details.setAttribute("open", "");
+    expect(screen.getByText("Raw Msgs")).toBeInTheDocument();
+    expect(screen.getByText("1,234")).toBeInTheDocument();
+  });
+
+  it("displays 0 raw messages when not provided", () => {
+    render(<DBHistoryAnalytics {...defaultProps} />);
+    const details = screen.getByTestId("dbhist-analytics");
+    details.setAttribute("open", "");
+    expect(screen.getByText("Raw Msgs")).toBeInTheDocument();
+    // The "0" text appears in the Raw Msgs card; use getAllByText since other elements may also show "0"
+    expect(screen.getAllByText("0").length).toBeGreaterThanOrEqual(1);
+  });
+});
+
 describe("DBHistoryAnalytics — Activity Heatmap", () => {
   const defaultProps = {
     summaries: [makeSummary()],
@@ -123,9 +148,9 @@ describe("DBHistoryAnalytics — Activity Heatmap", () => {
     // Header row has 24 hour labels (0–23)
     const hourHeaders = container.querySelectorAll("[data-testid='heatmap-section'] .inline-grid > div");
     // First row: 1 label + 24 hours = 25, then data rows
-    // Just check that "23" appears (last hour)
+    // Just check that "23" appears (last hour) and "0" appears (first hour)
     expect(screen.getByText("23")).toBeInTheDocument();
-    expect(screen.getByText("0")).toBeInTheDocument();
+    expect(screen.getAllByText("0").length).toBeGreaterThanOrEqual(1);
     expect(hourHeaders.length).toBeGreaterThanOrEqual(25);
   });
 });
