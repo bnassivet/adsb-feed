@@ -10,6 +10,8 @@ import type {
   HourlyHeatmapQuery,
   MetricsSnapshot,
   PositionRecord,
+  RawMessageQuery,
+  RawSbsRecord,
   StatusResponse,
   StorageStats,
   TimeDistributionBucket,
@@ -89,4 +91,10 @@ export async function getHourlyHeatmap(
   query: HourlyHeatmapQuery
 ): Promise<HourlyHeatmapCell[]> {
   return invoke("get_hourly_heatmap", { query });
+}
+
+export async function getRawMessages(
+  query: RawMessageQuery
+): Promise<RawSbsRecord[]> {
+  return invoke("get_raw_messages", { query });
 }

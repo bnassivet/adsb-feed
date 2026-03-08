@@ -89,6 +89,48 @@ pub fn parse_sbs_message(line: &str) -> Option<AircraftPosition> {
     })
 }
 
+/// Extract raw SBS metadata without full position parsing.
+///
+/// Returns `(hex_ident, msg_type, transmission_type)` or `None` for
+/// non-MSG lines, short lines, empty hex, or heartbeat hex "000000".
+pub fn parse_sbs_raw_fields(line: &str) -> Option<(String, String, Option<u8>)> {
+    let fields: Vec<&str> = line.split(',').collect();
+
+    if fields.len() < 22 {
+        return None;
+    }
+
+    if fields[0].trim() != "MSG" {
+        return None;
+    }
+
+    let hex_ident = fields[4].trim().to_string();
+    if hex_ident.is_empty() || hex_ident == "000000" {
+        return None;
+    }
+
+    let msg_type = format!("MSG,{}", fields[1].trim());
+    let transmission_type = fields[1].trim().parse::<u8>().ok();
+
+    Some((hex_ident, msg_type, transmission_type))
+}
+
+/// Extract timestamp string from SBS fields 6+7 without full parsing.
+///
+/// Returns `Some("date time")` if the line has at least 8 fields.
+pub fn extract_sbs_timestamp(line: &str) -> Option<String> {
+    let fields: Vec<&str> = line.split(',').collect();
+    if fields.len() < 8 {
+        return None;
+    }
+    let date = fields[6].trim();
+    let time = fields[7].trim();
+    if date.is_empty() && time.is_empty() {
+        return None;
+    }
+    Some(format!("{} {}", date, time))
+}
+
 fn non_empty(s: &str) -> Option<String> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
@@ -249,6 +291,52 @@ mod tests {
         assert_eq!(parse_bool("-1"), Some(false));
         assert_eq!(parse_bool(""), None);
         assert_eq!(parse_bool("abc"), None);
+    }
+
+    // --- parse_sbs_raw_fields tests ---
+
+    #[test]
+    fn test_parse_sbs_raw_msg3() {
+        let line = "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,35000,,120.5,45.5017,-73.5673,,1234,,,,0";
+        let (hex, msg_type, trans) = parse_sbs_raw_fields(line).unwrap();
+        assert_eq!(hex, "A1B2C3");
+        assert_eq!(msg_type, "MSG,3");
+        assert_eq!(trans, Some(3));
+    }
+
+    #[test]
+    fn test_parse_sbs_raw_non_msg() {
+        let line = "STA,1,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,,,,,,,,,,,";
+        assert!(parse_sbs_raw_fields(line).is_none());
+    }
+
+    #[test]
+    fn test_parse_sbs_raw_short_line() {
+        assert!(parse_sbs_raw_fields("MSG,3,1").is_none());
+    }
+
+    #[test]
+    fn test_parse_sbs_raw_empty_hex() {
+        let line = "MSG,3,1,1,,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,35000,,,45.5,-73.5,,,,,,0";
+        assert!(parse_sbs_raw_fields(line).is_none());
+    }
+
+    #[test]
+    fn test_parse_sbs_raw_000000() {
+        let line = "MSG,3,1,1,000000,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,35000,,,45.5,-73.5,,,,,,0";
+        assert!(parse_sbs_raw_fields(line).is_none());
+    }
+
+    #[test]
+    fn test_extract_sbs_timestamp() {
+        let line = "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,35000,,120.5,45.5017,-73.5673,,1234,,,,0";
+        let ts = extract_sbs_timestamp(line).unwrap();
+        assert_eq!(ts, "2024/01/15 10:30:00.000");
+    }
+
+    #[test]
+    fn test_extract_sbs_timestamp_short_line() {
+        assert!(extract_sbs_timestamp("MSG,3,1").is_none());
     }
 
     #[test]

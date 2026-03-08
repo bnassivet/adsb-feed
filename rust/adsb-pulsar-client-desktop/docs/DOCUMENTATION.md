@@ -140,8 +140,8 @@ export function useYourData(filters: Filters) {
 - Session continuity is critical (e.g., draft edits)
 
 **Rust backend (DuckDB)** — for streaming data that must survive restarts:
-- The Tauri bridge persists every 500ms position batch to `adsb_history.db` via `adsb-data-engine`
-- Frontend queries historical data via `queryBbox`, `getTrajectory`, `getAircraftSummary`, `getStorageStats`, `getTimeDistribution`, `getDetectionRange` commands
+- The Tauri bridge persists every 500ms position batch to `adsb_history.db` via `adsb-data-engine` (both merged positions and raw SBS-1 messages)
+- Frontend queries historical data via `queryBbox`, `getTrajectory`, `getAircraftSummary`, `getStorageStats`, `getTimeDistribution`, `getDetectionRange`, `getRawMessages` commands
 - The `DBHistoryPanel` provides browsing + analytics UI for DuckDB queries
 - This is preferred over localStorage for high-volume streaming data (avoids browser storage limits and serialization overhead)
 

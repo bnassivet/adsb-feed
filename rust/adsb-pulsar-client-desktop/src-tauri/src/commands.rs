@@ -6,8 +6,8 @@ use crate::bridge;
 use crate::state::{AppState, ConnectionStatus, StatusResponse};
 use adsb_data_engine::{
     AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, HourlyHeatmapCell,
-    HourlyHeatmapQuery, PositionRecord, StorageStats, TimeDistributionBucket,
-    TimeDistributionQuery, TrajectoryQuery,
+    HourlyHeatmapQuery, PositionRecord, RawMessageQuery, RawSbsRecord, StorageStats,
+    TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
 };
 use adsb_pulsar_client::{Config, MetricsSnapshot};
 use tauri::{Emitter, State};
@@ -263,6 +263,22 @@ pub async fn get_hourly_heatmap(
         .ok_or_else(|| "Storage not available".to_string())?;
     storage
         .get_hourly_heatmap(query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Query raw SBS messages by hex_ident and time range.
+#[tauri::command]
+pub async fn get_raw_messages(
+    query: RawMessageQuery,
+    state: State<'_, AppState>,
+) -> Result<Vec<RawSbsRecord>, String> {
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .query_raw_messages(query)
         .await
         .map_err(|e| e.to_string())
 }

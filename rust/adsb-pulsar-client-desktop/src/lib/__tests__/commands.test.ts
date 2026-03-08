@@ -49,9 +49,11 @@ const sampleSummary: AircraftSummary = {
 
 const sampleStats: StorageStats = {
   row_count: 1000,
-  db_size_bytes: 128000,
+  db_size_bytes: 1128000,
   oldest_timestamp_ms: 1705315800000,
   newest_timestamp_ms: 1705316100000,
+  raw_message_count: 5000,
+  raw_db_size_bytes: 1000000,
 };
 
 describe("Historical query commands", () => {
@@ -169,7 +171,7 @@ describe("Historical query commands", () => {
 
       const result = await getStorageStats();
       expect(result.row_count).toBe(1000);
-      expect(result.db_size_bytes).toBe(128000);
+      expect(result.db_size_bytes).toBe(1128000);
       expect(result.oldest_timestamp_ms).toBe(1705315800000);
       expect(result.newest_timestamp_ms).toBe(1705316100000);
     });

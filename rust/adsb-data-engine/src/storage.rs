@@ -8,8 +8,8 @@ use crate::error::StorageError;
 use crate::sbs_parser::AircraftPosition;
 use crate::types::{
     AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, HourlyHeatmapCell,
-    HourlyHeatmapQuery, PositionRecord, StorageConfig, StorageStats, TimeDistributionBucket,
-    TimeDistributionQuery, TrajectoryQuery,
+    HourlyHeatmapQuery, PositionRecord, RawMessageQuery, RawSbsRecord, StorageConfig, StorageStats,
+    TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
 };
 use duckdb::{params, Connection};
 use std::sync::{Arc, Mutex};
@@ -48,6 +48,18 @@ const SCHEMA_SQL: &str = r#"
 
     CREATE INDEX IF NOT EXISTS idx_positions_ts ON positions (timestamp_ms);
     CREATE INDEX IF NOT EXISTS idx_positions_hex_ts ON positions (hex_ident, timestamp_ms);
+
+    CREATE TABLE IF NOT EXISTS raw_messages (
+        hex_ident         TEXT    NOT NULL,
+        msg_type          TEXT,
+        transmission_type INTEGER,
+        timestamp_ms      BIGINT  NOT NULL,
+        raw_message       TEXT    NOT NULL,
+        source_id         TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_raw_msgs_ts ON raw_messages (timestamp_ms);
+    CREATE INDEX IF NOT EXISTS idx_raw_msgs_hex_ts ON raw_messages (hex_ident, timestamp_ms);
 "#;
 
 impl StorageHandle {
@@ -353,15 +365,23 @@ impl StorageHandle {
                     row.get(0)
                 })?;
 
+        let raw_count: i64 =
+            storage
+                .conn
+                .query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))?;
+
         // DuckDB database_size() returns a human-readable string for file-backed DBs.
         // For in-memory DBs it returns '0 bytes'. We approximate with row count * avg row size.
-        let db_size_bytes = (row_count as u64).saturating_mul(128); // ~128 bytes per row estimate
+        let positions_size = (row_count as u64).saturating_mul(128);
+        let raw_size = (raw_count as u64).saturating_mul(200); // ~200 bytes per raw row estimate
 
         Ok(StorageStats {
             row_count: row_count as u64,
-            db_size_bytes,
+            db_size_bytes: positions_size + raw_size,
             oldest_timestamp_ms: oldest,
             newest_timestamp_ms: newest,
+            raw_message_count: raw_count as u64,
+            raw_db_size_bytes: raw_size,
         })
     }
 
@@ -379,7 +399,14 @@ impl StorageHandle {
             params![older_than_ms],
         )?;
 
-        info!("Pruned {deleted} positions older than {older_than_ms}");
+        let raw_deleted = storage.conn.execute(
+            "DELETE FROM raw_messages WHERE timestamp_ms < ?",
+            params![older_than_ms],
+        )?;
+
+        info!(
+            "Pruned {deleted} positions and {raw_deleted} raw messages older than {older_than_ms}"
+        );
         Ok(deleted as u64)
     }
 
@@ -562,6 +589,82 @@ impl StorageHandle {
         Ok(rows)
     }
 
+    /// Batch insert raw SBS messages (synchronous).
+    ///
+    /// Converts `RawSbsRecord.timestamp` (string) to epoch milliseconds using `tz`.
+    /// The `source_id` is taken from the storage config, not the record.
+    pub fn insert_raw_batch_sync(
+        &self,
+        records: &[RawSbsRecord],
+        tz: &str,
+    ) -> Result<(), StorageError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let mut appender = storage.conn.appender("raw_messages")?;
+
+        for rec in records {
+            let timestamp_ms = parse_timestamp_to_ms(&rec.timestamp, tz);
+
+            appender.append_row(params![
+                rec.hex_ident,
+                rec.msg_type,
+                rec.transmission_type.map(|t| t as i32),
+                timestamp_ms,
+                rec.raw_message,
+                storage.source_id,
+            ])?;
+        }
+
+        appender.flush()?;
+        Ok(())
+    }
+
+    /// Query raw messages by hex_ident and time range (synchronous).
+    pub fn query_raw_messages_sync(
+        &self,
+        query: RawMessageQuery,
+    ) -> Result<Vec<RawSbsRecord>, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let sql = "SELECT hex_ident, msg_type, transmission_type, timestamp_ms,
+                          raw_message, source_id
+                   FROM raw_messages
+                   WHERE hex_ident = ? AND timestamp_ms BETWEEN ? AND ?
+                   ORDER BY timestamp_ms
+                   LIMIT 10000";
+
+        let mut stmt = storage.conn.prepare(sql)?;
+        let rows = stmt
+            .query_map(
+                params![query.hex_ident, query.start_ms, query.end_ms],
+                |row| {
+                    let trans_type: Option<i32> = row.get(2)?;
+                    Ok(RawSbsRecord {
+                        hex_ident: row.get(0)?,
+                        msg_type: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        transmission_type: trans_type.map(|t| t as u8),
+                        timestamp: String::new(),
+                        timestamp_ms: row.get(3)?,
+                        raw_message: row.get(4)?,
+                        source_id: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                    })
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
     // --- Async wrappers (Step 3) ---
 
     /// Batch insert parsed positions (async via spawn_blocking).
@@ -652,6 +755,29 @@ impl StorageHandle {
     ) -> Result<Vec<HourlyHeatmapCell>, StorageError> {
         let handle = self.clone();
         tokio::task::spawn_blocking(move || handle.get_hourly_heatmap_sync(query))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Batch insert raw SBS messages (async via spawn_blocking).
+    pub async fn insert_raw_batch(
+        &self,
+        records: Vec<RawSbsRecord>,
+        tz: String,
+    ) -> Result<(), StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.insert_raw_batch_sync(&records, &tz))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Query raw messages (async via spawn_blocking).
+    pub async fn query_raw_messages(
+        &self,
+        query: RawMessageQuery,
+    ) -> Result<Vec<RawSbsRecord>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.query_raw_messages_sync(query))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
@@ -1565,6 +1691,93 @@ mod tests {
         assert!(sectors.iter().all(|s| s.max_altitude.is_none()));
     }
 
+    #[test]
+    fn test_detection_range_50nm_accuracy() {
+        // Receiver near Paris (48.8°N, 2.3°E). Place aircraft ~50 NM away
+        // in several directions and verify DuckDB haversine matches Rust.
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let rx_lat = 48.8;
+        let rx_lon = 2.3;
+
+        // ~50 NM north (0.833° latitude ≈ 50 NM)
+        let north_lat = 49.634;
+        let north_lon = 2.3;
+        // ~50 NM east (longitude offset adjusted for latitude)
+        let east_lat = 48.8;
+        let east_lon = 3.565; // 0.833° / cos(48.8°) ≈ 1.265°
+                              // ~50 NM southwest
+        let sw_lat = 48.2;
+        let sw_lon = 1.5;
+
+        let positions = vec![
+            sample_position(
+                "NORTH",
+                Some(north_lat),
+                Some(north_lon),
+                "2024/01/15 10:00:00.000",
+            ),
+            sample_position(
+                "EAST",
+                Some(east_lat),
+                Some(east_lon),
+                "2024/01/15 10:00:01.000",
+            ),
+            sample_position("SW", Some(sw_lat), Some(sw_lon), "2024/01/15 10:00:02.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let sectors = handle
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                receiver_lat: rx_lat,
+                receiver_lon: rx_lon,
+                start_ms: None,
+                end_ms: None,
+            })
+            .unwrap();
+
+        let non_zero: Vec<_> = sectors.iter().filter(|s| s.position_count > 0).collect();
+        assert_eq!(
+            non_zero.len(),
+            3,
+            "Expected 3 non-zero sectors, got {non_zero:?}"
+        );
+
+        for s in &non_zero {
+            // Find the matching position based on sector bearing
+            let (ac_lat, ac_lon, label) = if s.bearing_deg < 30 {
+                (north_lat, north_lon, "NORTH")
+            } else if s.bearing_deg >= 80 && s.bearing_deg <= 100 {
+                (east_lat, east_lon, "EAST")
+            } else {
+                (sw_lat, sw_lon, "SW")
+            };
+
+            let expected = crate::geo::haversine_nm(rx_lat, rx_lon, ac_lat, ac_lon);
+            let diff = (s.max_distance_nm - expected).abs();
+            assert!(
+                diff < 0.2,
+                "{label}: DuckDB={:.2} NM, Rust={:.2} NM, diff={:.2} NM (>0.2 tolerance)",
+                s.max_distance_nm,
+                expected,
+                diff
+            );
+            eprintln!(
+                "{label}: bearing={}°, DuckDB={:.2} NM, Rust={:.2} NM, diff={:.4} NM",
+                s.bearing_deg, s.max_distance_nm, expected, diff
+            );
+        }
+
+        // Verify max range is ~50 NM
+        let max_range = non_zero
+            .iter()
+            .map(|s| s.max_distance_nm)
+            .fold(0.0_f64, f64::max);
+        assert!(
+            max_range > 40.0,
+            "Max range {max_range:.1} NM should be >40 NM for ~50 NM positions"
+        );
+    }
+
     #[tokio::test]
     async fn test_detection_range_async() {
         let handle = StorageHandle::open(test_config()).unwrap();
@@ -1679,5 +1892,105 @@ mod tests {
 
         assert_eq!(cells.len(), 1);
         assert_eq!(cells[0].aircraft_count, 1);
+    }
+
+    // --- Raw messages tests ---
+
+    fn sample_raw_record(hex: &str, msg_type: &str, trans: Option<u8>, ts: &str) -> RawSbsRecord {
+        RawSbsRecord {
+            hex_ident: hex.to_string(),
+            msg_type: msg_type.to_string(),
+            transmission_type: trans,
+            timestamp: ts.to_string(),
+            timestamp_ms: 0,
+            raw_message: format!("MSG,{},{}", trans.unwrap_or(0), hex),
+            source_id: String::new(),
+        }
+    }
+
+    #[test]
+    fn test_insert_raw_batch_and_count() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let records = vec![
+            sample_raw_record("A1B2C3", "MSG,3", Some(3), "2024/01/15 10:30:00.000"),
+            sample_raw_record("A1B2C3", "MSG,1", Some(1), "2024/01/15 10:30:01.000"),
+            sample_raw_record("D4E5F6", "MSG,3", Some(3), "2024/01/15 10:30:02.000"),
+        ];
+        handle.insert_raw_batch_sync(&records, "UTC").unwrap();
+        let stats = handle.get_stats_sync().unwrap();
+        assert_eq!(stats.raw_message_count, 3);
+    }
+
+    #[test]
+    fn test_insert_raw_batch_empty() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle.insert_raw_batch_sync(&[], "UTC").unwrap();
+        let stats = handle.get_stats_sync().unwrap();
+        assert_eq!(stats.raw_message_count, 0);
+    }
+
+    #[test]
+    fn test_query_raw_messages_by_hex_and_time() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let records = vec![
+            sample_raw_record("A1B2C3", "MSG,3", Some(3), "2024/01/15 10:30:00.000"),
+            sample_raw_record("A1B2C3", "MSG,1", Some(1), "2024/01/15 10:30:01.000"),
+            sample_raw_record("D4E5F6", "MSG,3", Some(3), "2024/01/15 10:30:02.000"),
+        ];
+        handle.insert_raw_batch_sync(&records, "UTC").unwrap();
+
+        let results = handle
+            .query_raw_messages_sync(RawMessageQuery {
+                hex_ident: "A1B2C3".to_string(),
+                start_ms: 0,
+                end_ms: i64::MAX,
+            })
+            .unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.hex_ident == "A1B2C3"));
+    }
+
+    #[test]
+    fn test_query_raw_messages_respects_time_bounds() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let records = vec![
+            sample_raw_record("A1B2C3", "MSG,3", Some(3), "2024/01/15 10:00:00.000"),
+            sample_raw_record("A1B2C3", "MSG,3", Some(3), "2024/01/15 11:00:00.000"),
+            sample_raw_record("A1B2C3", "MSG,3", Some(3), "2024/01/15 12:00:00.000"),
+        ];
+        handle.insert_raw_batch_sync(&records, "UTC").unwrap();
+
+        let start = parse_timestamp_to_ms("2024/01/15 10:30:00.000", "UTC");
+        let end = parse_timestamp_to_ms("2024/01/15 11:30:00.000", "UTC");
+
+        let results = handle
+            .query_raw_messages_sync(RawMessageQuery {
+                hex_ident: "A1B2C3".to_string(),
+                start_ms: start,
+                end_ms: end,
+            })
+            .unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_stats_includes_raw_count() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        // Initially zero
+        let stats = handle.get_stats_sync().unwrap();
+        assert_eq!(stats.raw_message_count, 0);
+
+        // Insert some raw records
+        let records = vec![
+            sample_raw_record("A1B2C3", "MSG,3", Some(3), "2024/01/15 10:30:00.000"),
+            sample_raw_record("D4E5F6", "MSG,1", Some(1), "2024/01/15 10:30:01.000"),
+        ];
+        handle.insert_raw_batch_sync(&records, "UTC").unwrap();
+
+        let stats = handle.get_stats_sync().unwrap();
+        assert_eq!(stats.raw_message_count, 2);
+        // Position count should still be zero
+        assert_eq!(stats.row_count, 0);
     }
 }

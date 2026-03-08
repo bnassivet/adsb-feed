@@ -239,6 +239,26 @@ export interface StorageStats {
   db_size_bytes: number;
   oldest_timestamp_ms: number | null;
   newest_timestamp_ms: number | null;
+  raw_message_count: number;
+  raw_db_size_bytes: number;
+}
+
+/** A single raw SBS-1 message stored for audit/replay (mirrors Rust RawSbsRecord). */
+export interface RawSbsRecord {
+  hex_ident: string;
+  msg_type: string;
+  transmission_type: number | null;
+  timestamp: string;
+  timestamp_ms: number;
+  raw_message: string;
+  source_id: string;
+}
+
+/** Query parameters for raw message retrieval (mirrors Rust RawMessageQuery). */
+export interface RawMessageQuery {
+  hex_ident: string;
+  start_ms: number;
+  end_ms: number;
 }
 
 export const DEFAULT_FILTERS: Filters = {

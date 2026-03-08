@@ -7,9 +7,11 @@ import type { StorageStats, AircraftSummary } from "@/lib/types";
 
 const sampleStats: StorageStats = {
   row_count: 1000,
-  db_size_bytes: 128000,
+  db_size_bytes: 1128000,
   oldest_timestamp_ms: 1705315800000,
   newest_timestamp_ms: 1705316100000,
+  raw_message_count: 5000,
+  raw_db_size_bytes: 1000000,
 };
 
 const sampleSummary: AircraftSummary = {

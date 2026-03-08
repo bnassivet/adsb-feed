@@ -5,7 +5,10 @@
 //! overwhelming the webview.
 
 use crate::state::{ConnectionStatus, FeedHandle, StatusResponse};
-use adsb_data_engine::{parse_sbs_message, AircraftPosition, StorageHandle};
+use adsb_data_engine::{
+    extract_sbs_timestamp, parse_sbs_message, parse_sbs_raw_fields, AircraftPosition, RawSbsRecord,
+    StorageHandle,
+};
 use adsb_pulsar_client::forwarder::NoopForwarder;
 use adsb_pulsar_client::{ADSBFeedClient, Config, Metrics};
 use std::collections::HashMap;
@@ -171,6 +174,7 @@ async fn relay_messages(
     let mut flush_interval = interval(Duration::from_millis(500));
     let mut buffer: HashMap<String, AircraftPosition> = HashMap::new();
     let mut message_counts: HashMap<String, u64> = HashMap::new();
+    let mut raw_buffer: Vec<RawSbsRecord> = Vec::new();
 
     loop {
         tokio::select! {
@@ -181,9 +185,24 @@ async fn relay_messages(
                         *last_message_time.write().await = Instant::now();
 
                         if let Ok(line) = String::from_utf8(data) {
+                            // Collect raw message for audit/replay
+                            if let Some((hex, msg_type, trans_type)) = parse_sbs_raw_fields(&line) {
+                                if let Some(ts) = extract_sbs_timestamp(&line) {
+                                    raw_buffer.push(RawSbsRecord {
+                                        hex_ident: hex,
+                                        msg_type,
+                                        transmission_type: trans_type,
+                                        timestamp: ts,
+                                        timestamp_ms: 0,
+                                        raw_message: line.clone(),
+                                        source_id: String::new(),
+                                    });
+                                }
+                            }
+
                             if let Some(pos) = parse_sbs_message(&line) {
                                 *message_counts.entry(pos.hex_ident.clone()).or_insert(0) += 1;
-                                buffer.insert(pos.hex_ident.clone(), pos);
+                                merge_into_buffer(&mut buffer, pos);
                             }
                         }
                     }
@@ -201,6 +220,8 @@ async fn relay_messages(
                             persist_batch(&storage, &batch, &dump1090_tz).await;
                             let _ = app.emit("adsb:message", &batch);
                         }
+                        persist_raw_batch(&storage, &raw_buffer, &dump1090_tz).await;
+                        raw_buffer.clear();
                         break;
                     }
                 }
@@ -216,7 +237,34 @@ async fn relay_messages(
                     persist_batch(&storage, &batch, &dump1090_tz).await;
                     let _ = app.emit("adsb:message", &batch);
                 }
+                persist_raw_batch(&storage, &raw_buffer, &dump1090_tz).await;
+                raw_buffer.clear();
             }
+        }
+    }
+}
+
+/// Merge a new SBS position into the buffer, preserving non-null fields from the
+/// existing entry.  SBS-1 splits aircraft data across multiple message subtypes
+/// (MSG1=callsign, MSG3=position, MSG4=speed, etc.).  A blind `insert` would
+/// overwrite a MSG3's lat/lon with nulls if a MSG1 arrives afterward in the same
+/// 500ms window. This merge keeps the best-known state per aircraft.
+fn merge_into_buffer(buffer: &mut HashMap<String, AircraftPosition>, new: AircraftPosition) {
+    match buffer.get_mut(&new.hex_ident) {
+        Some(existing) => {
+            existing.callsign = new.callsign.or(existing.callsign.take());
+            existing.altitude = new.altitude.or(existing.altitude);
+            existing.ground_speed = new.ground_speed.or(existing.ground_speed);
+            existing.track = new.track.or(existing.track);
+            existing.latitude = new.latitude.or(existing.latitude);
+            existing.longitude = new.longitude.or(existing.longitude);
+            existing.vertical_rate = new.vertical_rate.or(existing.vertical_rate);
+            existing.squawk = new.squawk.or(existing.squawk.take());
+            existing.is_on_ground = new.is_on_ground.or(existing.is_on_ground);
+            existing.timestamp = new.timestamp;
+        }
+        None => {
+            buffer.insert(new.hex_ident.clone(), new);
         }
     }
 }
@@ -226,6 +274,21 @@ async fn persist_batch(storage: &Option<StorageHandle>, batch: &[AircraftPositio
     if let Some(ref storage) = storage {
         if let Err(e) = storage.insert_batch(batch.to_vec(), tz.to_string()).await {
             warn!("Storage insert failed: {e}");
+        }
+    }
+}
+
+/// Persist a batch of raw SBS messages to DuckDB (non-fatal on failure).
+async fn persist_raw_batch(storage: &Option<StorageHandle>, batch: &[RawSbsRecord], tz: &str) {
+    if batch.is_empty() {
+        return;
+    }
+    if let Some(ref storage) = storage {
+        if let Err(e) = storage
+            .insert_raw_batch(batch.to_vec(), tz.to_string())
+            .await
+        {
+            warn!("Raw storage insert failed: {e}");
         }
     }
 }
@@ -252,6 +315,147 @@ async fn relay_metrics(
             // alive_rx.changed() resolves when alive_tx is dropped (client task exited)
             _ = alive_rx.changed() => { break; }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_pos(hex: &str) -> AircraftPosition {
+        AircraftPosition {
+            hex_ident: hex.to_string(),
+            callsign: None,
+            altitude: None,
+            ground_speed: None,
+            track: None,
+            latitude: None,
+            longitude: None,
+            vertical_rate: None,
+            squawk: None,
+            is_on_ground: None,
+            timestamp: "2024-01-01 00:00:00".to_string(),
+            message_count: 0,
+        }
+    }
+
+    #[test]
+    fn merge_inserts_new_aircraft() {
+        let mut buffer = HashMap::new();
+        let pos = AircraftPosition {
+            latitude: Some(48.8),
+            longitude: Some(2.3),
+            ..make_pos("ABC123")
+        };
+        merge_into_buffer(&mut buffer, pos);
+
+        assert_eq!(buffer.len(), 1);
+        let entry = &buffer["ABC123"];
+        assert_eq!(entry.latitude, Some(48.8));
+        assert_eq!(entry.longitude, Some(2.3));
+    }
+
+    #[test]
+    fn merge_preserves_position_when_non_position_msg_arrives() {
+        // MSG3 arrives with lat/lon, then MSG1 arrives with callsign but no lat/lon
+        let mut buffer = HashMap::new();
+
+        let msg3 = AircraftPosition {
+            latitude: Some(48.8),
+            longitude: Some(2.3),
+            altitude: Some(35000.0),
+            timestamp: "2024-01-01 00:00:00".to_string(),
+            ..make_pos("ABC123")
+        };
+        merge_into_buffer(&mut buffer, msg3);
+
+        let msg1 = AircraftPosition {
+            callsign: Some("BAW123".to_string()),
+            timestamp: "2024-01-01 00:00:01".to_string(),
+            ..make_pos("ABC123")
+        };
+        merge_into_buffer(&mut buffer, msg1);
+
+        let entry = &buffer["ABC123"];
+        assert_eq!(entry.latitude, Some(48.8), "lat must survive MSG1 merge");
+        assert_eq!(entry.longitude, Some(2.3), "lon must survive MSG1 merge");
+        assert_eq!(entry.altitude, Some(35000.0), "alt must survive MSG1 merge");
+        assert_eq!(
+            entry.callsign.as_deref(),
+            Some("BAW123"),
+            "callsign from MSG1"
+        );
+        assert_eq!(entry.timestamp, "2024-01-01 00:00:01", "timestamp updated");
+    }
+
+    #[test]
+    fn merge_updates_position_with_newer_values() {
+        let mut buffer = HashMap::new();
+
+        let first = AircraftPosition {
+            latitude: Some(48.8),
+            longitude: Some(2.3),
+            ..make_pos("ABC123")
+        };
+        merge_into_buffer(&mut buffer, first);
+
+        let second = AircraftPosition {
+            latitude: Some(49.0),
+            longitude: Some(2.5),
+            timestamp: "2024-01-01 00:00:02".to_string(),
+            ..make_pos("ABC123")
+        };
+        merge_into_buffer(&mut buffer, second);
+
+        let entry = &buffer["ABC123"];
+        assert_eq!(entry.latitude, Some(49.0));
+        assert_eq!(entry.longitude, Some(2.5));
+    }
+
+    #[test]
+    fn merge_preserves_squawk_string_field() {
+        let mut buffer = HashMap::new();
+
+        let msg = AircraftPosition {
+            squawk: Some("7700".to_string()),
+            ..make_pos("ABC123")
+        };
+        merge_into_buffer(&mut buffer, msg);
+
+        // Next message has no squawk
+        let msg2 = AircraftPosition {
+            altitude: Some(10000.0),
+            ..make_pos("ABC123")
+        };
+        merge_into_buffer(&mut buffer, msg2);
+
+        let entry = &buffer["ABC123"];
+        assert_eq!(entry.squawk.as_deref(), Some("7700"), "squawk must survive");
+        assert_eq!(entry.altitude, Some(10000.0));
+    }
+
+    #[test]
+    fn merge_handles_multiple_aircraft_independently() {
+        let mut buffer = HashMap::new();
+
+        merge_into_buffer(
+            &mut buffer,
+            AircraftPosition {
+                latitude: Some(48.8),
+                ..make_pos("AAA")
+            },
+        );
+        merge_into_buffer(
+            &mut buffer,
+            AircraftPosition {
+                latitude: Some(51.5),
+                ..make_pos("BBB")
+            },
+        );
+
+        assert_eq!(buffer.len(), 2);
+        assert_eq!(buffer["AAA"].latitude, Some(48.8));
+        assert_eq!(buffer["BBB"].latitude, Some(51.5));
     }
 }
 

@@ -1036,8 +1036,9 @@ useTauriEvent<AircraftPosition[]>("adsb:message", (batch) => {
 - `queryBbox(query: BboxQuery): Promise<PositionRecord[]>`: Query positions in geographic bounds + time window
 - `getTrajectory(query: TrajectoryQuery): Promise<PositionRecord[]>`: Full position history for a single aircraft
 - `getAircraftSummary(startMs?: number, endMs?: number): Promise<AircraftSummary[]>`: All aircraft seen with stats
-- `getStorageStats(): Promise<StorageStats>`: Database row count, size, age
+- `getStorageStats(): Promise<StorageStats>`: Database row count, size, raw msg count, age
 - `getTimeDistribution(query: TimeDistributionQuery): Promise<TimeDistributionBucket[]>`: Bucketed message counts over a time range for analytics charts
+- `getRawMessages(query: RawMessageQuery): Promise<RawSbsRecord[]>`: Raw SBS-1 messages by hex_ident + time range
 
 **Implementation**:
 ```typescript
@@ -1077,7 +1078,9 @@ export async function queryBbox(query: BboxQuery): Promise<PositionRecord[]> {
   - `BboxQuery`: Geographic + time bounding box (`north`, `south`, `east`, `west`, optional `start_ms`/`end_ms`, `limit`)
   - `TrajectoryQuery`: Single aircraft query (`hex_ident`, optional `start_ms`/`end_ms`)
   - `AircraftSummary`: Per-aircraft statistics (`hex_ident`, `callsign`, `position_count`, `first_seen_ms`, `last_seen_ms`, `min_altitude`, `max_altitude`)
-  - `StorageStats`: Database health (`row_count`, `db_size_bytes`, `oldest_timestamp_ms`, `newest_timestamp_ms`)
+  - `StorageStats`: Database health (`row_count`, `db_size_bytes`, `oldest_timestamp_ms`, `newest_timestamp_ms`, `raw_message_count`, `raw_db_size_bytes`)
+  - `RawSbsRecord`: Single raw SBS-1 message (`hex_ident`, `msg_type`, `transmission_type`, `timestamp`/`timestamp_ms`, `raw_message`, `source_id`)
+  - `RawMessageQuery`: Raw message query params (`hex_ident`, `start_ms`, `end_ms`)
 
 **Type Safety**: These types match Rust structs via `serde` serialization
 
@@ -1165,8 +1168,8 @@ export async function queryBbox(query: BboxQuery): Promise<PositionRecord[]> {
 ├── lib.rs                # Re-exports public API
 ├── geo.rs                # Pure geodesic math (haversine, bearing, sector mapping)
 ├── sbs_parser.rs         # SBS-1 message parser (22-field CSV)
-├── storage.rs            # DuckDB StorageHandle (CRUD + queries + detection range)
-├── types.rs              # PositionRecord, BboxQuery, TrajectoryQuery, AircraftSummary, StorageStats, DetectionRange*
+├── storage.rs            # DuckDB StorageHandle (CRUD + queries + detection range + raw messages)
+├── types.rs              # PositionRecord, BboxQuery, TrajectoryQuery, AircraftSummary, StorageStats, RawSbsRecord, RawMessageQuery, DetectionRange*
 └── error.rs              # StorageError types
 
 src-tauri/
@@ -1260,6 +1263,8 @@ graph TD
     commands::get_aircraft_summary,
     commands::get_storage_stats,
     commands::get_detection_range,
+    commands::get_hourly_heatmap,
+    commands::get_raw_messages,
 ])
 ```
 
@@ -1345,8 +1350,13 @@ All four commands below:
 - Each `AircraftSummary`: `hex_ident`, `callsign`, `position_count`, `first_seen_ms`, `last_seen_ms`, `min_altitude`, `max_altitude`
 
 ##### `get_storage_stats() -> Result<StorageStats, String>`
-- Returns database health metrics: `row_count`, `db_size_bytes`, `oldest_timestamp_ms`, `newest_timestamp_ms`
+- Returns database health metrics: `row_count`, `db_size_bytes`, `oldest_timestamp_ms`, `newest_timestamp_ms`, `raw_message_count`, `raw_db_size_bytes`
 - Useful for displaying storage status in the UI
+
+##### `get_raw_messages(query: RawMessageQuery) -> Result<Vec<RawSbsRecord>, String>`
+- Queries raw SBS-1 messages by `hex_ident` and time range (`start_ms`, `end_ms`)
+- Returns up to 10,000 records ordered by `timestamp_ms`
+- Each `RawSbsRecord` contains the original CSV line plus indexed key fields
 
 **File**: `src-tauri/src/commands.rs`
 
@@ -1423,10 +1433,12 @@ pub struct AppState {
 **Message Relay Strategy** (Throttling + DuckDB persistence):
 - Buffer messages in `HashMap<hex_ident, AircraftPosition>` (latest per aircraft)
 - Track per-aircraft message counts in a separate `HashMap<hex_ident, u64>` — incremented on every successful parse (before throttle discard)
+- Buffer raw SBS messages in a `Vec<RawSbsRecord>` for audit/replay (every valid MSG line, unmerged)
 - Flush batch every 500ms:
   1. Attach accumulated `message_count` to each position
-  2. **Persist batch to DuckDB** via `StorageHandle::insert_batch(positions, dump1090_tz)` — TZ read from `Config.dump1090_tz` at feed start; non-fatal if storage unavailable
-  3. Emit `adsb:message` Tauri event to frontend
+  2. **Persist merged positions to DuckDB** via `StorageHandle::insert_batch(positions, dump1090_tz)` — non-fatal
+  3. **Persist raw messages to DuckDB** via `StorageHandle::insert_raw_batch(raw_records, dump1090_tz)` — non-fatal
+  4. Emit `adsb:message` Tauri event to frontend
 - Prevents overwhelming the webview with high-frequency updates
 - Each received message updates `Arc<RwLock<Instant>>` shared with the watchdog
 
@@ -1471,9 +1483,13 @@ Thresholds are derived from the configured `socket_read_timeout_secs` (default 7
 
 **Struct**: `AircraftPosition` (mirrors TypeScript type)
 
-**Function**: `parse_sbs_message(line: &str) -> Option<AircraftPosition>`
+**Functions**:
 
-**Parsing Logic**:
+- `parse_sbs_message(line: &str) -> Option<AircraftPosition>` — Full position parsing for the merged positions table
+- `parse_sbs_raw_fields(line: &str) -> Option<(String, String, Option<u8>)>` — Lightweight metadata extraction (`hex_ident`, `msg_type`, `transmission_type`) for the raw messages table. Same validation as `parse_sbs_message` (≥22 fields, MSG type, non-empty hex, not "000000") but skips field-level parsing.
+- `extract_sbs_timestamp(line: &str) -> Option<String>` — Extracts timestamp string from SBS fields 6+7 without full parsing
+
+**Parsing Logic** (`parse_sbs_message`):
 1. Split CSV line by commas
 2. Extract message type (expect "MSG")
 3. Extract transmission type (1-8)
@@ -1485,7 +1501,7 @@ Thresholds are derived from the configured `socket_read_timeout_secs` (default 7
 - Returns `None` for invalid messages (logged but not propagated)
 - Tolerates missing fields (SBS-1 often has partial data)
 
-**File**: `src-tauri/src/sbs_parser.rs`
+**File**: `adsb-data-engine/src/sbs_parser.rs`
 
 ---
 
@@ -2277,9 +2293,10 @@ The two systems are complementary:
 
 **Database**: `StorageHandle` wraps an `Arc<Mutex<Connection>>` (thread-safe DuckDB connection).
 
-**Schema** (single `positions` table):
+**Schema** (two tables: merged positions + raw messages):
 
 ```sql
+-- Merged positions: one row per aircraft per 500ms flush window
 CREATE TABLE positions (
     hex_ident    TEXT NOT NULL,
     callsign     TEXT,
@@ -2296,7 +2313,21 @@ CREATE TABLE positions (
 );
 CREATE INDEX idx_positions_ts     ON positions(timestamp_ms);
 CREATE INDEX idx_positions_hex_ts ON positions(hex_ident, timestamp_ms);
+
+-- Raw messages: every individual SBS-1 line for audit/replay
+CREATE TABLE raw_messages (
+    hex_ident         TEXT    NOT NULL,
+    msg_type          TEXT,
+    transmission_type INTEGER,
+    timestamp_ms      BIGINT  NOT NULL,
+    raw_message       TEXT    NOT NULL,
+    source_id         TEXT
+);
+CREATE INDEX idx_raw_msgs_ts     ON raw_messages(timestamp_ms);
+CREATE INDEX idx_raw_msgs_hex_ts ON raw_messages(hex_ident, timestamp_ms);
 ```
+
+The `raw_messages` table stores every valid MSG line at full granularity (hybrid format: raw CSV line + indexed key columns). It grows ~50x faster than `positions` since positions are merged per-aircraft per flush window. Both tables are pruned together by `prune(older_than_ms)`.
 
 **Async/sync dual API**: All public methods are async (wrapping `tokio::task::spawn_blocking`) since DuckDB is a blocking C FFI library.
 
@@ -2304,14 +2335,16 @@ CREATE INDEX idx_positions_hex_ts ON positions(hex_ident, timestamp_ms);
 
 | Method | Parameters | Returns | Description |
 |--------|-----------|---------|-------------|
-| `insert_batch` | `Vec<AircraftPosition>` | — | Persist a batch of positions |
+| `insert_batch` | `Vec<AircraftPosition>` | — | Persist a batch of merged positions |
+| `insert_raw_batch` | `Vec<RawSbsRecord>` | — | Persist a batch of raw SBS-1 messages |
 | `query_bbox` | `BboxQuery` | `Vec<PositionRecord>` | All positions in lat/lon box + time window |
 | `get_trajectory` | `TrajectoryQuery` | `Vec<PositionRecord>` | Full path for one aircraft |
 | `get_aircraft_summary` | `start_ms?`, `end_ms?` | `Vec<AircraftSummary>` | Stats for all aircraft seen |
-| `get_storage_stats` | — | `StorageStats` | Row count, DB size, age |
+| `get_storage_stats` | — | `StorageStats` | Row count, DB size, raw msg count, age |
 | `get_time_distribution` | `TimeDistributionQuery` | `Vec<TimeDistributionBucket>` | Bucketed message counts over time range |
 | `get_detection_range` | `DetectionRangeQuery` | `Vec<DetectionRangeSector>` | Max detection distance per 10-degree azimuth sector |
-| `prune` | `older_than_ms` | deleted row count | Delete old data |
+| `query_raw_messages` | `RawMessageQuery` | `Vec<RawSbsRecord>` | Raw SBS lines by hex_ident + time range (limit 10k) |
+| `prune` | `older_than_ms` | deleted row count | Delete old data from both tables |
 
 ### Data Flow
 
@@ -2320,16 +2353,17 @@ CREATE INDEX idx_positions_hex_ts ON positions(hex_ident, timestamp_ms);
         ↓
   [bridge.rs — every 500ms]
         ↓
-  ┌─────────────────────────────┐
-  │  insert_batch(positions, tz)│   → DuckDB: positions table (always UTC ms)
-  │  emit("adsb:message", ...)  │   → Frontend: in-memory AircraftTrackingContext
-  └─────────────────────────────┘
+  ┌──────────────────────────────────┐
+  │  insert_batch(positions, tz)     │   → DuckDB: positions table (merged, always UTC ms)
+  │  insert_raw_batch(raw_msgs, tz)  │   → DuckDB: raw_messages table (every SBS line)
+  │  emit("adsb:message", ...)       │   → Frontend: in-memory AircraftTrackingContext
+  └──────────────────────────────────┘
         ↓
   [DuckDB file on disk]
   ~/.config/adsb-pulsar-client-desktop/adsb_history.db
         ↓
   [Frontend query via invoke()]
-  queryBbox / getTrajectory / getAircraftSummary / getStorageStats / getTimeDistribution
+  queryBbox / getTrajectory / getAircraftSummary / getStorageStats / getRawMessages / ...
 ```
 
 ### Accessing DuckDB Data from the Frontend
@@ -2341,7 +2375,8 @@ import { queryBbox, getTrajectory, getAircraftSummary, getStorageStats } from "@
 
 // Check storage health:
 const stats = await getStorageStats();
-// { row_count: 45000, db_size_bytes: 5760000, oldest_timestamp_ms: ..., newest_timestamp_ms: ... }
+// { row_count: 45000, db_size_bytes: 15760000, oldest_timestamp_ms: ..., newest_timestamp_ms: ...,
+//   raw_message_count: 2250000, raw_db_size_bytes: 10000000 }
 
 // Get all aircraft seen in the last hour:
 const now = Date.now();
@@ -2362,7 +2397,7 @@ const positions = await queryBbox({
 ### UI: DB History Panel
 
 Historical queries are surfaced through the **DB History Panel** — a first-class dockable/floating panel (see [DB History Panel](#db-history-panel)). The panel provides:
-- **Stats strip**: Row count, DB size, oldest/newest timestamps (via `getStorageStats`)
+- **Stats strip**: Row count, raw message count, raw size, total DB size, oldest/newest timestamps (via `getStorageStats`)
 - **Time range picker**: Uncontrolled `datetime-local` inputs (WKWebView-safe pattern)
 - **Aircraft list**: Browse results from `getAircraftSummary`, load trajectories via `getTrajectory`
 - **Analytics**: recharts-based time distribution bar chart + altitude histogram (via `getTimeDistribution`)
@@ -2385,12 +2420,13 @@ Isolating parser + storage in a shared workspace crate lets the data engine be t
 
 **Files**:
 - `adsb-data-engine/src/geo.rs` — Pure geodesic math (haversine, bearing, sector mapping) for test validation
-- `adsb-data-engine/src/storage.rs` — `StorageHandle`, `StorageConfig`, all query methods including detection range
-- `adsb-data-engine/src/types.rs` — `PositionRecord`, `BboxQuery`, `TrajectoryQuery`, `AircraftSummary`, `StorageStats`, `TimeDistributionBucket`, `TimeDistributionQuery`, `DetectionRangeQuery`, `DetectionRangeSector`
+- `adsb-data-engine/src/sbs_parser.rs` — `parse_sbs_message`, `parse_sbs_raw_fields`, `extract_sbs_timestamp`
+- `adsb-data-engine/src/storage.rs` — `StorageHandle`, `StorageConfig`, all query methods including detection range and raw messages
+- `adsb-data-engine/src/types.rs` — `PositionRecord`, `BboxQuery`, `TrajectoryQuery`, `AircraftSummary`, `StorageStats`, `RawSbsRecord`, `RawMessageQuery`, `TimeDistributionBucket`, `TimeDistributionQuery`, `DetectionRangeQuery`, `DetectionRangeSector`
 - `src-tauri/src/lib.rs` — `init_storage()`, storage injected into `AppState`
-- `src-tauri/src/bridge.rs` — `persist_batch()` called on every 500ms flush
-- `src-tauri/src/commands.rs` — five historical query command handlers (including `get_time_distribution`)
-- `src/lib/commands.ts` — TypeScript wrappers: `queryBbox`, `getTrajectory`, `getAircraftSummary`, `getStorageStats`, `getTimeDistribution`
+- `src-tauri/src/bridge.rs` — `persist_batch()` + `persist_raw_batch()` called on every 500ms flush
+- `src-tauri/src/commands.rs` — historical query command handlers (including `get_raw_messages`)
+- `src/lib/commands.ts` — TypeScript wrappers: `queryBbox`, `getTrajectory`, `getAircraftSummary`, `getStorageStats`, `getTimeDistribution`, `getRawMessages`
 - `src/lib/types.ts` — TypeScript mirrors of all DuckDB types
 
 ---

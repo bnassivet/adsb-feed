@@ -57,6 +57,28 @@ pub struct StorageStats {
     pub db_size_bytes: u64,
     pub oldest_timestamp_ms: Option<i64>,
     pub newest_timestamp_ms: Option<i64>,
+    pub raw_message_count: u64,
+    pub raw_db_size_bytes: u64,
+}
+
+/// A single raw SBS-1 message stored for audit/replay purposes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawSbsRecord {
+    pub hex_ident: String,
+    pub msg_type: String,
+    pub transmission_type: Option<u8>,
+    pub timestamp: String,
+    pub timestamp_ms: i64,
+    pub raw_message: String,
+    pub source_id: String,
+}
+
+/// Query parameters for raw message retrieval.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawMessageQuery {
+    pub hex_ident: String,
+    pub start_ms: i64,
+    pub end_ms: i64,
 }
 
 /// A single bucket in a time distribution histogram.

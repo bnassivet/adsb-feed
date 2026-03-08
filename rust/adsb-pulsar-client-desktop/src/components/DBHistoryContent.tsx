@@ -272,8 +272,16 @@ export function DBHistoryContent({
           <span>Records</span>
           <span className="text-slate-300">{stats.row_count.toLocaleString()}</span>
         </div>
+        <div className="flex justify-between" data-testid="dbhist-raw-count">
+          <span>Raw msgs</span>
+          <span className="text-slate-300">{stats.raw_message_count.toLocaleString()}</span>
+        </div>
+        <div className="flex justify-between" data-testid="dbhist-raw-size">
+          <span>Raw size</span>
+          <span className="text-slate-300">{formatBytes(stats.raw_db_size_bytes)}</span>
+        </div>
         <div className="flex justify-between" data-testid="dbhist-db-size">
-          <span>Size</span>
+          <span>Total size</span>
           <span className="text-slate-300">{formatBytes(stats.db_size_bytes)}</span>
         </div>
         <div className="flex justify-between">
