@@ -9,7 +9,7 @@ use crate::sbs_parser::AircraftPosition;
 use crate::types::{
     AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, HourlyHeatmapCell,
     HourlyHeatmapQuery, PositionRecord, RawMessageQuery, RawSbsRecord, StorageConfig, StorageStats,
-    TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
+    TimeDistributionBucket, TimeDistributionMetric, TimeDistributionQuery, TrajectoryQuery,
 };
 use duckdb::{params, Connection};
 use std::sync::{Arc, Mutex};
@@ -413,7 +413,10 @@ impl StorageHandle {
     /// Get time distribution as bucketed histogram (synchronous).
     ///
     /// Divides the `[start_ms, end_ms]` range into `num_buckets` equal-width buckets
-    /// and returns the count of positions in each non-empty bucket.
+    /// and returns the count per bucket. The `metric` field selects what to count:
+    /// - `Positions`: number of position rows
+    /// - `Aircraft`: number of distinct aircraft (hex_ident)
+    /// - `RawMessages`: number of raw SBS-1 messages
     pub fn get_time_distribution_sync(
         &self,
         query: TimeDistributionQuery,
@@ -433,11 +436,29 @@ impl StorageHandle {
             return Ok(Vec::new());
         }
 
-        let sql = "SELECT CAST(timestamp_ms / ? AS BIGINT) * ? AS bucket_ms, COUNT(*) AS count
-                   FROM positions
-                   WHERE timestamp_ms BETWEEN ? AND ?
-                   GROUP BY bucket_ms
-                   ORDER BY bucket_ms";
+        let sql = match query.metric {
+            TimeDistributionMetric::Positions => {
+                "SELECT CAST(timestamp_ms / ? AS BIGINT) * ? AS bucket_ms, COUNT(*) AS count
+                 FROM positions
+                 WHERE timestamp_ms BETWEEN ? AND ?
+                 GROUP BY bucket_ms
+                 ORDER BY bucket_ms"
+            }
+            TimeDistributionMetric::Aircraft => {
+                "SELECT CAST(timestamp_ms / ? AS BIGINT) * ? AS bucket_ms, COUNT(DISTINCT hex_ident) AS count
+                 FROM positions
+                 WHERE timestamp_ms BETWEEN ? AND ?
+                 GROUP BY bucket_ms
+                 ORDER BY bucket_ms"
+            }
+            TimeDistributionMetric::RawMessages => {
+                "SELECT CAST(timestamp_ms / ? AS BIGINT) * ? AS bucket_ms, COUNT(*) AS count
+                 FROM raw_messages
+                 WHERE timestamp_ms BETWEEN ? AND ?
+                 GROUP BY bucket_ms
+                 ORDER BY bucket_ms"
+            }
+        };
 
         let mut stmt = storage.conn.prepare(sql)?;
         let rows = stmt
@@ -1247,6 +1268,7 @@ mod tests {
                 start_ms: 1000,
                 end_ms: 2000,
                 num_buckets: 10,
+                ..Default::default()
             })
             .unwrap();
         assert!(buckets.is_empty());
@@ -1271,6 +1293,7 @@ mod tests {
                 start_ms: ts_start,
                 end_ms: ts_end,
                 num_buckets: 4,
+                ..Default::default()
             })
             .unwrap();
 
@@ -1303,6 +1326,7 @@ mod tests {
                 start_ms: ts_start,
                 end_ms: ts_end,
                 num_buckets: 2,
+                ..Default::default()
             })
             .unwrap();
 
@@ -1333,6 +1357,7 @@ mod tests {
                 start_ms: ts_start,
                 end_ms: ts_end,
                 num_buckets: 4,
+                ..Default::default()
             })
             .unwrap();
 
@@ -2081,5 +2106,82 @@ mod tests {
         let handle = StorageHandle::open(test_config()).unwrap();
         let count = handle.get_raw_message_count_sync(None, None).unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_time_distribution_aircraft_metric() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        // Two positions for aircraft A1, one for A2 — all in same bucket
+        let positions = vec![
+            sample_position("A1", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000"),
+            sample_position("A1", Some(45.6), Some(-73.6), "2024/01/15 10:00:10.000"),
+            sample_position("A2", Some(45.7), Some(-73.7), "2024/01/15 10:00:20.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let ts_start = parse_timestamp_to_ms("2024/01/15 09:00:00.000", "UTC");
+        let ts_end = parse_timestamp_to_ms("2024/01/15 11:00:00.000", "UTC");
+
+        // Positions metric: should count 3
+        let buckets = handle
+            .get_time_distribution_sync(crate::types::TimeDistributionQuery {
+                start_ms: ts_start,
+                end_ms: ts_end,
+                num_buckets: 1,
+                metric: crate::types::TimeDistributionMetric::Positions,
+            })
+            .unwrap();
+        let total: u64 = buckets.iter().map(|b| b.count).sum();
+        assert_eq!(total, 3);
+
+        // Aircraft metric: should count 2 distinct hex_ident values
+        let buckets = handle
+            .get_time_distribution_sync(crate::types::TimeDistributionQuery {
+                start_ms: ts_start,
+                end_ms: ts_end,
+                num_buckets: 1,
+                metric: crate::types::TimeDistributionMetric::Aircraft,
+            })
+            .unwrap();
+        let total: u64 = buckets.iter().map(|b| b.count).sum();
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn test_time_distribution_raw_messages_metric() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        // Insert raw messages (these go to raw_messages table, not positions)
+        let records = vec![
+            sample_raw_record("A1", "MSG,1", Some(1), "2024/01/15 10:00:00.000"),
+            sample_raw_record("A1", "MSG,3", Some(3), "2024/01/15 10:00:10.000"),
+            sample_raw_record("A2", "MSG,3", Some(3), "2024/01/15 10:00:20.000"),
+            sample_raw_record("A2", "MSG,4", Some(4), "2024/01/15 10:00:30.000"),
+        ];
+        handle.insert_raw_batch_sync(&records, "UTC").unwrap();
+
+        let ts_start = parse_timestamp_to_ms("2024/01/15 09:00:00.000", "UTC");
+        let ts_end = parse_timestamp_to_ms("2024/01/15 11:00:00.000", "UTC");
+
+        let buckets = handle
+            .get_time_distribution_sync(crate::types::TimeDistributionQuery {
+                start_ms: ts_start,
+                end_ms: ts_end,
+                num_buckets: 1,
+                metric: crate::types::TimeDistributionMetric::RawMessages,
+            })
+            .unwrap();
+        let total: u64 = buckets.iter().map(|b| b.count).sum();
+        assert_eq!(total, 4);
+    }
+
+    #[test]
+    fn test_time_distribution_default_metric_is_positions() {
+        // Verify serde default: omitting metric field should give Positions
+        let json = r#"{"start_ms": 0, "end_ms": 1000, "num_buckets": 10}"#;
+        let query: crate::types::TimeDistributionQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            query.metric,
+            crate::types::TimeDistributionMetric::Positions
+        );
     }
 }

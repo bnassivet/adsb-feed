@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getStorageStats, getAircraftSummary, getTrajectory, getTimeDistribution, getDetectionRange, getHourlyHeatmap, getRawMessageCount } from "@/lib/commands";
 import { recordsToTrack } from "@/lib/history-convert";
-import type { AircraftSummary, AircraftTrack, DetectionRangeSector, HourlyHeatmapCell, StorageStats, TimeDistributionBucket, TimeGranularity, TimeRangePreset } from "@/lib/types";
+import type { AircraftSummary, AircraftTrack, DetectionRangeSector, HourlyHeatmapCell, StorageStats, TimeDistributionBucket, TimeDistributionMetric, TimeGranularity, TimeRangePreset } from "@/lib/types";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
 import { formatBytes } from "@/lib/format";
 import { granularityToNumBuckets } from "@/lib/db-history-analytics";
@@ -75,6 +75,7 @@ export function DBHistoryContent({
   const [startMs, setStartMs] = useState(() => now - PRESET_DURATIONS["24h"]);
   const [endMs, setEndMs] = useState(() => now);
   const [granularity, setGranularity] = useState<TimeGranularity>("1h");
+  const [timeMetric, setTimeMetric] = useState<TimeDistributionMetric>("positions");
 
   useEffect(() => {
     getStorageStats().then((result) => {
@@ -86,7 +87,7 @@ export function DBHistoryContent({
     });
   }, []);
 
-  const doBrowse = useCallback(async (start: number, end: number, gran: TimeGranularity = granularity) => {
+  const doBrowse = useCallback(async (start: number, end: number, gran: TimeGranularity = granularity, met: TimeDistributionMetric = timeMetric) => {
     if (!browsing) setBrowsing(true);
     setLoading(true);
     onBrowse?.(start, end);
@@ -102,7 +103,7 @@ export function DBHistoryContent({
       Promise<number | string>,
     ] = [
       getAircraftSummary(start, end),
-      getTimeDistribution({ start_ms: start, end_ms: end, num_buckets: numBuckets }),
+      getTimeDistribution({ start_ms: start, end_ms: end, num_buckets: numBuckets, metric: met }),
       hasReceiver
         ? getDetectionRange({
             receiver_lat: receiverLat!,
@@ -129,7 +130,7 @@ export function DBHistoryContent({
     setRawMessageCount(rawCount);
     onSummariesLoaded?.(sums);
     setLoading(false);
-  }, [browsing, granularity, onBrowse, onSummariesLoaded, receiverLat, receiverLon]);
+  }, [browsing, granularity, timeMetric, onBrowse, onSummariesLoaded, receiverLat, receiverLon]);
 
   function handlePresetClick(p: TimeRangePreset) {
     setPreset(p);
@@ -170,6 +171,13 @@ export function DBHistoryContent({
     setGranularity(g);
     if (browsing) {
       doBrowse(startMs, endMs, g);
+    }
+  }
+
+  function handleTimeMetricChange(m: TimeDistributionMetric) {
+    setTimeMetric(m);
+    if (browsing) {
+      doBrowse(startMs, endMs, granularity, m);
     }
   }
 
@@ -487,6 +495,8 @@ export function DBHistoryContent({
               startMs={startMs}
               endMs={endMs}
               rawMessageCount={rawMessageCount}
+              timeMetric={timeMetric}
+              onTimeMetricChange={handleTimeMetricChange}
             />
           )}
 

@@ -20,5 +20,5 @@ pub use storage::StorageHandle;
 pub use types::{
     AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, HourlyHeatmapCell,
     HourlyHeatmapQuery, PositionRecord, RawMessageQuery, RawSbsRecord, StorageConfig, StorageStats,
-    TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
+    TimeDistributionBucket, TimeDistributionMetric, TimeDistributionQuery, TrajectoryQuery,
 };

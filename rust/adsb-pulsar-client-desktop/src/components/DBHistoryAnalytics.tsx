@@ -1,7 +1,7 @@
 "use client";
 import React, { useCallback, useMemo, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from "recharts";
-import type { AircraftSummary, DetectionRangeSector, HeatmapMetric, HourlyHeatmapCell, TimeDistributionBucket, TimeGranularity } from "@/lib/types";
+import type { AircraftSummary, DetectionRangeSector, HeatmapMetric, HourlyHeatmapCell, TimeDistributionBucket, TimeDistributionMetric, TimeGranularity } from "@/lib/types";
 import type { RadarMode } from "@/lib/detection-radar";
 import {
   buildAltitudeBins,
@@ -33,6 +33,10 @@ interface Props {
   endMs?: number;
   /** Total raw messages in the queried time range. */
   rawMessageCount?: number;
+  /** Current metric for the time distribution chart. */
+  timeMetric?: TimeDistributionMetric;
+  /** Called when user selects a different time distribution metric. */
+  onTimeMetricChange?: (m: TimeDistributionMetric) => void;
 }
 
 const GRANULARITIES: { value: TimeGranularity; label: string }[] = [
@@ -43,7 +47,7 @@ const GRANULARITIES: { value: TimeGranularity; label: string }[] = [
   { value: "month", label: "Month" },
 ];
 
-export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSectors, rangeMs, onZoom, granularity, onGranularityChange, heatmapCells, startMs, endMs, rawMessageCount }: Props) {
+export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSectors, rangeMs, onZoom, granularity, onGranularityChange, heatmapCells, startMs, endMs, rawMessageCount, timeMetric, onTimeMetricChange }: Props) {
   const summary = useMemo(() => computeDbHistorySummary(summaries, rawMessageCount ?? 0), [summaries, rawMessageCount]);
   const altBins = useMemo(() => buildAltitudeBins(summaries), [summaries]);
   const timeData = useMemo(() => formatTimeChartData(timeBuckets, tzName, rangeMs), [timeBuckets, tzName, rangeMs]);
@@ -95,6 +99,8 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSe
             onZoom={onZoom}
             granularity={granularity}
             onGranularityChange={onGranularityChange}
+            metric={timeMetric}
+            onMetricChange={onTimeMetricChange}
           />
         )}
 
@@ -145,15 +151,23 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSe
 
 // --- Time distribution chart with drag-to-zoom ---
 
+const TIME_METRICS: { value: TimeDistributionMetric; label: string }[] = [
+  { value: "positions", label: "Positions" },
+  { value: "aircraft", label: "Aircraft" },
+  { value: "raw_messages", label: "Raw Msgs" },
+];
+
 interface TimeChartProps {
   timeData: { label: string; count: number; bucketMs: number }[];
   tickFormatter: (value: number) => string;
   onZoom?: (startMs: number, endMs: number) => void;
   granularity?: TimeGranularity;
   onGranularityChange?: (g: TimeGranularity) => void;
+  metric?: TimeDistributionMetric;
+  onMetricChange?: (m: TimeDistributionMetric) => void;
 }
 
-function TimeDistributionChart({ timeData, tickFormatter, onZoom, granularity, onGranularityChange }: TimeChartProps) {
+function TimeDistributionChart({ timeData, tickFormatter, onZoom, granularity, onGranularityChange, metric, onMetricChange }: TimeChartProps) {
   const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null);
   const [refAreaRight, setRefAreaRight] = useState<number | null>(null);
 
@@ -189,7 +203,25 @@ function TimeDistributionChart({ timeData, tickFormatter, onZoom, granularity, o
     <div>
       <div className="flex items-center justify-between mb-1">
         <div className="text-[10px] text-slate-500 uppercase">Time Distribution</div>
-        {onZoom && !onGranularityChange && (
+        {onMetricChange && metric && (
+          <div className="flex gap-0.5" data-testid="dbhist-metric-toggle">
+            {TIME_METRICS.map((m) => (
+              <button
+                key={m.value}
+                onClick={() => onMetricChange(m.value)}
+                data-testid={`dbhist-metric-${m.value}`}
+                className={`px-1.5 py-0.5 text-[9px] rounded transition-colors ${
+                  metric === m.value
+                    ? "bg-cyan-900/60 text-cyan-300"
+                    : "text-slate-500 hover:text-slate-400"
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {onZoom && !onGranularityChange && !onMetricChange && (
           <div className="text-[9px] text-slate-600 italic">Drag to zoom</div>
         )}
       </div>

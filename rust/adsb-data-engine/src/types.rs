@@ -88,12 +88,28 @@ pub struct TimeDistributionBucket {
     pub count: u64,
 }
 
+/// Which metric to count in each histogram bucket.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimeDistributionMetric {
+    /// Count of position rows (default).
+    #[default]
+    Positions,
+    /// Count of distinct aircraft (hex_ident).
+    Aircraft,
+    /// Count of raw SBS-1 messages.
+    RawMessages,
+}
+
 /// Query parameters for time distribution (histogram).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TimeDistributionQuery {
     pub start_ms: i64,
     pub end_ms: i64,
     pub num_buckets: u32,
+    /// Which metric to histogram. Defaults to `Positions` if absent.
+    #[serde(default)]
+    pub metric: TimeDistributionMetric,
 }
 
 /// Query parameters for detection range analysis.

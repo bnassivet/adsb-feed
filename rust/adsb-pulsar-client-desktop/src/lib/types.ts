@@ -188,11 +188,15 @@ export interface TimeDistributionBucket {
   count: number;
 }
 
+/** Which metric to count in each histogram bucket. */
+export type TimeDistributionMetric = "positions" | "aircraft" | "raw_messages";
+
 /** Query parameters for time distribution (histogram). */
 export interface TimeDistributionQuery {
   start_ms: number;
   end_ms: number;
   num_buckets: number;
+  metric?: TimeDistributionMetric;
 }
 
 /** Query parameters for detection range analysis. */

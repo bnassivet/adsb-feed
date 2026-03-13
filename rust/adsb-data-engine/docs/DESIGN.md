@@ -193,7 +193,7 @@ The stored value is always UTC epoch milliseconds regardless of input timezone.
 | `query_bbox` | `BboxQuery` | `Vec<PositionRecord>` | Positions within a geographic bounding box, optional time window, configurable limit. Only rows with non-NULL lat/lon are returned. |
 | `get_trajectory` | `TrajectoryQuery` | `Vec<PositionRecord>` | All positions for a single aircraft by hex ident, ordered by timestamp. |
 | `get_aircraft_summary` | `start_ms?, end_ms?` | `Vec<AircraftSummary>` | Per-aircraft aggregates: position count, first/last seen, altitude range. |
-| `get_time_distribution` | `TimeDistributionQuery` | `Vec<TimeDistributionBucket>` | Message count histogram: divides the time range into N equal buckets. |
+| `get_time_distribution` | `TimeDistributionQuery` | `Vec<TimeDistributionBucket>` | Histogram over time: divides the range into N equal buckets. The `metric` field selects what to count — `Positions` (default, `COUNT(*)` on `positions`), `Aircraft` (`COUNT(DISTINCT hex_ident)` on `positions`), or `RawMessages` (`COUNT(*)` on `raw_messages`). |
 | `get_detection_range` | `DetectionRangeQuery` | `Vec<DetectionRangeSector>` | Max detection range by bearing sector (see below). Always returns 36 sectors. |
 | `get_hourly_heatmap` | `HourlyHeatmapQuery` | `Vec<HourlyHeatmapCell>` | Activity grid: distinct aircraft count and message count per (calendar day × hour). |
 | `get_stats` | — | `StorageStats` | Row counts, database file size, oldest/newest timestamps. |

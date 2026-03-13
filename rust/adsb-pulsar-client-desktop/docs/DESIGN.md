@@ -1049,7 +1049,7 @@ useTauriEvent<AircraftPosition[]>("adsb:message", (batch) => {
 - `getTrajectory(query: TrajectoryQuery): Promise<PositionRecord[]>`: Full position history for a single aircraft
 - `getAircraftSummary(startMs?: number, endMs?: number): Promise<AircraftSummary[]>`: All aircraft seen with stats
 - `getStorageStats(): Promise<StorageStats>`: Database row count, size, raw msg count, age
-- `getTimeDistribution(query: TimeDistributionQuery): Promise<TimeDistributionBucket[]>`: Bucketed message counts over a time range for analytics charts
+- `getTimeDistribution(query: TimeDistributionQuery): Promise<TimeDistributionBucket[]>`: Bucketed counts over a time range for analytics charts. The `metric` field selects positions (default), distinct aircraft, or raw messages
 - `getRawMessages(query: RawMessageQuery): Promise<RawSbsRecord[]>`: Raw SBS-1 messages by hex_ident + time range
 
 **Implementation**:
@@ -2485,14 +2485,14 @@ Loaded trajectories go into the `dbHistory` track category (4th category in `Air
 When "Browse" runs, `getAircraftSummary`, `getTimeDistribution`, and `getDetectionRange` (if receiver location is configured) are fetched in parallel. The analytics are displayed in a collapsible `<details>` section:
 
 1. **Summary stats**: Total tracks, total positions, average duration (plain flex, no charting library)
-2. **Time distribution**: `<BarChart>` with cyan bars, ~120px tall, labels formatted as HH:MM in the user's display timezone
+2. **Time distribution**: `<BarChart>` with cyan bars, ~120px tall, labels formatted as HH:MM in the user's display timezone. A metric toggle (Positions / Aircraft / Raw Msgs) selects what the bars count — position rows, distinct aircraft, or raw SBS-1 messages
 3. **Altitude histogram**: `<BarChart>` with indigo bars, ~100px tall, 10 bins of 5000ft each (0–50k ft)
 4. **Detection range radar**: Custom SVG polar chart showing max detection distance by 10-degree azimuth sector. Only shown when receiver location is configured and sectors have data.
 
 Pure utility functions in `src/lib/db-history-analytics.ts`:
 - `buildAltitudeBins(summaries)` — 10 bins, places each aircraft by `max_altitude`
 - `computeDbHistorySummary(summaries)` — totals + weighted average duration
-- `formatTimeChartData(buckets, tzName?)` — formats bucket timestamps as HH:MM labels
+- `formatTimeChartData(buckets, tzName?, rangeMs?)` — formats bucket timestamps as adaptive labels (HH:MM / MMM DD HH:MM / MMM DD depending on range)
 
 Pure SVG geometry functions in `src/lib/detection-radar.ts`:
 - `computeMaxRange(sectors)` — max distance across all sectors (min 1)
