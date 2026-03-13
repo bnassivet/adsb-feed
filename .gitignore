@@ -369,6 +369,9 @@ hs_err_pid*
 node_modules/
 tsconfig.tsbuildinfo
 
+# Next.js
+**/.next/
+
 src/notebooks/figures/
 src/notebooks/figures_copy/
 src/notebooks/data_cache/
