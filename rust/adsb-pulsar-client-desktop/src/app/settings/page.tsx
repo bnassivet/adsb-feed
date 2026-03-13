@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { getConfig, saveConfig, validateConfig } from "@/lib/commands";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
+import { TRACK_HISTORY_HOURS_KEY, DEFAULT_TRACK_HISTORY_HOURS } from "@/contexts/AircraftTrackingContext";
 import type { Config } from "@/lib/types";
 import Link from "next/link";
 
@@ -16,6 +17,7 @@ export default function SettingsPage() {
   const [trajectoryStyle, setTrajectoryStyle] = useLocalStorage<"line" | "dots">("adsb-trajectory-style", "line");
   const { tzMode, setTzMode } = useDisplayTz();
   const [metricsWindowSecs, setMetricsWindowSecs] = useLocalStorage<number>("adsb-metrics-window-secs", 5);
+  const [trackHistoryHours, setTrackHistoryHours] = useLocalStorage<number>(TRACK_HISTORY_HOURS_KEY, DEFAULT_TRACK_HISTORY_HOURS);
 
   useEffect(() => {
     getConfig()
@@ -237,6 +239,26 @@ export default function SettingsPage() {
               />
               <p className="text-xs text-slate-500 mt-1">
                 Sliding window for msgs/s calculation (1&ndash;60s). Saved automatically.
+              </p>
+            </div>
+            <div className="mt-4">
+              <label className="block text-xs text-slate-400 mb-1">Track History ({trackHistoryHours}h)</label>
+              <input
+                type="range"
+                min={1}
+                max={72}
+                step={1}
+                value={trackHistoryHours}
+                onChange={(e) => setTrackHistoryHours(Number(e.target.value))}
+                className="w-full accent-blue-500"
+              />
+              <div className="flex justify-between text-xs text-slate-500 mt-1">
+                <span>1h</span>
+                <span>72h</span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                How long expired tracks are kept in history before being pruned. Also controls
+                the startup DuckDB history load window. Saved automatically.
               </p>
             </div>
           </section>

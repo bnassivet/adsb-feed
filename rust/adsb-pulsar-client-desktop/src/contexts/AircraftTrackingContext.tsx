@@ -1,14 +1,19 @@
 "use client";
 import { createContext, useContext, useCallback, useRef, useState, useMemo, useEffect, ReactNode } from "react";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
+import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { queryBbox } from "@/lib/commands";
 import { recordsToTracks } from "@/lib/history-convert";
 import type { AircraftPosition, AircraftTrack } from "@/lib/types";
 
 const TRACK_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const HISTORY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_POSITIONS = 100_000; // Max position history per track
 const CLEANUP_INTERVAL_MS = 15_000; // TTL cleanup every 15 seconds
+
+export const TRACK_HISTORY_HOURS_KEY = "adsb-track-history-hours";
+export const DEFAULT_TRACK_HISTORY_HOURS = 24;
+
+type SetValue<T> = (value: T | ((prev: T) => T)) => void;
 
 interface AircraftTrackingContextValue {
   tracks: Map<string, AircraftTrack>;
@@ -24,6 +29,8 @@ interface AircraftTrackingContextValue {
   addAnalysisTracks: (tracks: AircraftTrack[]) => void;
   removeAnalysisTrack: (hexIdent: string) => void;
   clearAnalysis: () => void;
+  trackHistoryHours: number;
+  setTrackHistoryHours: SetValue<number>;
 }
 
 const AircraftTrackingContext = createContext<AircraftTrackingContextValue | null>(null);
@@ -67,6 +74,10 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
   const dbHistoryRef = useRef<Map<string, AircraftTrack>>(new Map());
   const analysisRef = useRef<Map<string, AircraftTrack>>(new Map());
   const [updateCounter, setUpdateCounter] = useState(0);
+  const [trackHistoryHours, setTrackHistoryHours] = useLocalStorage<number>(
+    TRACK_HISTORY_HOURS_KEY,
+    DEFAULT_TRACK_HISTORY_HOURS,
+  );
 
   const importTracks = useCallback((tracks: AircraftTrack[]) => {
     const map = importedRef.current;
@@ -162,6 +173,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
 
   // Fix 6: TTL cleanup on a separate interval instead of every batch
   useEffect(() => {
+    const historyTtlMs = trackHistoryHours * 60 * 60 * 1000;
     const id = setInterval(() => {
       const now = Date.now();
       const map = tracksRef.current;
@@ -179,7 +191,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
       }
 
       for (const [key, track] of histMap) {
-        if (now - track.last_seen > HISTORY_TTL_MS) {
+        if (now - track.last_seen > historyTtlMs) {
           histMap.delete(key);
           changed = true;
         }
@@ -191,17 +203,18 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
     }, CLEANUP_INTERVAL_MS);
 
     return () => clearInterval(id);
-  }, []);
+  }, [trackHistoryHours]);
 
-  // Auto-load last 24h of tracks from DuckDB on startup
+  // Auto-load tracks from DuckDB on startup using configured history window
   useEffect(() => {
     const now = Date.now();
+    const historyTtlMs = trackHistoryHours * 60 * 60 * 1000;
     queryBbox({
       north: 90,
       south: -90,
       east: 180,
       west: -180,
-      start_ms: now - HISTORY_TTL_MS,
+      start_ms: now - historyTtlMs,
       end_ms: null,
       limit: 1_000_000,
     })
@@ -238,8 +251,10 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
       addAnalysisTracks,
       removeAnalysisTrack,
       clearAnalysis,
+      trackHistoryHours,
+      setTrackHistoryHours,
     }),
-    [updateCounter, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory, addAnalysisTracks, removeAnalysisTrack, clearAnalysis],
+    [updateCounter, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory, addAnalysisTracks, removeAnalysisTrack, clearAnalysis, trackHistoryHours, setTrackHistoryHours],
   );
 
   return (
