@@ -1,6 +1,6 @@
 "use client";
 import { useState, useCallback, useMemo, useEffect } from "react";
-import { Map } from "@/components/Map";
+import { Map as AircraftMap } from "@/components/Map";
 import { AircraftTable } from "@/components/AircraftTable";
 import { MetricsBar } from "@/components/MetricsBar";
 import { ConnectionStatusIndicator } from "@/components/ConnectionStatus";
@@ -18,7 +18,7 @@ import { startFeed, stopFeed, getConfig } from "@/lib/commands";
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
 import { sortTracks } from "@/lib/sort-tracks";
 import { DEFAULT_FILTERS } from "@/lib/types";
-import type { ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode } from "@/lib/types";
+import type { ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, TrackSection } from "@/lib/types";
 import type { SelectEvent } from "@/components/AircraftTable";
 import { ModeTabs } from "@/components/ModeTabs";
 import Link from "next/link";
@@ -76,6 +76,7 @@ export default function Dashboard() {
 
   const [selectedHexIdents, setSelectedHexIdents] = useState<Set<string>>(new Set());
   const [lastSelectedHexIdent, setLastSelectedHexIdent] = useState<string | null>(null);
+  const [hiddenSections, setHiddenSections] = useState<Map<TrackSection, Set<string>>>(new Map());
   const [sortKey] = useState<"callsign">("callsign");
   const [sortAsc] = useState(true);
 
@@ -97,10 +98,18 @@ export default function Dashboard() {
 
   // Mode-conditional arrays for Map and Table
   const isLive = activeMode === "live";
-  const mapTracks = isLive ? allTracks : [];
-  const mapHistory = isLive ? visibleHistory : [];
-  const mapImported = isLive ? visibleImported : [];
-  const mapDbHistory = isLive ? visibleDbHistory : analysis;
+  const filterBySection = useCallback(
+    (section: TrackSection, tracks: typeof allTracks) => {
+      const sectionSet = hiddenSections.get(section);
+      if (!sectionSet || sectionSet.size === 0) return tracks;
+      return tracks.filter(t => !sectionSet.has(t.hex_ident));
+    },
+    [hiddenSections],
+  );
+  const mapTracks = isLive ? filterBySection("live", allTracks) : [];
+  const mapHistory = isLive ? filterBySection("history", visibleHistory) : [];
+  const mapImported = isLive ? filterBySection("imported", visibleImported) : [];
+  const mapDbHistory = isLive ? filterBySection("dbHistory", visibleDbHistory) : filterBySection("analysis", analysis);
   const tableTracks = isLive ? allTracks : analysis;
   const tableHistory = isLive ? visibleHistory : [];
   const tableImported = isLive ? visibleImported : [];
@@ -191,7 +200,11 @@ export default function Dashboard() {
   const densityTracks = useMemo(
     () => {
       if (!showDensity) return [];
-      if (isLive) return [...allTracks, ...history, ...(includeImportedInDensity ? imported : [])];
+      if (isLive) return [
+        ...allTracks,
+        ...history,
+        ...(includeImportedInDensity ? imported : []),
+      ];
       return analysis;
     },
     [showDensity, isLive, allTracks, history, includeImportedInDensity, imported, analysis],
@@ -229,6 +242,30 @@ export default function Dashboard() {
   function handleToggleReceiver() {
     setShowReceiver((prev: boolean) => !prev);
   }
+
+  const handleToggleMapVisibility = useCallback((hexIdent: string, section: TrackSection) => {
+    setHiddenSections(prev => {
+      const next = new Map(prev);
+      const s = new Set(next.get(section) ?? []);
+      s.has(hexIdent) ? s.delete(hexIdent) : s.add(hexIdent);
+      s.size === 0 ? next.delete(section) : next.set(section, s);
+      return next;
+    });
+  }, []);
+
+  const handleToggleGroupVisibility = useCallback((section: TrackSection, hexIdents: string[]) => {
+    setHiddenSections(prev => {
+      const next = new Map(prev);
+      const sectionSet = next.get(section);
+      const allHidden = sectionSet != null && hexIdents.every(h => sectionSet.has(h));
+      if (allHidden) {
+        next.delete(section);
+      } else {
+        next.set(section, new Set(hexIdents));
+      }
+      return next;
+    });
+  }, []);
 
   async function handleExport() {
     try {
@@ -414,7 +451,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <Map tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} />
+              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel
@@ -467,7 +504,10 @@ export default function Dashboard() {
             onModeChange={setActiveMode}
             liveCount={allTracks.length}
             analysisCount={analysis.length}
-            onClearAnalysis={clearAnalysis}
+            onClearAnalysis={() => {
+              clearAnalysis();
+              setHiddenSections(prev => { const n = new Map(prev); n.delete("analysis"); return n; });
+            }}
           />
 
           {/* Table — explicit height, resizable */}
@@ -484,6 +524,10 @@ export default function Dashboard() {
               lastSelectedHexIdent={lastSelectedHexIdent}
               onSelectTrack={handleSelectTrack}
               onRemoveTrack={!isLive ? removeAnalysisTrack : undefined}
+              onToggleMapVisibility={handleToggleMapVisibility}
+              hiddenSections={hiddenSections}
+              onToggleGroupVisibility={handleToggleGroupVisibility}
+              liveSectionKey={isLive ? "live" : "analysis"}
             />
           </div>
         </main>

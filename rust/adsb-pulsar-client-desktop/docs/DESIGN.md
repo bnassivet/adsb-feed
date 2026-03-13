@@ -359,7 +359,9 @@ accumulation even when users navigate to Settings or other pages.
 - `historyColorMode: AltitudeColorMode`: Color mode for history tracks (persisted)
 - `showImported: boolean`: Visibility of imported GeoJSON tracks (persisted)
 - `includeImportedInDensity: boolean`: Include imported tracks in H3 density (persisted)
-- `selectedHexIdent: string | null`: Currently selected aircraft (toggle behavior: click same to deselect)
+- `selectedHexIdents: Set<string>`: Currently selected aircraft hex_idents (multi-select via Ctrl/Cmd click, Shift range)
+- `lastSelectedHexIdent: string | null`: Anchor for shift-range selection and auto-scroll target
+- `hiddenSections: Map<TrackSection, Set<string>>`: Per-section track visibility — maps each `TrackSection` to a set of hidden hex_idents. Group visibility is derived (not stored separately)
 - `detailsPanelOpen: boolean`: Whether the details panel is expanded or collapsed (persisted)
 - `detailsPanelWidth: number`: Width of the expanded details panel in px, clamped 200–480 (persisted)
 - `dbHistoryOpen: boolean`: DB History panel visible (persisted)
@@ -375,12 +377,13 @@ accumulation even when users navigate to Settings or other pages.
 - `visibleHistory`: `showHistory ? history : []`
 - `visibleImported`: `showImported ? imported : []`
 - `visibleDbHistory`: `showDbHistory ? dbHistory : []`
-- `mapTracks / mapHistory / mapImported / mapDbHistory`: Mode-conditional arrays — in Live mode, same as visible arrays; in Analysis mode, only `analysis` tracks (passed as `mapDbHistory` for cyan styling)
-- `tableTracks / tableHistory / tableImported / tableDbHistory`: Mode-conditional arrays for table sections
-- `selectedTrack`: Resolved from `selectedHexIdent` against mode-conditional arrays (`mapTracks` → `mapHistory` → `mapDbHistory` → `mapImported`); `null` when no aircraft is selected
+- `mapTracks / mapHistory / mapImported / mapDbHistory`: Mode-conditional arrays filtered through `filterBySection` — in Live mode, removes hidden hex_idents per section; in Analysis mode, only `analysis` tracks (passed as `mapDbHistory` for cyan styling)
+- `tableTracks / tableHistory / tableImported / tableDbHistory`: Mode-conditional arrays for table sections (unfiltered — visibility dimming shown via eye icons)
+- `selectedTrack`: Resolved from `lastSelectedHexIdent` against mode-conditional map arrays (`mapTracks` → `mapHistory` → `mapDbHistory` → `mapImported`); `null` when no aircraft is selected
+- `flatVisibleOrder`: Flat hex_ident array mirroring table section order — used for shift-range selection
 - `isImportedSelection`: Whether the selected track came from the imported collection (drives `IMPORTED` badge in details panel)
 - `isDbHistorySelection`: Whether the selected track came from DB History or Analysis (drives `DB HISTORY` badge in details panel)
-- `densityTracks`: In Live mode, computed from `allTracks + history + (imported if includeImportedInDensity)`; in Analysis mode, uses `analysis` tracks
+- `densityTracks`: In Live mode, computed from unfiltered `allTracks + history + (imported if includeImportedInDensity)`; in Analysis mode, uses unfiltered `analysis` tracks. **Not affected by per-track or per-group visibility toggles** — density is controlled exclusively by the left panel
 
 **Layout Structure**:
 ```tsx
@@ -456,9 +459,14 @@ accumulation even when users navigate to Settings or other pages.
 - `historyTracks?: AircraftTrack[]`: Optional expired aircraft tracks (defaults to `[]`)
 - `dbHistoryTracks?: AircraftTrack[]`: Optional DB History tracks (defaults to `[]`)
 - `importedTracks?: AircraftTrack[]`: Optional imported GeoJSON tracks (defaults to `[]`)
-- `selectedHexIdent?: string | null`: Currently selected aircraft hex_ident
-- `onSelectTrack?: (hex: string) => void`: Callback when a row is clicked
+- `selectedHexIdents?: Set<string>`: Currently selected aircraft hex_idents (multi-select)
+- `lastSelectedHexIdent?: string | null`: Last-clicked hex for auto-scroll
+- `onSelectTrack?: (hex: string, event: SelectEvent) => void`: Callback when a row is clicked (with modifier keys)
 - `onRemoveTrack?: (hexIdent: string) => void`: Optional callback for per-row remove button (used in Analysis mode)
+- `onToggleMapVisibility?: (hexIdent: string, section: TrackSection) => void`: Per-track map visibility toggle
+- `hiddenSections?: Map<TrackSection, Set<string>>`: Per-section hidden hex_idents (drives eye icon state + row dimming)
+- `onToggleGroupVisibility?: (section: TrackSection, hexIdents: string[]) => void`: Group visibility toggle — receives the section and the full list of hex_idents in that section
+- `liveSectionKey?: TrackSection`: Section key for live rows — `"live"` in Live mode, `"analysis"` in Analysis mode
 
 **Responsibilities**:
 - Render scrollable table with fixed header
@@ -472,22 +480,26 @@ accumulation even when users navigate to Settings or other pages.
 - Imported rows display with `opacity-60` and indigo text tint for visual identity
 - DB History rows display with `opacity-60` and cyan text tint
 - When `onRemoveTrack` is provided, render a × button at the end of each Live/Analysis row (used in Analysis mode to remove individual tracks)
-- Highlight selected row and auto-scroll it into view
+- Highlight selected rows and auto-scroll last-selected into view
+- **Per-track eye toggle**: When `onToggleMapVisibility` provided, render eye icon per row. Hidden tracks show closed-eye + `opacity-40` dimming
+- **Group eye toggle**: When `onToggleGroupVisibility` provided, render eye icon on section headers. Icon state is **derived**: all hex_idents in section hidden → eye-closed, otherwise → eye-open
+- **Selection-aware eye toggle**: Clicking eye on a multi-selected track toggles all selected tracks within that section. Single-selected or unselected tracks toggle individually
 
 **Row Sections**:
 1. **Active/Analysis rows** — standard rendering, selected highlight: `bg-blue-900/40`; × remove button when `onRemoveTrack` provided
-2. **History divider** — uppercase label with count (e.g., "HISTORY (12)"), collapsible
+2. **History divider** — uppercase label with count (e.g., "HISTORY (12)"), collapsible, group eye toggle
 3. **History rows** — dimmed via `opacity-40`, selected highlight: `bg-blue-900/40`
-4. **DB History divider** — uppercase label with count (e.g., "DB HISTORY (3)"), collapsible
+4. **DB History divider** — uppercase label with count (e.g., "DB HISTORY (3)"), collapsible, group eye toggle
 5. **DB History rows** — dimmed via `opacity-60`, cyan text tint, selected highlight: `bg-cyan-900/40`
-6. **Imported divider** — uppercase label with count (e.g., "IMPORTED (5)"), collapsible
+6. **Imported divider** — uppercase label with count (e.g., "IMPORTED (5)"), collapsible, group eye toggle
 7. **Imported rows** — dimmed via `opacity-60`, indigo text tint, selected highlight: `bg-indigo-900/40`
 
 **Styling**:
 - Dark background (`bg-slate-900`)
 - Fixed header with `sticky top-0`
 - Overflow scrolling for table body
-- Selected row: `bg-blue-900/40` (active/history) or `bg-indigo-900/40` (imported) + `cursor-pointer` when clickable
+- Selected row: `bg-blue-900/40` (active/history) or `bg-cyan-900/40` (DB History) or `bg-indigo-900/40` (imported) + `cursor-pointer` when clickable
+- Hidden-from-map row: `opacity-40` with closed-eye icon
 
 **File**: `src/components/AircraftTable.tsx`
 
@@ -2124,7 +2136,7 @@ npm run test:watch  # Watch mode (TDD)
 | `src/lib/__tests__/` | colors, types, h3-density, format (**formatWithTz**), track-ordering, aircraft-icon, aircraft-details (**formatTrackTime** with tzName), **geojson**, **file-io**, **commands** (DuckDB wrappers) | Pure utility functions (incl. TZ formatting, GeoJSON conversion, file dialog orchestration, DuckDB command invoke wrappers) |
 | `src/contexts/__tests__/` | AircraftTrackingContext (appendPosition, mergePositionInto message_count) | Context merge logic |
 | `src/hooks/__tests__/` | useLocalStorage, useAircraftTracks, useSimulatedTracks, **useDisplayTz** | Hook logic, filters, TZ persistence |
-| `src/components/__tests__/` | ConnectionStatus, MetricsBar, Filters, AircraftTable (selection, RxTS, Msg#, **imported row highlight**), AircraftDetailsPanel (fold/unfold, sparkline, axes, **IMPORTED badge**), **AltitudeLegend**, **LeftPanel** | Component rendering and interactions |
+| `src/components/__tests__/` | ConnectionStatus, MetricsBar, Filters, AircraftTable (selection, RxTS, Msg#, **imported row highlight**, **section-aware visibility**, **group eye toggle**, **selection-aware batch eye toggle**), AircraftDetailsPanel (fold/unfold, sparkline, axes, **IMPORTED badge**), **AltitudeLegend**, **LeftPanel** | Component rendering and interactions |
 
 **Mocking:** `src/test/mocks/tauri.ts` provides mock `@tauri-apps/api` (invoke, events) for testing without Tauri runtime.
 
@@ -2925,6 +2937,68 @@ The Map already renders whatever arrays it receives via props. The mode switch i
 
 ---
 
+## Section-Aware Track Visibility
+
+### Overview
+
+Each track in the table can be hidden from the map independently per section. A track with the same `hex_ident` can appear in multiple sections (e.g., live and history) with independent visibility state. Hiding a track from the map does not remove it from the table — the row is dimmed (`opacity-40`) and the eye icon shows closed.
+
+### State Model
+
+A single `Map<TrackSection, Set<string>>` (`hiddenSections`) is the sole source of truth for track visibility:
+
+```
+hiddenSections: Map<TrackSection, Set<string>>
+  "live"     → Set { "ABC123", "DEF456" }   // these two hidden in live
+  "history"  → Set { "GHI789" }             // this one hidden in history
+```
+
+There is no separate `hiddenGroups` state. Group visibility is **derived**:
+- Group eye icon shows **eye-closed** when every hex_ident in the section is present in `hiddenSections[section]`
+- Group eye icon shows **eye-open** when any track in the section is visible (including mixed state)
+
+### Interactions
+
+| Action | Effect |
+|--------|--------|
+| Click per-track eye (no multi-select) | Toggle that hex_ident in `hiddenSections[section]` |
+| Click per-track eye (track is multi-selected) | Toggle all selected hex_idents within that section |
+| Click per-track eye (track is NOT selected, multi-select active elsewhere) | Toggle only that one hex_ident |
+| Click group eye (some/none hidden) | Add ALL hex_idents in section to `hiddenSections[section]` ("hide all") |
+| Click group eye (all hidden) | Remove `hiddenSections[section]` entirely ("show all") |
+
+### Density Overlay Independence
+
+The H3 density overlay is **not affected** by per-track or per-group visibility toggles. `densityTracks` is computed from unfiltered track arrays:
+
+- **Live mode**: `allTracks + history + (imported if includeImportedInDensity)`
+- **Analysis mode**: `analysis`
+
+Density is controlled exclusively by the left panel toggles (`showDensity`, `includeImportedInDensity`, altitude range). This separation ensures that density always represents "what coverage do I have" regardless of which individual tracks are visible on the map.
+
+### Map Filtering
+
+The `filterBySection` callback applies `hiddenSections` to map arrays only:
+
+```typescript
+const filterBySection = (section: TrackSection, tracks: AircraftTrack[]) => {
+  const sectionSet = hiddenSections.get(section);
+  if (!sectionSet || sectionSet.size === 0) return tracks;
+  return tracks.filter(t => !sectionSet.has(t.hex_ident));
+};
+```
+
+Table arrays are passed unfiltered — the table shows all tracks with visual dimming for hidden ones.
+
+### Files
+
+| File | Role |
+|------|------|
+| `src/app/page.tsx` | `hiddenSections` state, `handleToggleMapVisibility` (per-track), `handleToggleGroupVisibility` (bulk add/remove), `filterBySection`, `densityTracks` (unfiltered) |
+| `src/components/AircraftTable.tsx` | `GroupEyeButton` (derived state from tracks + hiddenSections), per-track eye with selection-aware batch toggle, row dimming |
+
+---
+
 ## Conclusion
 
 The ADS-B Aircraft Tracker desktop application demonstrates a modern, performant architecture:
@@ -2942,4 +3016,4 @@ This design prioritizes developer experience (hot reload, TypeScript, TDD), user
 
 ---
 
-*Last updated: February 2026 — Added config persistence via `tauri-plugin-store` (`config.json` in app data dir, loaded on startup, saved on user action). Added receiver location fields (`receiver_latitude`, `receiver_longitude`, `receiver_altitude`) to `Config` with Settings UI, map center override, and cyan receiver marker. Added `trailingSlash: true` to `next.config.ts` for correct Tauri static file navigation. Previous: `adsb-data-engine` workspace crate (DuckDB persistent history), dual history system, 5 historical query Tauri commands, DB History panel (docked/floating, recharts analytics), configurable source/display timezone.*
+*Last updated: March 2026 — Added section-aware track visibility system: single `hiddenSections` state (removed `hiddenGroups`), derived group eye icon state, selection-aware batch eye toggle, density overlay decoupled from visibility filters. Updated multi-select props (`selectedHexIdents`, `lastSelectedHexIdent`, `SelectEvent`). Previous: config persistence via `tauri-plugin-store`, receiver location, `adsb-data-engine` workspace crate (DuckDB persistent history), dual history system, DB History panel (docked/floating), configurable source/display timezone.*
