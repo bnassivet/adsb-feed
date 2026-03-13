@@ -135,7 +135,13 @@ pub fn start_feed(
 
     // Task 3: Relay metrics to frontend
     let metrics_task = tokio::spawn(async move {
-        relay_metrics(app_for_metrics, metrics_for_relay, messages_received_for_metrics, alive_rx_metrics).await;
+        relay_metrics(
+            app_for_metrics,
+            metrics_for_relay,
+            messages_received_for_metrics,
+            alive_rx_metrics,
+        )
+        .await;
     });
 
     // Task 4: Socket watchdog - monitor message activity and emit periodic status
