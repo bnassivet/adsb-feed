@@ -124,24 +124,16 @@ pub fn get_config(state: State<'_, AppState>) -> Result<Config, String> {
     Ok(config.clone())
 }
 
-/// Saves a new configuration. Cannot be changed while running.
+/// Saves a new configuration.
 /// Persists to the Tauri store for restoration on next launch.
+/// Safe to call while the feed is running — `start_feed` clones the config
+/// at startup, so changes take effect on the next restart.
 #[tauri::command]
 pub fn save_config(
     app: tauri::AppHandle,
     config: Config,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    // Prevent config changes while running
-    {
-        let handle = state.feed_handle.lock().map_err(|e| e.to_string())?;
-        if handle.is_some() {
-            return Err(
-                "Cannot change config while feed is running. Stop the feed first.".to_string(),
-            );
-        }
-    }
-
     // Validate
     config.validate().map_err(|e| e.to_string())?;
 

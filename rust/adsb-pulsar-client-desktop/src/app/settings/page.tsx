@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { getConfig, saveConfig, validateConfig } from "@/lib/commands";
+import { getConfig, getStatus, saveConfig, validateConfig } from "@/lib/commands";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
 import { TRACK_HISTORY_HOURS_KEY, DEFAULT_TRACK_HISTORY_HOURS } from "@/contexts/AircraftTrackingContext";
@@ -53,7 +53,11 @@ export default function SettingsPage() {
     if (!config) return;
     try {
       await saveConfig(config);
-      setMessage({ type: "success", text: "Configuration saved" });
+      const status = await getStatus();
+      const text = status.is_running
+        ? "Configuration saved. Connection changes will apply on next restart."
+        : "Configuration saved";
+      setMessage({ type: "success", text });
     } catch (e) {
       setMessage({ type: "error", text: String(e) });
     }
