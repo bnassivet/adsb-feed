@@ -13,6 +13,7 @@ import { useAircraftTracks } from "@/hooks/useAircraftTracks";
 import { useSimulatedTracks } from "@/hooks/useSimulatedTracks";
 import { useMetrics } from "@/hooks/useMetrics";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
+import { useRecordingState } from "@/hooks/useRecordingState";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { startFeed, stopFeed, getConfig } from "@/lib/commands";
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
@@ -90,6 +91,7 @@ export default function Dashboard() {
   const allTracks = useMemo(() => [...tracks, ...simulatedTracks], [tracks, simulatedTracks]);
   const metrics = useMetrics();
   const status = useConnectionStatus();
+  const { recordPositions, recordRaw, toggleRecordPositions, toggleRecordRaw } = useRecordingState();
   const isRunning = status.is_running;
 
   const visibleHistory = showHistory ? history : [];
@@ -534,7 +536,13 @@ export default function Dashboard() {
       </div>
 
       {/* Footer metrics */}
-      <MetricsBar metrics={metrics} />
+      <MetricsBar
+        metrics={metrics}
+        recordPositions={recordPositions}
+        recordRaw={recordRaw}
+        onToggleRecordPositions={toggleRecordPositions}
+        onToggleRecordRaw={toggleRecordRaw}
+      />
 
       {/* DB History panel — floating mode (portal-like, fixed position) */}
       {dbHistoryOpen && dbHistoryFloating && (

@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MetricsBar } from "../MetricsBar";
 import type { MetricsWithRates } from "@/hooks/useMetrics";
 
@@ -50,5 +51,76 @@ describe("MetricsBar", () => {
     const { container } = render(<MetricsBar metrics={makeMetrics({ errors: 0 })} />);
     const redEl = container.querySelector(".text-red-400");
     expect(redEl).toBeNull();
+  });
+
+  it("does not render recording indicators when props are omitted", () => {
+    render(<MetricsBar metrics={makeMetrics()} />);
+    expect(screen.queryByText("REC Pos")).toBeNull();
+    expect(screen.queryByText("REC Raw")).toBeNull();
+  });
+
+  it("renders recording indicators when props are provided", () => {
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        recordPositions={true}
+        recordRaw={false}
+        onToggleRecordPositions={() => {}}
+        onToggleRecordRaw={() => {}}
+      />
+    );
+    expect(screen.getByText("REC Pos")).toBeInTheDocument();
+    expect(screen.getByText("REC Raw")).toBeInTheDocument();
+  });
+
+  it("shows red styling when recording is ON", () => {
+    const { container } = render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        recordPositions={true}
+        recordRaw={true}
+        onToggleRecordPositions={() => {}}
+        onToggleRecordRaw={() => {}}
+      />
+    );
+    const redDots = container.querySelectorAll(".bg-red-500");
+    expect(redDots.length).toBe(2);
+  });
+
+  it("shows grey styling when recording is OFF", () => {
+    const { container } = render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        recordPositions={false}
+        recordRaw={false}
+        onToggleRecordPositions={() => {}}
+        onToggleRecordRaw={() => {}}
+      />
+    );
+    const greyDots = container.querySelectorAll(".bg-slate-600");
+    expect(greyDots.length).toBe(2);
+    expect(container.querySelectorAll(".bg-red-500").length).toBe(0);
+  });
+
+  it("calls toggle callbacks on click", async () => {
+    const user = userEvent.setup();
+    const onTogglePos = vi.fn();
+    const onToggleRaw = vi.fn();
+
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        recordPositions={true}
+        recordRaw={true}
+        onToggleRecordPositions={onTogglePos}
+        onToggleRecordRaw={onToggleRaw}
+      />
+    );
+
+    await user.click(screen.getByText("REC Pos"));
+    expect(onTogglePos).toHaveBeenCalledOnce();
+
+    await user.click(screen.getByText("REC Raw"));
+    expect(onToggleRaw).toHaveBeenCalledOnce();
   });
 });

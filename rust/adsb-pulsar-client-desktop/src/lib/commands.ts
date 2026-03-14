@@ -12,6 +12,7 @@ import type {
   PositionRecord,
   RawMessageQuery,
   RawSbsRecord,
+  RecordingState,
   StatusResponse,
   StorageStats,
   TimeDistributionBucket,
@@ -107,4 +108,16 @@ export async function getRawMessages(
   query: RawMessageQuery
 ): Promise<RawSbsRecord[]> {
   return invoke("get_raw_messages", { query });
+}
+
+// --- Recording state commands ---
+
+export async function getRecordingState(): Promise<RecordingState> {
+  return invoke("get_recording_state");
+}
+
+export async function setRecordingState(
+  recording: RecordingState
+): Promise<void> {
+  return invoke("set_recording_state", { recording });
 }

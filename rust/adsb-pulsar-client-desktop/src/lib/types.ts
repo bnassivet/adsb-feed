@@ -244,6 +244,12 @@ export interface HourlyHeatmapCell {
 /** Which metric the activity heatmap displays. */
 export type HeatmapMetric = "aircraft" | "messages" | "raw_messages";
 
+/** Recording state for independent DuckDB stream control (mirrors Rust RecordingState). */
+export interface RecordingState {
+  record_positions: boolean;
+  record_raw: boolean;
+}
+
 /** Storage statistics. */
 export interface StorageStats {
   row_count: number;

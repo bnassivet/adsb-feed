@@ -10,12 +10,15 @@ import {
   getTimeDistribution,
   getStorageStats,
   getDetectionRange,
+  getRecordingState,
+  setRecordingState,
 } from "../commands";
 import type {
   BboxQuery,
   TrajectoryQuery,
   PositionRecord,
   AircraftSummary,
+  RecordingState,
   StorageStats,
   TimeDistributionBucket,
   TimeDistributionQuery,
@@ -207,6 +210,27 @@ describe("Historical query commands", () => {
         receiver_lon: 0,
       });
       expect(result).toEqual([]);
+    });
+  });
+
+  describe("getRecordingState", () => {
+    it("returns the current recording state", async () => {
+      const state: RecordingState = { record_positions: true, record_raw: false };
+      mockInvokeResponse("get_recording_state", state);
+
+      const result = await getRecordingState();
+      expect(result.record_positions).toBe(true);
+      expect(result.record_raw).toBe(false);
+    });
+  });
+
+  describe("setRecordingState", () => {
+    it("sends recording state to backend", async () => {
+      mockInvokeResponse("set_recording_state", undefined);
+
+      await expect(
+        setRecordingState({ record_positions: false, record_raw: true })
+      ).resolves.toBeUndefined();
     });
   });
 });

@@ -62,6 +62,8 @@ pub fn run() {
             commands::get_hourly_heatmap,
             commands::get_raw_messages,
             commands::get_raw_message_count,
+            commands::get_recording_state,
+            commands::set_recording_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

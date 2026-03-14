@@ -3,13 +3,14 @@
 //! These commands are invoked from the Next.js frontend via `invoke()`.
 
 use crate::bridge;
-use crate::state::{AppState, ConnectionStatus, StatusResponse};
+use crate::state::{AppState, ConnectionStatus, RecordingState, StatusResponse};
 use adsb_data_engine::{
     AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, HourlyHeatmapCell,
     HourlyHeatmapQuery, PositionRecord, RawMessageQuery, RawSbsRecord, StorageStats,
     TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
 };
 use adsb_pulsar_client::{Config, MetricsSnapshot};
+use std::sync::atomic::Ordering;
 use tauri::{Emitter, State};
 
 /// Starts the ADS-B feed client with the current configuration.
@@ -36,7 +37,13 @@ pub async fn start_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
 
     let config = { state.config.lock().map_err(|e| e.to_string())?.clone() };
 
-    let feed_handle = bridge::start_feed(app, config, state.storage.clone())?;
+    let feed_handle = bridge::start_feed(
+        app,
+        config,
+        state.storage.clone(),
+        state.record_positions.clone(),
+        state.record_raw.clone(),
+    )?;
 
     // Update status
     {
@@ -290,4 +297,32 @@ pub async fn get_raw_messages(
         .query_raw_messages(query)
         .await
         .map_err(|e| e.to_string())
+}
+
+// --- Recording state commands ---
+
+/// Returns the current recording state (which streams are being persisted to DuckDB).
+#[tauri::command]
+pub fn get_recording_state(state: State<'_, AppState>) -> Result<RecordingState, String> {
+    Ok(RecordingState {
+        record_positions: state.record_positions.load(Ordering::Relaxed),
+        record_raw: state.record_raw.load(Ordering::Relaxed),
+    })
+}
+
+/// Sets the recording state and emits an event to notify the frontend.
+#[tauri::command]
+pub fn set_recording_state(
+    app: tauri::AppHandle,
+    recording: RecordingState,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .record_positions
+        .store(recording.record_positions, Ordering::Relaxed);
+    state
+        .record_raw
+        .store(recording.record_raw, Ordering::Relaxed);
+    let _ = app.emit("adsb:recording-state", &recording);
+    Ok(())
 }

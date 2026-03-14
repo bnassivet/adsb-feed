@@ -12,7 +12,7 @@ use adsb_data_engine::{
 use adsb_pulsar_client::forwarder::NoopForwarder;
 use adsb_pulsar_client::{ADSBFeedClient, Config, Metrics};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{broadcast, RwLock};
@@ -27,6 +27,8 @@ pub fn start_feed(
     app: AppHandle,
     config: Config,
     storage: Option<StorageHandle>,
+    record_positions: Arc<AtomicBool>,
+    record_raw: Arc<AtomicBool>,
 ) -> Result<FeedHandle, String> {
     let test_mode = config.test_mode;
     let socket_read_timeout_secs = config.socket_read_timeout_secs;
@@ -129,6 +131,8 @@ pub fn start_feed(
             storage,
             dump1090_tz,
             messages_received_for_relay,
+            record_positions,
+            record_raw,
         )
         .await;
     });
@@ -177,6 +181,7 @@ pub fn start_feed(
 /// Buffers messages into a HashMap keyed by hex_ident (keeping latest position
 /// per aircraft), then flushes the batch every 500ms. If a `StorageHandle` is
 /// provided, positions are also persisted to DuckDB on each flush (non-fatal on failure).
+#[allow(clippy::too_many_arguments)]
 async fn relay_messages(
     app: AppHandle,
     mut rx: broadcast::Receiver<Vec<u8>>,
@@ -184,6 +189,8 @@ async fn relay_messages(
     storage: Option<StorageHandle>,
     dump1090_tz: String,
     messages_received: Arc<AtomicU64>,
+    record_positions: Arc<AtomicBool>,
+    record_raw: Arc<AtomicBool>,
 ) {
     let mut flush_interval = interval(Duration::from_millis(500));
     let mut buffer: HashMap<String, AircraftPosition> = HashMap::new();
@@ -232,10 +239,14 @@ async fn relay_messages(
                                     pos.message_count = count;
                                 }
                             }
-                            persist_batch(&storage, &batch, &dump1090_tz).await;
+                            if record_positions.load(Ordering::Relaxed) {
+                                persist_batch(&storage, &batch, &dump1090_tz).await;
+                            }
                             let _ = app.emit("adsb:message", &batch);
                         }
-                        persist_raw_batch(&storage, &raw_buffer, &dump1090_tz).await;
+                        if record_raw.load(Ordering::Relaxed) {
+                            persist_raw_batch(&storage, &raw_buffer, &dump1090_tz).await;
+                        }
                         raw_buffer.clear();
                         break;
                     }
@@ -249,10 +260,14 @@ async fn relay_messages(
                             pos.message_count = count;
                         }
                     }
-                    persist_batch(&storage, &batch, &dump1090_tz).await;
+                    if record_positions.load(Ordering::Relaxed) {
+                        persist_batch(&storage, &batch, &dump1090_tz).await;
+                    }
                     let _ = app.emit("adsb:message", &batch);
                 }
-                persist_raw_batch(&storage, &raw_buffer, &dump1090_tz).await;
+                if record_raw.load(Ordering::Relaxed) {
+                    persist_raw_batch(&storage, &raw_buffer, &dump1090_tz).await;
+                }
                 raw_buffer.clear();
             }
         }

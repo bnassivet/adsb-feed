@@ -4,9 +4,13 @@ import { formatBytes } from "@/lib/format";
 
 interface Props {
   metrics: MetricsWithRates;
+  recordPositions?: boolean;
+  recordRaw?: boolean;
+  onToggleRecordPositions?: () => void;
+  onToggleRecordRaw?: () => void;
 }
 
-export function MetricsBar({ metrics }: Props) {
+export function MetricsBar({ metrics, recordPositions, recordRaw, onToggleRecordPositions, onToggleRecordRaw }: Props) {
   return (
     <div className="flex items-center gap-6 px-4 py-2 bg-slate-900 border-t border-slate-700 text-xs text-slate-400">
       <span>
@@ -55,6 +59,30 @@ export function MetricsBar({ metrics }: Props) {
           {formatUptime(metrics.elapsed_secs)}
         </span>
       </span>
+      {recordPositions !== undefined && (
+        <button
+          onClick={onToggleRecordPositions}
+          className="flex items-center gap-1 hover:text-slate-200 transition cursor-pointer"
+          title={recordPositions ? "Recording positions — click to pause" : "Positions recording paused — click to resume"}
+        >
+          <span className={`inline-block w-2 h-2 rounded-full ${recordPositions ? "bg-red-500" : "bg-slate-600"}`} />
+          <span className={`font-mono ${recordPositions ? "text-red-400" : "text-slate-600"}`}>
+            REC Pos
+          </span>
+        </button>
+      )}
+      {recordRaw !== undefined && (
+        <button
+          onClick={onToggleRecordRaw}
+          className="flex items-center gap-1 hover:text-slate-200 transition cursor-pointer"
+          title={recordRaw ? "Recording raw messages — click to pause" : "Raw recording paused — click to resume"}
+        >
+          <span className={`inline-block w-2 h-2 rounded-full ${recordRaw ? "bg-red-500" : "bg-slate-600"}`} />
+          <span className={`font-mono ${recordRaw ? "text-red-400" : "text-slate-600"}`}>
+            REC Raw
+          </span>
+        </button>
+      )}
     </div>
   );
 }

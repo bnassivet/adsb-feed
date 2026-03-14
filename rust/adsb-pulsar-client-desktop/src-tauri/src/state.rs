@@ -4,8 +4,9 @@
 
 use adsb_data_engine::StorageHandle;
 use adsb_pulsar_client::{Config, Metrics};
-use serde::Serialize;
-use std::sync::Mutex;
+use serde::{Deserialize, Serialize};
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 
 /// Connection status for UI display.
@@ -45,6 +46,13 @@ pub struct FeedHandle {
     pub task_handles: Vec<JoinHandle<()>>,
 }
 
+/// Recording state for independent DuckDB stream control.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RecordingState {
+    pub record_positions: bool,
+    pub record_raw: bool,
+}
+
 /// Top-level application state managed by Tauri.
 pub struct AppState {
     /// Current configuration (persisted via tauri-plugin-store)
@@ -55,6 +63,10 @@ pub struct AppState {
     pub connection_status: Mutex<StatusResponse>,
     /// DuckDB storage handle (None if init failed — app still works in real-time-only mode)
     pub storage: Option<StorageHandle>,
+    /// Whether to record position data to DuckDB (toggled at runtime)
+    pub record_positions: Arc<AtomicBool>,
+    /// Whether to record raw SBS-1 messages to DuckDB (toggled at runtime)
+    pub record_raw: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -73,6 +85,8 @@ impl AppState {
                 pulsar_status: ConnectionStatus::Disconnected,
             }),
             storage,
+            record_positions: Arc::new(AtomicBool::new(true)),
+            record_raw: Arc::new(AtomicBool::new(true)),
         }
     }
 }
@@ -113,6 +127,34 @@ mod tests {
         let json = serde_json::to_value(&error).unwrap();
         assert_eq!(json["status"], "Error");
         assert_eq!(json["message"], "test error");
+    }
+
+    #[test]
+    fn test_recording_flags_default_to_true() {
+        let state = AppState::new(None);
+        assert!(state
+            .record_positions
+            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(state.record_raw.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_recording_state_serialize() {
+        let rs = RecordingState {
+            record_positions: true,
+            record_raw: false,
+        };
+        let json = serde_json::to_value(&rs).unwrap();
+        assert_eq!(json["record_positions"], true);
+        assert_eq!(json["record_raw"], false);
+    }
+
+    #[test]
+    fn test_recording_state_deserialize() {
+        let json = serde_json::json!({"record_positions": false, "record_raw": true});
+        let rs: RecordingState = serde_json::from_value(json).unwrap();
+        assert!(!rs.record_positions);
+        assert!(rs.record_raw);
     }
 
     #[test]
