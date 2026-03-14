@@ -31,8 +31,8 @@ src-tauri/src/
 ├── lib.rs          # Tauri app builder, command/plugin registration, init_storage()
 ├── main.rs         # Entry point (calls lib::run)
 ├── bridge.rs       # Feed bridge: ADSBFeedClient → Tauri events (throttled) + DuckDB writes
-├── commands.rs     # Tauri IPC commands: feed control + 4 DuckDB historical query commands
-└── state.rs        # AppState (includes storage: Option<StorageHandle>), ConnectionStatus, StatusResponse
+├── commands.rs     # Tauri IPC commands: feed control + DuckDB historical queries + storage management (release/reclaim/export)
+└── state.rs        # AppState (SharedStorage, StorageAvailability, StorageConfig), ConnectionStatus, StatusResponse
 
 src/
 ├── app/            # Next.js App Router pages
@@ -46,7 +46,8 @@ src/
 
 - **Tauri bridge** throttles ~50k msg/s down to ~2 updates/sec via HashMap buffer flushed every 500ms; tracks per-aircraft message counts pre-throttle
 - **DuckDB writes on every flush**: each 500ms batch is persisted to `adsb_history.db` via `StorageHandle::insert_batch()` — non-fatal if storage is unavailable
-- **Graceful DuckDB degradation**: `AppState.storage: Option<StorageHandle>` — `None` if DuckDB init fails; app runs in real-time-only mode; all historical query commands return `"Storage not available"`
+- **Graceful DuckDB degradation**: `AppState.storage: SharedStorage` (`Arc<RwLock<Option<StorageHandle>>>`) — `None` if DuckDB init fails or connection is released; app runs in real-time-only mode; all historical query commands return `"Storage not available"`
+- **Storage management**: Release/reclaim DuckDB connection at runtime (for external tool access); live export via DuckDB `ATTACH`+`CREATE TABLE AS` without stopping recording; `StorageConfig` retained in AppState for reopening after release
 - `broadcast::channel` as message tap — fire-and-forget (`let _ = tx.send()`)
 - `watch::channel` for shutdown signal
 - Tauri v2 capability-based permissions in `src-tauri/capabilities/default.json`

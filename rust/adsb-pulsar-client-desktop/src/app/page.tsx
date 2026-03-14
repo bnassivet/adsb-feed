@@ -15,11 +15,13 @@ import { useMetrics } from "@/hooks/useMetrics";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { useRecordingState } from "@/hooks/useRecordingState";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
-import { startFeed, stopFeed, getConfig } from "@/lib/commands";
+import { startFeed, stopFeed, getConfig, getStorageStatus, releaseStorage, reclaimStorage, exportDatabase, getStorageStats } from "@/lib/commands";
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
+import { listen } from "@tauri-apps/api/event";
+import { save } from "@tauri-apps/plugin-dialog";
 import { sortTracks } from "@/lib/sort-tracks";
 import { DEFAULT_FILTERS } from "@/lib/types";
-import type { ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, TrackSection } from "@/lib/types";
+import type { ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, TrackSection, StorageAvailability } from "@/lib/types";
 import type { SelectEvent } from "@/components/AircraftTable";
 import { ModeTabs } from "@/components/ModeTabs";
 import Link from "next/link";
@@ -92,6 +94,61 @@ export default function Dashboard() {
   const metrics = useMetrics();
   const status = useConnectionStatus();
   const { recordPositions, recordRaw, toggleRecordPositions, toggleRecordRaw } = useRecordingState();
+  const [storageStatus, setStorageStatus] = useState<StorageAvailability>("unavailable");
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Fetch initial storage status and listen for changes
+  useEffect(() => {
+    getStorageStatus().then(setStorageStatus).catch(() => {});
+    const unlisten = listen<StorageAvailability>("adsb:storage-status", (event) => {
+      setStorageStatus(event.payload);
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  const handleReleaseStorage = useCallback(async () => {
+    try {
+      setError(null);
+      await releaseStorage();
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  const handleReclaimStorage = useCallback(async () => {
+    try {
+      setError(null);
+      await reclaimStorage();
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  const handleExportDatabase = useCallback(async () => {
+    try {
+      setError(null);
+      let defaultPath = "adsb_export.db";
+      try {
+        const stats = await getStorageStats();
+        const fmtDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+        if (stats.oldest_timestamp_ms != null && stats.newest_timestamp_ms != null) {
+          defaultPath = `adsb_export-${fmtDate(stats.oldest_timestamp_ms)}-${fmtDate(stats.newest_timestamp_ms)}.db`;
+        }
+      } catch { /* fall back to generic name */ }
+      const path = await save({
+        defaultPath,
+        filters: [{ name: "DuckDB Database", extensions: ["db"] }],
+      });
+      if (!path) return; // User cancelled
+      setIsExporting(true);
+      await exportDatabase(path);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setIsExporting(false);
+    }
+  }, []);
+
   const isRunning = status.is_running;
 
   const visibleHistory = showHistory ? history : [];
@@ -542,6 +599,11 @@ export default function Dashboard() {
         recordRaw={recordRaw}
         onToggleRecordPositions={toggleRecordPositions}
         onToggleRecordRaw={toggleRecordRaw}
+        storageStatus={storageStatus}
+        onReleaseStorage={handleReleaseStorage}
+        onReclaimStorage={handleReclaimStorage}
+        onExportDatabase={handleExportDatabase}
+        isExporting={isExporting}
       />
 
       {/* DB History panel — floating mode (portal-like, fixed position) */}

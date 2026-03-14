@@ -10,12 +10,13 @@
 7. [Global Context Manager Pattern](#global-context-manager-pattern)
 8. [In-Memory Aircraft History](#in-memory-aircraft-history)
 9. [DuckDB Persistent History](#duckdb-persistent-history)
-10. [DB History Panel](#db-history-panel)
-11. [GeoJSON Export/Import](#geojson-exportimport)
-12. [Imported Tracks Selection](#imported-tracks-selection)
-13. [Simulated Flights (Demo Mode)](#simulated-flights-demo-mode)
-14. [Config Persistence & Receiver Location](#config-persistence--receiver-location)
-15. [Analysis Mode](#analysis-mode)
+10. [Storage Management (Release/Reclaim/Export)](#storage-management-releasereclaimexport)
+11. [DB History Panel](#db-history-panel)
+12. [GeoJSON Export/Import](#geojson-exportimport)
+13. [Imported Tracks Selection](#imported-tracks-selection)
+14. [Simulated Flights (Demo Mode)](#simulated-flights-demo-mode)
+15. [Config Persistence & Receiver Location](#config-persistence--receiver-location)
+16. [Analysis Mode](#analysis-mode)
 
 ---
 
@@ -1297,7 +1298,7 @@ fn init_storage(app: &tauri::App) -> Option<StorageHandle> {
 }
 ```
 
-The `storage: Option<StorageHandle>` is stored in `AppState`. When `None`, all historical query commands return `Err("Storage not available")`.
+The storage handle is wrapped in `Arc<tokio::sync::RwLock<Option<StorageHandle>>>` (`SharedStorage` type alias) and stored in `AppState`. The `StorageConfig` is also retained for reopening after release. When the inner `Option` is `None`, all historical query commands return `Err("Storage not available")`.
 
 **File**: `src-tauri/src/lib.rs`
 
@@ -1342,8 +1343,8 @@ The `storage: Option<StorageHandle>` is stored in `AppState`. When `None`, all h
 
 ##### Historical Query Commands (DuckDB)
 
-All four commands below:
-- Return `Err("Storage not available")` if `AppState.storage` is `None`
+All query commands below:
+- Read-lock `AppState.storage` and return `Err("Storage not available")` if `None`
 - Run on `tokio::task::spawn_blocking` (DuckDB C FFI is blocking)
 - Accept optional `start_ms` / `end_ms` epoch-ms time boundaries
 
@@ -1369,6 +1370,30 @@ All four commands below:
 - Queries raw SBS-1 messages by `hex_ident` and time range (`start_ms`, `end_ms`)
 - Returns up to 10,000 records ordered by `timestamp_ms`
 - Each `RawSbsRecord` contains the original CSV line plus indexed key fields
+
+##### Storage Management Commands
+
+##### `get_storage_status() -> Result<StorageAvailability, String>`
+- Returns `available` (connection active), `released` (intentionally dropped), or `unavailable` (never initialized)
+- Uses presence of `storage_config` to distinguish `released` from `unavailable`
+
+##### `release_storage(app: AppHandle) -> Result<(), String>`
+- Write-locks `storage`, runs `CHECKPOINT` to flush WAL, drops the connection handle (sets to `None`)
+- Emits `adsb:storage-status` event with `StorageAvailability::Released`
+- Recording silently stops (batches are dropped); queries return "Storage not available"
+- DuckDB file is now unlocked — external tools (e.g., DuckDB CLI) can access it
+
+##### `reclaim_storage(app: AppHandle) -> Result<(), String>`
+- Reopens the database from the stored `StorageConfig`
+- Write-locks `storage`, sets to `Some(handle)`
+- Emits `adsb:storage-status` event with `StorageAvailability::Available`
+- Recording resumes on the next flush cycle
+
+##### `export_database(target_path: String) -> Result<(), String>`
+- Read-locks `storage`, runs `CHECKPOINT` + `ATTACH` + `CREATE TABLE AS` + `DETACH`
+- Copies both `positions` and `raw_messages` tables to the target path
+- Recording continues uninterrupted (runs within the active connection)
+- Target path provided by frontend via Tauri save-file dialog
 
 **File**: `src-tauri/src/commands.rs`
 
@@ -1410,17 +1435,30 @@ pub struct FeedHandle {
 }
 ```
 
+##### `StorageAvailability` (enum)
+```rust
+#[serde(rename_all = "lowercase")]
+pub enum StorageAvailability {
+    Available,    // Connection active and usable
+    Released,     // Intentionally dropped (user clicked release)
+    Unavailable,  // Init failed or never configured
+}
+```
+
 ##### `AppState`
 ```rust
 pub struct AppState {
     pub config: Mutex<Config>,                    // Current configuration
     pub feed_handle: Mutex<Option<FeedHandle>>,   // Running feed (None when stopped)
     pub connection_status: Mutex<StatusResponse>, // Current status
-    pub storage: Option<StorageHandle>,           // DuckDB handle (None if init failed)
+    pub storage: SharedStorage,                   // Arc<RwLock<Option<StorageHandle>>>
+    pub storage_config: Option<StorageConfig>,    // Kept for reopening after release
+    pub record_positions: Arc<AtomicBool>,        // Toggle position recording
+    pub record_raw: Arc<AtomicBool>,              // Toggle raw message recording
 }
 ```
 
-`storage` is intentionally not behind a `Mutex` — `StorageHandle` uses an internal `Arc<Mutex<Connection>>` for thread safety. The outer `Option` represents whether DuckDB initialized successfully; once set at app startup it never changes.
+`storage` is `Arc<tokio::sync::RwLock<Option<StorageHandle>>>` — shared between the relay task and Tauri commands. The relay task and query commands take a read-lock on each access. Release/reclaim takes a write-lock. `tokio::sync::RwLock` (not `std::sync`) is used because the lock is held across `.await` points in query commands. `storage_config` retains the `StorageConfig` used at init, enabling reclaim after release.
 
 **File**: `src-tauri/src/state.rs`
 
@@ -1430,7 +1468,7 @@ pub struct AppState {
 
 **Purpose**: Bridge between `adsb-pulsar-client` library and Tauri frontend
 
-**Key Function**: `start_feed(app: AppHandle, config: Config) -> Result<FeedHandle, String>`
+**Key Function**: `start_feed(app: AppHandle, config: Config, storage: SharedStorage, ...) -> Result<FeedHandle, String>`
 
 **Responsibilities**:
 1. Create `ADSBFeedClient` with configuration
@@ -1448,8 +1486,8 @@ pub struct AppState {
 - Buffer raw SBS messages in a `Vec<RawSbsRecord>` for audit/replay (every valid MSG line, unmerged)
 - Flush batch every 500ms:
   1. Attach accumulated `message_count` to each position
-  2. **Persist merged positions to DuckDB** via `StorageHandle::insert_batch(positions, dump1090_tz)` — non-fatal
-  3. **Persist raw messages to DuckDB** via `StorageHandle::insert_raw_batch(raw_records, dump1090_tz)` — non-fatal
+  2. **Persist merged positions to DuckDB** via read-lock on `SharedStorage` → `insert_batch(positions, dump1090_tz)` — non-fatal; silently skipped if storage is `None` (released)
+  3. **Persist raw messages to DuckDB** via read-lock on `SharedStorage` → `insert_raw_batch(raw_records, dump1090_tz)` — non-fatal; silently skipped if released
   4. Emit `adsb:message` Tauri event to frontend
 - Prevents overwhelming the webview with high-frequency updates
 - Each received message updates `Arc<RwLock<Instant>>` shared with the watchdog
@@ -2357,6 +2395,8 @@ The `raw_messages` table stores every valid MSG line at full granularity (hybrid
 | `get_detection_range` | `DetectionRangeQuery` | `Vec<DetectionRangeSector>` | Max detection distance per 10-degree azimuth sector |
 | `query_raw_messages` | `RawMessageQuery` | `Vec<RawSbsRecord>` | Raw SBS lines by hex_ident + time range (limit 10k) |
 | `prune` | `older_than_ms` | deleted row count | Delete old data from both tables |
+| `checkpoint` | — | — | Flush WAL to disk (call before releasing connection) |
+| `export_database` | `PathBuf` | — | Copy DB to target path via ATTACH + CREATE TABLE AS (non-blocking to recording) |
 
 ### Data Flow
 
@@ -2433,13 +2473,93 @@ Isolating parser + storage in a shared workspace crate lets the data engine be t
 **Files**:
 - `adsb-data-engine/src/geo.rs` — Pure geodesic math (haversine, bearing, sector mapping) for test validation
 - `adsb-data-engine/src/sbs_parser.rs` — `parse_sbs_message`, `parse_sbs_raw_fields`, `extract_sbs_timestamp`
-- `adsb-data-engine/src/storage.rs` — `StorageHandle`, `StorageConfig`, all query methods including detection range and raw messages
+- `adsb-data-engine/src/storage.rs` — `StorageHandle`, `StorageConfig`, all query methods including detection range, raw messages, `checkpoint`, `export_database`
 - `adsb-data-engine/src/types.rs` — `PositionRecord`, `BboxQuery`, `TrajectoryQuery`, `AircraftSummary`, `StorageStats`, `RawSbsRecord`, `RawMessageQuery`, `TimeDistributionBucket`, `TimeDistributionQuery`, `DetectionRangeQuery`, `DetectionRangeSector`
-- `src-tauri/src/lib.rs` — `init_storage()`, storage injected into `AppState`
-- `src-tauri/src/bridge.rs` — `persist_batch()` + `persist_raw_batch()` called on every 500ms flush
-- `src-tauri/src/commands.rs` — historical query command handlers (including `get_raw_messages`)
-- `src/lib/commands.ts` — TypeScript wrappers: `queryBbox`, `getTrajectory`, `getAircraftSummary`, `getStorageStats`, `getTimeDistribution`, `getRawMessages`
-- `src/lib/types.ts` — TypeScript mirrors of all DuckDB types
+- `src-tauri/src/lib.rs` — `init_storage()` returns `(handle, config)`, storage wrapped in `Arc<RwLock<...>>`
+- `src-tauri/src/state.rs` — `SharedStorage` type alias, `StorageAvailability` enum, `storage_config` field
+- `src-tauri/src/bridge.rs` — `persist_batch()` + `persist_raw_batch()` read-lock `SharedStorage` on every 500ms flush
+- `src-tauri/src/commands.rs` — historical query commands + storage management: `get_storage_status`, `release_storage`, `reclaim_storage`, `export_database`
+- `src/lib/commands.ts` — TypeScript wrappers: `queryBbox`, `getTrajectory`, `getAircraftSummary`, `getStorageStats`, `getTimeDistribution`, `getRawMessages`, `getStorageStatus`, `releaseStorage`, `reclaimStorage`, `exportDatabase`
+- `src/lib/types.ts` — TypeScript mirrors of all DuckDB types + `StorageAvailability`
+- `src/components/MetricsBar.tsx` — DB status button (release/reclaim) + Export DB button
+
+---
+
+## Storage Management (Release/Reclaim/Export)
+
+### Problem
+
+DuckDB uses exclusive file locking — no multi-process concurrent access. The Tauri app holds a read-write connection to `adsb_history.db` for its entire lifetime, so external tools (DuckDB CLI, Python scripts) get "database locked".
+
+### Solution
+
+Two complementary operations, both controlled from the `MetricsBar` footer:
+
+#### Release/Reclaim
+
+**Release**: Temporarily drops the DuckDB connection so external tools can access the original `.db` file.
+1. Write-locks `SharedStorage`
+2. Runs `CHECKPOINT` to flush the WAL
+3. Sets the inner `Option` to `None`
+4. Emits `adsb:storage-status` event with `released`
+
+While released: recording batches are silently dropped (relay task read-locks, sees `None`, skips). All query commands return "Storage not available".
+
+**Reclaim**: Reopens the database from the stored `StorageConfig`.
+1. Opens a new `StorageHandle` from `storage_config`
+2. Write-locks `SharedStorage`, sets to `Some(handle)`
+3. Emits `adsb:storage-status` event with `available`
+4. Recording resumes on the next 500ms flush
+
+#### Live Export
+
+**Export**: Copies the database to a user-chosen path without stopping recording.
+1. Read-locks `SharedStorage`
+2. Runs `CHECKPOINT` (flush WAL)
+3. Runs `ATTACH target_path AS export_db`
+4. Runs `CREATE TABLE export_db.positions AS SELECT * FROM positions`
+5. Runs `CREATE TABLE export_db.raw_messages AS SELECT * FROM raw_messages`
+6. Runs `DETACH export_db`
+
+This all runs within the existing connection — recording continues uninterrupted. The frontend uses the Tauri `save()` dialog to pick the target path.
+
+### Shared Storage Architecture
+
+```
+AppState.storage: Arc<tokio::sync::RwLock<Option<StorageHandle>>>
+                  ──────────────────────────────────────────────
+                            │                    │
+                   relay_messages()        query commands
+                   (read-lock per flush)   (read-lock per call)
+                            │                    │
+                   release_storage()       reclaim_storage()
+                   (write-lock)            (write-lock)
+```
+
+**Why `tokio::sync::RwLock`** (not `std::sync`): Query commands are async and hold the read lock across the `.await` of `spawn_blocking` calls. `std::sync::RwLock` would block the async runtime.
+
+### UI (MetricsBar)
+
+Two elements in the footer metrics bar:
+
+| Element | Condition | Appearance | Action |
+|---------|-----------|------------|--------|
+| **DB button** | `available` | Lock icon + "DB" (subtle) | Click → release |
+| **DB Released** | `released` | Unlock icon + "DB Released" (amber) | Click → reclaim |
+| **Export DB** | `available` | Download icon + "Export DB" | Click → save dialog → export |
+| *(hidden)* | `unavailable` | Not rendered | — |
+
+The export button shows "Exporting..." with disabled state during the operation.
+
+### Events
+
+| Event | Payload | When |
+|-------|---------|------|
+| `adsb:storage-status` | `StorageAvailability` (`"available"` / `"released"`) | After release or reclaim |
+
+### Frontend Integration
+
+`page.tsx` initializes `storageStatus` state from `getStorageStatus()` and listens for `adsb:storage-status` events. The status and handlers are passed to `MetricsBar` as props.
 
 ---
 
@@ -3016,4 +3136,4 @@ This design prioritizes developer experience (hot reload, TypeScript, TDD), user
 
 ---
 
-*Last updated: March 2026 — Added section-aware track visibility system: single `hiddenSections` state (removed `hiddenGroups`), derived group eye icon state, selection-aware batch eye toggle, density overlay decoupled from visibility filters. Updated multi-select props (`selectedHexIdents`, `lastSelectedHexIdent`, `SelectEvent`). Previous: config persistence via `tauri-plugin-store`, receiver location, `adsb-data-engine` workspace crate (DuckDB persistent history), dual history system, DB History panel (docked/floating), configurable source/display timezone.*
+*Last updated: March 2026 — Added storage management (release/reclaim DuckDB connection, live export via ATTACH). SharedStorage (`Arc<RwLock<Option<StorageHandle>>>`) replaces `Option<StorageHandle>` for concurrent access. Previous: section-aware track visibility system, multi-select props, config persistence via `tauri-plugin-store`, receiver location, `adsb-data-engine` workspace crate (DuckDB persistent history), dual history system, DB History panel (docked/floating), configurable source/display timezone.*

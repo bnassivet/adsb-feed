@@ -3,15 +3,19 @@
 //! These commands are invoked from the Next.js frontend via `invoke()`.
 
 use crate::bridge;
-use crate::state::{AppState, ConnectionStatus, RecordingState, StatusResponse};
+use crate::state::{
+    AppState, ConnectionStatus, RecordingState, StatusResponse, StorageAvailability,
+};
 use adsb_data_engine::{
     AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, HourlyHeatmapCell,
-    HourlyHeatmapQuery, PositionRecord, RawMessageQuery, RawSbsRecord, StorageStats,
+    HourlyHeatmapQuery, PositionRecord, RawMessageQuery, RawSbsRecord, StorageHandle, StorageStats,
     TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
 };
 use adsb_pulsar_client::{Config, MetricsSnapshot};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tauri::{Emitter, State};
+use tracing::info;
 
 /// Starts the ADS-B feed client with the current configuration.
 #[tauri::command]
@@ -40,7 +44,7 @@ pub async fn start_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
     let feed_handle = bridge::start_feed(
         app,
         config,
-        state.storage.clone(),
+        Arc::clone(&state.storage),
         state.record_positions.clone(),
         state.record_raw.clone(),
     )?;
@@ -168,8 +172,8 @@ pub async fn query_bbox(
     query: BboxQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<PositionRecord>, String> {
-    let storage = state
-        .storage
+    let guard = state.storage.read().await;
+    let storage = guard
         .as_ref()
         .ok_or_else(|| "Storage not available".to_string())?;
     storage.query_bbox(query).await.map_err(|e| e.to_string())
@@ -181,8 +185,8 @@ pub async fn get_trajectory(
     query: TrajectoryQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<PositionRecord>, String> {
-    let storage = state
-        .storage
+    let guard = state.storage.read().await;
+    let storage = guard
         .as_ref()
         .ok_or_else(|| "Storage not available".to_string())?;
     storage
@@ -198,8 +202,8 @@ pub async fn get_aircraft_summary(
     end_ms: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<Vec<AircraftSummary>, String> {
-    let storage = state
-        .storage
+    let guard = state.storage.read().await;
+    let storage = guard
         .as_ref()
         .ok_or_else(|| "Storage not available".to_string())?;
     storage
@@ -214,8 +218,8 @@ pub async fn get_time_distribution(
     query: TimeDistributionQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<TimeDistributionBucket>, String> {
-    let storage = state
-        .storage
+    let guard = state.storage.read().await;
+    let storage = guard
         .as_ref()
         .ok_or_else(|| "Storage not available".to_string())?;
     storage
@@ -227,8 +231,8 @@ pub async fn get_time_distribution(
 /// Get storage statistics (row count, time range, estimated size).
 #[tauri::command]
 pub async fn get_storage_stats(state: State<'_, AppState>) -> Result<StorageStats, String> {
-    let storage = state
-        .storage
+    let guard = state.storage.read().await;
+    let storage = guard
         .as_ref()
         .ok_or_else(|| "Storage not available".to_string())?;
     storage.get_stats().await.map_err(|e| e.to_string())
@@ -240,8 +244,8 @@ pub async fn get_detection_range(
     query: DetectionRangeQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<DetectionRangeSector>, String> {
-    let storage = state
-        .storage
+    let guard = state.storage.read().await;
+    let storage = guard
         .as_ref()
         .ok_or_else(|| "Storage not available".to_string())?;
     storage
@@ -256,8 +260,8 @@ pub async fn get_hourly_heatmap(
     query: HourlyHeatmapQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<HourlyHeatmapCell>, String> {
-    let storage = state
-        .storage
+    let guard = state.storage.read().await;
+    let storage = guard
         .as_ref()
         .ok_or_else(|| "Storage not available".to_string())?;
     storage
@@ -273,8 +277,8 @@ pub async fn get_raw_message_count(
     end_ms: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<u64, String> {
-    let storage = state
-        .storage
+    let guard = state.storage.read().await;
+    let storage = guard
         .as_ref()
         .ok_or_else(|| "Storage not available".to_string())?;
     storage
@@ -289,8 +293,8 @@ pub async fn get_raw_messages(
     query: RawMessageQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<RawSbsRecord>, String> {
-    let storage = state
-        .storage
+    let guard = state.storage.read().await;
+    let storage = guard
         .as_ref()
         .ok_or_else(|| "Storage not available".to_string())?;
     storage
@@ -324,5 +328,97 @@ pub fn set_recording_state(
         .record_raw
         .store(recording.record_raw, Ordering::Relaxed);
     let _ = app.emit("adsb:recording-state", &recording);
+    Ok(())
+}
+
+// --- Storage management commands ---
+
+/// Returns the current storage availability status.
+#[tauri::command]
+pub async fn get_storage_status(state: State<'_, AppState>) -> Result<StorageAvailability, String> {
+    let guard = state.storage.read().await;
+    if guard.is_some() {
+        Ok(StorageAvailability::Available)
+    } else if state.storage_config.is_some() {
+        // Config exists but handle is None → was released
+        Ok(StorageAvailability::Released)
+    } else {
+        Ok(StorageAvailability::Unavailable)
+    }
+}
+
+/// Release the DuckDB connection so external tools can access the file.
+///
+/// Flushes the WAL via CHECKPOINT, then drops the connection handle.
+/// Recording silently stops (batches are dropped). Queries return
+/// "Storage not available" until reclaimed.
+#[tauri::command]
+pub async fn release_storage(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut guard = state.storage.write().await;
+    if let Some(ref storage) = *guard {
+        storage
+            .checkpoint()
+            .await
+            .map_err(|e| format!("Checkpoint failed: {e}"))?;
+        info!("Storage released — DuckDB connection dropped");
+    }
+    *guard = None;
+
+    let status = StorageAvailability::Released;
+    let _ = app.emit("adsb:storage-status", &status);
+    Ok(())
+}
+
+/// Reclaim the DuckDB connection after a release.
+///
+/// Reopens the database from the stored config. Fails if no config
+/// was stored (storage was never available) or if the file can't be opened.
+#[tauri::command]
+pub async fn reclaim_storage(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let config = state
+        .storage_config
+        .as_ref()
+        .ok_or_else(|| "No storage config available — storage was never initialized".to_string())?
+        .clone();
+
+    let handle =
+        StorageHandle::open(config).map_err(|e| format!("Failed to reopen storage: {e}"))?;
+    info!("Storage reclaimed — DuckDB connection reopened");
+
+    let mut guard = state.storage.write().await;
+    *guard = Some(handle);
+
+    let status = StorageAvailability::Available;
+    let _ = app.emit("adsb:storage-status", &status);
+    Ok(())
+}
+
+/// Export the database to a user-chosen path without stopping recording.
+///
+/// Uses DuckDB's ATTACH + CREATE TABLE AS within the active connection,
+/// so recording continues uninterrupted. The frontend provides the target
+/// path from a Tauri save-file dialog.
+#[tauri::command]
+pub async fn export_database(
+    target_path: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+
+    let path = std::path::PathBuf::from(&target_path);
+    storage
+        .export_database(path)
+        .await
+        .map_err(|e| format!("Export failed: {e}"))?;
+
     Ok(())
 }

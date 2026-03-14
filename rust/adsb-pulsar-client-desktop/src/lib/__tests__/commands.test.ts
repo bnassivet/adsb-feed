@@ -12,6 +12,10 @@ import {
   getDetectionRange,
   getRecordingState,
   setRecordingState,
+  getStorageStatus,
+  releaseStorage,
+  reclaimStorage,
+  exportDatabase,
 } from "../commands";
 import type {
   BboxQuery,
@@ -231,6 +235,49 @@ describe("Historical query commands", () => {
       await expect(
         setRecordingState({ record_positions: false, record_raw: true })
       ).resolves.toBeUndefined();
+    });
+  });
+
+  // --- Storage management commands ---
+
+  describe("getStorageStatus", () => {
+    it("returns available status", async () => {
+      mockInvokeResponse("get_storage_status", "available");
+      const result = await getStorageStatus();
+      expect(result).toBe("available");
+    });
+
+    it("returns released status", async () => {
+      mockInvokeResponse("get_storage_status", "released");
+      const result = await getStorageStatus();
+      expect(result).toBe("released");
+    });
+
+    it("returns unavailable status", async () => {
+      mockInvokeResponse("get_storage_status", "unavailable");
+      const result = await getStorageStatus();
+      expect(result).toBe("unavailable");
+    });
+  });
+
+  describe("releaseStorage", () => {
+    it("sends release command to backend", async () => {
+      mockInvokeResponse("release_storage", undefined);
+      await expect(releaseStorage()).resolves.toBeUndefined();
+    });
+  });
+
+  describe("reclaimStorage", () => {
+    it("sends reclaim command to backend", async () => {
+      mockInvokeResponse("reclaim_storage", undefined);
+      await expect(reclaimStorage()).resolves.toBeUndefined();
+    });
+  });
+
+  describe("exportDatabase", () => {
+    it("sends target path to backend", async () => {
+      mockInvokeResponse("export_database", undefined);
+      await expect(exportDatabase("/tmp/export.db")).resolves.toBeUndefined();
     });
   });
 });

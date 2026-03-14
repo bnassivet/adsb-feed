@@ -2,11 +2,12 @@
 //!
 //! Holds the shared state between Tauri commands and background tasks.
 
-use adsb_data_engine::StorageHandle;
+use adsb_data_engine::{StorageConfig, StorageHandle};
 use adsb_pulsar_client::{Config, Metrics};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
 /// Connection status for UI display.
@@ -53,6 +54,26 @@ pub struct RecordingState {
     pub record_raw: bool,
 }
 
+/// Availability state for the DuckDB storage connection.
+///
+/// - `Available`: Connection is active and usable.
+/// - `Released`: Connection was intentionally dropped (user clicked release).
+/// - `Unavailable`: Init failed or storage was never configured.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageAvailability {
+    Available,
+    Released,
+    Unavailable,
+}
+
+/// Shared DuckDB storage: `Arc<RwLock<Option<StorageHandle>>>`.
+///
+/// The relay task and query commands read-lock on each access.
+/// Release takes a write-lock and sets to `None`.
+/// Reclaim reopens from the stored `StorageConfig`.
+pub type SharedStorage = Arc<RwLock<Option<StorageHandle>>>;
+
 /// Top-level application state managed by Tauri.
 pub struct AppState {
     /// Current configuration (persisted via tauri-plugin-store)
@@ -61,8 +82,10 @@ pub struct AppState {
     pub feed_handle: Mutex<Option<FeedHandle>>,
     /// Current connection status
     pub connection_status: Mutex<StatusResponse>,
-    /// DuckDB storage handle (None if init failed — app still works in real-time-only mode)
-    pub storage: Option<StorageHandle>,
+    /// DuckDB storage handle, shared with the relay task via Arc<RwLock<...>>
+    pub storage: SharedStorage,
+    /// Config used to reopen storage after release (None if storage was never available)
+    pub storage_config: Option<StorageConfig>,
     /// Whether to record position data to DuckDB (toggled at runtime)
     pub record_positions: Arc<AtomicBool>,
     /// Whether to record raw SBS-1 messages to DuckDB (toggled at runtime)
@@ -72,10 +95,14 @@ pub struct AppState {
 impl AppState {
     #[cfg(test)]
     pub fn new(storage: Option<StorageHandle>) -> Self {
-        Self::with_config(Config::default(), storage)
+        Self::with_config(Config::default(), storage, None)
     }
 
-    pub fn with_config(config: Config, storage: Option<StorageHandle>) -> Self {
+    pub fn with_config(
+        config: Config,
+        storage: Option<StorageHandle>,
+        storage_config: Option<StorageConfig>,
+    ) -> Self {
         Self {
             config: Mutex::new(config),
             feed_handle: Mutex::new(None),
@@ -84,7 +111,8 @@ impl AppState {
                 socket_status: ConnectionStatus::Disconnected,
                 pulsar_status: ConnectionStatus::Disconnected,
             }),
-            storage,
+            storage: Arc::new(RwLock::new(storage)),
+            storage_config,
             record_positions: Arc::new(AtomicBool::new(true)),
             record_raw: Arc::new(AtomicBool::new(true)),
         }
@@ -155,6 +183,40 @@ mod tests {
         let rs: RecordingState = serde_json::from_value(json).unwrap();
         assert!(!rs.record_positions);
         assert!(rs.record_raw);
+    }
+
+    #[test]
+    fn test_storage_availability_serialize() {
+        let available = StorageAvailability::Available;
+        let json = serde_json::to_value(&available).unwrap();
+        assert_eq!(json, "available");
+
+        let released = StorageAvailability::Released;
+        let json = serde_json::to_value(&released).unwrap();
+        assert_eq!(json, "released");
+
+        let unavailable = StorageAvailability::Unavailable;
+        let json = serde_json::to_value(&unavailable).unwrap();
+        assert_eq!(json, "unavailable");
+    }
+
+    #[test]
+    fn test_storage_availability_deserialize() {
+        let val: StorageAvailability = serde_json::from_str("\"released\"").unwrap();
+        assert_eq!(val, StorageAvailability::Released);
+    }
+
+    #[test]
+    fn test_app_state_stores_storage_config() {
+        let config = adsb_data_engine::StorageConfig {
+            db_path: Some(std::path::PathBuf::from("/tmp/test.db")),
+            source_id: "test".to_string(),
+        };
+        let state = AppState::with_config(Config::default(), None, Some(config.clone()));
+        assert!(state.storage_config.is_some());
+        let stored = state.storage_config.unwrap();
+        assert_eq!(stored.source_id, "test");
+        assert_eq!(stored.db_path.unwrap().to_string_lossy(), "/tmp/test.db");
     }
 
     #[test]

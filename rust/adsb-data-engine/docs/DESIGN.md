@@ -200,6 +200,8 @@ The stored value is always UTC epoch milliseconds regardless of input timezone.
 | `prune` | `older_than_ms: i64` | `u64` (deleted count) | Delete positions and raw messages older than the given timestamp. |
 | `query_raw_messages` | `RawMessageQuery` | `Vec<RawSbsRecord>` | Raw SBS-1 lines for a specific aircraft and time window (limit 10 000). |
 | `get_raw_message_count` | `start_ms?, end_ms?` | `u64` | Count raw messages in optional time window. |
+| `checkpoint` | — | `()` | Flush the WAL to disk (`CHECKPOINT`). Called before releasing the connection or exporting. |
+| `export_database` | `target_path: PathBuf` | `()` | Copy both tables to a new DuckDB file via `ATTACH` + `CREATE TABLE AS` + `DETACH`. Runs within the active connection — recording continues uninterrupted. Overwrites target if it exists; creates parent directories as needed. |
 
 ### Detection Range Query (Advanced)
 
@@ -263,7 +265,7 @@ All public methods return `Result<T, StorageError>`. The Tauri command layer map
 
 ## Graceful Degradation
 
-The Tauri `AppState` holds `storage: Option<StorageHandle>`. If DuckDB fails to open (e.g., disk full, permission error), `storage` is `None` and all storage-backed Tauri commands return the string `"Storage not available"`. The application continues to operate in real-time-only mode — live aircraft tracks are still visible, historical queries are disabled.
+The Tauri `AppState` holds `storage: SharedStorage` (`Arc<RwLock<Option<StorageHandle>>>`). The storage is `None` when DuckDB fails to open (e.g., disk full, permission error) or when the user explicitly releases the connection for external tool access. In either case, all storage-backed Tauri commands return `"Storage not available"`. The application continues to operate in real-time-only mode — live aircraft tracks are still visible, historical queries are disabled. A released connection can be reclaimed at runtime using the retained `StorageConfig`.
 
 ---
 
@@ -317,6 +319,10 @@ All storage tests use in-memory DuckDB (`db_path: None`) for speed and isolation
 - Raw message insert and query
 - `Arc` cloning — two handles sharing the same connection
 - `source_id` propagation
+- Checkpoint on in-memory and file-backed databases
+- Export to tempfile: creates valid copy with both tables and correct row counts
+- Export overwrites existing target, creates parent directories
+- Original database still functional after export
 
 ---
 
@@ -358,6 +364,7 @@ dump1090 TCP stream (SBS-1 text)
     query_bbox   get_trajectory          get_detection_range
     get_hourly_heatmap                  get_time_distribution
     get_aircraft_summary                get_stats / prune
+    checkpoint / export_database
           │
           ▼
    Tauri commands → Frontend (React / Next.js)

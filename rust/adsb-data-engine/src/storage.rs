@@ -875,6 +875,74 @@ impl StorageHandle {
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
+
+    /// Flush the WAL to disk (synchronous).
+    ///
+    /// Forces DuckDB to write all pending changes from the write-ahead log
+    /// into the main database file. Call before releasing the connection
+    /// so external tools see a consistent state.
+    pub fn checkpoint_sync(&self) -> Result<(), StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+        storage.conn.execute_batch("CHECKPOINT")?;
+        Ok(())
+    }
+
+    /// Flush the WAL to disk (async via spawn_blocking).
+    pub async fn checkpoint(&self) -> Result<(), StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.checkpoint_sync())
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Export the database to a new file at `target_path` (synchronous).
+    ///
+    /// Uses DuckDB's `ATTACH` + `CREATE TABLE AS` to copy all tables
+    /// within the current connection — recording continues uninterrupted.
+    /// The target file is overwritten if it already exists.
+    pub fn export_database_sync(&self, target_path: &std::path::Path) -> Result<(), StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        // Flush WAL first for a consistent snapshot
+        storage.conn.execute_batch("CHECKPOINT")?;
+
+        // Clean overwrite
+        if target_path.exists() {
+            std::fs::remove_file(target_path)?;
+        }
+        if let Some(parent) = target_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let path_str = target_path.to_string_lossy().replace('\'', "''");
+        storage.conn.execute_batch(&format!(
+            "ATTACH '{}' AS export_db;
+             CREATE TABLE export_db.positions AS SELECT * FROM positions;
+             CREATE TABLE export_db.raw_messages AS SELECT * FROM raw_messages;
+             DETACH export_db;",
+            path_str
+        ))?;
+
+        info!("Database exported to {}", target_path.display());
+        Ok(())
+    }
+
+    /// Export the database to a new file (async via spawn_blocking).
+    pub async fn export_database(
+        &self,
+        target_path: std::path::PathBuf,
+    ) -> Result<(), StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.export_database_sync(&target_path))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
 }
 
 /// Parse an SBS-1 timestamp string ("YYYY/MM/DD HH:MM:SS.mmm") to UTC epoch milliseconds.
@@ -2256,5 +2324,160 @@ mod tests {
             query.metric,
             crate::types::TimeDistributionMetric::Positions
         );
+    }
+
+    // --- Checkpoint tests ---
+
+    #[test]
+    fn test_checkpoint_on_in_memory_db() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        // Insert some data so there's something to checkpoint
+        let positions = vec![sample_position(
+            "A1B2C3",
+            Some(45.5),
+            Some(-73.5),
+            "2024/01/15 10:30:00.000",
+        )];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+        // Should not error even on in-memory DB
+        handle.checkpoint_sync().unwrap();
+    }
+
+    #[test]
+    fn test_checkpoint_on_file_backed_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let config = StorageConfig {
+            db_path: Some(db_path),
+            source_id: "test".to_string(),
+        };
+        let handle = StorageHandle::open(config).unwrap();
+        let positions = vec![sample_position(
+            "A1B2C3",
+            Some(45.5),
+            Some(-73.5),
+            "2024/01/15 10:30:00.000",
+        )];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+        handle.checkpoint_sync().unwrap();
+        // Data still accessible after checkpoint
+        let stats = handle.get_stats_sync().unwrap();
+        assert_eq!(stats.row_count, 1);
+    }
+
+    // --- Export database tests ---
+
+    #[test]
+    fn test_export_database_creates_valid_copy() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        // Insert positions
+        let positions = vec![
+            sample_position("A1B2C3", Some(45.5), Some(-73.5), "2024/01/15 10:30:00.000"),
+            sample_position("D4E5F6", Some(46.0), Some(-74.0), "2024/01/15 10:31:00.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        // Insert raw messages
+        let raw_records = vec![crate::types::RawSbsRecord {
+            hex_ident: "A1B2C3".to_string(),
+            msg_type: "MSG".to_string(),
+            transmission_type: Some(3),
+            timestamp: "2024/01/15 10:30:00.000".to_string(),
+            timestamp_ms: 0,
+            raw_message: "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,,,45.5,-73.5,35000,,,,,,0"
+                .to_string(),
+            source_id: String::new(),
+        }];
+        handle.insert_raw_batch_sync(&raw_records, "UTC").unwrap();
+
+        // Export to a temp file
+        let dir = tempfile::tempdir().unwrap();
+        let export_path = dir.path().join("export.db");
+        handle.export_database_sync(&export_path).unwrap();
+
+        // Open exported DB and verify
+        assert!(export_path.exists());
+        let exported = Connection::open(&export_path).unwrap();
+
+        let pos_count: i64 = exported
+            .query_row("SELECT COUNT(*) FROM positions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(pos_count, 2);
+
+        let raw_count: i64 = exported
+            .query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(raw_count, 1);
+    }
+
+    #[test]
+    fn test_export_database_overwrites_existing() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let positions = vec![sample_position(
+            "A1B2C3",
+            Some(45.5),
+            Some(-73.5),
+            "2024/01/15 10:30:00.000",
+        )];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let export_path = dir.path().join("export.db");
+
+        // Export once
+        handle.export_database_sync(&export_path).unwrap();
+        // Export again — should overwrite without error
+        handle.export_database_sync(&export_path).unwrap();
+
+        let exported = Connection::open(&export_path).unwrap();
+        let pos_count: i64 = exported
+            .query_row("SELECT COUNT(*) FROM positions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(pos_count, 1);
+    }
+
+    #[test]
+    fn test_export_database_creates_parent_dirs() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let positions = vec![sample_position(
+            "A1B2C3",
+            Some(45.5),
+            Some(-73.5),
+            "2024/01/15 10:30:00.000",
+        )];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let export_path = dir.path().join("nested").join("dir").join("export.db");
+
+        handle.export_database_sync(&export_path).unwrap();
+        assert!(export_path.exists());
+    }
+
+    #[test]
+    fn test_export_database_original_still_works() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let positions = vec![sample_position(
+            "A1B2C3",
+            Some(45.5),
+            Some(-73.5),
+            "2024/01/15 10:30:00.000",
+        )];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let export_path = dir.path().join("export.db");
+        handle.export_database_sync(&export_path).unwrap();
+
+        // Original DB still works — can insert and query after export
+        let more = vec![sample_position(
+            "D4E5F6",
+            Some(46.0),
+            Some(-74.0),
+            "2024/01/15 10:31:00.000",
+        )];
+        handle.insert_batch_sync(&more, "UTC").unwrap();
+        let stats = handle.get_stats_sync().unwrap();
+        assert_eq!(stats.row_count, 2);
     }
 }

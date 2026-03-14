@@ -4,10 +4,9 @@
 //! to the frontend via Tauri events, with throttling to prevent
 //! overwhelming the webview.
 
-use crate::state::{ConnectionStatus, FeedHandle, StatusResponse};
+use crate::state::{ConnectionStatus, FeedHandle, SharedStorage, StatusResponse};
 use adsb_data_engine::{
     extract_sbs_timestamp, parse_sbs_message, parse_sbs_raw_fields, AircraftPosition, RawSbsRecord,
-    StorageHandle,
 };
 use adsb_pulsar_client::forwarder::NoopForwarder;
 use adsb_pulsar_client::{ADSBFeedClient, Config, Metrics};
@@ -26,7 +25,7 @@ use tracing::{error, info, warn};
 pub fn start_feed(
     app: AppHandle,
     config: Config,
-    storage: Option<StorageHandle>,
+    storage: SharedStorage,
     record_positions: Arc<AtomicBool>,
     record_raw: Arc<AtomicBool>,
 ) -> Result<FeedHandle, String> {
@@ -186,7 +185,7 @@ async fn relay_messages(
     app: AppHandle,
     mut rx: broadcast::Receiver<Vec<u8>>,
     last_message_time: Arc<RwLock<Instant>>,
-    storage: Option<StorageHandle>,
+    storage: SharedStorage,
     dump1090_tz: String,
     messages_received: Arc<AtomicU64>,
     record_positions: Arc<AtomicBool>,
@@ -300,24 +299,26 @@ fn merge_into_buffer(buffer: &mut HashMap<String, AircraftPosition>, new: Aircra
 }
 
 /// Persist a batch of positions to DuckDB (non-fatal on failure).
-async fn persist_batch(storage: &Option<StorageHandle>, batch: &[AircraftPosition], tz: &str) {
-    if let Some(ref storage) = storage {
-        if let Err(e) = storage.insert_batch(batch.to_vec(), tz.to_string()).await {
+///
+/// Takes a read-lock on the shared storage. If storage has been released
+/// (set to `None`), the batch is silently dropped.
+async fn persist_batch(storage: &SharedStorage, batch: &[AircraftPosition], tz: &str) {
+    let guard = storage.read().await;
+    if let Some(ref s) = *guard {
+        if let Err(e) = s.insert_batch(batch.to_vec(), tz.to_string()).await {
             warn!("Storage insert failed: {e}");
         }
     }
 }
 
 /// Persist a batch of raw SBS messages to DuckDB (non-fatal on failure).
-async fn persist_raw_batch(storage: &Option<StorageHandle>, batch: &[RawSbsRecord], tz: &str) {
+async fn persist_raw_batch(storage: &SharedStorage, batch: &[RawSbsRecord], tz: &str) {
     if batch.is_empty() {
         return;
     }
-    if let Some(ref storage) = storage {
-        if let Err(e) = storage
-            .insert_raw_batch(batch.to_vec(), tz.to_string())
-            .await
-        {
+    let guard = storage.read().await;
+    if let Some(ref s) = *guard {
+        if let Err(e) = s.insert_raw_batch(batch.to_vec(), tz.to_string()).await {
             warn!("Raw storage insert failed: {e}");
         }
     }

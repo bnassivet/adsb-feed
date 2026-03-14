@@ -37,11 +37,11 @@ pub fn run() {
         .setup(|app| {
             // Initialize DuckDB storage in the app data directory.
             // Failure is non-fatal — the app continues in real-time-only mode.
-            let storage = init_storage(app);
+            let (storage, storage_config) = init_storage(app);
 
             // Load persisted config from Tauri store (falls back to defaults).
             let config = load_config(app);
-            let state = AppState::with_config(config, storage);
+            let state = AppState::with_config(config, storage, storage_config);
             app.manage(state);
             Ok(())
         })
@@ -64,6 +64,10 @@ pub fn run() {
             commands::get_raw_message_count,
             commands::get_recording_state,
             commands::set_recording_state,
+            commands::get_storage_status,
+            commands::release_storage,
+            commands::reclaim_storage,
+            commands::export_database,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -110,22 +114,28 @@ pub fn persist_config(app: &tauri::AppHandle, config: &Config) -> Result<(), Str
 
 /// Initialize DuckDB storage in the Tauri app data directory.
 ///
-/// Returns `None` if initialization fails (app continues without history).
-fn init_storage(app: &tauri::App) -> Option<StorageHandle> {
-    let app_data_dir = app.path().app_data_dir().ok()?;
+/// Returns `(handle, config)`. The config is kept for reopening after release.
+/// Returns `(None, None)` if initialization fails (app continues without history).
+fn init_storage(app: &tauri::App) -> (Option<StorageHandle>, Option<StorageConfig>) {
+    let app_data_dir = match app.path().app_data_dir() {
+        Ok(dir) => dir,
+        Err(_) => return (None, None),
+    };
     let db_path = app_data_dir.join("adsb_history.db");
 
-    match StorageHandle::open(StorageConfig {
+    let config = StorageConfig {
         db_path: Some(db_path.clone()),
         source_id: "desktop".to_string(),
-    }) {
+    };
+
+    match StorageHandle::open(config.clone()) {
         Ok(handle) => {
             info!("Storage initialized: {}", db_path.display());
-            Some(handle)
+            (Some(handle), Some(config))
         }
         Err(e) => {
             warn!("Storage init failed (continuing without history): {e}");
-            None
+            (None, Some(config))
         }
     }
 }

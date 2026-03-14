@@ -123,4 +123,96 @@ describe("MetricsBar", () => {
     await user.click(screen.getByText("REC Raw"));
     expect(onToggleRaw).toHaveBeenCalledOnce();
   });
+
+  // --- Storage management UI ---
+
+  it("shows DB button when storage is available", () => {
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        storageStatus="available"
+        onReleaseStorage={() => {}}
+        onExportDatabase={() => {}}
+      />
+    );
+    expect(screen.getByText("DB")).toBeInTheDocument();
+    expect(screen.getByText("Export DB")).toBeInTheDocument();
+  });
+
+  it("shows DB Released button when storage is released", () => {
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        storageStatus="released"
+        onReclaimStorage={() => {}}
+      />
+    );
+    expect(screen.getByText("DB Released")).toBeInTheDocument();
+    expect(screen.queryByText("Export DB")).toBeNull();
+  });
+
+  it("hides DB buttons when storage is unavailable", () => {
+    render(<MetricsBar metrics={makeMetrics()} storageStatus="unavailable" />);
+    expect(screen.queryByText("DB")).toBeNull();
+    expect(screen.queryByText("DB Released")).toBeNull();
+    expect(screen.queryByText("Export DB")).toBeNull();
+  });
+
+  it("calls release callback on DB button click", async () => {
+    const user = userEvent.setup();
+    const onRelease = vi.fn();
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        storageStatus="available"
+        onReleaseStorage={onRelease}
+        onExportDatabase={() => {}}
+      />
+    );
+    await user.click(screen.getByText("DB"));
+    expect(onRelease).toHaveBeenCalledOnce();
+  });
+
+  it("calls reclaim callback on DB Released button click", async () => {
+    const user = userEvent.setup();
+    const onReclaim = vi.fn();
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        storageStatus="released"
+        onReclaimStorage={onReclaim}
+      />
+    );
+    await user.click(screen.getByText("DB Released"));
+    expect(onReclaim).toHaveBeenCalledOnce();
+  });
+
+  it("calls export callback on Export DB click", async () => {
+    const user = userEvent.setup();
+    const onExport = vi.fn();
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        storageStatus="available"
+        onReleaseStorage={() => {}}
+        onExportDatabase={onExport}
+      />
+    );
+    await user.click(screen.getByText("Export DB"));
+    expect(onExport).toHaveBeenCalledOnce();
+  });
+
+  it("shows Exporting... text during export", () => {
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        storageStatus="available"
+        onReleaseStorage={() => {}}
+        onExportDatabase={() => {}}
+        isExporting={true}
+      />
+    );
+    expect(screen.getByText("Exporting...")).toBeInTheDocument();
+    expect(screen.queryByText("Export DB")).toBeNull();
+  });
 });

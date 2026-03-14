@@ -14,6 +14,7 @@ import type {
   RawSbsRecord,
   RecordingState,
   StatusResponse,
+  StorageAvailability,
   StorageStats,
   TimeDistributionBucket,
   TimeDistributionQuery,
@@ -120,4 +121,22 @@ export async function setRecordingState(
   recording: RecordingState
 ): Promise<void> {
   return invoke("set_recording_state", { recording });
+}
+
+// --- Storage management commands ---
+
+export async function getStorageStatus(): Promise<StorageAvailability> {
+  return invoke("get_storage_status");
+}
+
+export async function releaseStorage(): Promise<void> {
+  return invoke("release_storage");
+}
+
+export async function reclaimStorage(): Promise<void> {
+  return invoke("reclaim_storage");
+}
+
+export async function exportDatabase(targetPath: string): Promise<void> {
+  return invoke("export_database", { targetPath });
 }
