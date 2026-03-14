@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildAltitudeBins,
   buildHeatmapGrid,
+  buildHeatmapCellLookup,
   computeDbHistorySummary,
   formatTimeChartData,
   formatAdaptiveTimeLabel,
@@ -217,8 +218,8 @@ describe("buildHeatmapGrid", () => {
   const JAN16 = JAN15 + DAY_MS;
   const JAN17 = JAN16 + DAY_MS;
 
-  function makeCell(day_ms: number, hour: number, aircraft: number, messages: number): HourlyHeatmapCell {
-    return { day_ms, hour, aircraft_count: aircraft, message_count: messages };
+  function makeCell(day_ms: number, hour: number, aircraft: number, messages: number, raw: number = 0): HourlyHeatmapCell {
+    return { day_ms, hour, aircraft_count: aircraft, message_count: messages, raw_message_count: raw };
   }
 
   it("returns empty grid for empty input", () => {
@@ -282,5 +283,47 @@ describe("buildHeatmapGrid", () => {
     // Other hours should be 0
     expect(grid[0].hours[0]).toBe(0);
     expect(grid[0].hours[12]).toBe(0);
+  });
+
+  it("uses raw_message_count when metric is 'raw_messages'", () => {
+    const cells = [makeCell(JAN15, 10, 5, 100, 3456)];
+    const grid = buildHeatmapGrid(cells, JAN15, JAN15 + DAY_MS, "raw_messages");
+    expect(grid[0].hours[10]).toBe(3456);
+  });
+});
+
+// --- buildHeatmapCellLookup ---
+
+describe("buildHeatmapCellLookup", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const JAN15 = Date.UTC(2024, 0, 15);
+
+  function makeCell(day_ms: number, hour: number, aircraft: number, messages: number, raw: number = 0): HourlyHeatmapCell {
+    return { day_ms, hour, aircraft_count: aircraft, message_count: messages, raw_message_count: raw };
+  }
+
+  it("creates lookup keyed by day_ms-hour", () => {
+    const cells = [
+      makeCell(JAN15, 10, 5, 100, 300),
+      makeCell(JAN15, 14, 2, 50, 150),
+    ];
+    const lookup = buildHeatmapCellLookup(cells);
+    expect(lookup.size).toBe(2);
+    expect(lookup.get(`${JAN15}-10`)).toEqual(cells[0]);
+    expect(lookup.get(`${JAN15}-14`)).toEqual(cells[1]);
+  });
+
+  it("returns empty map for empty input", () => {
+    const lookup = buildHeatmapCellLookup([]);
+    expect(lookup.size).toBe(0);
+  });
+
+  it("allows quick access to all metrics for tooltip", () => {
+    const cells = [makeCell(JAN15, 10, 5, 100, 300)];
+    const lookup = buildHeatmapCellLookup(cells);
+    const cell = lookup.get(`${JAN15}-10`)!;
+    expect(cell.aircraft_count).toBe(5);
+    expect(cell.message_count).toBe(100);
+    expect(cell.raw_message_count).toBe(300);
   });
 });

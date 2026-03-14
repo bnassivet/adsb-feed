@@ -25,8 +25,9 @@ function makeCell(
   hour: number,
   aircraft_count: number,
   message_count: number,
+  raw_message_count: number = 0,
 ): HourlyHeatmapCell {
-  return { day_ms, hour, aircraft_count, message_count };
+  return { day_ms, hour, aircraft_count, message_count, raw_message_count };
 }
 
 describe("DBHistoryAnalytics — Summary stats", () => {
@@ -92,8 +93,8 @@ describe("DBHistoryAnalytics — Activity Heatmap", () => {
     expect(screen.queryByTestId("heatmap-section")).not.toBeInTheDocument();
   });
 
-  it("shows Aircraft/Messages toggle", () => {
-    const cells = [makeCell(JAN15, 10, 5, 100)];
+  it("shows Aircraft/Messages/Raw Msgs toggle", () => {
+    const cells = [makeCell(JAN15, 10, 5, 100, 300)];
     render(
       <DBHistoryAnalytics
         {...defaultProps}
@@ -107,11 +108,12 @@ describe("DBHistoryAnalytics — Activity Heatmap", () => {
     expect(screen.getByTestId("heatmap-metric-toggle")).toBeInTheDocument();
     expect(screen.getByTestId("heatmap-metric-aircraft")).toBeInTheDocument();
     expect(screen.getByTestId("heatmap-metric-messages")).toBeInTheDocument();
+    expect(screen.getByTestId("heatmap-metric-raw_messages")).toBeInTheDocument();
   });
 
-  it("toggles between aircraft and messages metric", async () => {
+  it("toggles between aircraft, messages, and raw_messages metric", async () => {
     const user = userEvent.setup();
-    const cells = [makeCell(JAN15, 10, 5, 100)];
+    const cells = [makeCell(JAN15, 10, 5, 100, 300)];
     render(
       <DBHistoryAnalytics
         {...defaultProps}
@@ -126,11 +128,16 @@ describe("DBHistoryAnalytics — Activity Heatmap", () => {
     // Aircraft button should be active initially (cyan text)
     const aircraftBtn = screen.getByTestId("heatmap-metric-aircraft");
     const messagesBtn = screen.getByTestId("heatmap-metric-messages");
+    const rawBtn = screen.getByTestId("heatmap-metric-raw_messages");
     expect(aircraftBtn.className).toContain("text-cyan-300");
 
     // Click Messages
     await user.click(messagesBtn);
     expect(messagesBtn.className).toContain("text-cyan-300");
+
+    // Click Raw Msgs
+    await user.click(rawBtn);
+    expect(rawBtn.className).toContain("text-cyan-300");
   });
 
   it("renders correct number of hour columns", () => {

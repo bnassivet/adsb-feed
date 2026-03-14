@@ -1,4 +1,4 @@
-import type { AircraftSummary, HourlyHeatmapCell, TimeDistributionBucket, TimeGranularity } from "./types";
+import type { AircraftSummary, HeatmapMetric, HourlyHeatmapCell, TimeDistributionBucket, TimeGranularity } from "./types";
 
 /** A single bin in an altitude histogram. */
 export interface AltitudeBin {
@@ -190,7 +190,7 @@ export function buildHeatmapGrid(
   cells: HourlyHeatmapCell[],
   startMs: number,
   endMs: number,
-  metric: "aircraft" | "messages" = "aircraft",
+  metric: HeatmapMetric = "aircraft",
   tzName?: string,
 ): HeatmapRow[] {
   if (startMs >= endMs) return [];
@@ -208,7 +208,8 @@ export function buildHeatmapGrid(
       hourMap = new Map();
       cellMap.set(c.day_ms, hourMap);
     }
-    hourMap.set(c.hour, metric === "aircraft" ? c.aircraft_count : c.message_count);
+    const value = metric === "aircraft" ? c.aircraft_count : metric === "messages" ? c.message_count : c.raw_message_count;
+    hourMap.set(c.hour, value);
   }
 
   // Generate rows for each day in range, most recent first.
@@ -232,6 +233,18 @@ export function buildHeatmapGrid(
 /** Floor a timestamp to midnight UTC of that day. */
 function floorToDay(ms: number): number {
   return Math.floor(ms / MS_DAY) * MS_DAY;
+}
+
+/**
+ * Build a lookup map from heatmap cells, keyed by `"${day_ms}-${hour}"`.
+ * Used to quickly retrieve all metrics for a given cell in multi-metric tooltips.
+ */
+export function buildHeatmapCellLookup(cells: HourlyHeatmapCell[]): Map<string, HourlyHeatmapCell> {
+  const map = new Map<string, HourlyHeatmapCell>();
+  for (const c of cells) {
+    map.set(`${c.day_ms}-${c.hour}`, c);
+  }
+  return map;
 }
 
 /** Format a midnight epoch ms to a short day label like "Mon 1/15". */

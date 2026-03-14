@@ -584,27 +584,50 @@ impl StorageHandle {
             .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
 
         let sql = r#"
+            WITH pos AS (
+                SELECT
+                    CAST(epoch_ms(CAST(epoch_ms(timestamp_ms) AS DATE)) AS BIGINT) AS day_ms,
+                    EXTRACT(HOUR FROM epoch_ms(timestamp_ms)) AS hour,
+                    COUNT(DISTINCT hex_ident) AS aircraft_count,
+                    COUNT(*) AS message_count
+                FROM positions
+                WHERE timestamp_ms BETWEEN ? AND ?
+                GROUP BY day_ms, hour
+            ),
+            raw AS (
+                SELECT
+                    CAST(epoch_ms(CAST(epoch_ms(timestamp_ms) AS DATE)) AS BIGINT) AS day_ms,
+                    EXTRACT(HOUR FROM epoch_ms(timestamp_ms)) AS hour,
+                    COUNT(*) AS raw_message_count
+                FROM raw_messages
+                WHERE timestamp_ms BETWEEN ? AND ?
+                GROUP BY day_ms, hour
+            )
             SELECT
-                CAST(epoch_ms(CAST(epoch_ms(timestamp_ms) AS DATE)) AS BIGINT) AS day_ms,
-                EXTRACT(HOUR FROM epoch_ms(timestamp_ms)) AS hour,
-                COUNT(DISTINCT hex_ident) AS aircraft_count,
-                COUNT(*) AS message_count
-            FROM positions
-            WHERE timestamp_ms BETWEEN ? AND ?
-            GROUP BY day_ms, hour
+                COALESCE(pos.day_ms, raw.day_ms) AS day_ms,
+                COALESCE(pos.hour, raw.hour) AS hour,
+                COALESCE(pos.aircraft_count, 0) AS aircraft_count,
+                COALESCE(pos.message_count, 0) AS message_count,
+                COALESCE(raw.raw_message_count, 0) AS raw_message_count
+            FROM pos
+            FULL OUTER JOIN raw ON pos.day_ms = raw.day_ms AND pos.hour = raw.hour
             ORDER BY day_ms, hour
         "#;
 
         let mut stmt = storage.conn.prepare(sql)?;
         let rows = stmt
-            .query_map(params![query.start_ms, query.end_ms], |row| {
-                Ok(HourlyHeatmapCell {
-                    day_ms: row.get(0)?,
-                    hour: row.get::<_, i32>(1)? as u8,
-                    aircraft_count: row.get::<_, i64>(2)? as u64,
-                    message_count: row.get::<_, i64>(3)? as u64,
-                })
-            })?
+            .query_map(
+                params![query.start_ms, query.end_ms, query.start_ms, query.end_ms],
+                |row| {
+                    Ok(HourlyHeatmapCell {
+                        day_ms: row.get(0)?,
+                        hour: row.get::<_, i32>(1)? as u8,
+                        aircraft_count: row.get::<_, i64>(2)? as u64,
+                        message_count: row.get::<_, i64>(3)? as u64,
+                        raw_message_count: row.get::<_, i64>(4)? as u64,
+                    })
+                },
+            )?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(rows)
@@ -1920,16 +1943,19 @@ mod tests {
         assert_eq!(cells[0].hour, 10);
         assert_eq!(cells[0].aircraft_count, 2);
         assert_eq!(cells[0].message_count, 2);
+        assert_eq!(cells[0].raw_message_count, 0);
 
         // Jan 15, hour 14: 1 message, 1 aircraft (A1)
         assert_eq!(cells[1].hour, 14);
         assert_eq!(cells[1].aircraft_count, 1);
         assert_eq!(cells[1].message_count, 1);
+        assert_eq!(cells[1].raw_message_count, 0);
 
         // Jan 16, hour 10: 1 message, 1 aircraft (A3)
         assert_eq!(cells[2].hour, 10);
         assert_eq!(cells[2].aircraft_count, 1);
         assert_eq!(cells[2].message_count, 1);
+        assert_eq!(cells[2].raw_message_count, 0);
     }
 
     #[test]
@@ -1967,6 +1993,53 @@ mod tests {
 
         assert_eq!(cells.len(), 1);
         assert_eq!(cells[0].aircraft_count, 1);
+        assert_eq!(cells[0].raw_message_count, 0);
+    }
+
+    #[test]
+    fn test_hourly_heatmap_includes_raw_message_count() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        // Insert positions and raw messages in overlapping time windows.
+        let positions = vec![
+            sample_position("A1", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000"),
+            sample_position("A2", Some(45.6), Some(-73.6), "2024/01/15 10:30:00.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let raw_records = vec![
+            sample_raw_record("A1", "MSG,3", Some(3), "2024/01/15 10:00:00.000"),
+            sample_raw_record("A1", "MSG,1", Some(1), "2024/01/15 10:00:01.000"),
+            sample_raw_record("A2", "MSG,3", Some(3), "2024/01/15 10:00:02.000"),
+            // One raw message in hour 14, no positions in that hour
+            sample_raw_record("A3", "MSG,4", Some(4), "2024/01/15 14:00:00.000"),
+        ];
+        handle.insert_raw_batch_sync(&raw_records, "UTC").unwrap();
+
+        let start = parse_timestamp_to_ms("2024/01/15 00:00:00.000", "UTC");
+        let end = parse_timestamp_to_ms("2024/01/15 23:59:59.000", "UTC");
+
+        let cells = handle
+            .get_hourly_heatmap_sync(crate::types::HourlyHeatmapQuery {
+                start_ms: start,
+                end_ms: end,
+            })
+            .unwrap();
+
+        // Should have 2 cells: hour 10 (positions + raw) and hour 14 (raw only)
+        assert_eq!(cells.len(), 2);
+
+        // Hour 10: 2 aircraft, 2 position msgs, 3 raw msgs
+        let h10 = cells.iter().find(|c| c.hour == 10).unwrap();
+        assert_eq!(h10.aircraft_count, 2);
+        assert_eq!(h10.message_count, 2);
+        assert_eq!(h10.raw_message_count, 3);
+
+        // Hour 14: 0 aircraft, 0 position msgs, 1 raw msg (from FULL OUTER JOIN)
+        let h14 = cells.iter().find(|c| c.hour == 14).unwrap();
+        assert_eq!(h14.aircraft_count, 0);
+        assert_eq!(h14.message_count, 0);
+        assert_eq!(h14.raw_message_count, 1);
     }
 
     // --- Raw messages tests ---

@@ -6,6 +6,7 @@ import type { RadarMode } from "@/lib/detection-radar";
 import {
   buildAltitudeBins,
   buildHeatmapGrid,
+  buildHeatmapCellLookup,
   computeDbHistorySummary,
   formatTimeChartData,
   formatAdaptiveTimeLabel,
@@ -152,8 +153,8 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSe
 // --- Time distribution chart with drag-to-zoom ---
 
 const TIME_METRICS: { value: TimeDistributionMetric; label: string }[] = [
-  { value: "positions", label: "Positions" },
   { value: "aircraft", label: "Aircraft" },
+  { value: "positions", label: "Messages" },
   { value: "raw_messages", label: "Raw Msgs" },
 ];
 
@@ -333,6 +334,7 @@ function DetectionRangeSection({ sectors }: { sectors: DetectionRangeSector[] })
 const HEATMAP_METRICS: { value: HeatmapMetric; label: string }[] = [
   { value: "aircraft", label: "Aircraft" },
   { value: "messages", label: "Messages" },
+  { value: "raw_messages", label: "Raw Msgs" },
 ];
 
 const HOUR_LABELS = Array.from({ length: 24 }, (_, i) => i);
@@ -374,6 +376,8 @@ function ActivityHeatmap({
     () => buildHeatmapGrid(cells, startMs, endMs, metric, tzName),
     [cells, startMs, endMs, metric, tzName],
   );
+
+  const cellLookup = useMemo(() => buildHeatmapCellLookup(cells), [cells]);
 
   // Compute max value for normalisation
   const maxVal = useMemo(() => {
@@ -435,6 +439,13 @@ function ActivityHeatmap({
               {row.hours.map((val, hi) => {
                 const t = maxVal > 0 ? val / maxVal : 0;
                 const isHovered = hoveredCell?.row === ri && hoveredCell?.col === hi;
+                const cell = cellLookup.get(`${row.dayMs}-${hi}`);
+                const tooltipLines = [
+                  `${row.dayLabel} ${hi}:00–${hi}:59`,
+                  `${(cell?.aircraft_count ?? 0).toLocaleString()} aircraft`,
+                  `${(cell?.message_count ?? 0).toLocaleString()} messages`,
+                  `${(cell?.raw_message_count ?? 0).toLocaleString()} raw msgs`,
+                ];
                 return (
                   <div
                     key={hi}
@@ -443,7 +454,7 @@ function ActivityHeatmap({
                       backgroundColor: heatmapColor(t),
                       outline: isHovered ? "1px solid #94a3b8" : "none",
                     }}
-                    title={`${row.dayLabel} ${hi}:00–${hi}:59 — ${val.toLocaleString()} ${metric === "aircraft" ? "aircraft" : "messages"}`}
+                    title={tooltipLines.join("\n")}
                     onMouseEnter={() => setHoveredCell({ row: ri, col: hi })}
                     onMouseLeave={() => setHoveredCell(null)}
                   />

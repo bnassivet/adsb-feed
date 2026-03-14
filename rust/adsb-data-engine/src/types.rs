@@ -154,6 +154,8 @@ pub struct HourlyHeatmapCell {
     pub aircraft_count: u64,
     /// Total number of position messages in this cell.
     pub message_count: u64,
+    /// Total number of raw SBS-1 messages in this cell.
+    pub raw_message_count: u64,
 }
 
 /// Configuration for opening a storage handle.

@@ -237,10 +237,12 @@ export interface HourlyHeatmapCell {
   aircraft_count: number;
   /** Total number of position messages in this cell. */
   message_count: number;
+  /** Total number of raw SBS-1 messages in this cell. */
+  raw_message_count: number;
 }
 
 /** Which metric the activity heatmap displays. */
-export type HeatmapMetric = "aircraft" | "messages";
+export type HeatmapMetric = "aircraft" | "messages" | "raw_messages";
 
 /** Storage statistics. */
 export interface StorageStats {
