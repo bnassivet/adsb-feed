@@ -17,14 +17,15 @@ const EMPTY_METRICS: MetricsSnapshot = {
 };
 
 export interface MetricsWithRates extends MetricsSnapshot {
-  /** Windowed raw SBS-1 message rate (pre-throttle). */
+  /** Windowed raw TCP line rate (all lines from socket, pre-parse). */
   hits_per_sec: number;
 }
 
 /**
  * Subscribes to `adsb:metrics` events and returns the latest snapshot
- * with throughput_msg_per_sec replaced by a sliding-window rate,
- * plus a windowed hits_per_sec for raw message rate.
+ * with windowed rates:
+ * - `hits_per_sec`: all raw lines from socket (messages_sent counter)
+ * - `throughput_msg_per_sec`: successfully parsed MSG messages (messages_received counter)
  */
 export function useMetrics(): MetricsWithRates {
   const [metrics, setMetrics] = useState<MetricsSnapshot>(EMPTY_METRICS);
@@ -35,16 +36,16 @@ export function useMetrics(): MetricsWithRates {
   const active = metrics.elapsed_secs > 0 ? metrics : null;
 
   const windowedRate = useWindowedRate(
+    active?.messages_received ?? null,
+    metrics.elapsed_secs,
+    windowSecs,
+  );
+
+  const hitsPerSec = useWindowedRate(
     active?.messages_sent ?? null,
     metrics.elapsed_secs,
     windowSecs,
     metrics.throughput_msg_per_sec,
-  );
-
-  const hitsPerSec = useWindowedRate(
-    active?.messages_received ?? null,
-    metrics.elapsed_secs,
-    windowSecs,
   );
 
   return useMemo(
