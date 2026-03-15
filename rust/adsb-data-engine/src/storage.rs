@@ -945,6 +945,40 @@ impl StorageHandle {
     }
 }
 
+/// Move a database file (and its WAL) to a snapshot path.
+///
+/// The DuckDB connection **must be closed** before calling this function,
+/// otherwise the file may be locked. Parent directories of `snapshot_path`
+/// are created automatically.
+///
+/// If a WAL file (`*.db.wal`) exists alongside `db_path`, it is moved too.
+pub fn move_database_to_snapshot(
+    db_path: &std::path::Path,
+    snapshot_path: &std::path::Path,
+) -> Result<(), StorageError> {
+    // Create parent dirs for snapshot
+    if let Some(parent) = snapshot_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Move main DB file
+    std::fs::rename(db_path, snapshot_path)?;
+
+    // Move WAL file if it exists
+    let wal_source = db_path.with_extension("db.wal");
+    if wal_source.exists() {
+        let wal_target = snapshot_path.with_extension("db.wal");
+        std::fs::rename(&wal_source, &wal_target)?;
+    }
+
+    info!(
+        "Database moved to snapshot: {} → {}",
+        db_path.display(),
+        snapshot_path.display()
+    );
+    Ok(())
+}
+
 /// Parse an SBS-1 timestamp string ("YYYY/MM/DD HH:MM:SS.mmm") to UTC epoch milliseconds.
 ///
 /// `tz` controls how the naive datetime is interpreted:
@@ -2479,5 +2513,63 @@ mod tests {
         handle.insert_batch_sync(&more, "UTC").unwrap();
         let stats = handle.get_stats_sync().unwrap();
         assert_eq!(stats.row_count, 2);
+    }
+
+    // --- move_database_to_snapshot tests ---
+
+    #[test]
+    fn test_move_database_to_snapshot_renames_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        std::fs::write(&db_path, b"data").unwrap();
+
+        let snapshot_path = dir.path().join("test_snapshot.db");
+        move_database_to_snapshot(&db_path, &snapshot_path).unwrap();
+
+        assert!(!db_path.exists());
+        assert!(snapshot_path.exists());
+        assert_eq!(std::fs::read(&snapshot_path).unwrap(), b"data");
+    }
+
+    #[test]
+    fn test_move_database_to_snapshot_creates_parent_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        std::fs::write(&db_path, b"data").unwrap();
+
+        let snapshot_path = dir.path().join("snapshots").join("nested").join("test.db");
+        move_database_to_snapshot(&db_path, &snapshot_path).unwrap();
+
+        assert!(!db_path.exists());
+        assert!(snapshot_path.exists());
+    }
+
+    #[test]
+    fn test_move_database_to_snapshot_moves_wal_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let wal_path = dir.path().join("test.db.wal");
+        std::fs::write(&db_path, b"data").unwrap();
+        std::fs::write(&wal_path, b"wal-data").unwrap();
+
+        let snapshot_path = dir.path().join("snapshot.db");
+        move_database_to_snapshot(&db_path, &snapshot_path).unwrap();
+
+        assert!(!db_path.exists());
+        assert!(!wal_path.exists());
+        assert!(snapshot_path.exists());
+        let wal_snapshot = dir.path().join("snapshot.db.wal");
+        assert!(wal_snapshot.exists());
+        assert_eq!(std::fs::read(&wal_snapshot).unwrap(), b"wal-data");
+    }
+
+    #[test]
+    fn test_move_database_to_snapshot_missing_source_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("nonexistent.db");
+        let snapshot_path = dir.path().join("snapshot.db");
+
+        let result = move_database_to_snapshot(&db_path, &snapshot_path);
+        assert!(result.is_err());
     }
 }

@@ -202,6 +202,63 @@ describe("MetricsBar", () => {
     expect(onExport).toHaveBeenCalledOnce();
   });
 
+  // --- Swap DB button ---
+
+  it("shows Swap DB button when storage is available", () => {
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        storageStatus="available"
+        onReleaseStorage={() => {}}
+        onSwapDatabase={() => {}}
+        onExportDatabase={() => {}}
+      />
+    );
+    expect(screen.getByText("Swap DB")).toBeInTheDocument();
+  });
+
+  it("calls swap callback on Swap DB click", async () => {
+    const user = userEvent.setup();
+    const onSwap = vi.fn();
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        storageStatus="available"
+        onReleaseStorage={() => {}}
+        onSwapDatabase={onSwap}
+        onExportDatabase={() => {}}
+      />
+    );
+    await user.click(screen.getByText("Swap DB"));
+    expect(onSwap).toHaveBeenCalledOnce();
+  });
+
+  it("shows Swapping... text and disables during swap", () => {
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        storageStatus="available"
+        onReleaseStorage={() => {}}
+        onSwapDatabase={() => {}}
+        isSwapping={true}
+        onExportDatabase={() => {}}
+      />
+    );
+    expect(screen.getByText("Swapping...")).toBeInTheDocument();
+    expect(screen.queryByText("Swap DB")).toBeNull();
+  });
+
+  it("hides Swap DB button when storage is released", () => {
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        storageStatus="released"
+        onReclaimStorage={() => {}}
+      />
+    );
+    expect(screen.queryByText("Swap DB")).toBeNull();
+  });
+
   it("shows Exporting... text during export", () => {
     render(
       <MetricsBar

@@ -1395,6 +1395,14 @@ All query commands below:
 - Recording continues uninterrupted (runs within the active connection)
 - Target path provided by frontend via Tauri save-file dialog
 
+##### `swap_database(app: AppHandle) -> Result<String, String>`
+- Archives current DB as a timestamped snapshot and starts fresh (zero data loss)
+- Pre-creates a fresh `StorageHandle` at staging path before taking write-lock
+- Atomic swap: write-lock, take old → insert new, release lock
+- Checkpoints and drops old handle, renames files: old→snapshot, staging→canonical
+- Returns the snapshot file path
+- Emits `adsb:storage-status` event with `StorageAvailability::Available`
+
 **File**: `src-tauri/src/commands.rs`
 
 ---
@@ -2397,6 +2405,7 @@ The `raw_messages` table stores every valid MSG line at full granularity (hybrid
 | `prune` | `older_than_ms` | deleted row count | Delete old data from both tables |
 | `checkpoint` | — | — | Flush WAL to disk (call before releasing connection) |
 | `export_database` | `PathBuf` | — | Copy DB to target path via ATTACH + CREATE TABLE AS (non-blocking to recording) |
+| `swap_database` | — | `String` (snapshot path) | Archive current DB as snapshot and start fresh (zero-loss atomic swap) |
 
 ### Data Flow
 
@@ -2473,13 +2482,13 @@ Isolating parser + storage in a shared workspace crate lets the data engine be t
 **Files**:
 - `adsb-data-engine/src/geo.rs` — Pure geodesic math (haversine, bearing, sector mapping) for test validation
 - `adsb-data-engine/src/sbs_parser.rs` — `parse_sbs_message`, `parse_sbs_raw_fields`, `extract_sbs_timestamp`
-- `adsb-data-engine/src/storage.rs` — `StorageHandle`, `StorageConfig`, all query methods including detection range, raw messages, `checkpoint`, `export_database`
+- `adsb-data-engine/src/storage.rs` — `StorageHandle`, `StorageConfig`, all query methods including detection range, raw messages, `checkpoint`, `export_database`, `move_database_to_snapshot`
 - `adsb-data-engine/src/types.rs` — `PositionRecord`, `BboxQuery`, `TrajectoryQuery`, `AircraftSummary`, `StorageStats`, `RawSbsRecord`, `RawMessageQuery`, `TimeDistributionBucket`, `TimeDistributionQuery`, `DetectionRangeQuery`, `DetectionRangeSector`
 - `src-tauri/src/lib.rs` — `init_storage()` returns `(handle, config)`, storage wrapped in `Arc<RwLock<...>>`
 - `src-tauri/src/state.rs` — `SharedStorage` type alias, `StorageAvailability` enum, `storage_config` field
 - `src-tauri/src/bridge.rs` — `persist_batch()` + `persist_raw_batch()` read-lock `SharedStorage` on every 500ms flush
-- `src-tauri/src/commands.rs` — historical query commands + storage management: `get_storage_status`, `release_storage`, `reclaim_storage`, `export_database`
-- `src/lib/commands.ts` — TypeScript wrappers: `queryBbox`, `getTrajectory`, `getAircraftSummary`, `getStorageStats`, `getTimeDistribution`, `getRawMessages`, `getStorageStatus`, `releaseStorage`, `reclaimStorage`, `exportDatabase`
+- `src-tauri/src/commands.rs` — historical query commands + storage management: `get_storage_status`, `release_storage`, `reclaim_storage`, `export_database`, `swap_database`
+- `src/lib/commands.ts` — TypeScript wrappers: `queryBbox`, `getTrajectory`, `getAircraftSummary`, `getStorageStats`, `getTimeDistribution`, `getRawMessages`, `getStorageStatus`, `releaseStorage`, `reclaimStorage`, `exportDatabase`, `swapDatabase`
 - `src/lib/types.ts` — TypeScript mirrors of all DuckDB types + `StorageAvailability`
 - `src/components/MetricsBar.tsx` — DB status button (release/reclaim) + Export DB button
 
@@ -2546,6 +2555,7 @@ Two elements in the footer metrics bar:
 |---------|-----------|------------|--------|
 | **DB button** | `available` | Lock icon + "DB" (subtle) | Click → release |
 | **DB Released** | `released` | Unlock icon + "DB Released" (amber) | Click → reclaim |
+| **Swap DB** | `available` | Rotate icon + "Swap DB" | Click → swap (archive + fresh DB) |
 | **Export DB** | `available` | Download icon + "Export DB" | Click → save dialog → export |
 | *(hidden)* | `unavailable` | Not rendered | — |
 
@@ -2556,6 +2566,23 @@ The export button shows "Exporting..." with disabled state during the operation.
 | Event | Payload | When |
 |-------|---------|------|
 | `adsb:storage-status` | `StorageAvailability` (`"available"` / `"released"`) | After release or reclaim |
+
+#### Database Swap (Rolling Snapshot)
+
+**Swap**: Archives the current database as a timestamped snapshot and starts fresh — analogous to log rotation. Zero data loss: the `SharedStorage` is never `None` during the swap.
+
+Sequence:
+1. Pre-create a fresh `StorageHandle` at a staging path (`adsb_history_next.db`) — outside any lock
+2. Write-lock `SharedStorage`: take old handle, insert new handle (atomic swap)
+3. Release write-lock — relay task resumes immediately with the new DB
+4. Checkpoint old handle (flush WAL), then drop it (close connection)
+5. `fs::rename(adsb_history.db → snapshots/adsb_history_{timestamp}.db)`
+6. `fs::rename(adsb_history_next.db → adsb_history.db)`
+7. Emit `adsb:storage-status` with `available`
+
+The rename in step 6 is safe on Unix: the active connection holds an fd to the inode, not the pathname.
+
+`move_database_to_snapshot()` is a free function in `adsb-data-engine/src/storage.rs` — it creates parent dirs, renames the DB file, and renames the WAL file if present.
 
 ### Frontend Integration
 

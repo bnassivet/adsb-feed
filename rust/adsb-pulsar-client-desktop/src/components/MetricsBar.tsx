@@ -12,13 +12,15 @@ interface Props {
   storageStatus?: StorageAvailability;
   onReleaseStorage?: () => void;
   onReclaimStorage?: () => void;
+  onSwapDatabase?: () => void;
+  isSwapping?: boolean;
   onExportDatabase?: () => void;
   isExporting?: boolean;
 }
 
 export function MetricsBar({
   metrics, recordPositions, recordRaw, onToggleRecordPositions, onToggleRecordRaw,
-  storageStatus, onReleaseStorage, onReclaimStorage, onExportDatabase, isExporting,
+  storageStatus, onReleaseStorage, onReclaimStorage, onSwapDatabase, isSwapping, onExportDatabase, isExporting,
 }: Props) {
   return (
     <div className="flex items-center gap-6 px-4 py-2 bg-slate-900 border-t border-slate-700 text-xs text-slate-400">
@@ -114,6 +116,20 @@ export function MetricsBar({
             <path d="M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2zm3 6V3a3 3 0 0 0-6 0v4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z" />
           </svg>
           <span className="font-mono text-amber-400">DB Released</span>
+        </button>
+      )}
+      {storageStatus === "available" && (
+        <button
+          onClick={onSwapDatabase}
+          disabled={isSwapping}
+          className={`flex items-center gap-1 transition cursor-pointer ${isSwapping ? "text-slate-600 cursor-wait" : "hover:text-slate-200"}`}
+          title="Swap database — archive current data as snapshot and start fresh"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z" />
+            <path fillRule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z" />
+          </svg>
+          <span className="font-mono">{isSwapping ? "Swapping..." : "Swap DB"}</span>
         </button>
       )}
       {storageStatus === "available" && (

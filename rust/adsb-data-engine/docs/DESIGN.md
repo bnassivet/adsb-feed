@@ -203,6 +203,12 @@ The stored value is always UTC epoch milliseconds regardless of input timezone.
 | `checkpoint` | — | `()` | Flush the WAL to disk (`CHECKPOINT`). Called before releasing the connection or exporting. |
 | `export_database` | `target_path: PathBuf` | `()` | Copy both tables to a new DuckDB file via `ATTACH` + `CREATE TABLE AS` + `DETACH`. Runs within the active connection — recording continues uninterrupted. Overwrites target if it exists; creates parent directories as needed. |
 
+### Free Functions
+
+| Function | Parameters | Returns | Description |
+|----------|-----------|---------|-------------|
+| `move_database_to_snapshot` | `db_path: &Path, snapshot_path: &Path` | `Result<(), StorageError>` | Rename a closed database file (and its WAL if present) to a snapshot path. Creates parent directories for the snapshot. The DuckDB connection **must be closed** before calling — this is a file-level operation, not a connection-level one. Used by the Tauri `swap_database` command for zero-loss database rotation. |
+
 ### Detection Range Query (Advanced)
 
 The detection range query computes the maximum range at which aircraft were observed from a receiver position, broken down by compass bearing in 10° sectors.
@@ -364,7 +370,7 @@ dump1090 TCP stream (SBS-1 text)
     query_bbox   get_trajectory          get_detection_range
     get_hourly_heatmap                  get_time_distribution
     get_aircraft_summary                get_stats / prune
-    checkpoint / export_database
+    checkpoint / export_database / move_database_to_snapshot
           │
           ▼
    Tauri commands → Frontend (React / Next.js)

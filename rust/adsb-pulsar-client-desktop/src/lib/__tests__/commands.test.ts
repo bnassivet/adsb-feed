@@ -16,6 +16,7 @@ import {
   releaseStorage,
   reclaimStorage,
   exportDatabase,
+  swapDatabase,
 } from "../commands";
 import type {
   BboxQuery,
@@ -278,6 +279,16 @@ describe("Historical query commands", () => {
     it("sends target path to backend", async () => {
       mockInvokeResponse("export_database", undefined);
       await expect(exportDatabase("/tmp/export.db")).resolves.toBeUndefined();
+    });
+  });
+
+  describe("swapDatabase", () => {
+    it("returns the snapshot path", async () => {
+      const snapshotPath = "/data/snapshots/adsb_history_2026-03-15T10-30-00.000.db";
+      mockInvokeResponse("swap_database", snapshotPath);
+
+      const result = await swapDatabase();
+      expect(result).toBe(snapshotPath);
     });
   });
 });

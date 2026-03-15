@@ -399,6 +399,91 @@ pub async fn reclaim_storage(
     Ok(())
 }
 
+/// Swap the current database to a timestamped snapshot and start fresh.
+///
+/// This is a zero-loss operation: the `SharedStorage` is never `None` during
+/// the swap. A fresh DB is pre-created at a staging path, then atomically
+/// swapped into `SharedStorage` under a brief write-lock. The old DB is
+/// checkpointed, closed, and renamed to `snapshots/adsb_history_{timestamp}.db`.
+///
+/// Returns the snapshot file path.
+#[tauri::command]
+pub async fn swap_database(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    // 1. Read db_path from storage_config
+    let config = state
+        .storage_config
+        .as_ref()
+        .ok_or_else(|| "No storage config — storage was never initialized".to_string())?;
+    let db_path = config
+        .db_path
+        .as_ref()
+        .ok_or_else(|| "Cannot swap an in-memory database".to_string())?
+        .clone();
+
+    let db_parent = db_path
+        .parent()
+        .ok_or_else(|| "Database path has no parent directory".to_string())?;
+
+    // 2. Build snapshot and staging paths
+    let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S%.3f");
+    let snapshot_path = db_parent
+        .join("snapshots")
+        .join(format!("adsb_history_{timestamp}.db"));
+    let staging_path = db_parent.join("adsb_history_next.db");
+
+    // 3. Pre-create fresh DB at staging path (expensive — outside any lock)
+    let staging_config = adsb_data_engine::StorageConfig {
+        db_path: Some(staging_path.clone()),
+        source_id: config.source_id.clone(),
+    };
+    let new_handle = StorageHandle::open(staging_config)
+        .map_err(|e| format!("Failed to create staging database: {e}"))?;
+
+    // 4. Atomic swap under write-lock (SharedStorage is never None)
+    let old_handle = {
+        let mut guard = state.storage.write().await;
+        let old = guard.take();
+        *guard = Some(new_handle);
+        old
+    };
+    // relay_messages immediately writes to the new DB on its next flush
+
+    // 5. Checkpoint and drop old handle (outside lock)
+    if let Some(old) = old_handle {
+        if let Err(e) = old.checkpoint().await {
+            info!("Checkpoint warning during swap (non-fatal): {e}");
+        }
+        drop(old); // closes connection, releases file lock
+    }
+
+    // 6. Rename old DB → snapshot
+    let snap = snapshot_path.clone();
+    let db = db_path.clone();
+    tokio::task::spawn_blocking(move || adsb_data_engine::move_database_to_snapshot(&db, &snap))
+        .await
+        .map_err(|e| format!("Task join error: {e}"))?
+        .map_err(|e| format!("Failed to move database to snapshot: {e}"))?;
+
+    // 7. Rename staging → canonical path
+    let staging = staging_path.clone();
+    let canonical = db_path.clone();
+    tokio::task::spawn_blocking(move || std::fs::rename(&staging, &canonical))
+        .await
+        .map_err(|e| format!("Task join error: {e}"))?
+        .map_err(|e| format!("Failed to rename staging database: {e}"))?;
+
+    info!("Database swapped — snapshot at {}", snapshot_path.display());
+
+    // 8. Emit status event for UI refresh
+    let status = StorageAvailability::Available;
+    let _ = app.emit("adsb:storage-status", &status);
+
+    Ok(snapshot_path.to_string_lossy().into_owned())
+}
+
 /// Export the database to a user-chosen path without stopping recording.
 ///
 /// Uses DuckDB's ATTACH + CREATE TABLE AS within the active connection,

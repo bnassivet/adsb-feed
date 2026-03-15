@@ -140,3 +140,7 @@ export async function reclaimStorage(): Promise<void> {
 export async function exportDatabase(targetPath: string): Promise<void> {
   return invoke("export_database", { targetPath });
 }
+
+export async function swapDatabase(): Promise<string> {
+  return invoke("swap_database");
+}

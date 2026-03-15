@@ -15,10 +15,10 @@ import { useMetrics } from "@/hooks/useMetrics";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { useRecordingState } from "@/hooks/useRecordingState";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
-import { startFeed, stopFeed, getConfig, getStorageStatus, releaseStorage, reclaimStorage, exportDatabase, getStorageStats } from "@/lib/commands";
+import { startFeed, stopFeed, getConfig, getStorageStatus, releaseStorage, reclaimStorage, exportDatabase, swapDatabase, getStorageStats } from "@/lib/commands";
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
 import { listen } from "@tauri-apps/api/event";
-import { save } from "@tauri-apps/plugin-dialog";
+import { ask, save } from "@tauri-apps/plugin-dialog";
 import { sortTracks } from "@/lib/sort-tracks";
 import { DEFAULT_FILTERS } from "@/lib/types";
 import type { ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, TrackSection, StorageAvailability } from "@/lib/types";
@@ -96,6 +96,7 @@ export default function Dashboard() {
   const { recordPositions, recordRaw, toggleRecordPositions, toggleRecordRaw } = useRecordingState();
   const [storageStatus, setStorageStatus] = useState<StorageAvailability>("unavailable");
   const [isExporting, setIsExporting] = useState(false);
+  const [isSwapping, setIsSwapping] = useState(false);
 
   // Fetch initial storage status and listen for changes
   useEffect(() => {
@@ -106,7 +107,23 @@ export default function Dashboard() {
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
+  const handleToggleRecordPositions = useCallback(async () => {
+    const action = recordPositions ? "Pause" : "Resume";
+    const confirmed = await ask(`${action} recording positions to DuckDB?`, { title: "Recording", kind: "info" });
+    if (!confirmed) return;
+    toggleRecordPositions();
+  }, [recordPositions, toggleRecordPositions]);
+
+  const handleToggleRecordRaw = useCallback(async () => {
+    const action = recordRaw ? "Pause" : "Resume";
+    const confirmed = await ask(`${action} recording raw messages to DuckDB?`, { title: "Recording", kind: "info" });
+    if (!confirmed) return;
+    toggleRecordRaw();
+  }, [recordRaw, toggleRecordRaw]);
+
   const handleReleaseStorage = useCallback(async () => {
+    const confirmed = await ask("Release the DB connection? Recording will pause and queries will be unavailable until reclaimed.", { title: "Release Storage", kind: "warning" });
+    if (!confirmed) return;
     try {
       setError(null);
       await releaseStorage();
@@ -116,6 +133,8 @@ export default function Dashboard() {
   }, []);
 
   const handleReclaimStorage = useCallback(async () => {
+    const confirmed = await ask("Reclaim the DB connection and resume recording?", { title: "Reclaim Storage", kind: "info" });
+    if (!confirmed) return;
     try {
       setError(null);
       await reclaimStorage();
@@ -146,6 +165,20 @@ export default function Dashboard() {
       setError(String(e));
     } finally {
       setIsExporting(false);
+    }
+  }, []);
+
+  const handleSwapDatabase = useCallback(async () => {
+    const confirmed = await ask("Archive the current database as a snapshot and start fresh?", { title: "Swap Database", kind: "warning" });
+    if (!confirmed) return;
+    try {
+      setError(null);
+      setIsSwapping(true);
+      await swapDatabase();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setIsSwapping(false);
     }
   }, []);
 
@@ -597,11 +630,13 @@ export default function Dashboard() {
         metrics={metrics}
         recordPositions={recordPositions}
         recordRaw={recordRaw}
-        onToggleRecordPositions={toggleRecordPositions}
-        onToggleRecordRaw={toggleRecordRaw}
+        onToggleRecordPositions={handleToggleRecordPositions}
+        onToggleRecordRaw={handleToggleRecordRaw}
         storageStatus={storageStatus}
         onReleaseStorage={handleReleaseStorage}
         onReclaimStorage={handleReclaimStorage}
+        onSwapDatabase={handleSwapDatabase}
+        isSwapping={isSwapping}
         onExportDatabase={handleExportDatabase}
         isExporting={isExporting}
       />
