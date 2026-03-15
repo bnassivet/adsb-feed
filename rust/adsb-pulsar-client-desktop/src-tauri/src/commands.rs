@@ -8,8 +8,8 @@ use crate::state::{
 };
 use adsb_data_engine::{
     AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, HourlyHeatmapCell,
-    HourlyHeatmapQuery, PositionRecord, RawMessageQuery, RawSbsRecord, StorageHandle, StorageStats,
-    TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
+    HourlyHeatmapQuery, ImportPreview, ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord,
+    StorageHandle, StorageStats, TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
 };
 use adsb_pulsar_client::{Config, MetricsSnapshot};
 use std::sync::atomic::Ordering;
@@ -506,4 +506,47 @@ pub async fn export_database(
         .map_err(|e| format!("Export failed: {e}"))?;
 
     Ok(())
+}
+
+/// Preview an external database file before importing.
+///
+/// ATTACHes the file as READ_ONLY, queries row counts and timestamp ranges
+/// for each table, then DETACHes. Returns zero-count previews for missing tables.
+#[tauri::command]
+pub async fn preview_import_database(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<ImportPreview, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+
+    let path = std::path::PathBuf::from(&path);
+    storage
+        .preview_import(path)
+        .await
+        .map_err(|e| format!("Preview failed: {e}"))
+}
+
+/// Import records from an external database file with deduplication.
+///
+/// ATTACHes the file as READ_ONLY, INSERTs rows that don't already exist
+/// (anti-join on natural keys), then DETACHes. Returns the count of newly
+/// imported rows per table.
+#[tauri::command]
+pub async fn import_database(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<ImportResult, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+
+    let path = std::path::PathBuf::from(&path);
+    storage
+        .import_database(path)
+        .await
+        .map_err(|e| format!("Import failed: {e}"))
 }

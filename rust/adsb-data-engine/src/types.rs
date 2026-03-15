@@ -158,6 +158,28 @@ pub struct HourlyHeatmapCell {
     pub raw_message_count: u64,
 }
 
+/// Preview of a single table in an external database file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TablePreview {
+    pub row_count: u64,
+    pub oldest_timestamp_ms: Option<i64>,
+    pub newest_timestamp_ms: Option<i64>,
+}
+
+/// Preview of an external database file before import.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportPreview {
+    pub positions: TablePreview,
+    pub raw_messages: TablePreview,
+}
+
+/// Result of a database import operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportResult {
+    pub positions_imported: u64,
+    pub raw_messages_imported: u64,
+}
+
 /// Configuration for opening a storage handle.
 #[derive(Debug, Clone)]
 pub struct StorageConfig {

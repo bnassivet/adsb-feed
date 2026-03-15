@@ -19,6 +19,7 @@ pub use sbs_parser::{
 pub use storage::{move_database_to_snapshot, StorageHandle};
 pub use types::{
     AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, HourlyHeatmapCell,
-    HourlyHeatmapQuery, PositionRecord, RawMessageQuery, RawSbsRecord, StorageConfig, StorageStats,
-    TimeDistributionBucket, TimeDistributionMetric, TimeDistributionQuery, TrajectoryQuery,
+    HourlyHeatmapQuery, ImportPreview, ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord,
+    StorageConfig, StorageStats, TablePreview, TimeDistributionBucket, TimeDistributionMetric,
+    TimeDistributionQuery, TrajectoryQuery,
 };

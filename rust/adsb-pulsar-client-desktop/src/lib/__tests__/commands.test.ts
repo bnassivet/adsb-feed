@@ -16,6 +16,8 @@ import {
   releaseStorage,
   reclaimStorage,
   exportDatabase,
+  previewImportDatabase,
+  importDatabase,
   swapDatabase,
 } from "../commands";
 import type {
@@ -29,6 +31,8 @@ import type {
   TimeDistributionQuery,
   DetectionRangeQuery,
   DetectionRangeSector,
+  ImportPreview,
+  ImportResult,
 } from "../types";
 
 const samplePosition: PositionRecord = {
@@ -279,6 +283,31 @@ describe("Historical query commands", () => {
     it("sends target path to backend", async () => {
       mockInvokeResponse("export_database", undefined);
       await expect(exportDatabase("/tmp/export.db")).resolves.toBeUndefined();
+    });
+  });
+
+  describe("previewImportDatabase", () => {
+    it("sends path and returns import preview", async () => {
+      const preview: ImportPreview = {
+        positions: { row_count: 100, oldest_timestamp_ms: 1705315800000, newest_timestamp_ms: 1705316100000 },
+        raw_messages: { row_count: 500, oldest_timestamp_ms: 1705315800000, newest_timestamp_ms: 1705316100000 },
+      };
+      mockInvokeResponse("preview_import_database", preview);
+
+      const result = await previewImportDatabase("/tmp/source.db");
+      expect(result.positions.row_count).toBe(100);
+      expect(result.raw_messages.row_count).toBe(500);
+    });
+  });
+
+  describe("importDatabase", () => {
+    it("sends path and returns import result", async () => {
+      const importResult: ImportResult = { positions_imported: 50, raw_messages_imported: 200 };
+      mockInvokeResponse("import_database", importResult);
+
+      const result = await importDatabase("/tmp/source.db");
+      expect(result.positions_imported).toBe(50);
+      expect(result.raw_messages_imported).toBe(200);
     });
   });
 

@@ -15,10 +15,10 @@ import { useMetrics } from "@/hooks/useMetrics";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { useRecordingState } from "@/hooks/useRecordingState";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
-import { startFeed, stopFeed, getConfig, getStorageStatus, releaseStorage, reclaimStorage, exportDatabase, swapDatabase, getStorageStats } from "@/lib/commands";
+import { startFeed, stopFeed, getConfig, getStorageStatus, releaseStorage, reclaimStorage, exportDatabase, previewImportDatabase, importDatabase, swapDatabase, getStorageStats } from "@/lib/commands";
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
 import { listen } from "@tauri-apps/api/event";
-import { ask, save } from "@tauri-apps/plugin-dialog";
+import { ask, message, save, open } from "@tauri-apps/plugin-dialog";
 import { sortTracks } from "@/lib/sort-tracks";
 import { DEFAULT_FILTERS } from "@/lib/types";
 import type { ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, TrackSection, StorageAvailability } from "@/lib/types";
@@ -97,6 +97,7 @@ export default function Dashboard() {
   const [storageStatus, setStorageStatus] = useState<StorageAvailability>("unavailable");
   const [isExporting, setIsExporting] = useState(false);
   const [isSwapping, setIsSwapping] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
 
   // Fetch initial storage status and listen for changes
   useEffect(() => {
@@ -179,6 +180,54 @@ export default function Dashboard() {
       setError(String(e));
     } finally {
       setIsSwapping(false);
+    }
+  }, []);
+
+  const handleImportDatabase = useCallback(async () => {
+    try {
+      setError(null);
+      const path = await open({
+        filters: [{ name: "DuckDB Database", extensions: ["db"] }],
+        multiple: false,
+        directory: false,
+      });
+      if (!path) return; // User cancelled
+
+      // Preview the external DB
+      const preview = await previewImportDatabase(path as string);
+      const currentStats = await getStorageStats();
+
+      const fmtDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+      const fmtRange = (oldest: number | null, newest: number | null) =>
+        oldest != null && newest != null
+          ? `${fmtDate(oldest)} to ${fmtDate(newest)}`
+          : "N/A";
+
+      const msg = [
+        `External DB:`,
+        `  Positions: ${preview.positions.row_count.toLocaleString()} rows (${fmtRange(preview.positions.oldest_timestamp_ms, preview.positions.newest_timestamp_ms)})`,
+        `  Raw messages: ${preview.raw_messages.row_count.toLocaleString()} rows (${fmtRange(preview.raw_messages.oldest_timestamp_ms, preview.raw_messages.newest_timestamp_ms)})`,
+        ``,
+        `Current DB:`,
+        `  Positions: ${currentStats.row_count.toLocaleString()} rows (${fmtRange(currentStats.oldest_timestamp_ms, currentStats.newest_timestamp_ms)})`,
+        `  Raw messages: ${currentStats.raw_message_count.toLocaleString()} rows`,
+        ``,
+        `Duplicate records will be skipped. Merge into current database?`,
+      ].join("\n");
+
+      const confirmed = await ask(msg, { title: "Import Database", kind: "info" });
+      if (!confirmed) return;
+
+      setIsImporting(true);
+      const result = await importDatabase(path as string);
+      await message(
+        `Imported ${result.positions_imported.toLocaleString()} positions and ${result.raw_messages_imported.toLocaleString()} raw messages.`,
+        { title: "Import Complete", kind: "info" }
+      );
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setIsImporting(false);
     }
   }, []);
 
@@ -639,6 +688,8 @@ export default function Dashboard() {
         isSwapping={isSwapping}
         onExportDatabase={handleExportDatabase}
         isExporting={isExporting}
+        onImportDatabase={handleImportDatabase}
+        isImporting={isImporting}
       />
 
       {/* DB History panel — floating mode (portal-like, fixed position) */}

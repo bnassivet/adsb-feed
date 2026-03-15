@@ -8,6 +8,8 @@ import type {
   DetectionRangeSector,
   HourlyHeatmapCell,
   HourlyHeatmapQuery,
+  ImportPreview,
+  ImportResult,
   MetricsSnapshot,
   PositionRecord,
   RawMessageQuery,
@@ -139,6 +141,14 @@ export async function reclaimStorage(): Promise<void> {
 
 export async function exportDatabase(targetPath: string): Promise<void> {
   return invoke("export_database", { targetPath });
+}
+
+export async function previewImportDatabase(path: string): Promise<ImportPreview> {
+  return invoke("preview_import_database", { path });
+}
+
+export async function importDatabase(path: string): Promise<ImportResult> {
+  return invoke("import_database", { path });
 }
 
 export async function swapDatabase(): Promise<string> {

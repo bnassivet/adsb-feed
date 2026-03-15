@@ -244,6 +244,25 @@ export interface HourlyHeatmapCell {
 /** Which metric the activity heatmap displays. */
 export type HeatmapMetric = "aircraft" | "messages" | "raw_messages";
 
+/** Preview of a single table in an external database file. */
+export interface TablePreview {
+  row_count: number;
+  oldest_timestamp_ms: number | null;
+  newest_timestamp_ms: number | null;
+}
+
+/** Preview of an external database file before import. */
+export interface ImportPreview {
+  positions: TablePreview;
+  raw_messages: TablePreview;
+}
+
+/** Result of a database import operation. */
+export interface ImportResult {
+  positions_imported: number;
+  raw_messages_imported: number;
+}
+
 /** Storage availability status (mirrors Rust StorageAvailability). */
 export type StorageAvailability = "available" | "released" | "unavailable";
 

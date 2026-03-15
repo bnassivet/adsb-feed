@@ -68,6 +68,8 @@ pub fn run() {
             commands::release_storage,
             commands::reclaim_storage,
             commands::export_database,
+            commands::preview_import_database,
+            commands::import_database,
             commands::swap_database,
         ])
         .run(tauri::generate_context!())

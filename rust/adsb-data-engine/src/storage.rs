@@ -8,8 +8,9 @@ use crate::error::StorageError;
 use crate::sbs_parser::AircraftPosition;
 use crate::types::{
     AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, HourlyHeatmapCell,
-    HourlyHeatmapQuery, PositionRecord, RawMessageQuery, RawSbsRecord, StorageConfig, StorageStats,
-    TimeDistributionBucket, TimeDistributionMetric, TimeDistributionQuery, TrajectoryQuery,
+    HourlyHeatmapQuery, ImportPreview, ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord,
+    StorageConfig, StorageStats, TablePreview, TimeDistributionBucket, TimeDistributionMetric,
+    TimeDistributionQuery, TrajectoryQuery,
 };
 use duckdb::{params, Connection};
 use std::sync::{Arc, Mutex};
@@ -942,6 +943,161 @@ impl StorageHandle {
         tokio::task::spawn_blocking(move || handle.export_database_sync(&target_path))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Preview an external database file before importing (synchronous).
+    ///
+    /// ATTACHes the file as `import_db (READ_ONLY)`, queries row counts and
+    /// timestamp ranges for each table, then DETACHes. Returns zero-count
+    /// `TablePreview` for tables that don't exist in the external file.
+    pub fn preview_import_sync(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<ImportPreview, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let path_str = path.to_string_lossy().replace('\'', "''");
+        Self::with_attached_db(&storage.conn, &path_str, |conn| {
+            let positions = Self::preview_table(conn, "positions")?;
+            let raw_messages = Self::preview_table(conn, "raw_messages")?;
+            Ok(ImportPreview {
+                positions,
+                raw_messages,
+            })
+        })
+    }
+
+    /// Preview an external database (async via spawn_blocking).
+    pub async fn preview_import(
+        &self,
+        path: std::path::PathBuf,
+    ) -> Result<ImportPreview, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.preview_import_sync(&path))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Import records from an external database file with deduplication (synchronous).
+    ///
+    /// ATTACHes the file as `import_db (READ_ONLY)`, CHECKPOINTs the current DB,
+    /// then INSERTs rows that don't already exist (anti-join on natural keys).
+    /// Returns the count of newly imported rows per table.
+    pub fn import_database_sync(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<ImportResult, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        storage.conn.execute_batch("CHECKPOINT")?;
+
+        let path_str = path.to_string_lossy().replace('\'', "''");
+        Self::with_attached_db(&storage.conn, &path_str, |conn| {
+            let positions_imported = if Self::table_exists_in_schema(conn, "positions")? {
+                conn.execute(
+                    "INSERT INTO positions
+                     SELECT ip.* FROM import_db.positions ip
+                     WHERE NOT EXISTS (
+                         SELECT 1 FROM positions p
+                         WHERE p.hex_ident = ip.hex_ident AND p.timestamp_ms = ip.timestamp_ms
+                     )",
+                    [],
+                )? as u64
+            } else {
+                0
+            };
+
+            let raw_messages_imported = if Self::table_exists_in_schema(conn, "raw_messages")? {
+                conn.execute(
+                    "INSERT INTO raw_messages
+                     SELECT ir.* FROM import_db.raw_messages ir
+                     WHERE NOT EXISTS (
+                         SELECT 1 FROM raw_messages r
+                         WHERE r.hex_ident = ir.hex_ident AND r.timestamp_ms = ir.timestamp_ms
+                           AND r.raw_message = ir.raw_message
+                     )",
+                    [],
+                )? as u64
+            } else {
+                0
+            };
+
+            info!(
+                "Database imported: {} positions, {} raw messages",
+                positions_imported, raw_messages_imported
+            );
+
+            Ok(ImportResult {
+                positions_imported,
+                raw_messages_imported,
+            })
+        })
+    }
+
+    /// Import records from an external database (async via spawn_blocking).
+    pub async fn import_database(
+        &self,
+        path: std::path::PathBuf,
+    ) -> Result<ImportResult, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.import_database_sync(&path))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    // --- Private helpers for import ---
+
+    /// ATTACH an external database, run a closure, and always DETACH afterwards.
+    fn with_attached_db<T>(
+        conn: &Connection,
+        path_str: &str,
+        f: impl FnOnce(&Connection) -> Result<T, StorageError>,
+    ) -> Result<T, StorageError> {
+        conn.execute_batch(&format!("ATTACH '{}' AS import_db (READ_ONLY)", path_str))?;
+        let result = f(conn);
+        let _ = conn.execute_batch("DETACH import_db");
+        result
+    }
+
+    /// Check if a table exists in the import_db catalog.
+    fn table_exists_in_schema(conn: &Connection, table_name: &str) -> Result<bool, StorageError> {
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM information_schema.tables
+             WHERE table_catalog = 'import_db' AND table_name = ?",
+            params![table_name],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Preview a single table from import_db (returns zero-count if table doesn't exist).
+    fn preview_table(conn: &Connection, table_name: &str) -> Result<TablePreview, StorageError> {
+        if !Self::table_exists_in_schema(conn, table_name)? {
+            return Ok(TablePreview {
+                row_count: 0,
+                oldest_timestamp_ms: None,
+                newest_timestamp_ms: None,
+            });
+        }
+        let (count, min_ts, max_ts): (i64, Option<i64>, Option<i64>) = conn.query_row(
+            &format!(
+                "SELECT COUNT(*), MIN(timestamp_ms), MAX(timestamp_ms) FROM import_db.{}",
+                table_name
+            ),
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        Ok(TablePreview {
+            row_count: count as u64,
+            oldest_timestamp_ms: min_ts,
+            newest_timestamp_ms: max_ts,
+        })
     }
 }
 
@@ -2571,5 +2727,199 @@ mod tests {
 
         let result = move_database_to_snapshot(&db_path, &snapshot_path);
         assert!(result.is_err());
+    }
+
+    // --- Import database tests ---
+
+    /// Helper: create an exported DB file with given positions and raw messages.
+    fn create_export_db(
+        positions: &[AircraftPosition],
+        raw_records: &[crate::types::RawSbsRecord],
+    ) -> (tempfile::TempDir, std::path::PathBuf) {
+        let source = StorageHandle::open(test_config()).unwrap();
+        if !positions.is_empty() {
+            source.insert_batch_sync(positions, "UTC").unwrap();
+        }
+        if !raw_records.is_empty() {
+            source.insert_raw_batch_sync(raw_records, "UTC").unwrap();
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source.db");
+        source.export_database_sync(&path).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn test_preview_import_valid_db() {
+        let positions = vec![
+            sample_position("A1", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000"),
+            sample_position("A2", Some(46.0), Some(-74.0), "2024/01/15 11:00:00.000"),
+        ];
+        let raw = vec![sample_raw_record(
+            "A1",
+            "MSG,3",
+            Some(3),
+            "2024/01/15 10:00:00.000",
+        )];
+        let (_dir, path) = create_export_db(&positions, &raw);
+
+        let target = StorageHandle::open(test_config()).unwrap();
+        let preview = target.preview_import_sync(&path).unwrap();
+
+        assert_eq!(preview.positions.row_count, 2);
+        assert!(preview.positions.oldest_timestamp_ms.is_some());
+        assert!(preview.positions.newest_timestamp_ms.is_some());
+        assert_eq!(preview.raw_messages.row_count, 1);
+    }
+
+    #[test]
+    fn test_preview_import_missing_tables() {
+        // Create an empty DuckDB file with no tables
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.db");
+        let conn = Connection::open(&path).unwrap();
+        drop(conn);
+
+        let target = StorageHandle::open(test_config()).unwrap();
+        let preview = target.preview_import_sync(&path).unwrap();
+
+        assert_eq!(preview.positions.row_count, 0);
+        assert!(preview.positions.oldest_timestamp_ms.is_none());
+        assert_eq!(preview.raw_messages.row_count, 0);
+    }
+
+    #[test]
+    fn test_preview_import_nonexistent_file() {
+        let target = StorageHandle::open(test_config()).unwrap();
+        let result = target.preview_import_sync(std::path::Path::new("/nonexistent/path.db"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_import_inserts_new_records() {
+        let positions = vec![
+            sample_position("A1", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000"),
+            sample_position("A2", Some(46.0), Some(-74.0), "2024/01/15 11:00:00.000"),
+            sample_position("A3", Some(47.0), Some(-75.0), "2024/01/15 12:00:00.000"),
+        ];
+        let raw = vec![
+            sample_raw_record("A1", "MSG,3", Some(3), "2024/01/15 10:00:00.000"),
+            sample_raw_record("A2", "MSG,1", Some(1), "2024/01/15 11:00:00.000"),
+        ];
+        let (_dir, path) = create_export_db(&positions, &raw);
+
+        // Empty target DB
+        let target = StorageHandle::open(test_config()).unwrap();
+        let result = target.import_database_sync(&path).unwrap();
+
+        assert_eq!(result.positions_imported, 3);
+        assert_eq!(result.raw_messages_imported, 2);
+
+        let stats = target.get_stats_sync().unwrap();
+        assert_eq!(stats.row_count, 3);
+        assert_eq!(stats.raw_message_count, 2);
+    }
+
+    #[test]
+    fn test_import_deduplicates_positions() {
+        // Source DB has 3 positions
+        let positions = vec![
+            sample_position("A1", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000"),
+            sample_position("A2", Some(46.0), Some(-74.0), "2024/01/15 11:00:00.000"),
+            sample_position("A3", Some(47.0), Some(-75.0), "2024/01/15 12:00:00.000"),
+        ];
+        let (_dir, path) = create_export_db(&positions, &[]);
+
+        // Target already has one overlapping position (A1 at same timestamp)
+        let target = StorageHandle::open(test_config()).unwrap();
+        target
+            .insert_batch_sync(
+                &[sample_position(
+                    "A1",
+                    Some(45.5),
+                    Some(-73.5),
+                    "2024/01/15 10:00:00.000",
+                )],
+                "UTC",
+            )
+            .unwrap();
+
+        let result = target.import_database_sync(&path).unwrap();
+
+        // Only A2 and A3 should be imported (A1 is duplicate)
+        assert_eq!(result.positions_imported, 2);
+
+        let stats = target.get_stats_sync().unwrap();
+        assert_eq!(stats.row_count, 3); // 1 existing + 2 imported
+    }
+
+    #[test]
+    fn test_import_deduplicates_raw_messages() {
+        let raw = vec![
+            sample_raw_record("A1", "MSG,3", Some(3), "2024/01/15 10:00:00.000"),
+            sample_raw_record("A2", "MSG,1", Some(1), "2024/01/15 11:00:00.000"),
+        ];
+        let (_dir, path) = create_export_db(&[], &raw);
+
+        // Target already has the A1 raw message
+        let target = StorageHandle::open(test_config()).unwrap();
+        target
+            .insert_raw_batch_sync(
+                &[sample_raw_record(
+                    "A1",
+                    "MSG,3",
+                    Some(3),
+                    "2024/01/15 10:00:00.000",
+                )],
+                "UTC",
+            )
+            .unwrap();
+
+        let result = target.import_database_sync(&path).unwrap();
+
+        assert_eq!(result.raw_messages_imported, 1); // only A2
+        let stats = target.get_stats_sync().unwrap();
+        assert_eq!(stats.raw_message_count, 2); // 1 existing + 1 imported
+    }
+
+    #[test]
+    fn test_import_missing_source_tables() {
+        // Create an empty DuckDB file with no tables
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.db");
+        let conn = Connection::open(&path).unwrap();
+        drop(conn);
+
+        let target = StorageHandle::open(test_config()).unwrap();
+        let result = target.import_database_sync(&path).unwrap();
+
+        assert_eq!(result.positions_imported, 0);
+        assert_eq!(result.raw_messages_imported, 0);
+    }
+
+    #[test]
+    fn test_import_current_db_still_works() {
+        let positions = vec![sample_position(
+            "A1",
+            Some(45.5),
+            Some(-73.5),
+            "2024/01/15 10:00:00.000",
+        )];
+        let (_dir, path) = create_export_db(&positions, &[]);
+
+        let target = StorageHandle::open(test_config()).unwrap();
+        target.import_database_sync(&path).unwrap();
+
+        // Can still insert and query after import
+        let more = vec![sample_position(
+            "B1",
+            Some(48.0),
+            Some(-76.0),
+            "2024/01/15 13:00:00.000",
+        )];
+        target.insert_batch_sync(&more, "UTC").unwrap();
+
+        let stats = target.get_stats_sync().unwrap();
+        assert_eq!(stats.row_count, 2); // 1 imported + 1 new
     }
 }

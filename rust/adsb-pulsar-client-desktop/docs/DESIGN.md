@@ -1403,6 +1403,18 @@ All query commands below:
 - Returns the snapshot file path
 - Emits `adsb:storage-status` event with `StorageAvailability::Available`
 
+##### `preview_import_database(path: String) -> Result<ImportPreview, String>`
+- Read-locks `storage`, ATTACHes external file as `import_db (READ_ONLY)`
+- Queries `COUNT(*)`, `MIN(timestamp_ms)`, `MAX(timestamp_ms)` for each table
+- Returns zero-count `TablePreview` for missing tables in the external DB
+- Always DETACHes even on error
+
+##### `import_database(path: String) -> Result<ImportResult, String>`
+- Read-locks `storage`, CHECKPOINTs, ATTACHes external file as `import_db (READ_ONLY)`
+- INSERTs with dedup: `WHERE NOT EXISTS` anti-join on `(hex_ident, timestamp_ms)` for positions, `(hex_ident, timestamp_ms, raw_message)` for raw_messages
+- Returns count of newly imported rows per table
+- Always DETACHes even on error
+
 **File**: `src-tauri/src/commands.rs`
 
 ---
@@ -2532,6 +2544,19 @@ While released: recording batches are silently dropped (relay task read-locks, s
 
 This all runs within the existing connection — recording continues uninterrupted. The frontend uses the Tauri `save()` dialog to pick the target path.
 
+#### Database Import (Merge)
+
+**Import**: Merges records from an external `.db` file into the current database with deduplication.
+1. User clicks "Import DB" → native `open()` file picker (`.db` filter)
+2. Read-locks `SharedStorage`
+3. Runs `ATTACH 'path' AS import_db (READ_ONLY)`
+4. Preview: queries `COUNT(*)`, `MIN/MAX(timestamp_ms)` per table → shown in confirmation dialog
+5. On confirm: `INSERT INTO positions SELECT * FROM import_db.positions WHERE NOT EXISTS (... dedup on hex_ident + timestamp_ms)`
+6. Same for `raw_messages` (dedup on hex_ident + timestamp_ms + raw_message)
+7. `DETACH import_db` (always, even on error)
+
+Recording continues uninterrupted. The inner `Mutex<Storage>` serializes the INSERT with ongoing recording flushes — a brief pause may occur for large imports.
+
 ### Shared Storage Architecture
 
 ```
@@ -2557,6 +2582,7 @@ Two elements in the footer metrics bar:
 | **DB Released** | `released` | Unlock icon + "DB Released" (amber) | Click → reclaim |
 | **Swap DB** | `available` | Rotate icon + "Swap DB" | Click → swap (archive + fresh DB) |
 | **Export DB** | `available` | Download icon + "Export DB" | Click → save dialog → export |
+| **Import DB** | `available` | Upload icon + "Import DB" | Click → open dialog → preview → confirm → import |
 | *(hidden)* | `unavailable` | Not rendered | — |
 
 The export button shows "Exporting..." with disabled state during the operation.

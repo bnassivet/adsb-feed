@@ -20,7 +20,7 @@ All changes follow Test-Driven Development (Red → Green → Refactor). No code
 
 ```bash
 # From this directory (adsb-feed/rust/)
-cargo test --workspace                    # ~84 tests (unit + integration + doc-tests)
+cargo test --workspace                    # ~227 tests (unit + integration + doc-tests)
 cargo clippy --workspace -- -D warnings   # Lint
 cargo fmt --workspace --check             # Format check
 ```
@@ -30,7 +30,7 @@ cargo fmt --workspace --check             # Format check
 ```bash
 cargo test -p adsb-pulsar-client              # Library: ~65 tests (unit + integration + doc)
 cargo test -p adsb-pulsar-client-desktop-lib  # Tauri: ~19 tests (unit)
-cargo test -p adsb-data-engine               # Data engine: ~15 tests (SBS parser + storage)
+cargo test -p adsb-data-engine               # Data engine: ~113 tests (SBS parser + storage + import)
 ```
 
 ### Run Specific Tests

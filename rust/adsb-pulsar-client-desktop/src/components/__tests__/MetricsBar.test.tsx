@@ -272,4 +272,66 @@ describe("MetricsBar", () => {
     expect(screen.getByText("Exporting...")).toBeInTheDocument();
     expect(screen.queryByText("Export DB")).toBeNull();
   });
+
+  // --- Import DB button ---
+
+  it("shows Import DB button when storage is available", () => {
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        storageStatus="available"
+        onReleaseStorage={() => {}}
+        onExportDatabase={() => {}}
+        onImportDatabase={() => {}}
+      />
+    );
+    expect(screen.getByText("Import DB")).toBeInTheDocument();
+  });
+
+  it("hides Import DB button when storage is unavailable", () => {
+    render(<MetricsBar metrics={makeMetrics()} storageStatus="unavailable" />);
+    expect(screen.queryByText("Import DB")).toBeNull();
+  });
+
+  it("hides Import DB button when storage is released", () => {
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        storageStatus="released"
+        onReclaimStorage={() => {}}
+      />
+    );
+    expect(screen.queryByText("Import DB")).toBeNull();
+  });
+
+  it("shows Importing... text when import is active", () => {
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        storageStatus="available"
+        onReleaseStorage={() => {}}
+        onExportDatabase={() => {}}
+        onImportDatabase={() => {}}
+        isImporting={true}
+      />
+    );
+    expect(screen.getByText("Importing...")).toBeInTheDocument();
+    expect(screen.queryByText("Import DB")).toBeNull();
+  });
+
+  it("calls import callback on Import DB click", async () => {
+    const user = userEvent.setup();
+    const onImport = vi.fn();
+    render(
+      <MetricsBar
+        metrics={makeMetrics()}
+        storageStatus="available"
+        onReleaseStorage={() => {}}
+        onExportDatabase={() => {}}
+        onImportDatabase={onImport}
+      />
+    );
+    await user.click(screen.getByText("Import DB"));
+    expect(onImport).toHaveBeenCalledOnce();
+  });
 });
