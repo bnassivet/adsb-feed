@@ -35,6 +35,10 @@ interface Props {
   showReceiver: boolean;
   onToggleReceiver: () => void;
   hasReceiverLocation: boolean;
+  historySliderMin: number;
+  historySliderMax: number;
+  historySliderRange: number;
+  onHistoryTimeChange: (min: number, max: number) => void;
 }
 
 function Section({ title, defaultOpen, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
@@ -51,7 +55,7 @@ function Section({ title, defaultOpen, children }: { title: string; defaultOpen?
   );
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange }: Props) {
   return (
     <div className="flex flex-col gap-2 p-4">
 
@@ -129,6 +133,21 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
               <span className="text-slate-500 font-mono">({historyCount} past)</span>
             </span>
           </label>
+          {showHistory && historySliderRange > 0 && (
+            <div className="ml-5 mt-1">
+              <RangeSlider
+                min={0}
+                max={historySliderRange}
+                step={1}
+                valueMin={historySliderMin}
+                valueMax={historySliderMax}
+                onChange={onHistoryTimeChange}
+                formatLabel={(v) =>
+                  v >= historySliderRange ? "now" : `${historySliderRange - v}h ago`
+                }
+              />
+            </div>
+          )}
         </div>
 
         {hasReceiverLocation && (

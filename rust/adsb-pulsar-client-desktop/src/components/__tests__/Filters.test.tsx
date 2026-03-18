@@ -43,6 +43,10 @@ function renderFilters(overrides = {}) {
     showReceiver: true,
     onToggleReceiver: vi.fn(),
     hasReceiverLocation: true,
+    historySliderMin: 0,
+    historySliderMax: 24,
+    historySliderRange: 24,
+    onHistoryTimeChange: vi.fn(),
     ...overrides,
   };
   return { ...render(<FiltersPanel {...defaultProps} />), props: defaultProps };
@@ -266,6 +270,31 @@ describe("include imported in density", () => {
     const checkbox = screen.getByText(/Include imported/).closest("label")!.querySelector("input")!;
     await user.click(checkbox);
     expect(onToggle).toHaveBeenCalledOnce();
+  });
+});
+
+describe("history time range slider", () => {
+  it("hides time slider when showHistory is false", () => {
+    renderFilters({ showHistory: false, historySliderRange: 24 });
+    // The slider would show "0h ago" or "now" labels — neither should appear in the history section
+    expect(screen.queryByText("now")).not.toBeInTheDocument();
+  });
+
+  it("shows time slider when showHistory is true", () => {
+    renderFilters({ showHistory: true, historySliderRange: 24, historySliderMin: 0, historySliderMax: 24 });
+    // At full range (0, 24) the label is "24h ago – now"
+    expect(screen.getByText("24h ago – now")).toBeInTheDocument();
+  });
+
+  it("shows correct label for narrowed range", () => {
+    // sliderMin=6, sliderMax=18 → "18h ago – 6h ago"
+    renderFilters({ showHistory: true, historySliderRange: 24, historySliderMin: 6, historySliderMax: 18 });
+    expect(screen.getByText("18h ago – 6h ago")).toBeInTheDocument();
+  });
+
+  it("hides slider when historySliderRange is 0", () => {
+    renderFilters({ showHistory: true, historySliderRange: 0 });
+    expect(screen.queryByText("now")).not.toBeInTheDocument();
   });
 });
 

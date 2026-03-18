@@ -44,6 +44,10 @@ interface LeftPanelProps {
   showReceiver: boolean;
   onToggleReceiver: () => void;
   hasReceiverLocation: boolean;
+  historySliderMin: number;
+  historySliderMax: number;
+  historySliderRange: number;
+  onHistoryTimeChange: (min: number, max: number) => void;
 }
 
 export function LeftPanel({ isOpen, width, onToggle, onWidthChange, ...filterProps }: LeftPanelProps) {

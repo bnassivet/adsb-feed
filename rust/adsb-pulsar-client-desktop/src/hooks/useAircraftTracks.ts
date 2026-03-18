@@ -56,6 +56,7 @@ export function useAircraftTracks(filters: Filters) {
     addAnalysisTracks,
     removeAnalysisTrack,
     clearAnalysis,
+    trackHistoryHours,
   } = useAircraftTrackingContext();
 
   const tracks = useMemo(
@@ -99,5 +100,6 @@ export function useAircraftTracks(filters: Filters) {
     tracks, history, imported, dbHistory, analysis,
     importTracks, clearImported, loadDbHistoryTracks, clearDbHistory,
     addAnalysisTracks, removeAnalysisTrack, clearAnalysis,
+    trackHistoryHours,
   };
 }

@@ -20,6 +20,7 @@ import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
 import { listen } from "@tauri-apps/api/event";
 import { ask, message, save, open } from "@tauri-apps/plugin-dialog";
 import { sortTracks } from "@/lib/sort-tracks";
+import { filterHistoryByTimeRange } from "@/lib/history-time-filter";
 import { DEFAULT_FILTERS } from "@/lib/types";
 import type { ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, TrackSection, StorageAvailability } from "@/lib/types";
 import type { SelectEvent } from "@/components/AircraftTable";
@@ -87,8 +88,13 @@ export default function Dashboard() {
     tracks, history, imported, dbHistory, analysis,
     importTracks, clearImported, loadDbHistoryTracks, clearDbHistory,
     addAnalysisTracks, removeAnalysisTrack, clearAnalysis,
+    trackHistoryHours,
   } = useAircraftTracks(activeFilters);
   const [showImported, setShowImported] = useLocalStorage<boolean>("adsb-show-imported", true);
+  // History time range slider — session-only state (resets each session)
+  const [historySliderMin, setHistorySliderMin] = useState(0);
+  const [historySliderMax, setHistorySliderMax] = useState<number | null>(null);
+  const effectiveSliderMax = historySliderMax ?? trackHistoryHours;
   const simulatedTracks = useSimulatedTracks(showSimulation);
   const allTracks = useMemo(() => [...tracks, ...simulatedTracks], [tracks, simulatedTracks]);
   const metrics = useMetrics();
@@ -233,7 +239,16 @@ export default function Dashboard() {
 
   const isRunning = status.is_running;
 
-  const visibleHistory = showHistory ? history : [];
+  // Reset slider when trackHistoryHours changes (e.g. user changes setting)
+  useEffect(() => {
+    setHistorySliderMin(0);
+    setHistorySliderMax(null);
+  }, [trackHistoryHours]);
+
+  const visibleHistory = useMemo(() => {
+    if (!showHistory) return [];
+    return filterHistoryByTimeRange(history, trackHistoryHours, historySliderMin, effectiveSliderMax, Date.now());
+  }, [showHistory, history, trackHistoryHours, historySliderMin, effectiveSliderMax]);
   const visibleImported = showImported ? imported : [];
   const visibleDbHistory = showDbHistory ? dbHistory : [];
 
@@ -374,6 +389,11 @@ export default function Dashboard() {
   function handleToggleIncludeImportedInDensity() {
     setIncludeImportedInDensity((prev: boolean) => !prev);
   }
+
+  const handleHistoryTimeChange = useCallback((min: number, max: number) => {
+    setHistorySliderMin(min);
+    setHistorySliderMax(max);
+  }, []);
 
   const handleDensityAltitudeChange = useCallback((min: number, max: number) => {
     setDensityAltitudeMin(min);
@@ -585,6 +605,10 @@ export default function Dashboard() {
           showReceiver={showReceiver}
           onToggleReceiver={handleToggleReceiver}
           hasReceiverLocation={receiverLocation != null}
+          historySliderMin={historySliderMin}
+          historySliderMax={effectiveSliderMax}
+          historySliderRange={trackHistoryHours}
+          onHistoryTimeChange={handleHistoryTimeChange}
         />
 
         {/* Map + Table */}
