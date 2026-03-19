@@ -1,8 +1,9 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { getStorageStats, getAircraftSummary, getTrajectory, getTimeDistribution, getDetectionRange, getHourlyHeatmap, getRawMessageCount } from "@/lib/commands";
+import { getStorageStats, getAircraftSummary, getFlightSummary, getTrajectory, getTimeDistribution, getDetectionRange, getHourlyHeatmap, getRawMessageCount } from "@/lib/commands";
 import { recordsToTrack } from "@/lib/history-convert";
-import type { AircraftSummary, AircraftTrack, DetectionRangeSector, HourlyHeatmapCell, StorageStats, TimeDistributionBucket, TimeDistributionMetric, TimeGranularity, TimeRangePreset } from "@/lib/types";
+import { useLocalStorage } from "@/hooks/useLocalStorage";
+import type { AircraftSummary, AircraftTrack, DetectionRangeSector, FlightSummary, HourlyHeatmapCell, StorageStats, TimeDistributionBucket, TimeDistributionMetric, TimeGranularity, TimeRangePreset } from "@/lib/types";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
 import { formatBytes } from "@/lib/format";
 import { granularityToNumBuckets } from "@/lib/db-history-analytics";
@@ -65,9 +66,11 @@ export function DBHistoryContent({
   const [detectionSectors, setDetectionSectors] = useState<DetectionRangeSector[]>([]);
   const [heatmapCells, setHeatmapCells] = useState<HourlyHeatmapCell[]>([]);
   const [rawMessageCount, setRawMessageCount] = useState(0);
+  const [flightSummaries, setFlightSummaries] = useState<FlightSummary[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedAircraft, setSelectedAircraft] = useState<Set<string>>(new Set());
+  const [selectedFlights, setSelectedFlights] = useState<Set<string>>(new Set());
   const [batchLoading, setBatchLoading] = useState(false);
+  const [gapThresholdMinutes, setGapThresholdMinutes] = useLocalStorage<number>("adsb-flight-gap-minutes", 60);
 
   // Controlled time range state
   const now = Date.now();
@@ -87,7 +90,7 @@ export function DBHistoryContent({
     });
   }, []);
 
-  const doBrowse = useCallback(async (start: number, end: number, gran: TimeGranularity = granularity, met: TimeDistributionMetric = timeMetric) => {
+  const doBrowse = useCallback(async (start: number, end: number, gran: TimeGranularity = granularity, met: TimeDistributionMetric = timeMetric, gapMins: number = gapThresholdMinutes) => {
     if (!browsing) setBrowsing(true);
     setLoading(true);
     onBrowse?.(start, end);
@@ -97,12 +100,14 @@ export function DBHistoryContent({
 
     const promises: [
       Promise<AircraftSummary[] | string>,
+      Promise<FlightSummary[] | string>,
       Promise<TimeDistributionBucket[] | string>,
       Promise<DetectionRangeSector[] | string>,
       Promise<HourlyHeatmapCell[] | string>,
       Promise<number | string>,
     ] = [
       getAircraftSummary(start, end),
+      getFlightSummary({ start_ms: start, end_ms: end, gap_threshold_ms: gapMins * 60_000 }),
       getTimeDistribution({ start_ms: start, end_ms: end, num_buckets: numBuckets, metric: met }),
       hasReceiver
         ? getDetectionRange({
@@ -116,21 +121,24 @@ export function DBHistoryContent({
       getRawMessageCount(start, end),
     ];
 
-    const [summaryResults, timeResults, rangeResults, heatmapResults, rawCountResult] = await Promise.all(promises);
+    const [summaryResults, flightResults, timeResults, rangeResults, heatmapResults, rawCountResult] = await Promise.all(promises);
 
     const sums = typeof summaryResults === "string" ? [] : (summaryResults as AircraftSummary[]);
+    const flights = typeof flightResults === "string" ? [] : (flightResults as FlightSummary[]);
     const buckets = typeof timeResults === "string" ? [] : (timeResults as TimeDistributionBucket[]);
     const sectors = typeof rangeResults === "string" ? [] : (rangeResults as DetectionRangeSector[]);
     const heatmap = typeof heatmapResults === "string" ? [] : (heatmapResults as HourlyHeatmapCell[]);
     const rawCount = typeof rawCountResult === "number" ? rawCountResult : 0;
     setSummaries(sums);
+    setFlightSummaries(flights);
     setTimeBuckets(buckets);
     setDetectionSectors(sectors);
     setHeatmapCells(heatmap);
     setRawMessageCount(rawCount);
+    setSelectedFlights(new Set());
     onSummariesLoaded?.(sums);
     setLoading(false);
-  }, [browsing, granularity, timeMetric, onBrowse, onSummariesLoaded, receiverLat, receiverLon]);
+  }, [browsing, granularity, timeMetric, gapThresholdMinutes, onBrowse, onSummariesLoaded, receiverLat, receiverLon]);
 
   function handlePresetClick(p: TimeRangePreset) {
     setPreset(p);
@@ -192,45 +200,51 @@ export function DBHistoryContent({
     setRefreshing(false);
   }
 
-  async function handleLoadTrajectory(summary: AircraftSummary) {
+  async function handleLoadTrajectory(flight: FlightSummary) {
     const records = await getTrajectory({
-      hex_ident: summary.hex_ident,
-      start_ms: startMs,
-      end_ms: endMs,
+      hex_ident: flight.hex_ident,
+      start_ms: flight.first_seen_ms,
+      end_ms: flight.last_seen_ms,
     });
     if (typeof records === "string" || !Array.isArray(records) || records.length === 0) return;
     const track = recordsToTrack(records);
+    track.track_id = flight.flight_id;
+    track.callsign = flight.callsign;
     onLoadTracks([track]);
   }
 
-  function toggleSelection(hexIdent: string) {
-    setSelectedAircraft(prev => {
+  function toggleSelection(flightId: string) {
+    setSelectedFlights(prev => {
       const next = new Set(prev);
-      if (next.has(hexIdent)) next.delete(hexIdent);
-      else next.add(hexIdent);
+      if (next.has(flightId)) next.delete(flightId);
+      else next.add(flightId);
       return next;
     });
   }
 
   function toggleSelectAll() {
-    if (selectedAircraft.size === summaries.length) {
-      setSelectedAircraft(new Set());
+    if (selectedFlights.size === flightSummaries.length) {
+      setSelectedFlights(new Set());
     } else {
-      setSelectedAircraft(new Set(summaries.map(s => s.hex_ident)));
+      setSelectedFlights(new Set(flightSummaries.map(f => f.flight_id)));
     }
   }
 
   async function fetchSelectedTracks(): Promise<AircraftTrack[]> {
-    const selected = summaries.filter(s => selectedAircraft.has(s.hex_ident));
+    const selected = flightSummaries.filter(f => selectedFlights.has(f.flight_id));
     const results = await Promise.all(
-      selected.map(s =>
-        getTrajectory({ hex_ident: s.hex_ident, start_ms: startMs, end_ms: endMs })
+      selected.map(f =>
+        getTrajectory({ hex_ident: f.hex_ident, start_ms: f.first_seen_ms, end_ms: f.last_seen_ms })
+          .then(records => ({ flight: f, records }))
       )
     );
     const tracks: AircraftTrack[] = [];
-    for (const records of results) {
+    for (const { flight, records } of results) {
       if (typeof records === "string" || !Array.isArray(records) || records.length === 0) continue;
-      tracks.push(recordsToTrack(records));
+      const track = recordsToTrack(records);
+      track.track_id = flight.flight_id;
+      track.callsign = flight.callsign;
+      tracks.push(track);
     }
     return tracks;
   }
@@ -379,15 +393,15 @@ export function DBHistoryContent({
       {/* Results area */}
       {browsing && (
         <div className="flex flex-col gap-1 px-3 pb-2">
-          {summaries.length === 0 && !loading && (
+          {flightSummaries.length === 0 && !loading && (
             <p className="text-xs text-slate-500 italic">No aircraft found.</p>
           )}
 
-          {summaries.length > 0 && (
+          {flightSummaries.length > 0 && (
             <details open className="group" data-testid="dbhist-track-list">
               <summary className="flex items-center gap-1.5 cursor-pointer select-none text-xs font-semibold text-slate-400 list-none [&::-webkit-details-marker]:hidden">
                 <span className="text-[10px] transition-transform duration-150 group-open:rotate-90">▶</span>
-                <span className="flex-1">Aircraft ({summaries.length})</span>
+                <span className="flex-1">Flights ({flightSummaries.length})</span>
                 {dbHistoryCount > 0 && (
                   <button
                     onClick={(e) => { e.preventDefault(); onClearTracks(); }}
@@ -400,24 +414,46 @@ export function DBHistoryContent({
                 )}
               </summary>
 
+              {/* Gap threshold selector */}
+              <div className="mt-1 px-2 flex items-center gap-1">
+                <span className="text-[10px] text-slate-500">Gap:</span>
+                {[15, 30, 60, 120, 240].map((mins) => (
+                  <button
+                    key={mins}
+                    onClick={() => {
+                      setGapThresholdMinutes(mins);
+                      doBrowse(startMs, endMs, granularity, timeMetric, mins);
+                    }}
+                    data-testid={`dbhist-gap-${mins}`}
+                    className={`px-1 py-0.5 text-[10px] rounded transition-colors ${
+                      gapThresholdMinutes === mins
+                        ? "bg-cyan-900/60 text-cyan-300"
+                        : "text-slate-500 hover:text-slate-400"
+                    }`}
+                  >
+                    {mins < 60 ? `${mins}m` : `${mins / 60}h`}
+                  </button>
+                ))}
+              </div>
+
               {/* Select All / batch actions */}
               <div className="mt-1 flex items-center gap-1.5 px-2">
                 <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer select-none" data-testid="dbhist-select-all">
                   <input
                     type="checkbox"
-                    checked={selectedAircraft.size === summaries.length && summaries.length > 0}
+                    checked={selectedFlights.size === flightSummaries.length && flightSummaries.length > 0}
                     onChange={toggleSelectAll}
                     className="accent-cyan-500"
                   />
-                  {selectedAircraft.size === summaries.length ? "Deselect all" : "Select all"}
+                  {selectedFlights.size === flightSummaries.length ? "Deselect all" : "Select all"}
                 </label>
-                {selectedAircraft.size > 0 && (
-                  <span className="text-[10px] text-slate-500">({selectedAircraft.size})</span>
+                {selectedFlights.size > 0 && (
+                  <span className="text-[10px] text-slate-500">({selectedFlights.size})</span>
                 )}
                 <div className="ml-auto flex gap-1">
                   <button
                     onClick={handleBatchLoadToLive}
-                    disabled={selectedAircraft.size === 0 || batchLoading}
+                    disabled={selectedFlights.size === 0 || batchLoading}
                     data-testid="dbhist-load-to-live"
                     className="px-1.5 py-0.5 text-[10px] rounded transition disabled:opacity-30 text-blue-400 hover:bg-blue-900/30"
                     title="Load selected trajectories to Live overlay"
@@ -427,7 +463,7 @@ export function DBHistoryContent({
                   {onAddToAnalysis && (
                     <button
                       onClick={handleBatchLoadToAnalysis}
-                      disabled={selectedAircraft.size === 0 || batchLoading}
+                      disabled={selectedFlights.size === 0 || batchLoading}
                       data-testid="dbhist-load-to-analysis"
                       className="px-1.5 py-0.5 text-[10px] rounded transition disabled:opacity-30 text-cyan-400 hover:bg-cyan-900/30"
                       title="Load selected trajectories to Analysis mode (additive)"
@@ -439,40 +475,43 @@ export function DBHistoryContent({
               </div>
 
               <div className="mt-1 flex flex-col gap-0.5 max-h-48 overflow-y-auto">
-                {summaries.map((s) => (
+                {flightSummaries.map((f) => (
                   <div
-                    key={s.hex_ident}
+                    key={f.flight_id}
                     className="flex items-start gap-1.5 px-2 py-1.5 text-xs rounded hover:bg-cyan-900/30 transition border border-transparent hover:border-cyan-800/40"
                   >
                     <input
                       type="checkbox"
-                      checked={selectedAircraft.has(s.hex_ident)}
-                      onChange={() => toggleSelection(s.hex_ident)}
-                      data-testid={`dbhist-check-${s.hex_ident}`}
+                      checked={selectedFlights.has(f.flight_id)}
+                      onChange={() => toggleSelection(f.flight_id)}
+                      data-testid={`dbhist-check-${f.flight_id}`}
                       className="accent-cyan-500 mt-0.5 shrink-0"
                     />
                     <button
-                      onClick={() => handleLoadTrajectory(s)}
-                      data-testid={`dbhist-load-${s.hex_ident}`}
+                      onClick={() => handleLoadTrajectory(f)}
+                      data-testid={`dbhist-load-${f.flight_id}`}
                       className="text-left flex-1 min-w-0"
-                      title={`Load trajectory for ${s.hex_ident}`}
+                      title={`Load trajectory for ${f.flight_id}`}
                     >
                       <div className="flex justify-between items-center">
                         <span className="text-cyan-200 font-mono font-semibold">
-                          {s.callsign ?? s.hex_ident}
+                          {f.callsign ?? f.hex_ident}
                         </span>
                         <span className="text-slate-500 text-[10px]">
-                          {s.position_count} pts
+                          {f.position_count} pts
                         </span>
                       </div>
                       <div className="text-[10px] text-slate-500 mt-0.5">
-                        {s.hex_ident}
-                        {s.min_altitude !== null && s.max_altitude !== null && (
-                          <span className="ml-2">
-                            {s.min_altitude.toLocaleString()}-{s.max_altitude.toLocaleString()} ft
-                          </span>
-                        )}
+                        {f.hex_ident}
+                        <span className="ml-2">
+                          {formatTime(f.first_seen_ms)} – {formatTime(f.last_seen_ms)}
+                        </span>
                       </div>
+                      {f.min_altitude !== null && f.max_altitude !== null && (
+                        <div className="text-[10px] text-slate-500">
+                          {f.min_altitude.toLocaleString()}-{f.max_altitude.toLocaleString()} ft
+                        </div>
+                      )}
                     </button>
                   </div>
                 ))}

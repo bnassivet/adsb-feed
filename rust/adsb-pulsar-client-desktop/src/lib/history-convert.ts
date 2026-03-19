@@ -1,6 +1,41 @@
 import type { AircraftTrack, PositionRecord } from "@/lib/types";
 
 /**
+ * Groups PositionRecord rows by hex_ident, then splits each group into
+ * separate flights when consecutive positions are separated by > gapMs.
+ * Each resulting AircraftTrack gets a track_id of "{hex_ident}_{flightNum}".
+ */
+export function recordsToFlightTracks(
+  records: PositionRecord[],
+  gapMs: number = 3_600_000,
+): AircraftTrack[] {
+  const groups = new Map<string, PositionRecord[]>();
+  for (const r of records) {
+    const arr = groups.get(r.hex_ident);
+    if (arr) arr.push(r);
+    else groups.set(r.hex_ident, [r]);
+  }
+
+  const tracks: AircraftTrack[] = [];
+  for (const [hexIdent, recs] of groups) {
+    const sorted = [...recs].sort((a, b) => a.timestamp_ms - b.timestamp_ms);
+    let flightNum = 0;
+    let flightStart = 0;
+    for (let i = 1; i <= sorted.length; i++) {
+      if (i === sorted.length || sorted[i].timestamp_ms - sorted[i - 1].timestamp_ms > gapMs) {
+        const flightRecords = sorted.slice(flightStart, i);
+        const track = recordsToTrack(flightRecords);
+        track.track_id = `${hexIdent}_${flightNum}`;
+        tracks.push(track);
+        flightNum++;
+        flightStart = i;
+      }
+    }
+  }
+  return tracks;
+}
+
+/**
  * Groups PositionRecord rows by hex_ident and converts each group into
  * an AircraftTrack. Used to bulk-convert DuckDB query results into tracks.
  */

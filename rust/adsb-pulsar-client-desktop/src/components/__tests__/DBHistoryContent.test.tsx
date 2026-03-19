@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockInvokeResponse, clearMockResponses } from "@/test/mocks/tauri";
 import { DBHistoryContent } from "../DBHistoryContent";
-import type { StorageStats, AircraftSummary } from "@/lib/types";
+import type { StorageStats, AircraftSummary, FlightSummary } from "@/lib/types";
 
 const sampleStats: StorageStats = {
   row_count: 1000,
@@ -24,15 +24,31 @@ const sampleSummary: AircraftSummary = {
   max_altitude: 35000,
 };
 
+const sampleFlight: FlightSummary = {
+  hex_ident: "A1B2C3",
+  flight_num: 0,
+  flight_id: "A1B2C3_0",
+  callsign: "TEST123",
+  position_count: 42,
+  first_seen_ms: 1705315800000,
+  last_seen_ms: 1705316100000,
+  min_altitude: 30000,
+  max_altitude: 35000,
+};
+
 const baseProps = {
   onLoadTracks: vi.fn(),
   onClearTracks: vi.fn(),
   dbHistoryCount: 0,
 };
 
-/** Set up mocks for a successful browse (summaries + time distribution + heatmap + raw count). */
-function mockBrowseResponses(summaries: AircraftSummary[] = [sampleSummary]) {
+/** Set up mocks for a successful browse (summaries + flights + time distribution + heatmap + raw count). */
+function mockBrowseResponses(
+  summaries: AircraftSummary[] = [sampleSummary],
+  flights: FlightSummary[] = [sampleFlight],
+) {
   mockInvokeResponse("get_aircraft_summary", summaries);
+  mockInvokeResponse("get_flight_summary", flights);
   mockInvokeResponse("get_time_distribution", []);
   mockInvokeResponse("get_hourly_heatmap", []);
   mockInvokeResponse("get_raw_message_count", 0);
@@ -76,7 +92,7 @@ describe("DBHistoryContent", () => {
     expect(btn24h).toHaveClass("bg-cyan-900/60");
   });
 
-  it("clicking a preset triggers browse with summaries", async () => {
+  it("clicking a preset triggers browse with flight summaries", async () => {
     mockInvokeResponse("get_storage_stats", sampleStats);
     mockBrowseResponses();
 
@@ -140,7 +156,7 @@ describe("DBHistoryContent", () => {
     });
   });
 
-  it("load button calls getTrajectory then onLoadTracks", async () => {
+  it("load button calls getTrajectory then onLoadTracks with track_id", async () => {
     mockInvokeResponse("get_storage_stats", sampleStats);
     mockBrowseResponses();
     mockInvokeResponse("get_trajectory", [
@@ -169,25 +185,29 @@ describe("DBHistoryContent", () => {
     await user.click(screen.getByTestId("dbhist-preset-24h"));
 
     await waitFor(() => {
-      expect(screen.getByTestId("dbhist-load-A1B2C3")).toBeInTheDocument();
+      expect(screen.getByTestId("dbhist-load-A1B2C3_0")).toBeInTheDocument();
     });
-    await user.click(screen.getByTestId("dbhist-load-A1B2C3"));
+    await user.click(screen.getByTestId("dbhist-load-A1B2C3_0"));
 
     await waitFor(() => {
       expect(onLoad).toHaveBeenCalledWith(
         expect.arrayContaining([
-          expect.objectContaining({ hex_ident: "A1B2C3" }),
+          expect.objectContaining({ hex_ident: "A1B2C3", track_id: "A1B2C3_0", callsign: "TEST123" }),
         ]),
       );
     });
   });
 
-  it("wraps track list in a foldable details/summary element", async () => {
+  it("wraps track list in a foldable details/summary with Flights label", async () => {
+    const twoFlights: FlightSummary[] = [
+      sampleFlight,
+      { ...sampleFlight, hex_ident: "D4E5F6", flight_num: 0, flight_id: "D4E5F6_0", callsign: "OTHER99", position_count: 10, min_altitude: 20000, max_altitude: 25000 },
+    ];
     mockInvokeResponse("get_storage_stats", sampleStats);
-    mockBrowseResponses([
-      sampleSummary,
-      { ...sampleSummary, hex_ident: "D4E5F6", callsign: "OTHER99", position_count: 10, min_altitude: 20000, max_altitude: 25000 },
-    ]);
+    mockBrowseResponses(
+      [sampleSummary, { ...sampleSummary, hex_ident: "D4E5F6", callsign: "OTHER99", position_count: 10, min_altitude: 20000, max_altitude: 25000 }],
+      twoFlights,
+    );
 
     const user = userEvent.setup();
     render(<DBHistoryContent {...baseProps} />);
@@ -203,7 +223,7 @@ describe("DBHistoryContent", () => {
 
     const details = screen.getByTestId("dbhist-track-list");
     expect(details.tagName).toBe("DETAILS");
-    expect(details.querySelector("summary")).toHaveTextContent("Aircraft (2)");
+    expect(details.querySelector("summary")).toHaveTextContent("Flights (2)");
     expect(details).toHaveAttribute("open");
   });
 
@@ -338,6 +358,10 @@ describe("DBHistoryContent", () => {
 });
 
 describe("DBHistoryContent multi-selection", () => {
+  const twoFlights: FlightSummary[] = [
+    sampleFlight,
+    { ...sampleFlight, hex_ident: "D4E5F6", flight_num: 0, flight_id: "D4E5F6_0", callsign: "OTHER99", position_count: 10, min_altitude: 20000, max_altitude: 25000 },
+  ];
   const twoSummaries: AircraftSummary[] = [
     sampleSummary,
     { ...sampleSummary, hex_ident: "D4E5F6", callsign: "OTHER99", position_count: 10, min_altitude: 20000, max_altitude: 25000 },
@@ -345,7 +369,7 @@ describe("DBHistoryContent multi-selection", () => {
 
   async function renderWithSummaries(extraProps: Partial<typeof baseProps & { onAddToAnalysis: ReturnType<typeof vi.fn>; onSwitchToAnalysis: ReturnType<typeof vi.fn> }> = {}) {
     mockInvokeResponse("get_storage_stats", sampleStats);
-    mockBrowseResponses(twoSummaries);
+    mockBrowseResponses(twoSummaries, twoFlights);
 
     const user = userEvent.setup();
     const result = render(<DBHistoryContent {...baseProps} {...extraProps} />);
@@ -362,10 +386,10 @@ describe("DBHistoryContent multi-selection", () => {
     return { user, ...result };
   }
 
-  it("renders checkboxes per aircraft row", async () => {
+  it("renders checkboxes per flight row keyed by flight_id", async () => {
     await renderWithSummaries();
-    expect(screen.getByTestId("dbhist-check-A1B2C3")).toBeInTheDocument();
-    expect(screen.getByTestId("dbhist-check-D4E5F6")).toBeInTheDocument();
+    expect(screen.getByTestId("dbhist-check-A1B2C3_0")).toBeInTheDocument();
+    expect(screen.getByTestId("dbhist-check-D4E5F6_0")).toBeInTheDocument();
   });
 
   it("Select All toggles all checkboxes", async () => {
@@ -376,8 +400,8 @@ describe("DBHistoryContent multi-selection", () => {
 
     await user.click(selectAll);
 
-    const check1 = screen.getByTestId("dbhist-check-A1B2C3") as HTMLInputElement;
-    const check2 = screen.getByTestId("dbhist-check-D4E5F6") as HTMLInputElement;
+    const check1 = screen.getByTestId("dbhist-check-A1B2C3_0") as HTMLInputElement;
+    const check2 = screen.getByTestId("dbhist-check-D4E5F6_0") as HTMLInputElement;
     expect(check1.checked).toBe(true);
     expect(check2.checked).toBe(true);
 
@@ -403,7 +427,7 @@ describe("DBHistoryContent multi-selection", () => {
     expect(screen.queryByTestId("dbhist-load-to-analysis")).not.toBeInTheDocument();
   });
 
-  it("'→ Analysis' calls onAddToAnalysis with fetched tracks", async () => {
+  it("'→ Analysis' calls onAddToAnalysis with fetched tracks including track_id", async () => {
     mockInvokeResponse("get_trajectory", [
       {
         hex_ident: "A1B2C3",
@@ -424,8 +448,8 @@ describe("DBHistoryContent multi-selection", () => {
     const onSwitch = vi.fn();
     const { user } = await renderWithSummaries({ onAddToAnalysis: onAdd, onSwitchToAnalysis: onSwitch });
 
-    // Select first aircraft
-    await user.click(screen.getByTestId("dbhist-check-A1B2C3"));
+    // Select first flight
+    await user.click(screen.getByTestId("dbhist-check-A1B2C3_0"));
 
     // Click "→ Analysis"
     await user.click(screen.getByTestId("dbhist-load-to-analysis"));
@@ -433,10 +457,232 @@ describe("DBHistoryContent multi-selection", () => {
     await waitFor(() => {
       expect(onAdd).toHaveBeenCalledWith(
         expect.arrayContaining([
-          expect.objectContaining({ hex_ident: "A1B2C3" }),
+          expect.objectContaining({ hex_ident: "A1B2C3", track_id: "A1B2C3_0", callsign: "TEST123" }),
         ]),
       );
     });
     expect(onSwitch).toHaveBeenCalled();
+  });
+});
+
+describe("DBHistoryContent flight segmentation", () => {
+  const twoFlightsSameHex: FlightSummary[] = [
+    {
+      hex_ident: "A1B2C3",
+      flight_num: 1,
+      flight_id: "A1B2C3_1",
+      callsign: "FLT200",
+      position_count: 20,
+      first_seen_ms: 1705320000000,
+      last_seen_ms: 1705323600000,
+      min_altitude: 10000,
+      max_altitude: 15000,
+    },
+    {
+      hex_ident: "A1B2C3",
+      flight_num: 0,
+      flight_id: "A1B2C3_0",
+      callsign: "FLT100",
+      position_count: 42,
+      first_seen_ms: 1705315800000,
+      last_seen_ms: 1705316100000,
+      min_altitude: 30000,
+      max_altitude: 35000,
+    },
+  ];
+
+  function mockFlightBrowse(flights: FlightSummary[] = twoFlightsSameHex) {
+    mockInvokeResponse("get_aircraft_summary", [sampleSummary]);
+    mockInvokeResponse("get_flight_summary", flights);
+    mockInvokeResponse("get_time_distribution", []);
+    mockInvokeResponse("get_hourly_heatmap", []);
+    mockInvokeResponse("get_raw_message_count", 0);
+  }
+
+  it("two flights for same hex_ident render with distinct keys", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockFlightBrowse();
+
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("dbhist-preset-24h"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-check-A1B2C3_0")).toBeInTheDocument();
+      expect(screen.getByTestId("dbhist-check-A1B2C3_1")).toBeInTheDocument();
+    });
+    // Both render with distinct callsigns
+    expect(screen.getByText("FLT100")).toBeInTheDocument();
+    expect(screen.getByText("FLT200")).toBeInTheDocument();
+  });
+
+  it("selecting one flight doesn't select another of same hex", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockFlightBrowse();
+
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("dbhist-preset-24h"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-check-A1B2C3_0")).toBeInTheDocument();
+    });
+
+    // Select only flight 0
+    await user.click(screen.getByTestId("dbhist-check-A1B2C3_0"));
+
+    const check0 = screen.getByTestId("dbhist-check-A1B2C3_0") as HTMLInputElement;
+    const check1 = screen.getByTestId("dbhist-check-A1B2C3_1") as HTMLInputElement;
+    expect(check0.checked).toBe(true);
+    expect(check1.checked).toBe(false);
+  });
+
+  it("trajectory uses flight's own time range", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockFlightBrowse();
+    mockInvokeResponse("get_trajectory", [
+      {
+        hex_ident: "A1B2C3",
+        callsign: "FLT100",
+        latitude: 45.5,
+        longitude: -73.5,
+        altitude: 35000,
+        ground_speed: 450,
+        track: 90,
+        vertical_rate: 0,
+        squawk: "1200",
+        is_on_ground: false,
+        timestamp_ms: 1705315800000,
+      },
+    ]);
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    const onLoad = vi.fn();
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} onLoadTracks={onLoad} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("dbhist-preset-24h"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-load-A1B2C3_0")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("dbhist-load-A1B2C3_0"));
+
+    await waitFor(() => {
+      expect(onLoad).toHaveBeenCalled();
+    });
+
+    // Verify trajectory was called with flight's own time range
+    const calls = (invoke as ReturnType<typeof vi.fn>).mock.calls;
+    const trajCall = calls.find((c: unknown[]) => c[0] === "get_trajectory");
+    expect(trajCall).toBeDefined();
+    expect(trajCall![1].query.start_ms).toBe(1705315800000); // flight's first_seen_ms
+    expect(trajCall![1].query.end_ms).toBe(1705316100000);   // flight's last_seen_ms
+  });
+
+  it("gap threshold buttons are rendered", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockFlightBrowse();
+
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("dbhist-preset-24h"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-gap-60")).toBeInTheDocument();
+    });
+    // Check all gap buttons are present
+    for (const mins of [15, 30, 60, 120, 240]) {
+      expect(screen.getByTestId(`dbhist-gap-${mins}`)).toBeInTheDocument();
+    }
+  });
+
+  it("changing gap threshold re-triggers browse with new threshold", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockFlightBrowse();
+
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("dbhist-preset-24h"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-gap-60")).toBeInTheDocument();
+    });
+
+    // Mock new responses for the re-browse
+    mockFlightBrowse();
+
+    // Click 30m gap
+    await user.click(screen.getByTestId("dbhist-gap-30"));
+
+    await waitFor(() => {
+      const calls = (invoke as ReturnType<typeof vi.fn>).mock.calls;
+      const flightCalls = calls.filter((c: unknown[]) => c[0] === "get_flight_summary");
+      // Should have at least 2 calls (initial + re-triggered)
+      expect(flightCalls.length).toBeGreaterThanOrEqual(2);
+      // The last call should have gap_threshold_ms = 30 * 60_000
+      const lastCall = flightCalls[flightCalls.length - 1];
+      expect(lastCall[1].query.gap_threshold_ms).toBe(30 * 60_000);
+    });
+  });
+
+  it("loaded tracks have track_id set to flight_id", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockFlightBrowse();
+    mockInvokeResponse("get_trajectory", [
+      {
+        hex_ident: "A1B2C3",
+        callsign: "FLT100",
+        latitude: 45.5,
+        longitude: -73.5,
+        altitude: 35000,
+        ground_speed: 450,
+        track: 90,
+        vertical_rate: 0,
+        squawk: "1200",
+        is_on_ground: false,
+        timestamp_ms: 1705315800000,
+      },
+    ]);
+
+    const onLoad = vi.fn();
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} onLoadTracks={onLoad} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("dbhist-preset-24h"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-load-A1B2C3_0")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("dbhist-load-A1B2C3_0"));
+
+    await waitFor(() => {
+      expect(onLoad).toHaveBeenCalled();
+      const tracks = onLoad.mock.calls[0][0];
+      expect(tracks[0].track_id).toBe("A1B2C3_0");
+    });
   });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { PositionRecord } from "@/lib/types";
-import { recordsToTrack, recordsToTracks } from "@/lib/history-convert";
+import { recordsToTrack, recordsToTracks, recordsToFlightTracks } from "@/lib/history-convert";
 
 function makeRecord(overrides: Partial<PositionRecord> = {}): PositionRecord {
   return {
@@ -73,6 +73,15 @@ describe("recordsToTrack", () => {
     expect(track.positions[0][2]).toBeNull();
   });
 
+  it("uses last record callsign (callers override with richer data)", () => {
+    const records = [
+      makeRecord({ timestamp_ms: 1_000, callsign: "FLT100" }),
+      makeRecord({ timestamp_ms: 2_000, callsign: null }),
+    ];
+    const track = recordsToTrack(records);
+    expect(track.callsign).toBeNull();
+  });
+
   it("generates ISO timestamp string from last timestamp_ms", () => {
     const record = makeRecord({ timestamp_ms: 0 });
     const track = recordsToTrack([record]);
@@ -113,5 +122,73 @@ describe("recordsToTracks", () => {
     expect(tracks[0].last_seen).toBe(5_000);
     expect(tracks[0].positions[0][0]).toBe(48.0); // earlier record first
     expect(tracks[0].positions[1][0]).toBe(48.5);
+  });
+});
+
+describe("recordsToFlightTracks", () => {
+  it("single flight — positions within gap produce 1 track", () => {
+    const records = [
+      makeRecord({ hex_ident: "ABCDEF", timestamp_ms: 1000, latitude: 48.0 }),
+      makeRecord({ hex_ident: "ABCDEF", timestamp_ms: 2000, latitude: 48.1 }),
+      makeRecord({ hex_ident: "ABCDEF", timestamp_ms: 3000, latitude: 48.2 }),
+    ];
+    const tracks = recordsToFlightTracks(records);
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0].track_id).toBe("ABCDEF_0");
+    expect(tracks[0].positions).toHaveLength(3);
+  });
+
+  it("gap splits — gap > threshold produces 2 tracks", () => {
+    const records = [
+      makeRecord({ hex_ident: "ABCDEF", timestamp_ms: 1000, latitude: 48.0 }),
+      makeRecord({ hex_ident: "ABCDEF", timestamp_ms: 2000, latitude: 48.1 }),
+      makeRecord({ hex_ident: "ABCDEF", timestamp_ms: 3_603_000, latitude: 48.5 }),
+    ];
+    const tracks = recordsToFlightTracks(records);
+    expect(tracks).toHaveLength(2);
+    expect(tracks[0].track_id).toBe("ABCDEF_0");
+    expect(tracks[0].positions).toHaveLength(2);
+    expect(tracks[1].track_id).toBe("ABCDEF_1");
+    expect(tracks[1].positions).toHaveLength(1);
+  });
+
+  it("multiple aircraft — each hex_ident segmented independently", () => {
+    const records = [
+      makeRecord({ hex_ident: "AAA111", timestamp_ms: 1000, latitude: 48.0 }),
+      makeRecord({ hex_ident: "BBB222", timestamp_ms: 1500, latitude: 49.0 }),
+      makeRecord({ hex_ident: "AAA111", timestamp_ms: 2000, latitude: 48.1 }),
+      makeRecord({ hex_ident: "BBB222", timestamp_ms: 2500, latitude: 49.1 }),
+    ];
+    const tracks = recordsToFlightTracks(records);
+    expect(tracks.length).toBeGreaterThanOrEqual(2);
+    const hexIdents = tracks.map((t) => t.hex_ident);
+    expect(hexIdents).toContain("AAA111");
+    expect(hexIdents).toContain("BBB222");
+  });
+
+  it("custom gap — smaller gap splits more", () => {
+    const records = [
+      makeRecord({ hex_ident: "ABCDEF", timestamp_ms: 0, latitude: 48.0 }),
+      makeRecord({ hex_ident: "ABCDEF", timestamp_ms: 60_000, latitude: 48.1 }),
+      makeRecord({ hex_ident: "ABCDEF", timestamp_ms: 1_860_000, latitude: 48.5 }),
+    ];
+    // Default gap (1h) — all within 1h, so 1 track
+    const defaultTracks = recordsToFlightTracks(records);
+    expect(defaultTracks).toHaveLength(1);
+
+    // Custom gap 15min (900_000ms) — 30min gap between 2nd and 3rd splits
+    const customTracks = recordsToFlightTracks(records, 900_000);
+    expect(customTracks).toHaveLength(2);
+  });
+
+  it("preserves callsign per flight segment", () => {
+    const records = [
+      makeRecord({ hex_ident: "ABCDEF", timestamp_ms: 1000, callsign: "FLT1", latitude: 48.0 }),
+      makeRecord({ hex_ident: "ABCDEF", timestamp_ms: 3_700_000, callsign: "FLT2", latitude: 49.0 }),
+    ];
+    const tracks = recordsToFlightTracks(records);
+    expect(tracks).toHaveLength(2);
+    expect(tracks[0].callsign).toBe("FLT1");
+    expect(tracks[1].callsign).toBe("FLT2");
   });
 });
