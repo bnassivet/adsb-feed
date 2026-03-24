@@ -1,4 +1,5 @@
 import type { AircraftTrack } from "./types";
+import { trackKey } from "./types";
 
 /**
  * Returns a new array with selected tracks moved to the end (last = top layer in Leaflet),
@@ -12,7 +13,7 @@ export function orderTracksWithSelectedLast(
   const nonSelected: AircraftTrack[] = [];
   const selected: AircraftTrack[] = [];
   for (const t of tracks) {
-    if (selectedHexIdents.has(t.hex_ident)) {
+    if (selectedHexIdents.has(trackKey(t))) {
       selected.push(t);
     } else {
       nonSelected.push(t);

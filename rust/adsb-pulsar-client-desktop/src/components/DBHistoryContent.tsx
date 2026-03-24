@@ -1,13 +1,14 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
-import { getStorageStats, getAircraftSummary, getFlightSummary, getTrajectory, getTimeDistribution, getDetectionRange, getHourlyHeatmap, getRawMessageCount } from "@/lib/commands";
-import { recordsToTrack } from "@/lib/history-convert";
-import { useLocalStorage } from "@/hooks/useLocalStorage";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { getStorageStats, getAircraftSummary, getFlightSummaryArrow, getTrajectoryBatchArrow, getTimeDistribution, getDetectionRange, getHourlyHeatmap, getRawMessageCount } from "@/lib/commands";
+import { arrowToTracks, arrowToFlightSummaries } from "@/lib/arrow-utils";
 import type { AircraftSummary, AircraftTrack, DetectionRangeSector, FlightSummary, HourlyHeatmapCell, StorageStats, TimeDistributionBucket, TimeDistributionMetric, TimeGranularity, TimeRangePreset } from "@/lib/types";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
 import { formatBytes } from "@/lib/format";
 import { granularityToNumBuckets } from "@/lib/db-history-analytics";
 import { DBHistoryAnalytics } from "./DBHistoryAnalytics";
+import { browseReducer, initialBrowseState } from "@/lib/browse-reducer";
 
 interface Props {
   onLoadTracks: (tracks: AircraftTrack[]) => void;
@@ -60,17 +61,18 @@ export function DBHistoryContent({
   const [stats, setStats] = useState<StorageStats | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [browsing, setBrowsing] = useState(false);
-  const [summaries, setSummaries] = useState<AircraftSummary[]>([]);
-  const [timeBuckets, setTimeBuckets] = useState<TimeDistributionBucket[]>([]);
-  const [detectionSectors, setDetectionSectors] = useState<DetectionRangeSector[]>([]);
-  const [heatmapCells, setHeatmapCells] = useState<HourlyHeatmapCell[]>([]);
-  const [rawMessageCount, setRawMessageCount] = useState(0);
-  const [flightSummaries, setFlightSummaries] = useState<FlightSummary[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [selectedFlights, setSelectedFlights] = useState<Set<string>>(new Set());
-  const [batchLoading, setBatchLoading] = useState(false);
-  const [gapThresholdMinutes, setGapThresholdMinutes] = useLocalStorage<number>("adsb-flight-gap-minutes", 60);
+
+  const [browse, dispatch] = useReducer(browseReducer, initialBrowseState);
+  const { browsing, loading, batchLoading, summaries, flightSummaries, timeBuckets, detectionSectors, heatmapCells, rawMessageCount, selectedFlights } = browse;
+
+  // Virtualizer for flight list
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: flightSummaries.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 58, // ~58px per row (callsign + hex + time + altitude lines)
+    overscan: 10,
+  });
 
   // Controlled time range state
   const now = Date.now();
@@ -90,9 +92,8 @@ export function DBHistoryContent({
     });
   }, []);
 
-  const doBrowse = useCallback(async (start: number, end: number, gran: TimeGranularity = granularity, met: TimeDistributionMetric = timeMetric, gapMins: number = gapThresholdMinutes) => {
-    if (!browsing) setBrowsing(true);
-    setLoading(true);
+  const doBrowse = useCallback(async (start: number, end: number, gran: TimeGranularity = granularity, met: TimeDistributionMetric = timeMetric) => {
+    dispatch({ type: "START_BROWSE" });
     onBrowse?.(start, end);
 
     const numBuckets = granularityToNumBuckets(gran, end - start);
@@ -107,7 +108,8 @@ export function DBHistoryContent({
       Promise<number | string>,
     ] = [
       getAircraftSummary(start, end),
-      getFlightSummary({ start_ms: start, end_ms: end, gap_threshold_ms: gapMins * 60_000 }),
+      getFlightSummaryArrow({ start_ms: start, end_ms: end })
+        .then(bytes => typeof bytes === "string" ? bytes : arrowToFlightSummaries(bytes as number[])),
       getTimeDistribution({ start_ms: start, end_ms: end, num_buckets: numBuckets, metric: met }),
       hasReceiver
         ? getDetectionRange({
@@ -129,16 +131,18 @@ export function DBHistoryContent({
     const sectors = typeof rangeResults === "string" ? [] : (rangeResults as DetectionRangeSector[]);
     const heatmap = typeof heatmapResults === "string" ? [] : (heatmapResults as HourlyHeatmapCell[]);
     const rawCount = typeof rawCountResult === "number" ? rawCountResult : 0;
-    setSummaries(sums);
-    setFlightSummaries(flights);
-    setTimeBuckets(buckets);
-    setDetectionSectors(sectors);
-    setHeatmapCells(heatmap);
-    setRawMessageCount(rawCount);
-    setSelectedFlights(new Set());
+
+    dispatch({
+      type: "BROWSE_RESULTS",
+      summaries: sums,
+      flightSummaries: flights,
+      timeBuckets: buckets,
+      detectionSectors: sectors,
+      heatmapCells: heatmap,
+      rawMessageCount: rawCount,
+    });
     onSummariesLoaded?.(sums);
-    setLoading(false);
-  }, [browsing, granularity, timeMetric, gapThresholdMinutes, onBrowse, onSummariesLoaded, receiverLat, receiverLon]);
+  }, [granularity, timeMetric, onBrowse, onSummariesLoaded, receiverLat, receiverLon]);
 
   function handlePresetClick(p: TimeRangePreset) {
     setPreset(p);
@@ -201,70 +205,54 @@ export function DBHistoryContent({
   }
 
   async function handleLoadTrajectory(flight: FlightSummary) {
-    const records = await getTrajectory({
-      hex_ident: flight.hex_ident,
-      start_ms: flight.first_seen_ms,
-      end_ms: flight.last_seen_ms,
-    });
-    if (typeof records === "string" || !Array.isArray(records) || records.length === 0) return;
-    const track = recordsToTrack(records);
-    track.track_id = flight.flight_id;
-    track.callsign = flight.callsign;
-    onLoadTracks([track]);
+    const bytes = await getTrajectoryBatchArrow([
+      [{ hex_ident: flight.hex_ident, start_ms: flight.first_seen_ms, end_ms: flight.last_seen_ms }, flight.flight_id],
+    ]);
+    if (typeof bytes === "string" || !Array.isArray(bytes) || bytes.length === 0) return;
+    const tracks = arrowToTracks(bytes, [flight]);
+    if (tracks.length > 0) onLoadTracks(tracks);
   }
 
   function toggleSelection(flightId: string) {
-    setSelectedFlights(prev => {
-      const next = new Set(prev);
-      if (next.has(flightId)) next.delete(flightId);
-      else next.add(flightId);
-      return next;
-    });
+    dispatch({ type: "TOGGLE_FLIGHT", flightId });
   }
 
   function toggleSelectAll() {
-    if (selectedFlights.size === flightSummaries.length) {
-      setSelectedFlights(new Set());
-    } else {
-      setSelectedFlights(new Set(flightSummaries.map(f => f.flight_id)));
-    }
+    dispatch({ type: "TOGGLE_ALL" });
   }
 
   async function fetchSelectedTracks(): Promise<AircraftTrack[]> {
     const selected = flightSummaries.filter(f => selectedFlights.has(f.flight_id));
-    const results = await Promise.all(
-      selected.map(f =>
-        getTrajectory({ hex_ident: f.hex_ident, start_ms: f.first_seen_ms, end_ms: f.last_seen_ms })
-          .then(records => ({ flight: f, records }))
-      )
-    );
-    const tracks: AircraftTrack[] = [];
-    for (const { flight, records } of results) {
-      if (typeof records === "string" || !Array.isArray(records) || records.length === 0) continue;
-      const track = recordsToTrack(records);
-      track.track_id = flight.flight_id;
-      track.callsign = flight.callsign;
-      tracks.push(track);
-    }
-    return tracks;
+    if (selected.length === 0) return [];
+
+    // Single IPC call with Arrow binary — 1 Mutex acquisition, ~4x less data
+    const queries: [{ hex_ident: string; start_ms?: number | null; end_ms?: number | null }, string][] =
+      selected.map(f => [
+        { hex_ident: f.hex_ident, start_ms: f.first_seen_ms, end_ms: f.last_seen_ms },
+        f.flight_id,
+      ]);
+
+    const bytes = await getTrajectoryBatchArrow(queries);
+    if (typeof bytes === "string" || !Array.isArray(bytes)) return [];
+    return arrowToTracks(bytes, selected);
   }
 
   async function handleBatchLoadToLive() {
-    setBatchLoading(true);
+    dispatch({ type: "SET_BATCH_LOADING", loading: true });
     const tracks = await fetchSelectedTracks();
     if (tracks.length > 0) onLoadTracks(tracks);
-    setBatchLoading(false);
+    dispatch({ type: "SET_BATCH_LOADING", loading: false });
   }
 
   async function handleBatchLoadToAnalysis() {
     if (!onAddToAnalysis) return;
-    setBatchLoading(true);
+    dispatch({ type: "SET_BATCH_LOADING", loading: true });
     const tracks = await fetchSelectedTracks();
     if (tracks.length > 0) {
       onAddToAnalysis(tracks);
       onSwitchToAnalysis?.();
     }
-    setBatchLoading(false);
+    dispatch({ type: "SET_BATCH_LOADING", loading: false });
   }
 
   if (unavailable) {
@@ -414,28 +402,6 @@ export function DBHistoryContent({
                 )}
               </summary>
 
-              {/* Gap threshold selector */}
-              <div className="mt-1 px-2 flex items-center gap-1">
-                <span className="text-[10px] text-slate-500">Gap:</span>
-                {[15, 30, 60, 120, 240].map((mins) => (
-                  <button
-                    key={mins}
-                    onClick={() => {
-                      setGapThresholdMinutes(mins);
-                      doBrowse(startMs, endMs, granularity, timeMetric, mins);
-                    }}
-                    data-testid={`dbhist-gap-${mins}`}
-                    className={`px-1 py-0.5 text-[10px] rounded transition-colors ${
-                      gapThresholdMinutes === mins
-                        ? "bg-cyan-900/60 text-cyan-300"
-                        : "text-slate-500 hover:text-slate-400"
-                    }`}
-                  >
-                    {mins < 60 ? `${mins}m` : `${mins / 60}h`}
-                  </button>
-                ))}
-              </div>
-
               {/* Select All / batch actions */}
               <div className="mt-1 flex items-center gap-1.5 px-2">
                 <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer select-none" data-testid="dbhist-select-all">
@@ -474,47 +440,55 @@ export function DBHistoryContent({
                 </div>
               </div>
 
-              <div className="mt-1 flex flex-col gap-0.5 max-h-48 overflow-y-auto">
-                {flightSummaries.map((f) => (
-                  <div
-                    key={f.flight_id}
-                    className="flex items-start gap-1.5 px-2 py-1.5 text-xs rounded hover:bg-cyan-900/30 transition border border-transparent hover:border-cyan-800/40"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedFlights.has(f.flight_id)}
-                      onChange={() => toggleSelection(f.flight_id)}
-                      data-testid={`dbhist-check-${f.flight_id}`}
-                      className="accent-cyan-500 mt-0.5 shrink-0"
-                    />
-                    <button
-                      onClick={() => handleLoadTrajectory(f)}
-                      data-testid={`dbhist-load-${f.flight_id}`}
-                      className="text-left flex-1 min-w-0"
-                      title={`Load trajectory for ${f.flight_id}`}
-                    >
-                      <div className="flex justify-between items-center">
-                        <span className="text-cyan-200 font-mono font-semibold">
-                          {f.callsign ?? f.hex_ident}
-                        </span>
-                        <span className="text-slate-500 text-[10px]">
-                          {f.position_count} pts
-                        </span>
+              <div ref={scrollRef} className="mt-1 max-h-48 overflow-y-auto">
+                <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+                  {virtualizer.getVirtualItems().map((virtualRow) => {
+                    const f = flightSummaries[virtualRow.index];
+                    return (
+                      <div
+                        key={f.flight_id}
+                        data-index={virtualRow.index}
+                        ref={virtualizer.measureElement}
+                        style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${virtualRow.start}px)` }}
+                        className="flex items-start gap-1.5 px-2 py-1.5 text-xs rounded hover:bg-cyan-900/30 transition border border-transparent hover:border-cyan-800/40"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedFlights.has(f.flight_id)}
+                          onChange={() => toggleSelection(f.flight_id)}
+                          data-testid={`dbhist-check-${f.flight_id}`}
+                          className="accent-cyan-500 mt-0.5 shrink-0"
+                        />
+                        <button
+                          onClick={() => handleLoadTrajectory(f)}
+                          data-testid={`dbhist-load-${f.flight_id}`}
+                          className="text-left flex-1 min-w-0"
+                          title={`Load trajectory for ${f.flight_id}`}
+                        >
+                          <div className="flex justify-between items-center">
+                            <span className="text-cyan-200 font-mono font-semibold">
+                              {f.callsign ?? f.hex_ident}
+                            </span>
+                            <span className="text-slate-500 text-[10px]">
+                              {f.position_count} pts
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            {f.hex_ident}
+                            <span className="ml-2">
+                              {formatTime(f.first_seen_ms)} – {formatTime(f.last_seen_ms)}
+                            </span>
+                          </div>
+                          {f.min_altitude !== null && f.max_altitude !== null && (
+                            <div className="text-[10px] text-slate-500">
+                              {f.min_altitude.toLocaleString()}-{f.max_altitude.toLocaleString()} ft
+                            </div>
+                          )}
+                        </button>
                       </div>
-                      <div className="text-[10px] text-slate-500 mt-0.5">
-                        {f.hex_ident}
-                        <span className="ml-2">
-                          {formatTime(f.first_seen_ms)} – {formatTime(f.last_seen_ms)}
-                        </span>
-                      </div>
-                      {f.min_altitude !== null && f.max_altitude !== null && (
-                        <div className="text-[10px] text-slate-500">
-                          {f.min_altitude.toLocaleString()}-{f.max_altitude.toLocaleString()} ft
-                        </div>
-                      )}
-                    </button>
-                  </div>
-                ))}
+                    );
+                  })}
+                </div>
               </div>
             </details>
           )}

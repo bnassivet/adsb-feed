@@ -3,7 +3,7 @@ import { useEffect, useMemo, useCallback } from "react";
 import { MapContainer, TileLayer, Marker, Polyline, GeoJSON, Tooltip, CircleMarker, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import type { AircraftTrack, DensityMetric, DensityTooltipMode, AltitudeColorMode } from "@/lib/types";
-import { zoomToH3Resolution } from "@/lib/types";
+import { zoomToH3Resolution, trackKey } from "@/lib/types";
 import { altitudeToColor, densityColor, cachedAltitudeToColor, type MapTheme } from "@/lib/colors";
 import { computeH3Density } from "@/lib/h3-density";
 import type { DensityProperties, DensityAltitudeRange } from "@/lib/h3-density";
@@ -236,7 +236,7 @@ function DotsLayer({
     for (const t of tracks) {
       if (t.positions.length < 2) continue;
       const trackColor = cachedAltitudeToColor(t.altitude, theme);
-      const isSelected = selectedHexIdents.has(t.hex_ident);
+      const isSelected = selectedHexIdents.has(trackKey(t));
       const radius = isSelected ? baseRadius + 2 : baseRadius;
       const fillOpacity = isSelected ? 0.9 : baseFillOpacity;
 
@@ -339,11 +339,11 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         {trajectoryStyle === "line" && orderedHistory.map((t) => {
           if (t.positions.length < 2) return null;
           const trackColor = cachedAltitudeToColor(t.altitude, mapTheme);
-          const isSelected = selectedHexIdents.has(t.hex_ident);
+          const isSelected = selectedHexIdents.has(trackKey(t));
 
           return (
             <Polyline
-              key={`hist-${t.hex_ident}`}
+              key={`hist-${trackKey(t)}`}
               positions={toLatLngs(t.positions)}
               pathOptions={{
                 color: trackColor,
@@ -371,17 +371,17 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         )}
         {trajectoryStyle === "line" && dbHistoryTracks.map((t) => {
           if (t.positions.length < 2) return null;
-          const isSelected = selectedHexIdents.has(t.hex_ident);
+          const isSelected = selectedHexIdents.has(trackKey(t));
           return (
             <Polyline
-              key={`dbhist-${t.hex_ident}`}
+              key={`dbhist-${trackKey(t)}`}
               positions={toLatLngs(t.positions)}
               pathOptions={{
                 color: "#06b6d4",
                 weight: isSelected ? 3 : 2,
                 opacity: isSelected ? 0.8 : 0.5,
               }}
-              eventHandlers={{ click: () => onSelectTrack(t.hex_ident) }}
+              eventHandlers={{ click: () => onSelectTrack(trackKey(t)) }}
             >
               <Tooltip sticky>
                 <div style={{ fontSize: 11 }}>
@@ -403,10 +403,10 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         )}
         {trajectoryStyle === "line" && importedTracks.map((t) => {
           if (t.positions.length < 2) return null;
-          const isSelected = selectedHexIdents.has(t.hex_ident);
+          const isSelected = selectedHexIdents.has(trackKey(t));
           return (
             <Polyline
-              key={`imported-${t.hex_ident}`}
+              key={`imported-${trackKey(t)}`}
               positions={toLatLngs(t.positions)}
               pathOptions={{
                 color: "#818cf8",
@@ -414,7 +414,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
                 opacity: isSelected ? 0.8 : 0.5,
                 dashArray: isSelected ? undefined : "6 4",
               }}
-              eventHandlers={{ click: () => onSelectTrack(t.hex_ident) }}
+              eventHandlers={{ click: () => onSelectTrack(trackKey(t)) }}
             >
               <Tooltip sticky>
                 <div style={{ fontSize: 11 }}>
@@ -459,15 +459,15 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         {orderedTracks.map((t) => {
           if (t.latitude === null || t.longitude === null) return null;
           const trackColor = cachedAltitudeToColor(t.altitude, mapTheme);
-          const isSelected = selectedHexIdents.has(t.hex_ident);
+          const isSelected = selectedHexIdents.has(trackKey(t));
           const icon = aircraftIcon(t.track ?? 0, trackColor, isSelected);
 
           return (
-            <div key={t.hex_ident}>
+            <div key={trackKey(t)}>
               <Marker
                 position={[t.latitude, t.longitude]}
                 icon={icon}
-                eventHandlers={{ click: () => onSelectTrack(t.hex_ident) }}
+                eventHandlers={{ click: () => onSelectTrack(trackKey(t)) }}
               >
                 <Tooltip direction="top" offset={[0, -12]}>
                   <div style={{ fontSize: 11 }}>

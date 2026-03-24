@@ -54,13 +54,18 @@ pub fn run() {
             commands::save_config,
             commands::validate_config,
             commands::query_bbox,
+            commands::query_bbox_arrow,
             commands::get_trajectory,
+            commands::get_trajectories_batch_arrow,
             commands::get_aircraft_summary,
+            commands::get_flight_summary,
+            commands::get_flight_summary_arrow,
             commands::get_time_distribution,
             commands::get_storage_stats,
             commands::get_detection_range,
             commands::get_hourly_heatmap,
             commands::get_raw_messages,
+            commands::get_raw_messages_arrow,
             commands::get_raw_message_count,
             commands::get_recording_state,
             commands::set_recording_state,
@@ -129,6 +134,7 @@ fn init_storage(app: &tauri::App) -> (Option<StorageHandle>, Option<StorageConfi
     let config = StorageConfig {
         db_path: Some(db_path.clone()),
         source_id: "desktop".to_string(),
+        gap_threshold_ms: 3_600_000,
     };
 
     match StorageHandle::open(config.clone()) {

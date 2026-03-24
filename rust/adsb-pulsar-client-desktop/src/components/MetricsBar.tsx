@@ -79,8 +79,8 @@ export function MetricsBar({
           className="flex items-center gap-1 hover:text-slate-200 transition cursor-pointer"
           title={recordPositions ? "Recording positions — click to pause" : "Positions recording paused — click to resume"}
         >
-          <span className={`inline-block w-2 h-2 rounded-full ${recordPositions ? "bg-red-500" : "bg-slate-600"}`} />
-          <span className={`font-mono ${recordPositions ? "text-red-400" : "text-slate-600"}`}>
+          <span className={`inline-block w-2 h-2 rounded-full ${recordPositions ? "bg-green-500" : "bg-slate-600"}`} />
+          <span className={`font-mono ${recordPositions ? "text-green-400" : "text-slate-600"}`}>
             REC Pos
           </span>
         </button>
@@ -91,8 +91,8 @@ export function MetricsBar({
           className="flex items-center gap-1 hover:text-slate-200 transition cursor-pointer"
           title={recordRaw ? "Recording raw messages — click to pause" : "Raw recording paused — click to resume"}
         >
-          <span className={`inline-block w-2 h-2 rounded-full ${recordRaw ? "bg-red-500" : "bg-slate-600"}`} />
-          <span className={`font-mono ${recordRaw ? "text-red-400" : "text-slate-600"}`}>
+          <span className={`inline-block w-2 h-2 rounded-full ${recordRaw ? "bg-green-500" : "bg-slate-600"}`} />
+          <span className={`font-mono ${recordRaw ? "text-green-400" : "text-slate-600"}`}>
             REC Raw
           </span>
         </button>

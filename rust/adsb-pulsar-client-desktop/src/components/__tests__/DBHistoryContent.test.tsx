@@ -4,6 +4,50 @@ import userEvent from "@testing-library/user-event";
 import { mockInvokeResponse, clearMockResponses } from "@/test/mocks/tauri";
 import { DBHistoryContent } from "../DBHistoryContent";
 import type { StorageStats, AircraftSummary, FlightSummary } from "@/lib/types";
+import { tableToIPC, makeTable, vectorFromArray, Float64, Int32, Utf8, Bool, Int64 } from "apache-arrow";
+
+/** Build Arrow IPC bytes matching get_trajectories_batch_arrow output schema. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildMockArrowIPC(rows: {
+  hex_ident: string; callsign: string | null; latitude: number; longitude: number;
+  altitude: number | null; ground_speed: number | null; track: number | null;
+  vertical_rate: number | null; squawk: string | null; is_on_ground: boolean | null;
+  timestamp_ms: bigint; flight_id: string;
+}[]): number[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const table = makeTable({
+    hex_ident: vectorFromArray(rows.map(r => r.hex_ident), new Utf8()),
+    callsign: vectorFromArray(rows.map(r => r.callsign), new Utf8()),
+    latitude: vectorFromArray(rows.map(r => r.latitude), new Float64()),
+    longitude: vectorFromArray(rows.map(r => r.longitude), new Float64()),
+    altitude: vectorFromArray(rows.map(r => r.altitude), new Float64()),
+    ground_speed: vectorFromArray(rows.map(r => r.ground_speed), new Float64()),
+    track: vectorFromArray(rows.map(r => r.track), new Float64()),
+    vertical_rate: vectorFromArray(rows.map(r => r.vertical_rate), new Float64()),
+    squawk: vectorFromArray(rows.map(r => r.squawk), new Utf8()),
+    is_on_ground: vectorFromArray(rows.map(r => r.is_on_ground), new Bool()),
+    timestamp_ms: vectorFromArray(rows.map(r => r.timestamp_ms), new Int64()),
+    flight_id: vectorFromArray(rows.map(r => r.flight_id), new Utf8()),
+  } as any);
+  return Array.from(new Uint8Array(tableToIPC(table, "stream")));
+}
+
+/** Build Arrow IPC bytes matching get_flight_summary_arrow output schema. */
+function buildFlightSummaryIPC(flights: FlightSummary[]): number[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const table = makeTable({
+    hex_ident: vectorFromArray(flights.map(f => f.hex_ident), new Utf8()),
+    flight_num: vectorFromArray(flights.map(f => f.flight_num), new Int32()),
+    flight_id: vectorFromArray(flights.map(f => f.flight_id), new Utf8()),
+    callsign: vectorFromArray(flights.map(f => f.callsign), new Utf8()),
+    position_count: vectorFromArray(flights.map(f => BigInt(f.position_count)), new Int64()),
+    first_seen_ms: vectorFromArray(flights.map(f => BigInt(f.first_seen_ms)), new Int64()),
+    last_seen_ms: vectorFromArray(flights.map(f => BigInt(f.last_seen_ms)), new Int64()),
+    min_altitude: vectorFromArray(flights.map(f => f.min_altitude), new Float64()),
+    max_altitude: vectorFromArray(flights.map(f => f.max_altitude), new Float64()),
+  } as any);
+  return Array.from(new Uint8Array(tableToIPC(table, "stream")));
+}
 
 const sampleStats: StorageStats = {
   row_count: 1000,
@@ -48,7 +92,7 @@ function mockBrowseResponses(
   flights: FlightSummary[] = [sampleFlight],
 ) {
   mockInvokeResponse("get_aircraft_summary", summaries);
-  mockInvokeResponse("get_flight_summary", flights);
+  mockInvokeResponse("get_flight_summary_arrow", buildFlightSummaryIPC(flights));
   mockInvokeResponse("get_time_distribution", []);
   mockInvokeResponse("get_hourly_heatmap", []);
   mockInvokeResponse("get_raw_message_count", 0);
@@ -159,7 +203,7 @@ describe("DBHistoryContent", () => {
   it("load button calls getTrajectory then onLoadTracks with track_id", async () => {
     mockInvokeResponse("get_storage_stats", sampleStats);
     mockBrowseResponses();
-    mockInvokeResponse("get_trajectory", [
+    mockInvokeResponse("get_trajectories_batch_arrow", buildMockArrowIPC([
       {
         hex_ident: "A1B2C3",
         callsign: "TEST123",
@@ -171,9 +215,10 @@ describe("DBHistoryContent", () => {
         vertical_rate: 0,
         squawk: "1200",
         is_on_ground: false,
-        timestamp_ms: 1705315800000,
+        timestamp_ms: BigInt(1705315800000),
+        flight_id: "A1B2C3_0",
       },
-    ]);
+    ]));
 
     const onLoad = vi.fn();
     const user = userEvent.setup();
@@ -428,7 +473,7 @@ describe("DBHistoryContent multi-selection", () => {
   });
 
   it("'→ Analysis' calls onAddToAnalysis with fetched tracks including track_id", async () => {
-    mockInvokeResponse("get_trajectory", [
+    mockInvokeResponse("get_trajectories_batch_arrow", buildMockArrowIPC([
       {
         hex_ident: "A1B2C3",
         callsign: "TEST123",
@@ -440,9 +485,10 @@ describe("DBHistoryContent multi-selection", () => {
         vertical_rate: 0,
         squawk: "1200",
         is_on_ground: false,
-        timestamp_ms: 1705315800000,
+        timestamp_ms: BigInt(1705315800000),
+        flight_id: "A1B2C3_0",
       },
-    ]);
+    ]));
 
     const onAdd = vi.fn();
     const onSwitch = vi.fn();
@@ -493,7 +539,7 @@ describe("DBHistoryContent flight segmentation", () => {
 
   function mockFlightBrowse(flights: FlightSummary[] = twoFlightsSameHex) {
     mockInvokeResponse("get_aircraft_summary", [sampleSummary]);
-    mockInvokeResponse("get_flight_summary", flights);
+    mockInvokeResponse("get_flight_summary_arrow", buildFlightSummaryIPC(flights));
     mockInvokeResponse("get_time_distribution", []);
     mockInvokeResponse("get_hourly_heatmap", []);
     mockInvokeResponse("get_raw_message_count", 0);
@@ -548,7 +594,7 @@ describe("DBHistoryContent flight segmentation", () => {
   it("trajectory uses flight's own time range", async () => {
     mockInvokeResponse("get_storage_stats", sampleStats);
     mockFlightBrowse();
-    mockInvokeResponse("get_trajectory", [
+    mockInvokeResponse("get_trajectories_batch_arrow", buildMockArrowIPC([
       {
         hex_ident: "A1B2C3",
         callsign: "FLT100",
@@ -560,9 +606,10 @@ describe("DBHistoryContent flight segmentation", () => {
         vertical_rate: 0,
         squawk: "1200",
         is_on_ground: false,
-        timestamp_ms: 1705315800000,
+        timestamp_ms: BigInt(1705315800000),
+        flight_id: "A1B2C3_0",
       },
-    ]);
+    ]));
 
     const { invoke } = await import("@tauri-apps/api/core");
     const onLoad = vi.fn();
@@ -583,73 +630,19 @@ describe("DBHistoryContent flight segmentation", () => {
       expect(onLoad).toHaveBeenCalled();
     });
 
-    // Verify trajectory was called with flight's own time range
+    // Verify batch arrow was called with flight's own time range
     const calls = (invoke as ReturnType<typeof vi.fn>).mock.calls;
-    const trajCall = calls.find((c: unknown[]) => c[0] === "get_trajectory");
+    const trajCall = calls.find((c: unknown[]) => c[0] === "get_trajectories_batch_arrow");
     expect(trajCall).toBeDefined();
-    expect(trajCall![1].query.start_ms).toBe(1705315800000); // flight's first_seen_ms
-    expect(trajCall![1].query.end_ms).toBe(1705316100000);   // flight's last_seen_ms
-  });
-
-  it("gap threshold buttons are rendered", async () => {
-    mockInvokeResponse("get_storage_stats", sampleStats);
-    mockFlightBrowse();
-
-    const user = userEvent.setup();
-    render(<DBHistoryContent {...baseProps} />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument();
-    });
-    await user.click(screen.getByTestId("dbhist-preset-24h"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("dbhist-gap-60")).toBeInTheDocument();
-    });
-    // Check all gap buttons are present
-    for (const mins of [15, 30, 60, 120, 240]) {
-      expect(screen.getByTestId(`dbhist-gap-${mins}`)).toBeInTheDocument();
-    }
-  });
-
-  it("changing gap threshold re-triggers browse with new threshold", async () => {
-    const { invoke } = await import("@tauri-apps/api/core");
-    mockInvokeResponse("get_storage_stats", sampleStats);
-    mockFlightBrowse();
-
-    const user = userEvent.setup();
-    render(<DBHistoryContent {...baseProps} />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument();
-    });
-    await user.click(screen.getByTestId("dbhist-preset-24h"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("dbhist-gap-60")).toBeInTheDocument();
-    });
-
-    // Mock new responses for the re-browse
-    mockFlightBrowse();
-
-    // Click 30m gap
-    await user.click(screen.getByTestId("dbhist-gap-30"));
-
-    await waitFor(() => {
-      const calls = (invoke as ReturnType<typeof vi.fn>).mock.calls;
-      const flightCalls = calls.filter((c: unknown[]) => c[0] === "get_flight_summary");
-      // Should have at least 2 calls (initial + re-triggered)
-      expect(flightCalls.length).toBeGreaterThanOrEqual(2);
-      // The last call should have gap_threshold_ms = 30 * 60_000
-      const lastCall = flightCalls[flightCalls.length - 1];
-      expect(lastCall[1].query.gap_threshold_ms).toBe(30 * 60_000);
-    });
+    const query = trajCall![1].queries[0][0]; // first query tuple's TrajectoryQuery
+    expect(query.start_ms).toBe(1705315800000); // flight's first_seen_ms
+    expect(query.end_ms).toBe(1705316100000);   // flight's last_seen_ms
   });
 
   it("loaded tracks have track_id set to flight_id", async () => {
     mockInvokeResponse("get_storage_stats", sampleStats);
     mockFlightBrowse();
-    mockInvokeResponse("get_trajectory", [
+    mockInvokeResponse("get_trajectories_batch_arrow", buildMockArrowIPC([
       {
         hex_ident: "A1B2C3",
         callsign: "FLT100",
@@ -661,9 +654,10 @@ describe("DBHistoryContent flight segmentation", () => {
         vertical_rate: 0,
         squawk: "1200",
         is_on_ground: false,
-        timestamp_ms: 1705315800000,
+        timestamp_ms: BigInt(1705315800000),
+        flight_id: "A1B2C3_0",
       },
-    ]);
+    ]));
 
     const onLoad = vi.fn();
     const user = userEvent.setup();

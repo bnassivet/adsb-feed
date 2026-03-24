@@ -4,6 +4,12 @@ import userEvent from "@testing-library/user-event";
 import { AircraftTable } from "../AircraftTable";
 import type { AircraftTrack, TrackSection } from "@/lib/types";
 
+const defaultSortProps = {
+  sortKey: "callsign" as const,
+  sortAsc: true,
+  onSort: vi.fn(),
+};
+
 // jsdom doesn't implement scrollIntoView
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
@@ -42,7 +48,7 @@ describe("AircraftTable selection", () => {
     const user = userEvent.setup();
 
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("ABC123")]}
         selectedHexIdents={new Set()}
         onSelectTrack={onSelect}
@@ -60,7 +66,7 @@ describe("AircraftTable selection", () => {
 
   it("highlights selected row with bg-blue-900/40", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("ABC123"), makeTrack("DEF456")]}
         selectedHexIdents={new Set(["ABC123"])}
       />,
@@ -74,7 +80,7 @@ describe("AircraftTable selection", () => {
 
   it("highlights multiple selected rows", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA"), makeTrack("BBB"), makeTrack("CCC")]}
         selectedHexIdents={new Set(["AAA", "CCC"])}
       />,
@@ -87,7 +93,7 @@ describe("AircraftTable selection", () => {
 
   it("highlights selected history row", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[]}
         historyTracks={[makeTrack("HIST01")]}
         selectedHexIdents={new Set(["HIST01"])}
@@ -103,7 +109,7 @@ describe("AircraftTable selection", () => {
     const user = userEvent.setup();
 
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[]}
         historyTracks={[makeTrack("HIST01")]}
         selectedHexIdents={new Set()}
@@ -120,7 +126,7 @@ describe("AircraftTable selection", () => {
 
   it("adds cursor-pointer to rows when onSelectTrack is provided", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("ABC123")]}
         selectedHexIdents={new Set()}
         onSelectTrack={() => {}}
@@ -133,7 +139,7 @@ describe("AircraftTable selection", () => {
 
   it("auto-scrolls last-selected row into view", () => {
     const { rerender } = render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA"), makeTrack("BBB"), makeTrack("CCC")]}
         selectedHexIdents={new Set()}
       />,
@@ -142,7 +148,7 @@ describe("AircraftTable selection", () => {
     vi.mocked(Element.prototype.scrollIntoView).mockClear();
 
     rerender(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA"), makeTrack("BBB"), makeTrack("CCC")]}
         selectedHexIdents={new Set(["BBB"])}
         lastSelectedHexIdent="BBB"
@@ -158,14 +164,14 @@ describe("AircraftTable selection", () => {
 
 describe("collapsible sections", () => {
   it("renders history section header with track count", () => {
-    render(<AircraftTable tracks={[]} historyTracks={[makeTrack("H1")]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[]} historyTracks={[makeTrack("H1")]} />);
     expect(screen.getByText(/History/)).toBeInTheDocument();
     expect(screen.getByText(/\(1\)/)).toBeInTheDocument();
   });
 
   it("collapses history rows when header is clicked", async () => {
     const user = userEvent.setup();
-    render(<AircraftTable tracks={[]} historyTracks={[makeTrack("H1")]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[]} historyTracks={[makeTrack("H1")]} />);
 
     expect(screen.getByTestId("row-hist-H1")).toBeInTheDocument();
 
@@ -177,13 +183,13 @@ describe("collapsible sections", () => {
   });
 
   it("renders imported section header with track count", () => {
-    render(<AircraftTable tracks={[]} importedTracks={[makeTrack("I1")]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[]} importedTracks={[makeTrack("I1")]} />);
     expect(screen.getByText(/Imported/)).toBeInTheDocument();
   });
 
   it("collapses imported rows when header is clicked", async () => {
     const user = userEvent.setup();
-    render(<AircraftTable tracks={[]} importedTracks={[makeTrack("I1")]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[]} importedTracks={[makeTrack("I1")]} />);
 
     expect(screen.getByTestId("row-imported-I1")).toBeInTheDocument();
 
@@ -192,7 +198,7 @@ describe("collapsible sections", () => {
   });
 
   it("hides imported section when no imported tracks", () => {
-    render(<AircraftTable tracks={[]} importedTracks={[]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[]} importedTracks={[]} />);
     expect(screen.queryByTestId("imported-section-header")).not.toBeInTheDocument();
   });
 });
@@ -201,7 +207,7 @@ describe("imported row selection", () => {
   it("highlights selected imported row with indigo background", () => {
     const importedTrack = makeTrack("IMP001", { callsign: "TEST01" });
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[]}
         importedTracks={[importedTrack]}
         selectedHexIdents={new Set(["IMP001"])}
@@ -216,7 +222,7 @@ describe("imported row selection", () => {
   it("keeps opacity-60 on unselected imported row", () => {
     const importedTrack = makeTrack("IMP002", { callsign: "TEST02" });
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[]}
         importedTracks={[importedTrack]}
         selectedHexIdents={new Set()}
@@ -231,19 +237,19 @@ describe("imported row selection", () => {
 
 describe("DB History section", () => {
   it("renders dbhistory section header when dbHistoryTracks exist", () => {
-    render(<AircraftTable tracks={[]} dbHistoryTracks={[makeTrack("DB01")]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[]} dbHistoryTracks={[makeTrack("DB01")]} />);
     expect(screen.getByTestId("dbhistory-section-header")).toBeInTheDocument();
     expect(screen.getByText(/DB History/)).toBeInTheDocument();
   });
 
   it("hides dbhistory section when no dbHistoryTracks", () => {
-    render(<AircraftTable tracks={[]} dbHistoryTracks={[]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[]} dbHistoryTracks={[]} />);
     expect(screen.queryByTestId("dbhistory-section-header")).not.toBeInTheDocument();
   });
 
   it("collapses/expands dbhistory rows on header click", async () => {
     const user = userEvent.setup();
-    render(<AircraftTable tracks={[]} dbHistoryTracks={[makeTrack("DB01")]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[]} dbHistoryTracks={[makeTrack("DB01")]} />);
 
     expect(screen.getByTestId("row-dbhist-DB01")).toBeInTheDocument();
 
@@ -256,7 +262,7 @@ describe("DB History section", () => {
 
   it("highlights selected dbhistory row with cyan background", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[]}
         dbHistoryTracks={[makeTrack("DB01")]}
         selectedHexIdents={new Set(["DB01"])}
@@ -270,20 +276,20 @@ describe("DB History section", () => {
 
 describe("Live section fold/unfold", () => {
   it("renders live section header with track count", () => {
-    render(<AircraftTable tracks={[makeTrack("A1"), makeTrack("A2")]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[makeTrack("A1"), makeTrack("A2")]} />);
     expect(screen.getByTestId("live-section-header")).toBeInTheDocument();
     expect(screen.getByText(/Live/)).toBeInTheDocument();
     expect(screen.getByText(/\(2\)/)).toBeInTheDocument();
   });
 
   it("hides live section header when no live tracks", () => {
-    render(<AircraftTable tracks={[]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[]} />);
     expect(screen.queryByTestId("live-section-header")).not.toBeInTheDocument();
   });
 
   it("collapses/expands live rows on header click", async () => {
     const user = userEvent.setup();
-    render(<AircraftTable tracks={[makeTrack("A1")]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[makeTrack("A1")]} />);
 
     expect(screen.getByTestId("row-A1")).toBeInTheDocument();
 
@@ -295,30 +301,30 @@ describe("Live section fold/unfold", () => {
   });
 
   it("keeps live rows expanded by default", () => {
-    render(<AircraftTable tracks={[makeTrack("A1")]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[makeTrack("A1")]} />);
     expect(screen.getByTestId("row-A1")).toBeInTheDocument();
   });
 });
 
 describe("AircraftTable columns", () => {
   it("renders RxTS column header", () => {
-    render(<AircraftTable tracks={[makeTrack("ABC123")]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[makeTrack("ABC123")]} />);
     expect(screen.getByText("RxTS")).toBeInTheDocument();
   });
 
   it("renders Msg# column header", () => {
-    render(<AircraftTable tracks={[makeTrack("ABC123")]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[makeTrack("ABC123")]} />);
     expect(screen.getByText("Msg#")).toBeInTheDocument();
   });
 
   it("displays relative time in RxTS column", () => {
     const twoMinAgo = Date.now() - 120_000;
-    render(<AircraftTable tracks={[makeTrack("ABC123", { last_seen: twoMinAgo })]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[makeTrack("ABC123", { last_seen: twoMinAgo })]} />);
     expect(screen.getByText("2m ago")).toBeInTheDocument();
   });
 
   it("displays message count in Msg# column", () => {
-    render(<AircraftTable tracks={[makeTrack("ABC123", { message_count: 42 })]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[makeTrack("ABC123", { message_count: 42 })]} />);
     expect(screen.getByText("42")).toBeInTheDocument();
   });
 });
@@ -326,7 +332,7 @@ describe("AircraftTable columns", () => {
 describe("AircraftTable map visibility toggle (section-aware)", () => {
   it("renders eye toggle button per row when onToggleMapVisibility is provided", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA111"), makeTrack("BBB222")]}
         onToggleMapVisibility={vi.fn()}
         hiddenSections={new Map()}
@@ -337,13 +343,13 @@ describe("AircraftTable map visibility toggle (section-aware)", () => {
   });
 
   it("does not render eye toggle when onToggleMapVisibility is not provided", () => {
-    render(<AircraftTable tracks={[makeTrack("AAA111")]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[makeTrack("AAA111")]} />);
     expect(screen.queryByTestId("visibility-live-AAA111")).not.toBeInTheDocument();
   });
 
   it("shows open eye icon when track is visible (not hidden)", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA111")]}
         onToggleMapVisibility={vi.fn()}
         hiddenSections={new Map()}
@@ -355,7 +361,7 @@ describe("AircraftTable map visibility toggle (section-aware)", () => {
 
   it("shows closed eye icon when track is hidden in its section", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA111")]}
         onToggleMapVisibility={vi.fn()}
         hiddenSections={makeHiddenSections({ live: ["AAA111"] })}
@@ -369,7 +375,7 @@ describe("AircraftTable map visibility toggle (section-aware)", () => {
     const user = userEvent.setup();
     const onToggle = vi.fn();
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA111")]}
         onToggleMapVisibility={onToggle}
         hiddenSections={new Map()}
@@ -384,7 +390,7 @@ describe("AircraftTable map visibility toggle (section-aware)", () => {
     const onSelect = vi.fn();
     const onToggle = vi.fn();
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA111")]}
         onSelectTrack={onSelect}
         onToggleMapVisibility={onToggle}
@@ -398,7 +404,7 @@ describe("AircraftTable map visibility toggle (section-aware)", () => {
 
   it("dims the row when track is hidden from map in its section", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA111")]}
         onToggleMapVisibility={vi.fn()}
         hiddenSections={makeHiddenSections({ live: ["AAA111"] })}
@@ -410,7 +416,7 @@ describe("AircraftTable map visibility toggle (section-aware)", () => {
 
   it("renders eye toggle for all section types with section-prefixed testids", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("LIVE01")]}
         historyTracks={[makeTrack("HIST01")]}
         dbHistoryTracks={[makeTrack("DB01")]}
@@ -429,7 +435,7 @@ describe("AircraftTable map visibility toggle (section-aware)", () => {
 describe("section-independent visibility", () => {
   it("same hex hidden in live is visible in history", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA111")]}
         historyTracks={[makeTrack("AAA111")]}
         onToggleMapVisibility={vi.fn()}
@@ -448,7 +454,7 @@ describe("section-independent visibility", () => {
     const user = userEvent.setup();
     const onToggle = vi.fn();
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA111")]}
         historyTracks={[makeTrack("HIST01")]}
         dbHistoryTracks={[makeTrack("DB01")]}
@@ -473,7 +479,7 @@ describe("section-independent visibility", () => {
 
   it("hidden in one section does not dim row in another section", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA111")]}
         historyTracks={[makeTrack("AAA111")]}
         onToggleMapVisibility={vi.fn()}
@@ -492,7 +498,7 @@ describe("section-independent visibility", () => {
 describe("group header visibility toggle", () => {
   it("renders group eye icon on section header when onToggleGroupVisibility provided", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("A1")]}
         onToggleGroupVisibility={vi.fn()}
         onToggleMapVisibility={vi.fn()}
@@ -506,7 +512,7 @@ describe("group header visibility toggle", () => {
     const user = userEvent.setup();
     const onGroupToggle = vi.fn();
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("A1"), makeTrack("A2")]}
         historyTracks={[makeTrack("H1")]}
         onToggleGroupVisibility={onGroupToggle}
@@ -525,7 +531,7 @@ describe("group header visibility toggle", () => {
 
   it("group eye shows eye-closed when ALL tracks in section are hidden via hiddenSections", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("A1"), makeTrack("A2")]}
         onToggleGroupVisibility={vi.fn()}
         onToggleMapVisibility={vi.fn()}
@@ -538,7 +544,7 @@ describe("group header visibility toggle", () => {
 
   it("group eye shows eye-open when only some tracks in section are hidden", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("A1"), makeTrack("A2")]}
         onToggleGroupVisibility={vi.fn()}
         onToggleMapVisibility={vi.fn()}
@@ -553,7 +559,7 @@ describe("group header visibility toggle", () => {
     const user = userEvent.setup();
     const onGroupToggle = vi.fn();
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("A1")]}
         onToggleGroupVisibility={onGroupToggle}
         onToggleMapVisibility={vi.fn()}
@@ -574,7 +580,7 @@ describe("selection-aware eye toggle", () => {
     const user = userEvent.setup();
     const onToggle = vi.fn();
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("A1"), makeTrack("A2"), makeTrack("A3")]}
         selectedHexIdents={new Set(["A1", "A2"])}
         onToggleMapVisibility={onToggle}
@@ -593,7 +599,7 @@ describe("selection-aware eye toggle", () => {
     const user = userEvent.setup();
     const onToggle = vi.fn();
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("A1"), makeTrack("A2"), makeTrack("A3")]}
         selectedHexIdents={new Set(["A1", "A2"])}
         onToggleMapVisibility={onToggle}
@@ -610,7 +616,7 @@ describe("selection-aware eye toggle", () => {
     const user = userEvent.setup();
     const onToggle = vi.fn();
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("A1"), makeTrack("A2")]}
         selectedHexIdents={new Set(["A1"])}
         onToggleMapVisibility={onToggle}
@@ -628,7 +634,7 @@ describe("selection-aware eye toggle", () => {
     const onToggle = vi.fn();
     // A1 is in live, H1 is in history — both selected
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("A1"), makeTrack("A2")]}
         historyTracks={[makeTrack("H1")]}
         selectedHexIdents={new Set(["A1", "A2", "H1"])}
@@ -648,7 +654,7 @@ describe("selection-aware eye toggle", () => {
 describe("AircraftTable onRemoveTrack", () => {
   it("renders × button per row when onRemoveTrack is provided", () => {
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA111"), makeTrack("BBB222")]}
         onRemoveTrack={vi.fn()}
       />
@@ -658,7 +664,7 @@ describe("AircraftTable onRemoveTrack", () => {
   });
 
   it("does not render × button when onRemoveTrack is not provided", () => {
-    render(<AircraftTable tracks={[makeTrack("AAA111")]} />);
+    render(<AircraftTable {...defaultSortProps} tracks={[makeTrack("AAA111")]} />);
     expect(screen.queryByTestId("remove-AAA111")).not.toBeInTheDocument();
   });
 
@@ -666,7 +672,7 @@ describe("AircraftTable onRemoveTrack", () => {
     const user = userEvent.setup();
     const onRemove = vi.fn();
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA111")]}
         onRemoveTrack={onRemove}
       />
@@ -680,7 +686,7 @@ describe("AircraftTable onRemoveTrack", () => {
     const onSelect = vi.fn();
     const onRemove = vi.fn();
     render(
-      <AircraftTable
+      <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA111")]}
         onSelectTrack={onSelect}
         onRemoveTrack={onRemove}

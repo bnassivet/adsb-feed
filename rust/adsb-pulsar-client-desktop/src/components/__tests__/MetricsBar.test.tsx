@@ -73,7 +73,7 @@ describe("MetricsBar", () => {
     expect(screen.getByText("REC Raw")).toBeInTheDocument();
   });
 
-  it("shows red styling when recording is ON", () => {
+  it("shows green styling when recording is ON", () => {
     const { container } = render(
       <MetricsBar
         metrics={makeMetrics()}
@@ -83,8 +83,8 @@ describe("MetricsBar", () => {
         onToggleRecordRaw={() => {}}
       />
     );
-    const redDots = container.querySelectorAll(".bg-red-500");
-    expect(redDots.length).toBe(2);
+    const greenDots = container.querySelectorAll(".bg-green-500");
+    expect(greenDots.length).toBe(2);
   });
 
   it("shows grey styling when recording is OFF", () => {
@@ -99,7 +99,7 @@ describe("MetricsBar", () => {
     );
     const greyDots = container.querySelectorAll(".bg-slate-600");
     expect(greyDots.length).toBe(2);
-    expect(container.querySelectorAll(".bg-red-500").length).toBe(0);
+    expect(container.querySelectorAll(".bg-green-500").length).toBe(0);
   });
 
   it("calls toggle callbacks on click", async () => {

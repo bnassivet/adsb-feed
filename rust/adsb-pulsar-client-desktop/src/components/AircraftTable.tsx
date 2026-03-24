@@ -1,7 +1,7 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import type { AircraftTrack, TrackSection } from "@/lib/types";
-import { sortTracks, type SortKey } from "@/lib/sort-tracks";
+import type { SortKey } from "@/lib/sort-tracks";
 import { altitudeToColor } from "@/lib/colors";
 import { timeAgo } from "@/lib/format";
 
@@ -16,6 +16,9 @@ interface Props {
   historyTracks?: AircraftTrack[];
   dbHistoryTracks?: AircraftTrack[];
   importedTracks?: AircraftTrack[];
+  sortKey: SortKey;
+  sortAsc: boolean;
+  onSort: (key: SortKey) => void;
   selectedHexIdents?: Set<string>;
   lastSelectedHexIdent?: string | null;
   onSelectTrack?: (hex: string, event: SelectEvent) => void;
@@ -44,19 +47,20 @@ function EyeIcon({ open }: { open: boolean }) {
   );
 }
 
-export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = [], importedTracks = [], selectedHexIdents, lastSelectedHexIdent, onSelectTrack, onRemoveTrack, onToggleMapVisibility, hiddenSections, onToggleGroupVisibility, liveSectionKey }: Props) {
-  const [sortKey, setSortKey] = useState<SortKey>("callsign");
-  const [sortAsc, setSortAsc] = useState(true);
+export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = [], importedTracks = [], sortKey, sortAsc, onSort, selectedHexIdents, lastSelectedHexIdent, onSelectTrack, onRemoveTrack, onToggleMapVisibility, hiddenSections, onToggleGroupVisibility, liveSectionKey }: Props) {
   const [liveCollapsed, setLiveCollapsed] = useState(false);
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
   const [dbHistoryCollapsed, setDbHistoryCollapsed] = useState(false);
   const [importedCollapsed, setImportedCollapsed] = useState(false);
 
-  const sorted = sortTracks(tracks, sortKey, sortAsc);
-  const sortedHistory = sortTracks(historyTracks, sortKey, sortAsc);
-  const sortedDbHistory = sortTracks(dbHistoryTracks, sortKey, sortAsc);
-  const sortedImported = sortTracks(importedTracks, sortKey, sortAsc);
+  // Tracks arrive pre-sorted from parent — no internal sorting needed
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Memoize key arrays for GroupEyeButton props — avoids .map() on every render
+  const liveKeys = useMemo(() => tracks.map(t => t.track_id ?? t.hex_ident), [tracks]);
+  const historyKeys = useMemo(() => historyTracks.map(t => t.track_id ?? t.hex_ident), [historyTracks]);
+  const dbHistoryKeys = useMemo(() => dbHistoryTracks.map(t => t.track_id ?? t.hex_ident), [dbHistoryTracks]);
+  const importedKeys = useMemo(() => importedTracks.map(t => t.track_id ?? t.hex_ident), [importedTracks]);
 
   const sectionKey = liveSectionKey ?? "live";
 
@@ -70,20 +74,11 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
     row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [lastSelectedHexIdent]);
 
-  function handleSort(key: SortKey) {
-    if (sortKey === key) {
-      setSortAsc(!sortAsc);
-    } else {
-      setSortKey(key);
-      setSortAsc(true);
-    }
-  }
-
   function SortHeader({ label, field }: { label: string; field: SortKey }) {
     return (
       <th
         className="px-3 py-2 text-left cursor-pointer hover:text-slate-200 select-none"
-        onClick={() => handleSort(field)}
+        onClick={() => onSort(field)}
       >
         {label}
         {sortKey === field && (
@@ -131,32 +126,33 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
         </thead>
         <tbody className="text-slate-300">
           {/* Live header — collapsible */}
-          {sorted.length > 0 && (
+          {tracks.length > 0 && (
             <tr
               data-testid="live-section-header"
               className="cursor-pointer select-none"
               onClick={() => setLiveCollapsed(prev => !prev)}
             >
               <td colSpan={11} className="px-3 py-1 bg-slate-800/80">
-                <GroupEyeButton section={sectionKey} trackHexes={sorted.map(t => t.hex_ident)} />
+                <GroupEyeButton section={sectionKey} trackHexes={liveKeys} />
                 <span className="text-[10px] text-green-500 uppercase tracking-wider">
-                  {liveCollapsed ? "\u25B8" : "\u25BE"} Live ({sorted.length})
+                  {liveCollapsed ? "\u25B8" : "\u25BE"} Live ({tracks.length})
                 </span>
               </td>
             </tr>
           )}
 
           {/* Live rows */}
-          {!liveCollapsed && sorted.map((t) => {
-            const isSelected = selectedHexIdents?.has(t.hex_ident) ?? false;
-            const isHidden = isHiddenInSection(t.hex_ident, sectionKey);
+          {!liveCollapsed && tracks.map((t) => {
+            const key = t.track_id ?? t.hex_ident;
+            const isSelected = selectedHexIdents?.has(key) ?? false;
+            const isHidden = isHiddenInSection(key, sectionKey);
             return (
             <tr
-              key={t.hex_ident}
-              data-testid={`row-${t.hex_ident}`}
-              data-hex={t.hex_ident}
+              key={key}
+              data-testid={`row-${key}`}
+              data-hex={key}
               onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
-              onClick={(e) => onSelectTrack?.(t.hex_ident, { shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey })}
+              onClick={(e) => onSelectTrack?.(key, { shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey })}
               className={`border-b border-slate-800 ${
                 isSelected
                   ? "bg-blue-900/40 hover:bg-blue-900/50"
@@ -208,15 +204,15 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      const isMultiSelected = selectedHexIdents && selectedHexIdents.has(t.hex_ident) && selectedHexIdents.size > 1;
+                      const isMultiSelected = selectedHexIdents && selectedHexIdents.has(key) && selectedHexIdents.size > 1;
                       if (isMultiSelected) {
-                        const selectedInSection = sorted.map(tr => tr.hex_ident).filter(h => selectedHexIdents.has(h));
+                        const selectedInSection = liveKeys.filter(h => selectedHexIdents.has(h));
                         selectedInSection.forEach(h => onToggleMapVisibility(h, sectionKey));
                       } else {
-                        onToggleMapVisibility(t.hex_ident, sectionKey);
+                        onToggleMapVisibility(key, sectionKey);
                       }
                     }}
-                    data-testid={`visibility-${sectionKey}-${t.hex_ident}`}
+                    data-testid={`visibility-${sectionKey}-${key}`}
                     className={`transition text-xs leading-none ${isHidden ? "text-slate-600 hover:text-slate-300" : "text-slate-400 hover:text-slate-200"}`}
                     title={isHidden ? `Show ${t.hex_ident} on map` : `Hide ${t.hex_ident} from map`}
                   >
@@ -227,8 +223,8 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
               {onRemoveTrack && (
                 <td className="px-1 py-1.5 text-center">
                   <button
-                    onClick={(e) => { e.stopPropagation(); onRemoveTrack(t.hex_ident); }}
-                    data-testid={`remove-${t.hex_ident}`}
+                    onClick={(e) => { e.stopPropagation(); onRemoveTrack(key); }}
+                    data-testid={`remove-${key}`}
                     className="text-slate-600 hover:text-red-400 transition text-xs leading-none"
                     title={`Remove ${t.hex_ident}`}
                   >
@@ -241,32 +237,33 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
           })}
 
           {/* History header — collapsible */}
-          {sortedHistory.length > 0 && (
+          {historyTracks.length > 0 && (
             <tr
               data-testid="history-section-header"
               className="cursor-pointer select-none"
               onClick={() => setHistoryCollapsed(prev => !prev)}
             >
               <td colSpan={11} className="px-3 py-1 bg-slate-800/80">
-                <GroupEyeButton section="history" trackHexes={sortedHistory.map(t => t.hex_ident)} />
+                <GroupEyeButton section="history" trackHexes={historyKeys} />
                 <span className="text-[10px] text-slate-500 uppercase tracking-wider">
-                  {historyCollapsed ? "\u25B8" : "\u25BE"} History ({sortedHistory.length})
+                  {historyCollapsed ? "\u25B8" : "\u25BE"} History ({historyTracks.length})
                 </span>
               </td>
             </tr>
           )}
 
           {/* History rows — dimmed */}
-          {!historyCollapsed && sortedHistory.map((t) => {
-            const isSelected = selectedHexIdents?.has(t.hex_ident) ?? false;
-            const isHidden = isHiddenInSection(t.hex_ident, "history");
+          {!historyCollapsed && historyTracks.map((t) => {
+            const key = t.track_id ?? t.hex_ident;
+            const isSelected = selectedHexIdents?.has(key) ?? false;
+            const isHidden = isHiddenInSection(key, "history");
             return (
             <tr
-              key={`hist-${t.hex_ident}`}
-              data-testid={`row-hist-${t.hex_ident}`}
-              data-hex={t.hex_ident}
+              key={`hist-${key}`}
+              data-testid={`row-hist-${key}`}
+              data-hex={key}
               onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
-              onClick={(e) => onSelectTrack?.(t.hex_ident, { shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey })}
+              onClick={(e) => onSelectTrack?.(key, { shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey })}
               className={`border-b border-slate-800 ${
                 isSelected
                   ? "bg-blue-900/40 hover:bg-blue-900/50"
@@ -312,15 +309,15 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      const isMultiSelected = selectedHexIdents && selectedHexIdents.has(t.hex_ident) && selectedHexIdents.size > 1;
+                      const isMultiSelected = selectedHexIdents && selectedHexIdents.has(key) && selectedHexIdents.size > 1;
                       if (isMultiSelected) {
-                        const selectedInSection = sortedHistory.map(tr => tr.hex_ident).filter(h => selectedHexIdents.has(h));
+                        const selectedInSection = historyKeys.filter(h => selectedHexIdents.has(h));
                         selectedInSection.forEach(h => onToggleMapVisibility(h, "history"));
                       } else {
-                        onToggleMapVisibility(t.hex_ident, "history");
+                        onToggleMapVisibility(key, "history");
                       }
                     }}
-                    data-testid={`visibility-history-${t.hex_ident}`}
+                    data-testid={`visibility-history-${key}`}
                     className={`transition text-xs leading-none ${isHidden ? "text-slate-600 hover:text-slate-300" : "text-slate-400 hover:text-slate-200"}`}
                     title={isHidden ? `Show ${t.hex_ident} on map` : `Hide ${t.hex_ident} from map`}
                   >
@@ -333,32 +330,33 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
           })}
 
           {/* DB History header — collapsible */}
-          {sortedDbHistory.length > 0 && (
+          {dbHistoryTracks.length > 0 && (
             <tr
               data-testid="dbhistory-section-header"
               className="cursor-pointer select-none"
               onClick={() => setDbHistoryCollapsed(prev => !prev)}
             >
               <td colSpan={11} className="px-3 py-1 bg-cyan-900/20">
-                <GroupEyeButton section="dbHistory" trackHexes={sortedDbHistory.map(t => t.hex_ident)} />
+                <GroupEyeButton section="dbHistory" trackHexes={dbHistoryKeys} />
                 <span className="text-[10px] text-cyan-500 uppercase tracking-wider">
-                  {dbHistoryCollapsed ? "\u25B8" : "\u25BE"} DB History ({sortedDbHistory.length})
+                  {dbHistoryCollapsed ? "\u25B8" : "\u25BE"} DB History ({dbHistoryTracks.length})
                 </span>
               </td>
             </tr>
           )}
 
           {/* DB History rows — cyan tint */}
-          {!dbHistoryCollapsed && sortedDbHistory.map((t) => {
-            const isSelected = selectedHexIdents?.has(t.hex_ident) ?? false;
-            const isHidden = isHiddenInSection(t.hex_ident, "dbHistory");
+          {!dbHistoryCollapsed && dbHistoryTracks.map((t) => {
+            const key = t.track_id ?? t.hex_ident;
+            const isSelected = selectedHexIdents?.has(key) ?? false;
+            const isHidden = isHiddenInSection(key, "dbHistory");
             return (
             <tr
-              key={`dbhist-${t.hex_ident}`}
-              data-testid={`row-dbhist-${t.hex_ident}`}
-              data-hex={t.hex_ident}
+              key={`dbhist-${key}`}
+              data-testid={`row-dbhist-${key}`}
+              data-hex={key}
               onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
-              onClick={(e) => onSelectTrack?.(t.hex_ident, { shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey })}
+              onClick={(e) => onSelectTrack?.(key, { shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey })}
               className={`border-b border-slate-800 ${
                 isSelected
                   ? "bg-cyan-900/40 hover:bg-cyan-900/50"
@@ -383,15 +381,15 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      const isMultiSelected = selectedHexIdents && selectedHexIdents.has(t.hex_ident) && selectedHexIdents.size > 1;
+                      const isMultiSelected = selectedHexIdents && selectedHexIdents.has(key) && selectedHexIdents.size > 1;
                       if (isMultiSelected) {
-                        const selectedInSection = sortedDbHistory.map(tr => tr.hex_ident).filter(h => selectedHexIdents.has(h));
+                        const selectedInSection = dbHistoryKeys.filter(h => selectedHexIdents.has(h));
                         selectedInSection.forEach(h => onToggleMapVisibility(h, "dbHistory"));
                       } else {
-                        onToggleMapVisibility(t.hex_ident, "dbHistory");
+                        onToggleMapVisibility(key, "dbHistory");
                       }
                     }}
-                    data-testid={`visibility-dbHistory-${t.hex_ident}`}
+                    data-testid={`visibility-dbHistory-${key}`}
                     className={`transition text-xs leading-none ${isHidden ? "text-slate-600 hover:text-slate-300" : "text-slate-400 hover:text-slate-200"}`}
                     title={isHidden ? `Show ${t.hex_ident} on map` : `Hide ${t.hex_ident} from map`}
                   >
@@ -404,32 +402,33 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
           })}
 
           {/* Imported header — collapsible */}
-          {sortedImported.length > 0 && (
+          {importedTracks.length > 0 && (
             <tr
               data-testid="imported-section-header"
               className="cursor-pointer select-none"
               onClick={() => setImportedCollapsed(prev => !prev)}
             >
               <td colSpan={11} className="px-3 py-1 bg-indigo-900/30">
-                <GroupEyeButton section="imported" trackHexes={sortedImported.map(t => t.hex_ident)} />
+                <GroupEyeButton section="imported" trackHexes={importedKeys} />
                 <span className="text-[10px] text-indigo-400 uppercase tracking-wider">
-                  {importedCollapsed ? "\u25B8" : "\u25BE"} Imported ({sortedImported.length})
+                  {importedCollapsed ? "\u25B8" : "\u25BE"} Imported ({importedTracks.length})
                 </span>
               </td>
             </tr>
           )}
 
           {/* Imported rows — indigo tint */}
-          {!importedCollapsed && sortedImported.map((t) => {
-            const isSelected = selectedHexIdents?.has(t.hex_ident) ?? false;
-            const isHidden = isHiddenInSection(t.hex_ident, "imported");
+          {!importedCollapsed && importedTracks.map((t) => {
+            const key = t.track_id ?? t.hex_ident;
+            const isSelected = selectedHexIdents?.has(key) ?? false;
+            const isHidden = isHiddenInSection(key, "imported");
             return (
             <tr
-              key={`imported-${t.hex_ident}`}
-              data-testid={`row-imported-${t.hex_ident}`}
-              data-hex={t.hex_ident}
+              key={`imported-${key}`}
+              data-testid={`row-imported-${key}`}
+              data-hex={key}
               onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
-              onClick={(e) => onSelectTrack?.(t.hex_ident, { shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey })}
+              onClick={(e) => onSelectTrack?.(key, { shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey })}
               className={`border-b border-slate-800 ${
                 isSelected
                   ? "bg-indigo-900/40 hover:bg-indigo-900/50"
@@ -454,15 +453,15 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      const isMultiSelected = selectedHexIdents && selectedHexIdents.has(t.hex_ident) && selectedHexIdents.size > 1;
+                      const isMultiSelected = selectedHexIdents && selectedHexIdents.has(key) && selectedHexIdents.size > 1;
                       if (isMultiSelected) {
-                        const selectedInSection = sortedImported.map(tr => tr.hex_ident).filter(h => selectedHexIdents.has(h));
+                        const selectedInSection = importedKeys.filter(h => selectedHexIdents.has(h));
                         selectedInSection.forEach(h => onToggleMapVisibility(h, "imported"));
                       } else {
-                        onToggleMapVisibility(t.hex_ident, "imported");
+                        onToggleMapVisibility(key, "imported");
                       }
                     }}
-                    data-testid={`visibility-imported-${t.hex_ident}`}
+                    data-testid={`visibility-imported-${key}`}
                     className={`transition text-xs leading-none ${isHidden ? "text-slate-600 hover:text-slate-300" : "text-slate-400 hover:text-slate-200"}`}
                     title={isHidden ? `Show ${t.hex_ident} on map` : `Hide ${t.hex_ident} from map`}
                   >
@@ -474,7 +473,7 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
             );
           })}
 
-          {sorted.length === 0 && sortedHistory.length === 0 && sortedDbHistory.length === 0 && sortedImported.length === 0 && (
+          {tracks.length === 0 && historyTracks.length === 0 && dbHistoryTracks.length === 0 && importedTracks.length === 0 && (
             <tr>
               <td
                 colSpan={11}

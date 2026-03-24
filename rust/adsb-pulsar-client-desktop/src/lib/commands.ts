@@ -6,6 +6,8 @@ import type {
   Config,
   DetectionRangeQuery,
   DetectionRangeSector,
+  FlightSummary,
+  FlightSummaryQuery,
   HourlyHeatmapCell,
   HourlyHeatmapQuery,
   ImportPreview,
@@ -59,10 +61,22 @@ export async function queryBbox(
   return invoke("query_bbox", { query });
 }
 
+export async function queryBboxArrow(
+  query: BboxQuery
+): Promise<number[]> {
+  return invoke("query_bbox_arrow", { query });
+}
+
 export async function getTrajectory(
   query: TrajectoryQuery
 ): Promise<PositionRecord[]> {
   return invoke("get_trajectory", { query });
+}
+
+export async function getTrajectoryBatchArrow(
+  queries: [TrajectoryQuery, string][]
+): Promise<number[]> {
+  return invoke("get_trajectories_batch_arrow", { queries });
 }
 
 export async function getAircraftSummary(
@@ -73,6 +87,18 @@ export async function getAircraftSummary(
     startMs: startMs ?? null,
     endMs: endMs ?? null,
   });
+}
+
+export async function getFlightSummary(
+  query: FlightSummaryQuery
+): Promise<FlightSummary[]> {
+  return invoke("get_flight_summary", { query });
+}
+
+export async function getFlightSummaryArrow(
+  query: FlightSummaryQuery
+): Promise<number[]> {
+  return invoke("get_flight_summary_arrow", { query });
 }
 
 export async function getTimeDistribution(
@@ -111,6 +137,12 @@ export async function getRawMessages(
   query: RawMessageQuery
 ): Promise<RawSbsRecord[]> {
   return invoke("get_raw_messages", { query });
+}
+
+export async function getRawMessagesArrow(
+  query: RawMessageQuery
+): Promise<number[]> {
+  return invoke("get_raw_messages_arrow", { query });
 }
 
 // --- Recording state commands ---

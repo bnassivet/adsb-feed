@@ -19,10 +19,10 @@ import { startFeed, stopFeed, getConfig, getStorageStatus, releaseStorage, recla
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
 import { listen } from "@tauri-apps/api/event";
 import { ask, message, save, open } from "@tauri-apps/plugin-dialog";
-import { sortTracks } from "@/lib/sort-tracks";
+import { sortTracks, type SortKey } from "@/lib/sort-tracks";
 import { filterHistoryByTimeRange } from "@/lib/history-time-filter";
-import { DEFAULT_FILTERS } from "@/lib/types";
-import type { ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, TrackSection, StorageAvailability } from "@/lib/types";
+import { DEFAULT_FILTERS, trackKey } from "@/lib/types";
+import type { AircraftTrack, ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, TrackSection, StorageAvailability } from "@/lib/types";
 import type { SelectEvent } from "@/components/AircraftTable";
 import { ModeTabs } from "@/components/ModeTabs";
 import Link from "next/link";
@@ -81,8 +81,12 @@ export default function Dashboard() {
   const [selectedHexIdents, setSelectedHexIdents] = useState<Set<string>>(new Set());
   const [lastSelectedHexIdent, setLastSelectedHexIdent] = useState<string | null>(null);
   const [hiddenSections, setHiddenSections] = useState<Map<TrackSection, Set<string>>>(new Map());
-  const [sortKey] = useState<"callsign">("callsign");
-  const [sortAsc] = useState(true);
+  const [sortKey, setSortKey] = useState<SortKey>("callsign");
+  const [sortAsc, setSortAsc] = useState(true);
+  const handleSort = useCallback((key: SortKey) => {
+    setSortAsc(prev => sortKey === key ? !prev : true);
+    setSortKey(key);
+  }, [sortKey]);
 
   const {
     tracks, history, imported, dbHistory, analysis,
@@ -258,38 +262,68 @@ export default function Dashboard() {
     (section: TrackSection, tracks: typeof allTracks) => {
       const sectionSet = hiddenSections.get(section);
       if (!sectionSet || sectionSet.size === 0) return tracks;
-      return tracks.filter(t => !sectionSet.has(t.hex_ident));
+      return tracks.filter(t => !sectionSet.has(trackKey(t)));
     },
     [hiddenSections],
   );
-  const mapTracks = isLive ? filterBySection("live", allTracks) : [];
-  const mapHistory = isLive ? filterBySection("history", visibleHistory) : [];
-  const mapImported = isLive ? filterBySection("imported", visibleImported) : [];
-  const mapDbHistory = isLive ? filterBySection("dbHistory", visibleDbHistory) : filterBySection("analysis", analysis);
-  const tableTracks = isLive ? allTracks : analysis;
-  const tableHistory = isLive ? visibleHistory : [];
-  const tableImported = isLive ? visibleImported : [];
-  const tableDbHistory = isLive ? visibleDbHistory : [];
+  const EMPTY_TRACKS: AircraftTrack[] = useMemo(() => [], []);
+  const mapTracks = useMemo(
+    () => isLive ? filterBySection("live", allTracks) : EMPTY_TRACKS,
+    [isLive, filterBySection, allTracks, EMPTY_TRACKS],
+  );
+  const mapHistory = useMemo(
+    () => isLive ? filterBySection("history", visibleHistory) : EMPTY_TRACKS,
+    [isLive, filterBySection, visibleHistory, EMPTY_TRACKS],
+  );
+  const mapImported = useMemo(
+    () => isLive ? filterBySection("imported", visibleImported) : EMPTY_TRACKS,
+    [isLive, filterBySection, visibleImported, EMPTY_TRACKS],
+  );
+  const mapDbHistory = useMemo(
+    () => isLive ? filterBySection("dbHistory", visibleDbHistory) : filterBySection("analysis", analysis),
+    [isLive, filterBySection, visibleDbHistory, analysis],
+  );
+  const tableTracks = useMemo(
+    () => isLive ? allTracks : analysis,
+    [isLive, allTracks, analysis],
+  );
+  const tableHistory = useMemo(
+    () => isLive ? visibleHistory : EMPTY_TRACKS,
+    [isLive, visibleHistory, EMPTY_TRACKS],
+  );
+  const tableImported = useMemo(
+    () => isLive ? visibleImported : EMPTY_TRACKS,
+    [isLive, visibleImported, EMPTY_TRACKS],
+  );
+  const tableDbHistory = useMemo(
+    () => isLive ? visibleDbHistory : EMPTY_TRACKS,
+    [isLive, visibleDbHistory, EMPTY_TRACKS],
+  );
+
+  // O(1) lookup map for all visible tracks — replaces chained .find() and Set rebuilding
+  const allMapTracksMap = useMemo(() => {
+    const m = new Map<string, AircraftTrack>();
+    for (const arr of [mapTracks, mapHistory, mapDbHistory, mapImported]) {
+      for (const t of arr) m.set(trackKey(t), t);
+    }
+    return m;
+  }, [mapTracks, mapHistory, mapDbHistory, mapImported]);
 
   const selectedTrack = useMemo(
-    () =>
-      mapTracks.find(t => t.hex_ident === lastSelectedHexIdent) ??
-      mapHistory.find(t => t.hex_ident === lastSelectedHexIdent) ??
-      mapDbHistory.find(t => t.hex_ident === lastSelectedHexIdent) ??
-      mapImported.find(t => t.hex_ident === lastSelectedHexIdent) ??
-      null,
-    [lastSelectedHexIdent, mapTracks, mapHistory, mapDbHistory, mapImported],
+    () => (lastSelectedHexIdent ? allMapTracksMap.get(lastSelectedHexIdent) ?? null : null),
+    [lastSelectedHexIdent, allMapTracksMap],
   );
+
+  // Memoized sorted arrays — shared by AircraftTable and flatVisibleOrder
+  const sortedTableTracks = useMemo(() => sortTracks(tableTracks, sortKey, sortAsc), [tableTracks, sortKey, sortAsc]);
+  const sortedTableHistory = useMemo(() => sortTracks(tableHistory, sortKey, sortAsc), [tableHistory, sortKey, sortAsc]);
+  const sortedTableDbHistory = useMemo(() => sortTracks(tableDbHistory, sortKey, sortAsc), [tableDbHistory, sortKey, sortAsc]);
+  const sortedTableImported = useMemo(() => sortTracks(tableImported, sortKey, sortAsc), [tableImported, sortKey, sortAsc]);
 
   // Flat visible order for shift-range selection — mirrors table section order
   const flatVisibleOrder = useMemo(
-    () => [
-      ...sortTracks(tableTracks, sortKey, sortAsc),
-      ...sortTracks(tableHistory, sortKey, sortAsc),
-      ...sortTracks(tableDbHistory, sortKey, sortAsc),
-      ...sortTracks(tableImported, sortKey, sortAsc),
-    ].map(t => t.hex_ident),
-    [tableTracks, tableHistory, tableDbHistory, tableImported, sortKey, sortAsc],
+    () => [...sortedTableTracks, ...sortedTableHistory, ...sortedTableDbHistory, ...sortedTableImported].map(t => trackKey(t)),
+    [sortedTableTracks, sortedTableHistory, sortedTableDbHistory, sortedTableImported],
   );
 
   // Multi-select handler: plain click = single, ctrl/cmd = toggle, shift = range
@@ -335,23 +369,20 @@ export default function Dashboard() {
   // Auto-deselect when selected tracks disappear from current mode
   useEffect(() => {
     if (selectedHexIdents.size === 0) return;
-    const allHexes = new Set([
-      ...mapTracks.map(t => t.hex_ident),
-      ...mapHistory.map(t => t.hex_ident),
-      ...mapDbHistory.map(t => t.hex_ident),
-      ...mapImported.map(t => t.hex_ident),
-    ]);
-    const remaining = new Set([...selectedHexIdents].filter(h => allHexes.has(h)));
+    const remaining = new Set([...selectedHexIdents].filter(h => allMapTracksMap.has(h)));
     if (remaining.size < selectedHexIdents.size) {
       setSelectedHexIdents(remaining);
     }
-    if (lastSelectedHexIdent && !allHexes.has(lastSelectedHexIdent)) {
+    if (lastSelectedHexIdent && !allMapTracksMap.has(lastSelectedHexIdent)) {
       setLastSelectedHexIdent(null);
     }
-  }, [selectedHexIdents, lastSelectedHexIdent, mapTracks, mapHistory, mapDbHistory, mapImported]);
+  }, [selectedHexIdents, lastSelectedHexIdent, allMapTracksMap]);
 
-  const isImportedSelection = mapImported.some(t => t.hex_ident === lastSelectedHexIdent);
-  const isDbHistorySelection = mapDbHistory.some(t => t.hex_ident === lastSelectedHexIdent);
+  // O(1) lookups using Sets built from existing arrays
+  const importedKeysSet = useMemo(() => new Set(mapImported.map(t => trackKey(t))), [mapImported]);
+  const dbHistoryKeysSet = useMemo(() => new Set(mapDbHistory.map(t => trackKey(t))), [mapDbHistory]);
+  const isImportedSelection = lastSelectedHexIdent ? importedKeysSet.has(lastSelectedHexIdent) : false;
+  const isDbHistorySelection = lastSelectedHexIdent ? dbHistoryKeysSet.has(lastSelectedHexIdent) : false;
 
   const densityTracks = useMemo(
     () => {
@@ -681,10 +712,13 @@ export default function Dashboard() {
             style={{ height: tableHeight }}
           >
             <AircraftTable
-              tracks={tableTracks}
-              historyTracks={tableHistory}
-              importedTracks={tableImported}
-              dbHistoryTracks={tableDbHistory}
+              tracks={sortedTableTracks}
+              historyTracks={sortedTableHistory}
+              importedTracks={sortedTableImported}
+              dbHistoryTracks={sortedTableDbHistory}
+              sortKey={sortKey}
+              sortAsc={sortAsc}
+              onSort={handleSort}
               selectedHexIdents={selectedHexIdents}
               lastSelectedHexIdent={lastSelectedHexIdent}
               onSelectTrack={handleSelectTrack}

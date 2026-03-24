@@ -57,8 +57,10 @@ export function recordsToTracks(records: PositionRecord[]): AircraftTrack[] {
  * (altitude, callsign, etc.) become the track's current state.
  */
 export function recordsToTrack(records: PositionRecord[]): AircraftTrack {
-  const sorted = [...records].sort((a, b) => a.timestamp_ms - b.timestamp_ms);
-  const last = sorted[sorted.length - 1];
+  // Sort in-place — callers pass owned arrays (slices, query results).
+  // V8 TimSort is O(n) for already-sorted data (DuckDB ORDER BY timestamp_ms).
+  records.sort((a, b) => a.timestamp_ms - b.timestamp_ms);
+  const last = records[records.length - 1];
   return {
     hex_ident: last.hex_ident,
     callsign: last.callsign,
@@ -71,11 +73,11 @@ export function recordsToTrack(records: PositionRecord[]): AircraftTrack {
     squawk: last.squawk,
     is_on_ground: last.is_on_ground,
     timestamp: new Date(last.timestamp_ms).toISOString(),
-    positions: sorted.map(
+    positions: records.map(
       (r) => [r.latitude, r.longitude, r.altitude] as [number, number, number | null]
     ),
-    first_seen: sorted[0].timestamp_ms,
+    first_seen: records[0].timestamp_ms,
     last_seen: last.timestamp_ms,
-    message_count: sorted.length,
+    message_count: records.length,
   };
 }

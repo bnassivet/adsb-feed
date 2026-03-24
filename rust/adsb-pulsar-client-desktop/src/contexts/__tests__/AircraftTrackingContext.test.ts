@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { appendPosition, mergePositionInto } from "../AircraftTrackingContext";
+import { appendPosition, mergePositionInto, trackKey } from "../AircraftTrackingContext";
 import type { AircraftTrack, AircraftPosition } from "@/lib/types";
 
 function makeTrack(overrides: Partial<AircraftTrack> = {}): AircraftTrack {
@@ -79,5 +79,38 @@ describe("mergePositionInto — message_count", () => {
     mergePositionInto(track, makePosition("A1B2C3", { message_count: 3 }), Date.now());
     mergePositionInto(track, makePosition("A1B2C3", { message_count: 7 }), Date.now());
     expect(track.message_count).toBe(10);
+  });
+});
+
+describe("trackKey", () => {
+  it("returns track_id when set", () => {
+    const track = makeTrack({ track_id: "A1B2C3_1" });
+    expect(trackKey(track)).toBe("A1B2C3_1");
+  });
+
+  it("returns hex_ident when track_id is undefined", () => {
+    const track = makeTrack();
+    expect(trackKey(track)).toBe("A1B2C3");
+  });
+
+  it("allows multiple tracks with same hex_ident but different track_id to coexist in Map", () => {
+    const map = new Map<string, AircraftTrack>();
+    const track1 = makeTrack({ track_id: "A1B2C3_0", callsign: "FLT1" });
+    const track2 = makeTrack({ track_id: "A1B2C3_1", callsign: "FLT2" });
+    map.set(trackKey(track1), track1);
+    map.set(trackKey(track2), track2);
+    expect(map.size).toBe(2);
+    expect(map.get("A1B2C3_0")?.callsign).toBe("FLT1");
+    expect(map.get("A1B2C3_1")?.callsign).toBe("FLT2");
+  });
+
+  it("tracks without track_id collapse to same key in Map", () => {
+    const map = new Map<string, AircraftTrack>();
+    const track1 = makeTrack({ callsign: "FLT1" });
+    const track2 = makeTrack({ callsign: "FLT2" });
+    map.set(trackKey(track1), track1);
+    map.set(trackKey(track2), track2);
+    expect(map.size).toBe(1); // same hex_ident = same key
+    expect(map.get("A1B2C3")?.callsign).toBe("FLT2"); // last write wins
   });
 });

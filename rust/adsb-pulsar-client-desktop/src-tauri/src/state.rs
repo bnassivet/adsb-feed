@@ -211,6 +211,7 @@ mod tests {
         let config = adsb_data_engine::StorageConfig {
             db_path: Some(std::path::PathBuf::from("/tmp/test.db")),
             source_id: "test".to_string(),
+            gap_threshold_ms: 3_600_000,
         };
         let state = AppState::with_config(Config::default(), None, Some(config.clone()));
         assert!(state.storage_config.is_some());

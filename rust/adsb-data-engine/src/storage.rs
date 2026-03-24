@@ -7,14 +7,44 @@
 use crate::error::StorageError;
 use crate::sbs_parser::AircraftPosition;
 use crate::types::{
-    AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, HourlyHeatmapCell,
-    HourlyHeatmapQuery, ImportPreview, ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord,
-    StorageConfig, StorageStats, TablePreview, TimeDistributionBucket, TimeDistributionMetric,
-    TimeDistributionQuery, TrajectoryQuery,
+    AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, FlightSummary,
+    FlightSummaryQuery, HourlyHeatmapCell, HourlyHeatmapQuery, ImportPreview, ImportResult,
+    PositionRecord, RawMessageQuery, RawSbsRecord, StorageConfig, StorageStats, TablePreview,
+    TimeDistributionBucket, TimeDistributionMetric, TimeDistributionQuery, TrajectoryQuery,
 };
+use arrow::ipc::writer::StreamWriter;
+use arrow::record_batch::RecordBatch;
 use duckdb::{params, Connection};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::info;
+
+/// Write Arrow RecordBatches to an IPC stream, returning the raw bytes.
+fn write_arrow_ipc(batches: impl Iterator<Item = RecordBatch>) -> Result<Vec<u8>, StorageError> {
+    let mut buf = Vec::new();
+    let mut writer: Option<StreamWriter<&mut Vec<u8>>> = None;
+
+    for batch in batches {
+        if writer.is_none() {
+            writer = Some(
+                StreamWriter::try_new(&mut buf, &batch.schema())
+                    .map_err(|e| StorageError::Query(format!("Arrow writer init: {e}")))?,
+            );
+        }
+        writer
+            .as_mut()
+            .unwrap()
+            .write(&batch)
+            .map_err(|e| StorageError::Query(format!("Arrow write: {e}")))?;
+    }
+
+    if let Some(w) = writer.as_mut() {
+        w.finish()
+            .map_err(|e| StorageError::Query(format!("Arrow finish: {e}")))?;
+    }
+
+    Ok(buf)
+}
 
 /// Thread-safe DuckDB handle. Cloneable (Arc internals).
 ///
@@ -26,9 +56,19 @@ pub struct StorageHandle {
     inner: Arc<Mutex<Storage>>,
 }
 
+/// Tracks the latest active flight per hex_ident for O(1) gap detection.
+struct ActiveFlight {
+    flight_id: String,
+    flight_num: u32,
+    last_seen_ms: i64,
+}
+
 struct Storage {
     conn: Connection,
     source_id: String,
+    gap_threshold_ms: i64,
+    /// In-memory index: hex_ident → latest flight. Rebuilt from DB on open().
+    flight_tracker: HashMap<String, ActiveFlight>,
 }
 
 const SCHEMA_SQL: &str = r#"
@@ -61,6 +101,21 @@ const SCHEMA_SQL: &str = r#"
 
     CREATE INDEX IF NOT EXISTS idx_raw_msgs_ts ON raw_messages (timestamp_ms);
     CREATE INDEX IF NOT EXISTS idx_raw_msgs_hex_ts ON raw_messages (hex_ident, timestamp_ms);
+
+    CREATE TABLE IF NOT EXISTS flights (
+        flight_id      TEXT    PRIMARY KEY,
+        hex_ident      TEXT    NOT NULL,
+        flight_num     INTEGER NOT NULL,
+        callsign       TEXT,
+        position_count INTEGER NOT NULL DEFAULT 0,
+        first_seen_ms  BIGINT  NOT NULL,
+        last_seen_ms   BIGINT  NOT NULL,
+        min_altitude   DOUBLE,
+        max_altitude   DOUBLE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_flights_hex ON flights (hex_ident);
+    CREATE INDEX IF NOT EXISTS idx_flights_last_seen ON flights (last_seen_ms);
 "#;
 
 impl StorageHandle {
@@ -90,12 +145,130 @@ impl StorageHandle {
                 .unwrap_or_else(|| ":memory:".to_string())
         );
 
-        Ok(Self {
+        let handle = Self {
             inner: Arc::new(Mutex::new(Storage {
                 conn,
                 source_id: config.source_id,
+                gap_threshold_ms: config.gap_threshold_ms,
+                flight_tracker: HashMap::new(),
             })),
-        })
+        };
+
+        // One-time migration: populate flights table from existing positions
+        handle.bootstrap_flights_sync()?;
+        // Rebuild in-memory tracker from flights table
+        handle.rebuild_flight_tracker_sync()?;
+
+        Ok(handle)
+    }
+
+    /// One-time migration: populate `flights` table from existing positions using
+    /// window functions. Only runs if `flights` is empty and `positions` has data.
+    fn bootstrap_flights_sync(&self) -> Result<(), StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let flight_count: i64 =
+            storage
+                .conn
+                .query_row("SELECT COUNT(*) FROM flights", [], |row| row.get(0))?;
+        let pos_count: i64 =
+            storage
+                .conn
+                .query_row("SELECT COUNT(*) FROM positions", [], |row| row.get(0))?;
+
+        if flight_count > 0 || pos_count == 0 {
+            return Ok(());
+        }
+
+        let gap = storage.gap_threshold_ms;
+        info!(
+            "Bootstrapping flights table from {} existing positions...",
+            pos_count
+        );
+
+        storage.conn.execute_batch(&format!(
+            "INSERT INTO flights (flight_id, hex_ident, flight_num, callsign,
+                                  position_count, first_seen_ms, last_seen_ms,
+                                  min_altitude, max_altitude)
+             WITH ordered AS (
+                 SELECT hex_ident, callsign, altitude, timestamp_ms,
+                        LAG(timestamp_ms) OVER (PARTITION BY hex_ident ORDER BY timestamp_ms) AS prev_ts
+                 FROM positions
+             ),
+             segmented AS (
+                 SELECT *,
+                        SUM(CASE WHEN prev_ts IS NULL OR timestamp_ms - prev_ts > {gap} THEN 1 ELSE 0 END)
+                            OVER (PARTITION BY hex_ident ORDER BY timestamp_ms) - 1 AS flight_num
+                 FROM ordered
+             )
+             SELECT hex_ident || '_' || CAST(flight_num AS INTEGER),
+                    hex_ident, CAST(flight_num AS INTEGER),
+                    MAX(callsign), COUNT(*),
+                    MIN(timestamp_ms), MAX(timestamp_ms),
+                    MIN(altitude), MAX(altitude)
+             FROM segmented
+             GROUP BY hex_ident, flight_num"
+        ))?;
+
+        let bootstrapped: i64 =
+            storage
+                .conn
+                .query_row("SELECT COUNT(*) FROM flights", [], |row| row.get(0))?;
+        info!(
+            "Bootstrapped {} flights from existing positions",
+            bootstrapped
+        );
+
+        Ok(())
+    }
+
+    /// Rebuild the in-memory flight tracker from the `flights` table.
+    /// Loads the latest flight per hex_ident so incremental updates resume correctly.
+    fn rebuild_flight_tracker_sync(&self) -> Result<(), StorageError> {
+        let mut storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        // Collect results first to avoid borrow conflict with flight_tracker mutation
+        let entries: Vec<(String, String, u32, i64)> = {
+            let mut stmt = storage.conn.prepare(
+                "SELECT f.hex_ident, f.flight_id, f.flight_num, f.last_seen_ms
+                 FROM flights f
+                 INNER JOIN (
+                     SELECT hex_ident, MAX(flight_num) AS max_num
+                     FROM flights
+                     GROUP BY hex_ident
+                 ) latest ON f.hex_ident = latest.hex_ident AND f.flight_num = latest.max_num",
+            )?;
+
+            stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i32>(2)? as u32,
+                    row.get::<_, i64>(3)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+        };
+
+        storage.flight_tracker.clear();
+        for (hex_ident, flight_id, flight_num, last_seen_ms) in entries {
+            storage.flight_tracker.insert(
+                hex_ident,
+                ActiveFlight {
+                    flight_id,
+                    flight_num,
+                    last_seen_ms,
+                },
+            );
+        }
+
+        Ok(())
     }
 
     /// Batch insert parsed positions (synchronous).
@@ -111,33 +284,177 @@ impl StorageHandle {
             return Ok(());
         }
 
-        let storage = self
+        let mut storage = self
             .inner
             .lock()
             .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
 
-        let mut appender = storage.conn.appender("positions")?;
+        // Phase 1: Insert positions via appender (existing logic)
+        // Collect (pos, timestamp_ms) for flight updates in phase 2
+        let mut batch_with_ts: Vec<(&AircraftPosition, i64)> = Vec::with_capacity(positions.len());
 
-        for pos in positions {
-            let timestamp_ms = parse_timestamp_to_ms(&pos.timestamp, tz);
+        {
+            let mut appender = storage.conn.appender("positions")?;
 
-            appender.append_row(params![
-                pos.hex_ident,
-                pos.callsign,
-                pos.latitude,
-                pos.longitude,
-                pos.altitude,
-                pos.ground_speed,
-                pos.track,
-                pos.vertical_rate,
-                pos.squawk,
-                pos.is_on_ground,
-                timestamp_ms,
-                storage.source_id,
-            ])?;
+            for pos in positions {
+                let timestamp_ms = parse_timestamp_to_ms(&pos.timestamp, tz);
+
+                appender.append_row(params![
+                    pos.hex_ident,
+                    pos.callsign,
+                    pos.latitude,
+                    pos.longitude,
+                    pos.altitude,
+                    pos.ground_speed,
+                    pos.track,
+                    pos.vertical_rate,
+                    pos.squawk,
+                    pos.is_on_ground,
+                    timestamp_ms,
+                    storage.source_id,
+                ])?;
+
+                batch_with_ts.push((pos, timestamp_ms));
+            }
+
+            appender.flush()?;
+        }
+        // Appender dropped here — conn borrow released
+
+        // Phase 2: Incrementally update flights table
+        // Collect new flights (INSERTs) and aggregated updates per flight_id
+        struct FlightInsert {
+            flight_id: String,
+            hex_ident: String,
+            flight_num: u32,
+            callsign: Option<String>,
+            timestamp_ms: i64,
+            altitude: Option<f64>,
+        }
+        struct AggregatedFlightUpdate {
+            flight_id: String,
+            position_count: u32,
+            last_callsign: Option<String>,
+            max_timestamp_ms: i64,
+            min_altitude: Option<f64>,
+            max_altitude: Option<f64>,
         }
 
-        appender.flush()?;
+        let mut inserts: Vec<FlightInsert> = Vec::new();
+        // Aggregate updates per flight_id: O(unique_aircraft) entries instead of O(positions)
+        let mut updates: HashMap<String, AggregatedFlightUpdate> = HashMap::new();
+        let gap_threshold = storage.gap_threshold_ms;
+
+        for (pos, ts_ms) in &batch_with_ts {
+            let hex = &pos.hex_ident;
+
+            match storage.flight_tracker.get(hex.as_str()) {
+                Some(active) if (*ts_ms - active.last_seen_ms) <= gap_threshold => {
+                    // Extend existing flight — aggregate into HashMap
+                    updates
+                        .entry(active.flight_id.clone())
+                        .and_modify(|agg| {
+                            agg.position_count += 1;
+                            agg.max_timestamp_ms = agg.max_timestamp_ms.max(*ts_ms);
+                            if let Some(alt) = pos.altitude {
+                                agg.min_altitude =
+                                    Some(agg.min_altitude.map_or(alt, |m: f64| m.min(alt)));
+                                agg.max_altitude =
+                                    Some(agg.max_altitude.map_or(alt, |m: f64| m.max(alt)));
+                            }
+                            if pos.callsign.is_some() {
+                                agg.last_callsign.clone_from(&pos.callsign);
+                            }
+                        })
+                        .or_insert(AggregatedFlightUpdate {
+                            flight_id: active.flight_id.clone(),
+                            position_count: 1,
+                            last_callsign: pos.callsign.clone(),
+                            max_timestamp_ms: *ts_ms,
+                            min_altitude: pos.altitude,
+                            max_altitude: pos.altitude,
+                        });
+                    // Update tracker in-place
+                    let active_mut = storage.flight_tracker.get_mut(hex.as_str()).unwrap();
+                    active_mut.last_seen_ms = *ts_ms;
+                }
+                _ => {
+                    // Gap exceeded or first time seeing this hex → new flight
+                    let flight_num = match storage.flight_tracker.get(hex.as_str()) {
+                        Some(active) => active.flight_num + 1,
+                        None => 0,
+                    };
+                    let flight_id = format!("{}_{}", hex, flight_num);
+
+                    inserts.push(FlightInsert {
+                        flight_id: flight_id.clone(),
+                        hex_ident: hex.clone(),
+                        flight_num,
+                        callsign: pos.callsign.clone(),
+                        timestamp_ms: *ts_ms,
+                        altitude: pos.altitude,
+                    });
+
+                    // Update tracker
+                    storage.flight_tracker.insert(
+                        hex.clone(),
+                        ActiveFlight {
+                            flight_id,
+                            flight_num,
+                            last_seen_ms: *ts_ms,
+                        },
+                    );
+                }
+            }
+        }
+
+        // Execute INSERTs for new flights
+        if !inserts.is_empty() {
+            let mut insert_stmt = storage.conn.prepare(
+                "INSERT INTO flights (flight_id, hex_ident, flight_num, callsign,
+                                      position_count, first_seen_ms, last_seen_ms,
+                                      min_altitude, max_altitude)
+                 VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)",
+            )?;
+            for ins in &inserts {
+                insert_stmt.execute(params![
+                    ins.flight_id,
+                    ins.hex_ident,
+                    ins.flight_num,
+                    ins.callsign,
+                    ins.timestamp_ms,
+                    ins.timestamp_ms,
+                    ins.altitude,
+                    ins.altitude,
+                ])?;
+            }
+        }
+
+        // Execute aggregated UPDATEs — one per flight_id instead of one per position
+        if !updates.is_empty() {
+            let mut update_stmt = storage.conn.prepare(
+                "UPDATE flights SET
+                    last_seen_ms = GREATEST(last_seen_ms, ?),
+                    position_count = position_count + ?,
+                    callsign = COALESCE(?, callsign),
+                    min_altitude = LEAST(COALESCE(min_altitude, ?), COALESCE(?, min_altitude)),
+                    max_altitude = GREATEST(COALESCE(max_altitude, ?), COALESCE(?, max_altitude))
+                 WHERE flight_id = ?",
+            )?;
+            for upd in updates.values() {
+                update_stmt.execute(params![
+                    upd.max_timestamp_ms,
+                    upd.position_count,
+                    upd.last_callsign,
+                    upd.min_altitude,
+                    upd.min_altitude,
+                    upd.max_altitude,
+                    upd.max_altitude,
+                    upd.flight_id,
+                ])?;
+            }
+        }
+
         Ok(())
     }
 
@@ -210,6 +527,49 @@ impl StorageHandle {
         Ok(rows)
     }
 
+    /// Query positions in a bounding box as Arrow IPC bytes (synchronous).
+    pub fn query_bbox_arrow_sync(&self, query: BboxQuery) -> Result<Vec<u8>, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let mut sql = String::from(
+            "SELECT hex_ident, callsign, latitude, longitude, altitude,
+                    ground_speed, track, vertical_rate, squawk, is_on_ground, timestamp_ms
+             FROM positions
+             WHERE latitude BETWEEN ? AND ?
+               AND longitude BETWEEN ? AND ?
+               AND latitude IS NOT NULL
+               AND longitude IS NOT NULL",
+        );
+
+        let mut params_vec: Vec<Box<dyn duckdb::ToSql>> = vec![
+            Box::new(query.south),
+            Box::new(query.north),
+            Box::new(query.west),
+            Box::new(query.east),
+        ];
+
+        if let Some(start) = query.start_ms {
+            sql.push_str(" AND timestamp_ms >= ?");
+            params_vec.push(Box::new(start));
+        }
+        if let Some(end) = query.end_ms {
+            sql.push_str(" AND timestamp_ms <= ?");
+            params_vec.push(Box::new(end));
+        }
+
+        sql.push_str(" ORDER BY hex_ident, timestamp_ms LIMIT ?");
+        params_vec.push(Box::new(query.limit as i64));
+
+        let mut stmt = storage.conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn duckdb::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let arrow_result = stmt.query_arrow(params_refs.as_slice())?;
+        write_arrow_ipc(arrow_result)
+    }
+
     /// Get trajectory for a single aircraft (synchronous).
     ///
     /// Returns positions sorted by timestamp_ms.
@@ -272,6 +632,101 @@ impl StorageHandle {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(rows)
+    }
+
+    /// Batch-fetch trajectories as Arrow IPC bytes (synchronous).
+    ///
+    /// Acquires the DuckDB Mutex once for all queries. Each query's results
+    /// are tagged with a `flight_id` column so the caller can partition them.
+    /// Returns Arrow IPC stream format bytes.
+    pub fn get_trajectories_batch_arrow_sync(
+        &self,
+        queries: &[(TrajectoryQuery, String)], // (query, flight_id)
+    ) -> Result<Vec<u8>, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let mut buf = Vec::new();
+        let mut writer: Option<StreamWriter<&mut Vec<u8>>> = None;
+        let mut extended_schema_ref: Option<Arc<arrow::datatypes::Schema>> = None;
+
+        for (query, flight_id) in queries {
+            let mut sql = String::from(
+                "SELECT hex_ident, callsign, latitude, longitude, altitude,
+                        ground_speed, track, vertical_rate, squawk, is_on_ground, timestamp_ms
+                 FROM positions
+                 WHERE hex_ident = ?
+                   AND latitude IS NOT NULL
+                   AND longitude IS NOT NULL",
+            );
+
+            if query.start_ms.is_some() {
+                sql.push_str(" AND timestamp_ms >= ?");
+            }
+            if query.end_ms.is_some() {
+                sql.push_str(" AND timestamp_ms <= ?");
+            }
+            sql.push_str(" ORDER BY timestamp_ms");
+
+            let mut stmt = storage.conn.prepare(&sql)?;
+
+            let mut params_vec: Vec<Box<dyn duckdb::ToSql>> =
+                vec![Box::new(query.hex_ident.clone())];
+            if let Some(start) = query.start_ms {
+                params_vec.push(Box::new(start));
+            }
+            if let Some(end) = query.end_ms {
+                params_vec.push(Box::new(end));
+            }
+            let params_refs: Vec<&dyn duckdb::ToSql> =
+                params_vec.iter().map(|p| p.as_ref()).collect();
+
+            let arrow_result = stmt.query_arrow(params_refs.as_slice())?;
+            let query_schema = arrow_result.get_schema();
+
+            // Build extended schema with flight_id column on first batch
+            if writer.is_none() {
+                use arrow::datatypes::{DataType, Field, Schema};
+
+                let mut fields = query_schema.fields().to_vec();
+                fields.push(Arc::new(Field::new("flight_id", DataType::Utf8, false)));
+                let schema = Arc::new(Schema::new(fields));
+                extended_schema_ref = Some(schema.clone());
+
+                writer = Some(
+                    StreamWriter::try_new(&mut buf, &schema)
+                        .map_err(|e| StorageError::Query(format!("Arrow writer init: {e}")))?,
+                );
+            }
+
+            let w = writer.as_mut().unwrap();
+            let schema = extended_schema_ref.as_ref().unwrap();
+
+            for batch in arrow_result {
+                use arrow::array::StringArray;
+                use arrow::record_batch::RecordBatch;
+
+                // Add flight_id column to this batch
+                let flight_id_col = StringArray::from(vec![flight_id.as_str(); batch.num_rows()]);
+                let mut columns: Vec<Arc<dyn arrow::array::Array>> = batch.columns().to_vec();
+                columns.push(Arc::new(flight_id_col));
+
+                let extended_batch = RecordBatch::try_new(schema.clone(), columns)
+                    .map_err(|e| StorageError::Query(format!("Arrow batch extend: {e}")))?;
+
+                w.write(&extended_batch)
+                    .map_err(|e| StorageError::Query(format!("Arrow write: {e}")))?;
+            }
+        }
+
+        if let Some(w) = writer.as_mut() {
+            w.finish()
+                .map_err(|e| StorageError::Query(format!("Arrow finish: {e}")))?;
+        }
+
+        Ok(buf)
     }
 
     /// Get summary of distinct aircraft in a time window (synchronous).
@@ -338,6 +793,121 @@ impl StorageHandle {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(rows)
+    }
+
+    /// Get flight-segmented summaries (synchronous).
+    ///
+    /// Reads from the pre-computed `flights` table. Flights are maintained
+    /// incrementally by `insert_batch_sync` — this is a simple indexed SELECT.
+    pub fn get_flight_summary_sync(
+        &self,
+        query: &FlightSummaryQuery,
+    ) -> Result<Vec<FlightSummary>, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let mut sql = String::from(
+            "SELECT hex_ident, flight_num, flight_id, callsign,
+                    position_count, first_seen_ms, last_seen_ms,
+                    min_altitude, max_altitude
+             FROM flights",
+        );
+
+        let mut conditions = Vec::new();
+        if query.start_ms.is_some() {
+            // Include flights that overlap the query window
+            conditions.push("last_seen_ms >= ?");
+        }
+        if query.end_ms.is_some() {
+            conditions.push("first_seen_ms <= ?");
+        }
+
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+
+        sql.push_str(" ORDER BY last_seen_ms DESC");
+
+        let mut stmt = storage.conn.prepare(&sql)?;
+
+        let mut params_vec: Vec<Box<dyn duckdb::ToSql>> = Vec::new();
+        if let Some(start) = query.start_ms {
+            params_vec.push(Box::new(start));
+        }
+        if let Some(end) = query.end_ms {
+            params_vec.push(Box::new(end));
+        }
+
+        let params_refs: Vec<&dyn duckdb::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                Ok(FlightSummary {
+                    hex_ident: row.get(0)?,
+                    flight_num: row.get::<_, i32>(1)? as u32,
+                    flight_id: row.get(2)?,
+                    callsign: row.get(3)?,
+                    position_count: row.get::<_, i64>(4)? as u64,
+                    first_seen_ms: row.get(5)?,
+                    last_seen_ms: row.get(6)?,
+                    min_altitude: row.get(7)?,
+                    max_altitude: row.get(8)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
+    /// Get flight summaries as Arrow IPC bytes (synchronous).
+    pub fn get_flight_summary_arrow_sync(
+        &self,
+        query: &FlightSummaryQuery,
+    ) -> Result<Vec<u8>, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let mut sql = String::from(
+            "SELECT hex_ident, flight_num, flight_id, callsign,
+                    position_count, first_seen_ms, last_seen_ms,
+                    min_altitude, max_altitude
+             FROM flights",
+        );
+
+        let mut conditions = Vec::new();
+        if query.start_ms.is_some() {
+            conditions.push("last_seen_ms >= ?");
+        }
+        if query.end_ms.is_some() {
+            conditions.push("first_seen_ms <= ?");
+        }
+
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+
+        sql.push_str(" ORDER BY last_seen_ms DESC");
+
+        let mut stmt = storage.conn.prepare(&sql)?;
+
+        let mut params_vec: Vec<Box<dyn duckdb::ToSql>> = Vec::new();
+        if let Some(start) = query.start_ms {
+            params_vec.push(Box::new(start));
+        }
+        if let Some(end) = query.end_ms {
+            params_vec.push(Box::new(end));
+        }
+
+        let params_refs: Vec<&dyn duckdb::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let arrow_result = stmt.query_arrow(params_refs.as_slice())?;
+        write_arrow_ipc(arrow_result)
     }
 
     /// Get storage statistics (synchronous).
@@ -710,6 +1280,35 @@ impl StorageHandle {
         Ok(rows)
     }
 
+    /// Query raw SBS messages as Arrow IPC bytes (synchronous).
+    pub fn query_raw_messages_arrow_sync(
+        &self,
+        query: RawMessageQuery,
+    ) -> Result<Vec<u8>, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let sql = "SELECT hex_ident, msg_type, transmission_type, timestamp_ms,
+                          raw_message, source_id
+                   FROM raw_messages
+                   WHERE hex_ident = ? AND timestamp_ms BETWEEN ? AND ?
+                   ORDER BY timestamp_ms
+                   LIMIT 10000";
+
+        let mut stmt = storage.conn.prepare(sql)?;
+        let params: Vec<Box<dyn duckdb::ToSql>> = vec![
+            Box::new(query.hex_ident),
+            Box::new(query.start_ms),
+            Box::new(query.end_ms),
+        ];
+        let params_refs: Vec<&dyn duckdb::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+        let arrow_result = stmt.query_arrow(params_refs.as_slice())?;
+        write_arrow_ipc(arrow_result)
+    }
+
     /// Count raw messages, optionally filtered by time range (synchronous).
     pub fn get_raw_message_count_sync(
         &self,
@@ -770,6 +1369,14 @@ impl StorageHandle {
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
 
+    /// Query positions in a bounding box as Arrow IPC (async via spawn_blocking).
+    pub async fn query_bbox_arrow(&self, query: BboxQuery) -> Result<Vec<u8>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.query_bbox_arrow_sync(query))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
     /// Get trajectory for a single aircraft (async via spawn_blocking).
     pub async fn get_trajectory(
         &self,
@@ -777,6 +1384,17 @@ impl StorageHandle {
     ) -> Result<Vec<PositionRecord>, StorageError> {
         let handle = self.clone();
         tokio::task::spawn_blocking(move || handle.get_trajectory_sync(query))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Batch-fetch trajectories as Arrow IPC bytes (async via spawn_blocking).
+    pub async fn get_trajectories_batch_arrow(
+        &self,
+        queries: Vec<(TrajectoryQuery, String)>,
+    ) -> Result<Vec<u8>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.get_trajectories_batch_arrow_sync(&queries))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
@@ -789,6 +1407,28 @@ impl StorageHandle {
     ) -> Result<Vec<AircraftSummary>, StorageError> {
         let handle = self.clone();
         tokio::task::spawn_blocking(move || handle.get_aircraft_summary_sync(start_ms, end_ms))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Get flight-segmented summaries (async via spawn_blocking).
+    pub async fn get_flight_summary(
+        &self,
+        query: FlightSummaryQuery,
+    ) -> Result<Vec<FlightSummary>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.get_flight_summary_sync(&query))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Get flight summaries as Arrow IPC (async via spawn_blocking).
+    pub async fn get_flight_summary_arrow(
+        &self,
+        query: FlightSummaryQuery,
+    ) -> Result<Vec<u8>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.get_flight_summary_arrow_sync(&query))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
@@ -873,6 +1513,17 @@ impl StorageHandle {
     ) -> Result<Vec<RawSbsRecord>, StorageError> {
         let handle = self.clone();
         tokio::task::spawn_blocking(move || handle.query_raw_messages_sync(query))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Query raw SBS messages as Arrow IPC (async via spawn_blocking).
+    pub async fn query_raw_messages_arrow(
+        &self,
+        query: RawMessageQuery,
+    ) -> Result<Vec<u8>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.query_raw_messages_arrow_sync(query))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
@@ -1188,6 +1839,7 @@ mod tests {
         StorageConfig {
             db_path: None,
             source_id: "test".to_string(),
+            gap_threshold_ms: 3_600_000,
         }
     }
 
@@ -1379,6 +2031,164 @@ mod tests {
     }
 
     #[test]
+    fn test_batch_arrow_returns_valid_ipc_stream() {
+        use arrow::ipc::reader::StreamReader;
+
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let positions = vec![
+            sample_position("A1B2C3", Some(45.5), Some(-73.5), "2024/01/15 10:30:00.000"),
+            sample_position("A1B2C3", Some(45.6), Some(-73.6), "2024/01/15 10:31:00.000"),
+            sample_position("D4E5F6", Some(46.0), Some(-74.0), "2024/01/15 10:30:00.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let queries = vec![
+            (
+                TrajectoryQuery {
+                    hex_ident: "A1B2C3".to_string(),
+                    start_ms: None,
+                    end_ms: None,
+                },
+                "A1B2C3_0".to_string(),
+            ),
+            (
+                TrajectoryQuery {
+                    hex_ident: "D4E5F6".to_string(),
+                    start_ms: None,
+                    end_ms: None,
+                },
+                "D4E5F6_0".to_string(),
+            ),
+        ];
+
+        let bytes = handle.get_trajectories_batch_arrow_sync(&queries).unwrap();
+        assert!(!bytes.is_empty());
+
+        // Verify the IPC stream is valid and contains expected data
+        let cursor = std::io::Cursor::new(&bytes);
+        let reader = StreamReader::try_new(cursor, None).unwrap();
+        let schema = reader.schema();
+
+        // Should have 12 columns (11 from positions + flight_id)
+        assert_eq!(schema.fields().len(), 12);
+        assert!(schema.field_with_name("flight_id").is_ok());
+        assert!(schema.field_with_name("latitude").is_ok());
+        assert!(schema.field_with_name("hex_ident").is_ok());
+
+        // Read all batches
+        let batches: Vec<_> = reader.collect::<Result<Vec<_>, _>>().unwrap();
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 3); // 2 for A1B2C3 + 1 for D4E5F6
+    }
+
+    #[test]
+    fn test_batch_arrow_empty_queries_returns_empty() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let bytes = handle.get_trajectories_batch_arrow_sync(&[]).unwrap();
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn test_flight_summary_arrow_returns_valid_ipc() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        // Insert positions and trigger flight segmentation
+        let pos1 = sample_position("A1B2C3", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000");
+        let pos2 = sample_position("A1B2C3", Some(45.6), Some(-73.4), "2024/01/15 10:30:00.000");
+        let pos3 = sample_position("D4E5F6", Some(40.7), Some(-74.0), "2024/01/15 11:00:00.000");
+        handle
+            .insert_batch_sync(&[pos1, pos2, pos3], "UTC")
+            .unwrap();
+
+        let query = FlightSummaryQuery {
+            start_ms: None,
+            end_ms: None,
+        };
+        let bytes = handle.get_flight_summary_arrow_sync(&query).unwrap();
+        assert!(!bytes.is_empty());
+
+        use arrow::ipc::reader::StreamReader;
+        let reader = StreamReader::try_new(std::io::Cursor::new(&bytes), None).unwrap();
+        let schema = reader.schema();
+        assert_eq!(schema.fields().len(), 9);
+        assert_eq!(schema.field(0).name(), "hex_ident");
+        assert_eq!(schema.field(2).name(), "flight_id");
+
+        let batches: Vec<_> = reader.collect::<Result<Vec<_>, _>>().unwrap();
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert!(total_rows >= 2); // At least 2 flights (A1B2C3 + D4E5F6)
+    }
+
+    #[test]
+    fn test_query_bbox_arrow_returns_valid_ipc() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        let pos1 = sample_position("A1B2C3", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000");
+        let pos2 = sample_position("A1B2C3", Some(45.6), Some(-73.4), "2024/01/15 10:30:00.000");
+        handle.insert_batch_sync(&[pos1, pos2], "UTC").unwrap();
+
+        let query = BboxQuery {
+            south: 45.0,
+            north: 46.0,
+            west: -74.0,
+            east: -73.0,
+            start_ms: None,
+            end_ms: None,
+            limit: 1000,
+        };
+        let bytes = handle.query_bbox_arrow_sync(query).unwrap();
+        assert!(!bytes.is_empty());
+
+        use arrow::ipc::reader::StreamReader;
+        let reader = StreamReader::try_new(std::io::Cursor::new(&bytes), None).unwrap();
+        let schema = reader.schema();
+        assert_eq!(schema.fields().len(), 11);
+        assert_eq!(schema.field(0).name(), "hex_ident");
+        assert_eq!(schema.field(10).name(), "timestamp_ms");
+
+        let batches: Vec<_> = reader.collect::<Result<Vec<_>, _>>().unwrap();
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 2);
+    }
+
+    #[test]
+    fn test_raw_messages_arrow_returns_valid_ipc() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        // Insert raw messages via insert_raw_batch_sync
+        let raw = RawSbsRecord {
+            hex_ident: "A1B2C3".to_string(),
+            msg_type: "MSG".to_string(),
+            transmission_type: Some(3),
+            timestamp: "2024/01/15 10:00:00.000".to_string(),
+            timestamp_ms: 0, // will be parsed from timestamp field
+            raw_message: "MSG,3,1,1,A1B2C3,1,2024/01/15,10:00:00.000,,,45.5,-73.5,35000,,,,,,0"
+                .to_string(),
+            source_id: "test".to_string(),
+        };
+        handle.insert_raw_batch_sync(&[raw], "UTC").unwrap();
+
+        let query = RawMessageQuery {
+            hex_ident: "A1B2C3".to_string(),
+            start_ms: 0,
+            end_ms: i64::MAX,
+        };
+        let bytes = handle.query_raw_messages_arrow_sync(query).unwrap();
+        assert!(!bytes.is_empty());
+
+        use arrow::ipc::reader::StreamReader;
+        let reader = StreamReader::try_new(std::io::Cursor::new(&bytes), None).unwrap();
+        let schema = reader.schema();
+        assert_eq!(schema.fields().len(), 6);
+        assert_eq!(schema.field(0).name(), "hex_ident");
+        assert_eq!(schema.field(4).name(), "raw_message");
+
+        let batches: Vec<_> = reader.collect::<Result<Vec<_>, _>>().unwrap();
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 1);
+    }
+
+    #[test]
     fn test_get_aircraft_summary() {
         let handle = StorageHandle::open(test_config()).unwrap();
 
@@ -1519,6 +2329,7 @@ mod tests {
         let config = StorageConfig {
             db_path: None,
             source_id: "my-receiver".to_string(),
+            gap_threshold_ms: 3_600_000,
         };
         let handle = StorageHandle::open(config).unwrap();
 
@@ -2540,6 +3351,7 @@ mod tests {
         let config = StorageConfig {
             db_path: Some(db_path),
             source_id: "test".to_string(),
+            gap_threshold_ms: 3_600_000,
         };
         let handle = StorageHandle::open(config).unwrap();
         let positions = vec![sample_position(
@@ -2921,5 +3733,334 @@ mod tests {
 
         let stats = target.get_stats_sync().unwrap();
         assert_eq!(stats.row_count, 2); // 1 imported + 1 new
+    }
+
+    // --- Flight summary tests ---
+
+    /// Helper: insert a position with a specific hex, callsign, altitude, and timestamp_ms.
+    /// Also updates the flights table and in-memory tracker (mirrors insert_batch_sync).
+    fn insert_position(
+        handle: &StorageHandle,
+        hex: &str,
+        callsign: Option<&str>,
+        altitude: Option<f64>,
+        ts_ms: i64,
+    ) {
+        let mut storage = handle.inner.lock().unwrap();
+        storage
+            .conn
+            .execute(
+                "INSERT INTO positions (hex_ident, callsign, latitude, longitude, altitude, timestamp_ms, source_id)
+                 VALUES (?, ?, 48.0, 2.0, ?, ?, 'test')",
+                params![hex, callsign, altitude, ts_ms],
+            )
+            .unwrap();
+
+        // Update flights table incrementally (same logic as insert_batch_sync)
+        let gap_threshold = storage.gap_threshold_ms;
+        match storage.flight_tracker.get(hex) {
+            Some(active) if (ts_ms - active.last_seen_ms) <= gap_threshold => {
+                let fid = active.flight_id.clone();
+                storage
+                    .conn
+                    .execute(
+                        "UPDATE flights SET
+                            last_seen_ms = GREATEST(last_seen_ms, ?),
+                            position_count = position_count + 1,
+                            callsign = COALESCE(?, callsign),
+                            min_altitude = LEAST(COALESCE(min_altitude, ?), COALESCE(?, min_altitude)),
+                            max_altitude = GREATEST(COALESCE(max_altitude, ?), COALESCE(?, max_altitude))
+                         WHERE flight_id = ?",
+                        params![ts_ms, callsign, altitude, altitude, altitude, altitude, fid],
+                    )
+                    .unwrap();
+                let active_mut = storage.flight_tracker.get_mut(hex).unwrap();
+                active_mut.last_seen_ms = ts_ms;
+            }
+            _ => {
+                let flight_num = match storage.flight_tracker.get(hex) {
+                    Some(active) => active.flight_num + 1,
+                    None => 0,
+                };
+                let flight_id = format!("{}_{}", hex, flight_num);
+                storage
+                    .conn
+                    .execute(
+                        "INSERT INTO flights (flight_id, hex_ident, flight_num, callsign,
+                                              position_count, first_seen_ms, last_seen_ms,
+                                              min_altitude, max_altitude)
+                         VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)",
+                        params![
+                            flight_id, hex, flight_num, callsign, ts_ms, ts_ms, altitude, altitude
+                        ],
+                    )
+                    .unwrap();
+                storage.flight_tracker.insert(
+                    hex.to_string(),
+                    ActiveFlight {
+                        flight_id,
+                        flight_num,
+                        last_seen_ms: ts_ms,
+                    },
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_flight_summary_single_flight() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        // 3 positions 10 minutes apart — well within 1h threshold
+        insert_position(&handle, "A1B2C3", Some("FLT100"), Some(35000.0), 1000);
+        insert_position(&handle, "A1B2C3", Some("FLT100"), Some(36000.0), 601_000); // +10min
+        insert_position(&handle, "A1B2C3", Some("FLT100"), Some(37000.0), 1_201_000); // +10min
+
+        let query = FlightSummaryQuery {
+            start_ms: None,
+            end_ms: None,
+        };
+        let flights = handle.get_flight_summary_sync(&query).unwrap();
+        assert_eq!(flights.len(), 1);
+        assert_eq!(flights[0].hex_ident, "A1B2C3");
+        assert_eq!(flights[0].flight_num, 0);
+        assert_eq!(flights[0].position_count, 3);
+    }
+
+    #[test]
+    fn test_flight_summary_gap_splits_flights() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        // Flight 1: two positions close together
+        insert_position(&handle, "A1B2C3", Some("FLT100"), Some(35000.0), 1000);
+        insert_position(&handle, "A1B2C3", Some("FLT100"), Some(36000.0), 601_000);
+        // Flight 2: 2 hours later (gap > 1h threshold)
+        let gap = 3_600_000 + 1; // just over 1h
+        insert_position(
+            &handle,
+            "A1B2C3",
+            Some("FLT200"),
+            Some(10000.0),
+            601_000 + gap,
+        );
+        insert_position(
+            &handle,
+            "A1B2C3",
+            Some("FLT200"),
+            Some(11000.0),
+            601_000 + gap + 60_000,
+        );
+
+        let query = FlightSummaryQuery {
+            start_ms: None,
+            end_ms: None,
+        };
+        let flights = handle.get_flight_summary_sync(&query).unwrap();
+        assert_eq!(flights.len(), 2);
+
+        // Ordered by last_seen DESC, so flight 2 (later) comes first
+        assert_eq!(flights[0].flight_num, 1);
+        assert_eq!(flights[0].first_seen_ms, 601_000 + gap);
+        assert_eq!(flights[0].position_count, 2);
+
+        assert_eq!(flights[1].flight_num, 0);
+        assert_eq!(flights[1].first_seen_ms, 1000);
+        assert_eq!(flights[1].position_count, 2);
+    }
+
+    #[test]
+    fn test_flight_summary_callsign_per_flight() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        // Flight 0 has callsign "FLT100"
+        insert_position(&handle, "A1B2C3", Some("FLT100"), Some(35000.0), 1000);
+        // Flight 1 (after gap) has callsign "FLT200"
+        insert_position(&handle, "A1B2C3", Some("FLT200"), Some(10000.0), 3_700_000);
+
+        let query = FlightSummaryQuery {
+            start_ms: None,
+            end_ms: None,
+        };
+        let flights = handle.get_flight_summary_sync(&query).unwrap();
+        assert_eq!(flights.len(), 2);
+
+        // Ordered by last_seen DESC
+        assert_eq!(flights[0].callsign.as_deref(), Some("FLT200"));
+        assert_eq!(flights[1].callsign.as_deref(), Some("FLT100"));
+    }
+
+    #[test]
+    fn test_flight_summary_multiple_aircraft() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        insert_position(&handle, "A1B2C3", Some("FLT100"), Some(35000.0), 1000);
+        insert_position(&handle, "D4E5F6", Some("FLT200"), Some(20000.0), 2000);
+
+        let query = FlightSummaryQuery {
+            start_ms: None,
+            end_ms: None,
+        };
+        let flights = handle.get_flight_summary_sync(&query).unwrap();
+        assert!(flights.len() >= 2);
+        // Both hex_idents present
+        let hexes: Vec<&str> = flights.iter().map(|f| f.hex_ident.as_str()).collect();
+        assert!(hexes.contains(&"A1B2C3"));
+        assert!(hexes.contains(&"D4E5F6"));
+        // Ordered by last_seen DESC
+        assert_eq!(flights[0].last_seen_ms, 2000);
+    }
+
+    #[test]
+    fn test_flight_summary_time_filter() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        // Flight A: spans 1000–10000ms (3 positions, single flight within 1h gap)
+        insert_position(&handle, "A1B2C3", Some("A"), Some(35000.0), 1000);
+        insert_position(&handle, "A1B2C3", Some("A"), Some(36000.0), 5000);
+        insert_position(&handle, "A1B2C3", Some("A"), Some(37000.0), 10_000);
+        // Flight B: completely outside query window
+        insert_position(&handle, "D4E5F6", Some("B"), Some(20000.0), 20_000);
+
+        // Query window 3000–15000: overlaps flight A, excludes flight B
+        let query = FlightSummaryQuery {
+            start_ms: Some(3000),
+            end_ms: Some(15_000),
+        };
+        let flights = handle.get_flight_summary_sync(&query).unwrap();
+        assert_eq!(flights.len(), 1);
+        // Returns the full pre-computed flight (all 3 positions)
+        assert_eq!(flights[0].hex_ident, "A1B2C3");
+        assert_eq!(flights[0].position_count, 3);
+        assert_eq!(flights[0].first_seen_ms, 1000);
+        assert_eq!(flights[0].last_seen_ms, 10_000);
+    }
+
+    #[test]
+    fn test_flight_summary_custom_threshold() {
+        // With 15-minute threshold, a 30min gap splits into 2 flights
+        let config = StorageConfig {
+            db_path: None,
+            source_id: "test".to_string(),
+            gap_threshold_ms: 900_000, // 15 minutes
+        };
+        let handle = StorageHandle::open(config).unwrap();
+        // 3 positions: gap between 2nd and 3rd is 30 minutes
+        insert_position(&handle, "A1B2C3", Some("FLT100"), Some(35000.0), 0);
+        insert_position(&handle, "A1B2C3", Some("FLT100"), Some(36000.0), 60_000); // +1 min
+        insert_position(&handle, "A1B2C3", Some("FLT100"), Some(37000.0), 1_860_000); // +30 min later
+
+        let query = FlightSummaryQuery {
+            start_ms: None,
+            end_ms: None,
+        };
+        let flights = handle.get_flight_summary_sync(&query).unwrap();
+        assert_eq!(flights.len(), 2); // 30min gap > 15min threshold
+    }
+
+    #[test]
+    fn test_flight_summary_flight_id_format() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        insert_position(&handle, "A1B2C3", Some("FLT100"), Some(35000.0), 1000);
+        // second flight after gap
+        insert_position(&handle, "A1B2C3", Some("FLT200"), Some(10000.0), 3_700_000);
+
+        let query = FlightSummaryQuery {
+            start_ms: None,
+            end_ms: None,
+        };
+        let flights = handle.get_flight_summary_sync(&query).unwrap();
+        assert_eq!(flights.len(), 2);
+
+        // Check flight_id format: "{hex_ident}_{flight_num}"
+        let ids: Vec<&str> = flights.iter().map(|f| f.flight_id.as_str()).collect();
+        assert!(ids.contains(&"A1B2C3_0"));
+        assert!(ids.contains(&"A1B2C3_1"));
+    }
+
+    #[test]
+    fn test_insert_batch_aggregates_flight_updates() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        // Build 5 positions for the same hex with varying altitudes
+        let positions: Vec<AircraftPosition> = vec![
+            AircraftPosition {
+                hex_ident: "AAA111".to_string(),
+                callsign: Some("FLT1".to_string()),
+                altitude: Some(100.0),
+                latitude: Some(48.0),
+                longitude: Some(2.0),
+                ground_speed: None,
+                track: None,
+                vertical_rate: None,
+                squawk: None,
+                is_on_ground: None,
+                timestamp: "2024/01/15,10:00:00.000".to_string(),
+                message_count: 0,
+            },
+            AircraftPosition {
+                hex_ident: "AAA111".to_string(),
+                callsign: Some("FLT1".to_string()),
+                altitude: Some(200.0),
+                latitude: Some(48.1),
+                longitude: Some(2.1),
+                ground_speed: None,
+                track: None,
+                vertical_rate: None,
+                squawk: None,
+                is_on_ground: None,
+                timestamp: "2024/01/15,10:00:01.000".to_string(),
+                message_count: 0,
+            },
+            AircraftPosition {
+                hex_ident: "AAA111".to_string(),
+                callsign: Some("FLT1".to_string()),
+                altitude: Some(50.0),
+                latitude: Some(48.2),
+                longitude: Some(2.2),
+                ground_speed: None,
+                track: None,
+                vertical_rate: None,
+                squawk: None,
+                is_on_ground: None,
+                timestamp: "2024/01/15,10:00:02.000".to_string(),
+                message_count: 0,
+            },
+            AircraftPosition {
+                hex_ident: "AAA111".to_string(),
+                callsign: Some("FLT1".to_string()),
+                altitude: Some(300.0),
+                latitude: Some(48.3),
+                longitude: Some(2.3),
+                ground_speed: None,
+                track: None,
+                vertical_rate: None,
+                squawk: None,
+                is_on_ground: None,
+                timestamp: "2024/01/15,10:00:03.000".to_string(),
+                message_count: 0,
+            },
+            AircraftPosition {
+                hex_ident: "AAA111".to_string(),
+                callsign: Some("FLT1".to_string()),
+                altitude: Some(150.0),
+                latitude: Some(48.4),
+                longitude: Some(2.4),
+                ground_speed: None,
+                track: None,
+                vertical_rate: None,
+                squawk: None,
+                is_on_ground: None,
+                timestamp: "2024/01/15,10:00:04.000".to_string(),
+                message_count: 0,
+            },
+        ];
+
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let query = FlightSummaryQuery {
+            start_ms: None,
+            end_ms: None,
+        };
+        let flights = handle.get_flight_summary_sync(&query).unwrap();
+        assert_eq!(flights.len(), 1);
+        assert_eq!(flights[0].hex_ident, "AAA111");
+        assert_eq!(flights[0].position_count, 5);
+        assert_eq!(flights[0].min_altitude, Some(50.0));
+        assert_eq!(flights[0].max_altitude, Some(300.0));
     }
 }

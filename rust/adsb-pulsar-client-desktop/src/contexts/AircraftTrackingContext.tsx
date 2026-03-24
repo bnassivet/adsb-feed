@@ -3,7 +3,7 @@ import { createContext, useContext, useCallback, useRef, useState, useMemo, useE
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { queryBbox } from "@/lib/commands";
-import { recordsToTracks } from "@/lib/history-convert";
+import { recordsToFlightTracks } from "@/lib/history-convert";
 import type { AircraftPosition, AircraftTrack } from "@/lib/types";
 
 const TRACK_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -12,6 +12,9 @@ const CLEANUP_INTERVAL_MS = 15_000; // TTL cleanup every 15 seconds
 
 export const TRACK_HISTORY_HOURS_KEY = "adsb-track-history-hours";
 export const DEFAULT_TRACK_HISTORY_HOURS = 24;
+
+/** Returns the unique key for a track: track_id if set, otherwise hex_ident. */
+export const trackKey = (t: AircraftTrack) => t.track_id ?? t.hex_ident;
 
 type SetValue<T> = (value: T | ((prev: T) => T)) => void;
 
@@ -27,7 +30,7 @@ interface AircraftTrackingContextValue {
   loadDbHistoryTracks: (tracks: AircraftTrack[]) => void;
   clearDbHistory: () => void;
   addAnalysisTracks: (tracks: AircraftTrack[]) => void;
-  removeAnalysisTrack: (hexIdent: string) => void;
+  removeAnalysisTrack: (trackId: string) => void;
   clearAnalysis: () => void;
   trackHistoryHours: number;
   setTrackHistoryHours: SetValue<number>;
@@ -83,7 +86,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
     const map = importedRef.current;
     map.clear();
     for (const t of tracks) {
-      map.set(t.hex_ident, t);
+      map.set(trackKey(t), t);
     }
     setUpdateCounter((c) => c + 1);
   }, []);
@@ -97,7 +100,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
     const map = dbHistoryRef.current;
     map.clear();
     for (const t of tracks) {
-      map.set(t.hex_ident, t);
+      map.set(trackKey(t), t);
     }
     setUpdateCounter((c) => c + 1);
   }, []);
@@ -110,13 +113,13 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
   const addAnalysisTracks = useCallback((tracks: AircraftTrack[]) => {
     const map = analysisRef.current;
     for (const t of tracks) {
-      map.set(t.hex_ident, t);
+      map.set(trackKey(t), t);
     }
     setUpdateCounter((c) => c + 1);
   }, []);
 
-  const removeAnalysisTrack = useCallback((hexIdent: string) => {
-    analysisRef.current.delete(hexIdent);
+  const removeAnalysisTrack = useCallback((trackId: string) => {
+    analysisRef.current.delete(trackId);
     setUpdateCounter((c) => c + 1);
   }, []);
 
@@ -220,10 +223,10 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
     })
       .then((records) => {
         if (records.length > 0) {
-          const tracks = recordsToTracks(records);
+          const tracks = recordsToFlightTracks(records);
           const map = historyRef.current;
           for (const t of tracks) {
-            map.set(t.hex_ident, t);
+            map.set(trackKey(t), t);
           }
           setUpdateCounter((c) => c + 1);
         }

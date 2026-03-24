@@ -7,9 +7,10 @@ use crate::state::{
     AppState, ConnectionStatus, RecordingState, StatusResponse, StorageAvailability,
 };
 use adsb_data_engine::{
-    AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, HourlyHeatmapCell,
-    HourlyHeatmapQuery, ImportPreview, ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord,
-    StorageHandle, StorageStats, TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
+    AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, FlightSummary,
+    FlightSummaryQuery, HourlyHeatmapCell, HourlyHeatmapQuery, ImportPreview, ImportResult,
+    PositionRecord, RawMessageQuery, RawSbsRecord, StorageHandle, StorageStats,
+    TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
 };
 use adsb_pulsar_client::{Config, MetricsSnapshot};
 use std::sync::atomic::Ordering;
@@ -179,6 +180,22 @@ pub async fn query_bbox(
     storage.query_bbox(query).await.map_err(|e| e.to_string())
 }
 
+/// Query positions in a bounding box as Arrow IPC bytes.
+#[tauri::command]
+pub async fn query_bbox_arrow(
+    query: BboxQuery,
+    state: State<'_, AppState>,
+) -> Result<Vec<u8>, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .query_bbox_arrow(query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Get trajectory for a single aircraft.
 #[tauri::command]
 pub async fn get_trajectory(
@@ -191,6 +208,29 @@ pub async fn get_trajectory(
         .ok_or_else(|| "Storage not available".to_string())?;
     storage
         .get_trajectory(query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Get trajectories for multiple flights in a single batch, returned as Arrow IPC.
+///
+/// Acquires the DuckDB Mutex once for all queries (vs N times for N separate calls),
+/// and returns binary Arrow IPC instead of JSON — ~4x smaller on the wire, ~5x faster
+/// to parse in the browser via `apache-arrow`'s `tableFromIPC()`.
+///
+/// Each query is paired with a `flight_id` string so the frontend can partition rows.
+/// Tauri serializes `Vec<u8>` as a JSON array of numbers over IPC.
+#[tauri::command]
+pub async fn get_trajectories_batch_arrow(
+    queries: Vec<(TrajectoryQuery, String)>,
+    state: State<'_, AppState>,
+) -> Result<Vec<u8>, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .get_trajectories_batch_arrow(queries)
         .await
         .map_err(|e| e.to_string())
 }
@@ -208,6 +248,38 @@ pub async fn get_aircraft_summary(
         .ok_or_else(|| "Storage not available".to_string())?;
     storage
         .get_aircraft_summary(start_ms, end_ms)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Get flight-segmented summaries for a time window.
+#[tauri::command]
+pub async fn get_flight_summary(
+    query: FlightSummaryQuery,
+    state: State<'_, AppState>,
+) -> Result<Vec<FlightSummary>, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .get_flight_summary(query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Get flight-segmented summaries as Arrow IPC bytes.
+#[tauri::command]
+pub async fn get_flight_summary_arrow(
+    query: FlightSummaryQuery,
+    state: State<'_, AppState>,
+) -> Result<Vec<u8>, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .get_flight_summary_arrow(query)
         .await
         .map_err(|e| e.to_string())
 }
@@ -299,6 +371,22 @@ pub async fn get_raw_messages(
         .ok_or_else(|| "Storage not available".to_string())?;
     storage
         .query_raw_messages(query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Get raw SBS messages as Arrow IPC bytes.
+#[tauri::command]
+pub async fn get_raw_messages_arrow(
+    query: RawMessageQuery,
+    state: State<'_, AppState>,
+) -> Result<Vec<u8>, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .query_raw_messages_arrow(query)
         .await
         .map_err(|e| e.to_string())
 }
@@ -438,6 +526,7 @@ pub async fn swap_database(
     let staging_config = adsb_data_engine::StorageConfig {
         db_path: Some(staging_path.clone()),
         source_id: config.source_id.clone(),
+        gap_threshold_ms: config.gap_threshold_ms,
     };
     let new_handle = StorageHandle::open(staging_config)
         .map_err(|e| format!("Failed to create staging database: {e}"))?;

@@ -180,6 +180,33 @@ pub struct ImportResult {
     pub raw_messages_imported: u64,
 }
 
+/// Summary of a single flight segment within a time window.
+///
+/// A "flight" is defined as a contiguous sequence of positions for the same
+/// `hex_ident` where consecutive positions are separated by no more than
+/// `gap_threshold_ms`. When a gap exceeds the threshold, a new flight begins.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlightSummary {
+    pub hex_ident: String,
+    /// 0-based flight index per hex_ident within the query window.
+    pub flight_num: u32,
+    /// Unique identifier: "{hex_ident}_{flight_num}".
+    pub flight_id: String,
+    pub callsign: Option<String>,
+    pub position_count: u64,
+    pub first_seen_ms: i64,
+    pub last_seen_ms: i64,
+    pub min_altitude: Option<f64>,
+    pub max_altitude: Option<f64>,
+}
+
+/// Query parameters for flight-segmented summary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlightSummaryQuery {
+    pub start_ms: Option<i64>,
+    pub end_ms: Option<i64>,
+}
+
 /// Configuration for opening a storage handle.
 #[derive(Debug, Clone)]
 pub struct StorageConfig {
@@ -187,6 +214,9 @@ pub struct StorageConfig {
     pub db_path: Option<std::path::PathBuf>,
     /// Source identifier for this receiver.
     pub source_id: String,
+    /// Time gap in milliseconds that separates flights. Default: 3_600_000 (1 hour).
+    /// Positions for the same hex_ident separated by more than this gap start a new flight.
+    pub gap_threshold_ms: i64,
 }
 
 impl Default for StorageConfig {
@@ -194,6 +224,7 @@ impl Default for StorageConfig {
         Self {
             db_path: None,
             source_id: "unknown".to_string(),
+            gap_threshold_ms: 3_600_000, // 1 hour
         }
     }
 }

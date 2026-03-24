@@ -35,6 +35,14 @@ export interface AircraftTrack {
   last_seen: number;
   /** Total SBS-1 messages received for this aircraft (pre-throttle cumulative count). */
   message_count: number;
+  /** Optional unique track identifier. Used as Map key instead of hex_ident when set.
+   *  Set to flight_id when loaded from DB history flight segmentation. */
+  track_id?: string;
+}
+
+/** Canonical key for an AircraftTrack — track_id when set (DB history flights), hex_ident otherwise. */
+export function trackKey(t: AircraftTrack): string {
+  return t.track_id ?? t.hex_ident;
 }
 
 /** Metrics snapshot from the Rust backend (mirrors MetricsSnapshot). */
@@ -180,6 +188,27 @@ export interface AircraftSummary {
   last_seen_ms: number;
   min_altitude: number | null;
   max_altitude: number | null;
+}
+
+/** Summary of a single flight segment (mirrors Rust FlightSummary). */
+export interface FlightSummary {
+  hex_ident: string;
+  /** 0-based flight index per hex_ident within the query window. */
+  flight_num: number;
+  /** Unique identifier: "{hex_ident}_{flight_num}". */
+  flight_id: string;
+  callsign: string | null;
+  position_count: number;
+  first_seen_ms: number;
+  last_seen_ms: number;
+  min_altitude: number | null;
+  max_altitude: number | null;
+}
+
+/** Query parameters for flight-segmented summary (mirrors Rust FlightSummaryQuery). */
+export interface FlightSummaryQuery {
+  start_ms?: number | null;
+  end_ms?: number | null;
 }
 
 /** A single bucket in a time distribution histogram. */
