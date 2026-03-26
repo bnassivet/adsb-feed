@@ -70,7 +70,33 @@ but not `Sync`. `dyn MessageForwarder` is `Send` but not `Sync` (e.g., `mpsc::Un
 inside `PulsarForwarder`). To avoid requiring `Sync`, `connect_socket` is implemented as a static
 method taking `config: &Config` rather than borrowing `&self` across an `.await` point.
 
-### 6. Message tap via `broadcast::channel`
+### 6. Heartbeat-aware connection monitoring
+
+The core client includes a `ConnectionMonitor` that performs lightweight byte-level pattern matching
+to detect dump1090 heartbeat messages (hex_ident `000000`, sent every ~60 seconds). This enables
+three-tier idle detection without full SBS parsing:
+
+- **TCP-level**: Raw socket read timeout (`socket_read_timeout_secs`, default 75s) catches fully
+  dead connections where `stream.read()` blocks.
+- **Heartbeat-level**: `ConnectionMonitor` tracks the time since the last heartbeat or data message.
+  If `heartbeat_timeout_secs` (default 90s = 1.5x the 60s heartbeat interval) elapses with no
+  heartbeat or data, the connection is declared stale and reconnection is triggered. Checked every
+  1 second in the housekeeping tick.
+- **UI-level** (desktop app only): Socket watchdog task emits Degraded/ConnectionLost status events
+  based on elapsed time since the last parsed message.
+
+The heartbeat pattern (default `,000000,`) is matched via byte-level `windows()` scan — no CSV
+parsing or field splitting. All lines (including heartbeats) continue to be forwarded to backends
+and the message tap; the monitor only classifies them for health tracking.
+
+### 7. Exponential backoff for reconnection
+
+`run_client_mode()` uses exponential backoff between reconnection attempts: starting at
+`initial_retry_delay_secs` (default 1s), doubling each attempt, capped at `max_retry_delay_secs`
+(default 60s). Backoff resets to the initial delay on successful connection. This prevents
+rapid-fire retries during extended outages while recovering quickly from brief glitches.
+
+### 8. Message tap via `broadcast::channel`
 
 `ADSBFeedClient::with_message_tap(capacity)` returns a `broadcast::Receiver<Vec<u8>>`. The sender
 is stored in the client; every forwarded message is also sent to the broadcast channel on a
@@ -86,6 +112,7 @@ src/
 ├── lib.rs                    Re-exports all public types
 ├── client.rs                 ADSBFeedClient — event loop, fan-out, retry
 ├── config.rs                 Config, ConnectionMode, ForwarderKind
+├── connection_monitor.rs     ConnectionMonitor — heartbeat-aware idle detection
 ├── error.rs                  ClientError, Result
 ├── metrics.rs                Metrics (lock-free atomics), MetricsSnapshot
 └── forwarder/
@@ -178,6 +205,8 @@ Key fields relevant to multi-forwarder operation:
 | `test_mode` | `bool` | `false` | Skip all forwarder I/O (count-only) |
 | `connection_mode` | `ConnectionMode` | `Client` | TCP client or server |
 | `dump1090_tz` | `String` | `"Local"` | IANA timezone for interpreting SBS-1 timestamps (`"Local"`, `"UTC"`, or IANA name e.g. `"Europe/Paris"`) |
+| `heartbeat_timeout_secs` | `u64` | `90` | Stale connection timeout; 0 disables. Triggers reconnect if no heartbeat/data arrives within this period |
+| `heartbeat_pattern` | `String` | `",000000,"` | Byte pattern identifying heartbeat lines from dump1090; empty string disables pattern matching |
 
 `ForwarderKind` enum: `Pulsar`, `File`, `Noop`.
 
@@ -219,10 +248,12 @@ Use `.is_recoverable()` to decide whether to reconnect, `.should_retry()` for re
 pub struct Metrics { /* Arc<AtomicU64> counters — Clone is cheap */ }
 
 impl Metrics {
-    pub fn messages_sent(&self) -> u64;
-    pub fn messages_failed(&self) -> u64;
+    pub fn messages_sent(&self) -> u64;       // Messages forwarded to backends
+    pub fn messages_received(&self) -> u64;   // All TCP lines (including heartbeats)
+    pub fn errors(&self) -> u64;
     pub fn bytes_sent(&self) -> u64;
     pub fn bytes_received(&self) -> u64;
+    pub fn reconnection_attempts(&self) -> u64;
     pub fn snapshot(&self) -> MetricsSnapshot;
 }
 ```
@@ -297,12 +328,16 @@ client.run().await?;
 ```
 TcpStream (async read)
     │
+    ├──► ConnectionMonitor.record_tcp_activity()
+    │
     ▼
 LineBuffer (BytesMut)          ← process_buffer() extracts complete \n-terminated lines
     │
     ▼ Vec<u8> (raw SBS-1 line, newline stripped)
     │
-    ├──► broadcast::Sender     ← fire-and-forget message tap (optional)
+    ├──► ConnectionMonitor.classify_line()  ← Heartbeat vs Data (pattern match)
+    ├──► Metrics.inc_messages_received()    ← count all lines
+    ├──► broadcast::Sender                  ← fire-and-forget message tap (optional)
     │
     └──► for each forwarder i:
            if forwarders[i].is_connected():
@@ -312,11 +347,15 @@ LineBuffer (BytesMut)          ← process_buffer() extracts complete \n-termina
            else:
                enqueue retry_queues[i]
 
-Housekeeping tick (500 ms):
+Housekeeping tick (1s):
     for each forwarder i:
         if forwarders[i].is_connected():
             drain up to 500 messages from retry_queues[i]
             forwarders[i].flush()
+    ConnectionMonitor.is_stale()? → force reconnect
+
+Stats tick (10s):
+    log MetricsSnapshot + time since last heartbeat/data
 ```
 
 ---

@@ -8,6 +8,7 @@
 //! - Metrics tracking and periodic statistics logging
 
 use crate::config::{Config, ConnectionMode};
+use crate::connection_monitor::ConnectionMonitor;
 use crate::error::{ClientError, Result};
 use crate::forwarder::MessageForwarder;
 use crate::metrics::Metrics;
@@ -52,6 +53,9 @@ pub struct ADSBFeedClient {
     /// Programmatic shutdown signal
     shutdown_tx: watch::Sender<bool>,
     shutdown_rx: watch::Receiver<bool>,
+
+    /// Connection health monitor with heartbeat-aware idle detection
+    connection_monitor: ConnectionMonitor,
 }
 
 impl ADSBFeedClient {
@@ -67,6 +71,7 @@ impl ADSBFeedClient {
             .collect();
 
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let connection_monitor = ConnectionMonitor::new(&config);
 
         Ok(Self {
             config,
@@ -79,6 +84,7 @@ impl ADSBFeedClient {
             message_tx: None,
             shutdown_tx,
             shutdown_rx,
+            connection_monitor,
         })
     }
 
@@ -157,7 +163,13 @@ impl ADSBFeedClient {
     }
 
     /// Runs in client mode (actively connects to dump1090).
+    ///
+    /// Uses exponential backoff between reconnection attempts (initial delay
+    /// doubling up to max delay). Backoff resets on successful connection.
     async fn run_client_mode(&mut self) -> Result<()> {
+        let mut retry_delay = self.config.initial_retry_delay();
+        let max_delay = self.config.max_retry_delay();
+
         loop {
             // Check for shutdown before attempting connection
             if *self.shutdown_rx.borrow() {
@@ -165,12 +177,17 @@ impl ADSBFeedClient {
                 return Ok(());
             }
 
+            self.metrics.inc_reconnection_attempts();
+            self.connection_monitor.reset();
+
             match Self::connect_socket(&self.config).await {
                 Ok(mut stream) => {
                     info!(
                         "Connected to dump1090 at {}:{}",
                         self.config.socket_host, self.config.socket_port
                     );
+                    // Reset backoff on successful connection
+                    retry_delay = self.config.initial_retry_delay();
 
                     match self.receive_and_forward(&mut stream).await {
                         Err(ClientError::Shutdown) => {
@@ -196,14 +213,16 @@ impl ADSBFeedClient {
                 }
             }
 
-            // Wait before retry, but check for shutdown
+            // Exponential backoff between reconnections
+            info!("Reconnecting in {:?}...", retry_delay);
             tokio::select! {
-                _ = sleep(self.config.initial_retry_delay()) => {}
+                _ = sleep(retry_delay) => {}
                 _ = self.shutdown_rx.changed() => {
                     info!("Shutdown requested during retry delay");
                     return Ok(());
                 }
             }
+            retry_delay = std::cmp::min(retry_delay * 2, max_delay);
         }
     }
 
@@ -327,9 +346,14 @@ impl ADSBFeedClient {
                         }
                         Ok(n) => {
                             self.metrics.add_bytes_received(n as u64);
+                            self.connection_monitor.record_tcp_activity();
 
                             let messages = self.process_buffer(&buffer[..n])?;
 
+                            for message in &messages {
+                                self.metrics.inc_messages_received();
+                                self.connection_monitor.classify_line(message);
+                            }
                             for message in messages {
                                 self.forward_message(message).await?;
                             }
@@ -352,10 +376,14 @@ impl ADSBFeedClient {
                 // Periodic stats logging
                 _ = stats_interval.tick() => {
                     let snapshot = self.metrics.snapshot();
-                    info!("Statistics: {}", snapshot);
+                    info!(
+                        "Statistics: {} (last heartbeat/data {:.0}s ago)",
+                        snapshot,
+                        self.connection_monitor.since_last_meaningful_message().as_secs_f64()
+                    );
                 }
 
-                // Forwarder housekeeping: drain retry queues, flush
+                // Forwarder housekeeping: drain retry queues, flush, check staleness
                 _ = housekeeping_interval.tick() => {
                     if !self.config.test_mode {
                         for i in 0..self.forwarders.len() {
@@ -364,6 +392,15 @@ impl ADSBFeedClient {
                                 self.forwarders[i].flush().await.ok();
                             }
                         }
+                    }
+
+                    // Check for stale connection via heartbeat monitor
+                    if let Some(reason) = self.connection_monitor.is_stale() {
+                        warn!("Connection stale: {}, forcing reconnect", reason);
+                        return Err(ClientError::Socket(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            format!("heartbeat timeout: {}", reason),
+                        )));
                     }
                 }
             }

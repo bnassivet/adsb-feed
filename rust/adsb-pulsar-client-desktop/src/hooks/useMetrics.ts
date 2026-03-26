@@ -8,10 +8,12 @@ import type { MetricsSnapshot } from "@/lib/types";
 const EMPTY_METRICS: MetricsSnapshot = {
   messages_sent: 0,
   messages_received: 0,
+  messages_parsed: 0,
   errors: 0,
   bytes_received: 0,
   bytes_sent: 0,
   retry_queue_size: 0,
+  reconnection_attempts: 0,
   elapsed_secs: 0,
   throughput_msg_per_sec: 0,
 };
@@ -25,7 +27,7 @@ export interface MetricsWithRates extends MetricsSnapshot {
  * Subscribes to `adsb:metrics` events and returns the latest snapshot
  * with windowed rates:
  * - `hits_per_sec`: all raw lines from socket (messages_sent counter)
- * - `throughput_msg_per_sec`: successfully parsed MSG messages (messages_received counter)
+ * - `throughput_msg_per_sec`: successfully parsed MSG messages (messages_parsed counter)
  */
 export function useMetrics(): MetricsWithRates {
   const [metrics, setMetrics] = useState<MetricsSnapshot>(EMPTY_METRICS);
@@ -36,7 +38,7 @@ export function useMetrics(): MetricsWithRates {
   const active = metrics.elapsed_secs > 0 ? metrics : null;
 
   const windowedRate = useWindowedRate(
-    active?.messages_received ?? null,
+    active?.messages_parsed ?? null,
     metrics.elapsed_secs,
     windowSecs,
   );

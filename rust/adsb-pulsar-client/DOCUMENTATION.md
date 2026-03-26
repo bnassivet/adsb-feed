@@ -63,13 +63,24 @@ adsb_pulsar_client
 │   └── ADSBFeedClient
 │       ├── new()
 │       ├── run()
-│       └── final_stats()
+│       ├── shutdown()
+│       └── metrics()
 ├── config
 │   ├── Config
 │   │   ├── validate()
 │   │   ├── get_connection_mode()
+│   │   ├── heartbeat_timeout()
 │   │   └── helper methods
 │   └── ConnectionMode (enum)
+├── connection_monitor
+│   ├── ConnectionMonitor
+│   │   ├── new()
+│   │   ├── record_tcp_activity()
+│   │   ├── classify_line() → LineKind
+│   │   ├── is_stale() → Option StaleReason
+│   │   └── reset()
+│   ├── LineKind (enum: Heartbeat, Data)
+│   └── StaleReason (enum: HeartbeatTimeout)
 ├── error
 │   ├── ClientError (enum)
 │   │   ├── is_recoverable()
@@ -79,6 +90,8 @@ adsb_pulsar_client
     ├── Metrics
     │   ├── new()
     │   ├── inc_messages_sent()
+    │   ├── inc_messages_received()
+    │   ├── inc_reconnection_attempts()
     │   ├── add_bytes_sent()
     │   └── snapshot()
     └── MetricsSnapshot

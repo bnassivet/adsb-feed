@@ -56,6 +56,10 @@ struct MetricsInner {
     bytes_sent: AtomicU64,
     /// Number of messages currently in retry queue
     retry_queue_size: AtomicU64,
+    /// Number of reconnection attempts
+    reconnection_attempts: AtomicU64,
+    /// Number of messages received from socket (all lines including heartbeats)
+    messages_received: AtomicU64,
     /// Start time for throughput calculation
     start_time: Instant,
 }
@@ -82,6 +86,8 @@ impl Metrics {
                 bytes_received: AtomicU64::new(0),
                 bytes_sent: AtomicU64::new(0),
                 retry_queue_size: AtomicU64::new(0),
+                reconnection_attempts: AtomicU64::new(0),
+                messages_received: AtomicU64::new(0),
                 start_time: Instant::now(),
             }),
         }
@@ -130,6 +136,20 @@ impl Metrics {
         self.inner.retry_queue_size.store(size, Ordering::Relaxed);
     }
 
+    /// Increments the reconnection attempts counter by 1 (atomic).
+    pub fn inc_reconnection_attempts(&self) {
+        self.inner
+            .reconnection_attempts
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increments the messages received counter by 1 (atomic).
+    ///
+    /// Counts all lines extracted from the TCP stream, including heartbeats.
+    pub fn inc_messages_received(&self) {
+        self.inner.messages_received.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Get current messages sent count
     pub fn messages_sent(&self) -> u64 {
         self.inner.messages_sent.load(Ordering::Relaxed)
@@ -153,6 +173,16 @@ impl Metrics {
     /// Get retry queue size
     pub fn retry_queue_size(&self) -> u64 {
         self.inner.retry_queue_size.load(Ordering::Relaxed)
+    }
+
+    /// Get reconnection attempts count
+    pub fn reconnection_attempts(&self) -> u64 {
+        self.inner.reconnection_attempts.load(Ordering::Relaxed)
+    }
+
+    /// Get messages received count (all TCP lines including heartbeats)
+    pub fn messages_received(&self) -> u64 {
+        self.inner.messages_received.load(Ordering::Relaxed)
     }
 
     /// Get elapsed time since start
@@ -192,10 +222,12 @@ impl Metrics {
     pub fn snapshot(&self) -> MetricsSnapshot {
         MetricsSnapshot {
             messages_sent: self.messages_sent(),
+            messages_received: self.messages_received(),
             errors: self.errors(),
             bytes_received: self.bytes_received(),
             bytes_sent: self.bytes_sent(),
             retry_queue_size: self.retry_queue_size(),
+            reconnection_attempts: self.reconnection_attempts(),
             elapsed_secs: self.elapsed().as_secs_f64(),
             throughput_msg_per_sec: self.messages_per_second(),
         }
@@ -224,10 +256,12 @@ impl Default for Metrics {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MetricsSnapshot {
     pub messages_sent: u64,
+    pub messages_received: u64,
     pub errors: u64,
     pub bytes_received: u64,
     pub bytes_sent: u64,
     pub retry_queue_size: u64,
+    pub reconnection_attempts: u64,
     pub elapsed_secs: f64,
     pub throughput_msg_per_sec: f64,
 }
@@ -239,10 +273,12 @@ impl std::fmt::Display for MetricsSnapshot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Messages: {}, Errors: {}, Queue: {}, Throughput: {:.1} msg/s, Sent: {:.2} MB, Received: {:.2} MB",
+            "Recv: {}, Sent: {}, Errors: {}, Queue: {}, Reconnects: {}, Throughput: {:.1} msg/s, TX: {:.2} MB, RX: {:.2} MB",
+            self.messages_received,
             self.messages_sent,
             self.errors,
             self.retry_queue_size,
+            self.reconnection_attempts,
             self.throughput_msg_per_sec,
             self.bytes_sent as f64 / 1024.0 / 1024.0,
             self.bytes_received as f64 / 1024.0 / 1024.0
@@ -258,10 +294,12 @@ mod tests {
     fn test_new_metrics_all_zero() {
         let m = Metrics::new();
         assert_eq!(m.messages_sent(), 0);
+        assert_eq!(m.messages_received(), 0);
         assert_eq!(m.errors(), 0);
         assert_eq!(m.bytes_received(), 0);
         assert_eq!(m.bytes_sent(), 0);
         assert_eq!(m.retry_queue_size(), 0);
+        assert_eq!(m.reconnection_attempts(), 0);
     }
 
     #[test]
@@ -325,13 +363,46 @@ mod tests {
     }
 
     #[test]
+    fn test_inc_reconnection_attempts() {
+        let m = Metrics::new();
+        m.inc_reconnection_attempts();
+        m.inc_reconnection_attempts();
+        assert_eq!(m.reconnection_attempts(), 2);
+    }
+
+    #[test]
+    fn test_inc_messages_received() {
+        let m = Metrics::new();
+        m.inc_messages_received();
+        m.inc_messages_received();
+        m.inc_messages_received();
+        assert_eq!(m.messages_received(), 3);
+    }
+
+    #[test]
+    fn test_snapshot_includes_new_fields() {
+        let m = Metrics::new();
+        m.inc_reconnection_attempts();
+        m.inc_messages_received();
+        m.inc_messages_received();
+        let snap = m.snapshot();
+        assert_eq!(snap.reconnection_attempts, 1);
+        assert_eq!(snap.messages_received, 2);
+    }
+
+    #[test]
     fn test_snapshot_display_format() {
         let m = Metrics::new();
         m.inc_messages_sent();
         m.inc_errors();
+        m.inc_reconnection_attempts();
         let display = m.snapshot().to_string();
-        assert!(display.contains("Messages:"), "should contain Messages:");
+        assert!(display.contains("Sent:"), "should contain Sent:");
         assert!(display.contains("Errors:"), "should contain Errors:");
+        assert!(
+            display.contains("Reconnects:"),
+            "should contain Reconnects:"
+        );
     }
 
     #[test]
@@ -359,10 +430,12 @@ mod tests {
         let value = serde_json::to_value(&snap).unwrap();
 
         assert!(value.get("messages_sent").is_some());
+        assert!(value.get("messages_received").is_some());
         assert!(value.get("errors").is_some());
         assert!(value.get("bytes_received").is_some());
         assert!(value.get("bytes_sent").is_some());
         assert!(value.get("retry_queue_size").is_some());
+        assert!(value.get("reconnection_attempts").is_some());
         assert!(value.get("elapsed_secs").is_some());
         assert!(value.get("throughput_msg_per_sec").is_some());
     }

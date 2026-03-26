@@ -7,11 +7,13 @@ import type { MetricsWithRates } from "@/hooks/useMetrics";
 function makeMetrics(overrides: Partial<MetricsWithRates> = {}): MetricsWithRates {
   return {
     messages_sent: 1000,
-    messages_received: 5000,
+    messages_received: 6000,
+    messages_parsed: 5000,
     errors: 0,
     bytes_received: 524288,
     bytes_sent: 262144,
     retry_queue_size: 0,
+    reconnection_attempts: 0,
     elapsed_secs: 120,
     throughput_msg_per_sec: 8.3,
     hits_per_sec: 41.7,
@@ -122,6 +124,21 @@ describe("MetricsBar", () => {
 
     await user.click(screen.getByText("REC Raw"));
     expect(onToggleRaw).toHaveBeenCalledOnce();
+  });
+
+  // --- Reconnection indicator ---
+
+  it("hides reconnects when attempts <= 1", () => {
+    render(<MetricsBar metrics={makeMetrics({ reconnection_attempts: 1 })} />);
+    expect(screen.queryByText("reconnects:")).toBeNull();
+  });
+
+  it("shows reconnects in amber when attempts > 1", () => {
+    const { container } = render(<MetricsBar metrics={makeMetrics({ reconnection_attempts: 3 })} />);
+    expect(screen.getByText("reconnects:")).toBeInTheDocument();
+    const amberEl = container.querySelector(".text-amber-400");
+    expect(amberEl).not.toBeNull();
+    expect(amberEl!.textContent).toBe("3");
   });
 
   // --- Storage management UI ---

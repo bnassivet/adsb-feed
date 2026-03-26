@@ -67,6 +67,14 @@ export function MetricsBar({
           {metrics.retry_queue_size}
         </span>
       </span>
+      {metrics.reconnection_attempts > 1 && (
+        <span>
+          <span className="text-slate-500">reconnects:</span>{" "}
+          <span className="font-mono text-amber-400">
+            {metrics.reconnection_attempts}
+          </span>
+        </span>
+      )}
       <span>
         <span className="text-slate-500">uptime:</span>{" "}
         <span className="text-slate-200 font-mono">

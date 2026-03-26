@@ -45,15 +45,19 @@ export function trackKey(t: AircraftTrack): string {
   return t.track_id ?? t.hex_ident;
 }
 
-/** Metrics snapshot from the Rust backend (mirrors MetricsSnapshot). */
+/** Metrics snapshot from the Rust backend (DesktopMetrics = flattened MetricsSnapshot + bridge fields). */
 export interface MetricsSnapshot {
   messages_sent: number;
-  /** Total raw SBS-1 messages successfully parsed (pre-throttle count from bridge). */
+  /** All TCP lines received from socket, including heartbeats (core library counter). */
   messages_received: number;
+  /** SBS-1 messages successfully parsed into AircraftPosition (bridge-level counter). */
+  messages_parsed: number;
   errors: number;
   bytes_received: number;
   bytes_sent: number;
   retry_queue_size: number;
+  /** Number of TCP reconnection attempts since client start. */
+  reconnection_attempts: number;
   elapsed_secs: number;
   throughput_msg_per_sec: number;
 }

@@ -43,9 +43,9 @@ pub fn start_feed(
     let metrics_for_relay = metrics.clone();
 
     // Shared counter for total raw SBS-1 messages parsed (pre-throttle)
-    let messages_received = Arc::new(AtomicU64::new(0));
-    let messages_received_for_relay = messages_received.clone();
-    let messages_received_for_metrics = messages_received.clone();
+    let messages_parsed = Arc::new(AtomicU64::new(0));
+    let messages_parsed_for_relay = messages_parsed.clone();
+    let messages_parsed_for_metrics = messages_parsed.clone();
 
     // Shared state for last message time (for socket watchdog)
     let last_message_time = Arc::new(RwLock::new(Instant::now()));
@@ -129,7 +129,7 @@ pub fn start_feed(
             last_message_time,
             storage,
             dump1090_tz,
-            messages_received_for_relay,
+            messages_parsed_for_relay,
             record_positions,
             record_raw,
         )
@@ -141,7 +141,7 @@ pub fn start_feed(
         relay_metrics(
             app_for_metrics,
             metrics_for_relay,
-            messages_received_for_metrics,
+            messages_parsed_for_metrics,
             alive_rx_metrics,
         )
         .await;
@@ -187,7 +187,7 @@ async fn relay_messages(
     last_message_time: Arc<RwLock<Instant>>,
     storage: SharedStorage,
     dump1090_tz: String,
-    messages_received: Arc<AtomicU64>,
+    messages_parsed: Arc<AtomicU64>,
     record_positions: Arc<AtomicBool>,
     record_raw: Arc<AtomicBool>,
 ) {
@@ -221,7 +221,7 @@ async fn relay_messages(
                             }
 
                             if let Some(pos) = parse_sbs_message(&line) {
-                                messages_received.fetch_add(1, Ordering::Relaxed);
+                                messages_parsed.fetch_add(1, Ordering::Relaxed);
                                 *message_counts.entry(pos.hex_ident.clone()).or_insert(0) += 1;
                                 merge_into_buffer(&mut buffer, pos);
                             }
@@ -329,8 +329,9 @@ async fn persist_raw_batch(storage: &SharedStorage, batch: &[RawSbsRecord], tz: 
 struct DesktopMetrics {
     #[serde(flatten)]
     base: adsb_pulsar_client::MetricsSnapshot,
-    /// Total raw SBS-1 messages successfully parsed (pre-throttle).
-    messages_received: u64,
+    /// Total raw SBS-1 messages successfully parsed into AircraftPosition (pre-throttle).
+    /// Distinct from `messages_received` (in base) which counts ALL TCP lines including heartbeats.
+    messages_parsed: u64,
 }
 
 /// Emits metrics snapshots to the frontend every second.
@@ -340,7 +341,7 @@ struct DesktopMetrics {
 async fn relay_metrics(
     app: AppHandle,
     metrics: Metrics,
-    messages_received: Arc<AtomicU64>,
+    messages_parsed: Arc<AtomicU64>,
     mut alive_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     let mut tick = interval(Duration::from_secs(1));
@@ -350,7 +351,7 @@ async fn relay_metrics(
             _ = tick.tick() => {
                 let desktop_metrics = DesktopMetrics {
                     base: metrics.snapshot(),
-                    messages_received: messages_received.load(Ordering::Relaxed),
+                    messages_parsed: messages_parsed.load(Ordering::Relaxed),
                 };
                 if app.emit("adsb:metrics", &desktop_metrics).is_err() {
                     break;

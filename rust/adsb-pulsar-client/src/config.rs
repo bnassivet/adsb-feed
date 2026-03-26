@@ -334,6 +334,39 @@ pub struct Config {
     #[serde(default = "default_file_path")]
     pub file_path: String,
 
+    /// Heartbeat inactivity timeout in seconds (0 = disabled).
+    ///
+    /// If no heartbeat (hex_ident 000000) or data message arrives within this
+    /// period, the connection is considered stale and reconnection is triggered.
+    /// Default: 90s (1.5x the dump1090 60s heartbeat interval).
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long,
+            default_value = "90",
+            env = "ADSB_HEARTBEAT_TIMEOUT",
+            help = "Heartbeat inactivity timeout in seconds (0 disables). Triggers reconnect if no heartbeat/data arrives."
+        )
+    )]
+    #[serde(default = "default_heartbeat_timeout_secs")]
+    pub heartbeat_timeout_secs: u64,
+
+    /// Byte pattern that identifies a heartbeat line from dump1090.
+    ///
+    /// The default `,000000,` matches the hex_ident field in SBS-1 heartbeat
+    /// messages. Empty string disables pattern matching (all lines count as data).
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long,
+            default_value = ",000000,",
+            env = "ADSB_HEARTBEAT_PATTERN",
+            help = "Byte pattern identifying heartbeat lines (empty to disable)"
+        )
+    )]
+    #[serde(default = "default_heartbeat_pattern")]
+    pub heartbeat_pattern: String,
+
     /// Receiver antenna latitude (decimal degrees)
     #[cfg_attr(feature = "cli", arg(skip))]
     #[serde(default)]
@@ -408,6 +441,12 @@ fn default_dump1090_tz() -> String {
 fn default_forwarders() -> Vec<ForwarderKind> {
     vec![ForwarderKind::Pulsar]
 }
+fn default_heartbeat_timeout_secs() -> u64 {
+    90
+}
+fn default_heartbeat_pattern() -> String {
+    ",000000,".to_string()
+}
 fn default_file_path() -> String {
     format!(
         "adsb_messages_{}.sbs",
@@ -439,6 +478,8 @@ impl Default for Config {
             dump1090_tz: default_dump1090_tz(),
             forwarders: default_forwarders(),
             file_path: default_file_path(),
+            heartbeat_timeout_secs: default_heartbeat_timeout_secs(),
+            heartbeat_pattern: default_heartbeat_pattern(),
             receiver_latitude: None,
             receiver_longitude: None,
             receiver_altitude: None,
@@ -528,6 +569,17 @@ impl Config {
     /// Gets Pulsar batch delay as a [`Duration`].
     pub fn pulsar_batch_delay(&self) -> Duration {
         Duration::from_millis(self.pulsar_batch_delay_ms)
+    }
+
+    /// Gets heartbeat timeout as an optional [`Duration`].
+    ///
+    /// Returns `None` when `heartbeat_timeout_secs` is 0 (disabled).
+    pub fn heartbeat_timeout(&self) -> Option<Duration> {
+        if self.heartbeat_timeout_secs == 0 {
+            None
+        } else {
+            Some(Duration::from_secs(self.heartbeat_timeout_secs))
+        }
     }
 }
 
@@ -706,6 +758,11 @@ mod tests {
         assert_eq!(original.test_mode, deserialized.test_mode);
         assert_eq!(original.connection_mode, deserialized.connection_mode);
         assert_eq!(original.forwarders, deserialized.forwarders);
+        assert_eq!(
+            original.heartbeat_timeout_secs,
+            deserialized.heartbeat_timeout_secs
+        );
+        assert_eq!(original.heartbeat_pattern, deserialized.heartbeat_pattern);
     }
 
     #[test]
@@ -751,6 +808,35 @@ mod tests {
             ForwarderKind::Pulsar
         );
         assert!("unknown".parse::<ForwarderKind>().is_err());
+    }
+
+    #[test]
+    fn test_heartbeat_timeout_defaults() {
+        let config = Config::default();
+        assert_eq!(config.heartbeat_timeout_secs, 90);
+        assert_eq!(config.heartbeat_pattern, ",000000,");
+    }
+
+    #[test]
+    fn test_heartbeat_timeout_zero_is_none() {
+        let mut config = Config::default();
+        config.heartbeat_timeout_secs = 0;
+        assert_eq!(config.heartbeat_timeout(), None);
+    }
+
+    #[test]
+    fn test_heartbeat_timeout_nonzero() {
+        let mut config = Config::default();
+        config.heartbeat_timeout_secs = 90;
+        assert_eq!(config.heartbeat_timeout(), Some(Duration::from_secs(90)));
+    }
+
+    #[test]
+    fn test_heartbeat_config_deserializes_default_when_missing() {
+        let json = serde_json::json!({ "source_id": "test" });
+        let config: Config = serde_json::from_value(json).unwrap();
+        assert_eq!(config.heartbeat_timeout_secs, 90);
+        assert_eq!(config.heartbeat_pattern, ",000000,");
     }
 
     #[test]

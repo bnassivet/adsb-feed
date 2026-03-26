@@ -8,7 +8,8 @@ mod common;
 use adsb_pulsar_client::forwarder::NoopForwarder;
 use adsb_pulsar_client::ADSBFeedClient;
 use common::{
-    test_config_for_port, MockDump1090, SBS_MSG1_CALLSIGN, SBS_MSG3_POSITION, SBS_MSG4_SPEED,
+    test_config_for_port, MockDump1090, SBS_HEARTBEAT, SBS_MSG1_CALLSIGN, SBS_MSG3_POSITION,
+    SBS_MSG4_SPEED,
 };
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
@@ -199,6 +200,67 @@ async fn test_large_burst() {
     }
 
     assert_eq!(count, n, "all {} burst messages should arrive", n);
+
+    client_handle.abort();
+}
+
+#[tokio::test]
+async fn test_heartbeat_messages_forwarded_and_counted() {
+    let mock = MockDump1090::new().await;
+    let port = mock.port();
+
+    let config = test_config_for_port(port);
+    let mut client = ADSBFeedClient::new(config, vec![Box::new(NoopForwarder)]).unwrap();
+    let mut tap = client.with_message_tap(100);
+    let metrics = client.metrics();
+
+    // Mix of heartbeat and real data messages
+    let lines = vec![
+        SBS_MSG3_POSITION.to_string(),
+        SBS_HEARTBEAT.to_string(),
+        SBS_MSG1_CALLSIGN.to_string(),
+        SBS_HEARTBEAT.to_string(),
+        SBS_MSG4_SPEED.to_string(),
+    ];
+
+    let client_handle = tokio::spawn(async move {
+        let _ = client.run().await;
+    });
+
+    mock.send_lines(lines).await;
+
+    // All 5 messages (including heartbeats) should arrive via tap
+    let mut received = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while received.len() < 5 {
+        tokio::select! {
+            msg = tap.recv() => {
+                match msg {
+                    Ok(data) => received.push(data),
+                    Err(_) => break,
+                }
+            }
+            _ = tokio::time::sleep_until(deadline) => break,
+        }
+    }
+
+    assert_eq!(
+        received.len(),
+        5,
+        "all 5 messages (including heartbeats) should arrive via tap"
+    );
+    // messages_received should count all lines
+    assert_eq!(
+        metrics.messages_received(),
+        5,
+        "messages_received should count all lines"
+    );
+    // messages_sent counts forwarded messages (same as received in noop mode)
+    assert_eq!(
+        metrics.messages_sent(),
+        5,
+        "messages_sent should count all forwarded lines"
+    );
 
     client_handle.abort();
 }

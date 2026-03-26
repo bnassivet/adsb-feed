@@ -55,6 +55,7 @@
 
 pub mod client;
 pub mod config;
+pub mod connection_monitor;
 pub mod error;
 pub mod forwarder;
 pub mod metrics;

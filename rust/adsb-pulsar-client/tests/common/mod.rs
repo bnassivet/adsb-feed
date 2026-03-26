@@ -17,6 +17,10 @@ pub const SBS_MSG1_CALLSIGN: &str =
 pub const SBS_MSG4_SPEED: &str =
     "MSG,4,1,1,D4E5F6,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,,450.5,275.3,,,,,,,,,0";
 
+/// Sample SBS-1 heartbeat message (hex_ident 000000, sent every ~60s by dump1090).
+pub const SBS_HEARTBEAT: &str =
+    "MSG,3,1,1,000000,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,0,,,0.0,0.0,,,,,,0";
+
 /// A mock dump1090 server that sends configurable SBS-1 lines.
 pub struct MockDump1090 {
     pub listener: TcpListener,

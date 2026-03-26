@@ -691,7 +691,7 @@ DotsLayer({ tracks, colorMode, type: "history" | "live" })
 
 **Purpose**: Footer bar displaying performance metrics
 
-**Props**: `metrics: MetricsSnapshot`
+**Props**: `metrics: MetricsWithRates`
 
 **Responsibilities**:
 - Display metrics in compact horizontal layout
@@ -699,9 +699,10 @@ DotsLayer({ tracks, colorMode, type: "history" | "live" })
 - Update in real-time (polled every 1 second)
 
 **Metrics Displayed**:
-- **Messages Sent**: Total messages sent to Pulsar
+- **Messages Sent**: Total messages forwarded to backends
 - **Errors**: Total errors encountered
-- **Throughput**: Messages/second
+- **Throughput**: Messages/second (windowed rate from `messages_parsed`)
+- **Hits/s**: Raw TCP line rate (windowed rate from `messages_sent`)
 - **Elapsed Time**: Time since feed started
 - **Bytes Sent/Received**: Network traffic stats
 
@@ -927,13 +928,16 @@ useEffect(() => {
 
 #### 4. **useMetrics** (`src/hooks/useMetrics.ts`)
 
-**Purpose**: Poll metrics from backend
+**Purpose**: Subscribe to metrics events and compute windowed rates
 
-**Returns**: `MetricsSnapshot`
+**Returns**: `MetricsWithRates` (extends `MetricsSnapshot` with `hits_per_sec`)
 
 **Responsibilities**:
-- Call `get_metrics()` command every 1 second
-- Update state with latest metrics
+- Subscribe to `adsb:metrics` Tauri events (emitted every 1s by `relay_metrics`)
+- Compute windowed throughput rates via `useWindowedRate`:
+  - `throughput_msg_per_sec`: windowed rate from `messages_parsed` (successfully parsed SBS messages)
+  - `hits_per_sec`: windowed rate from `messages_sent` (all forwarded TCP lines)
+- Window size configurable via localStorage key `adsb-metrics-window-secs` (default 5s)
 
 **File**: `src/hooks/useMetrics.ts`
 
@@ -1088,7 +1092,11 @@ export async function queryBbox(query: BboxQuery): Promise<PositionRecord[]> {
   - `first_seen: number` — ms epoch of first detection; set **once** when the track is created in `AircraftTrackingContext`, never updated by `mergePositionInto`
   - `last_seen: number` — ms epoch of most recent update
   - `positions: [lat, lng, altitude | null][]` — capped at 100 entries, no per-position timestamps
-- `MetricsSnapshot`: Performance metrics
+- `MetricsSnapshot`: Performance metrics (flattened `DesktopMetrics` from Rust). Key fields:
+  - `messages_received: number` — all TCP lines from socket (core library counter, includes heartbeats)
+  - `messages_parsed: number` — SBS-1 messages successfully parsed into `AircraftPosition` (bridge-level counter)
+  - `messages_sent: number` — messages forwarded to backends
+  - `reconnection_attempts: number` — TCP reconnection count since start
 - `ConnectionStatus`: Connection state union (`Disconnected | Connecting | Connected | Degraded | ConnectionLost | Error`)
 - `StatusResponse`: Combined status response (socket + pulsar)
 - `Config`: Client configuration (includes `socket_read_timeout_secs` used for watchdog thresholds)
@@ -1546,10 +1554,23 @@ pub struct AppState {
 - Prevents overwhelming the webview with high-frequency updates
 - Each received message updates `Arc<RwLock<Instant>>` shared with the watchdog
 
-**Socket Watchdog** (`socket_watchdog`):
+**Connection Monitoring** (three-layer architecture):
 
-Monitors socket health by tracking elapsed time since the last received message.
-Thresholds are derived from the configured `socket_read_timeout_secs` (default 75s):
+The connection health is monitored at three independent levels:
+
+1. **TCP socket read timeout** (core library, `client.rs`): Raw `tokio::time::timeout` on `stream.read()`.
+   Default 75s. Catches fully dead sockets where the OS keeps the TCP connection "alive."
+
+2. **Heartbeat monitor** (core library, `connection_monitor.rs`): Tracks dump1090 heartbeat messages
+   (hex_ident `000000`, sent every ~60s) via byte-level pattern matching. If no heartbeat or data
+   message arrives within `heartbeat_timeout_secs` (default 90s), declares the connection stale and
+   triggers reconnection. Checked every 1s in the housekeeping tick. This catches half-open TCP
+   connections faster than the raw socket timeout.
+
+3. **Socket watchdog** (bridge-level, `socket_watchdog` task): UI-level status indicator. Does NOT
+   trigger reconnection — only emits status events to the frontend.
+
+**Socket Watchdog** status thresholds (derived from `socket_read_timeout_secs`, default 75s):
 
 | Condition | Status | Color |
 |-----------|--------|-------|
@@ -1571,6 +1592,20 @@ Thresholds are derived from the configured `socket_read_timeout_secs` (default 7
 - **Check interval**: Every 5 seconds (fast transition detection)
 - **Heartbeat**: Emits current status to frontend every 60 seconds regardless of change
 - **Pulsar status**: Always `Disconnected` when `test_mode = true`
+
+**Reconnection strategy** (`run_client_mode` in core library):
+
+Exponential backoff between reconnection attempts: `initial_retry_delay_secs` (default 1s)
+→ doubles each attempt → capped at `max_retry_delay_secs` (default 60s). Resets to initial delay
+on successful connection. `Metrics.reconnection_attempts` counter is incremented on each attempt.
+
+**Metrics relay** (`DesktopMetrics`):
+
+The `adsb:metrics` event emits a `DesktopMetrics` struct that flattens the core `MetricsSnapshot`
+(via `#[serde(flatten)]`) and adds a bridge-level counter:
+- `messages_received` (from core): all TCP lines including heartbeats
+- `messages_parsed` (bridge-level): SBS-1 messages successfully parsed into `AircraftPosition`
+- `reconnection_attempts` (from core): TCP reconnection count since start
 
 **Shutdown Mechanism**:
 - Uses `tokio::sync::oneshot` channel to signal shutdown
