@@ -1,7 +1,7 @@
 "use client";
 import React, { useCallback, useMemo, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from "recharts";
-import type { AircraftSummary, DetectionRangeSector, HeatmapMetric, HourlyHeatmapCell, TimeDistributionBucket, TimeDistributionMetric, TimeGranularity } from "@/lib/types";
+import type { DetectionRangeSector, FlightSummary, HeatmapMetric, HourlyHeatmapCell, TimeDistributionBucket, TimeDistributionMetric, TimeGranularity } from "@/lib/types";
 import type { RadarMode } from "@/lib/detection-radar";
 import {
   buildAltitudeBins,
@@ -11,7 +11,10 @@ import {
   formatTimeChartData,
   formatAdaptiveTimeLabel,
 } from "@/lib/db-history-analytics";
+import type { AircraftSummary } from "@/lib/types";
 import { DetectionRadar } from "./DetectionRadar";
+
+type AltitudeMode = "aircraft" | "flights";
 
 interface Props {
   summaries: AircraftSummary[];
@@ -38,6 +41,8 @@ interface Props {
   timeMetric?: TimeDistributionMetric;
   /** Called when user selects a different time distribution metric. */
   onTimeMetricChange?: (m: TimeDistributionMetric) => void;
+  /** Flight summaries for flight-level analytics. */
+  flightSummaries?: FlightSummary[];
 }
 
 const GRANULARITIES: { value: TimeGranularity; label: string }[] = [
@@ -48,9 +53,13 @@ const GRANULARITIES: { value: TimeGranularity; label: string }[] = [
   { value: "month", label: "Month" },
 ];
 
-export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSectors, rangeMs, onZoom, granularity, onGranularityChange, heatmapCells, startMs, endMs, rawMessageCount, timeMetric, onTimeMetricChange }: Props) {
-  const summary = useMemo(() => computeDbHistorySummary(summaries, rawMessageCount ?? 0), [summaries, rawMessageCount]);
-  const altBins = useMemo(() => buildAltitudeBins(summaries), [summaries]);
+export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSectors, rangeMs, onZoom, granularity, onGranularityChange, heatmapCells, startMs, endMs, rawMessageCount, timeMetric, onTimeMetricChange, flightSummaries }: Props) {
+  const summary = useMemo(() => computeDbHistorySummary(summaries, rawMessageCount ?? 0, flightSummaries ?? []), [summaries, rawMessageCount, flightSummaries]);
+  const [altMode, setAltMode] = useState<AltitudeMode>("aircraft");
+  const altBins = useMemo(
+    () => buildAltitudeBins(altMode === "flights" && flightSummaries ? flightSummaries : summaries),
+    [summaries, flightSummaries, altMode],
+  );
   const timeData = useMemo(() => formatTimeChartData(timeBuckets, tzName, rangeMs), [timeBuckets, tzName, rangeMs]);
   const hasAltData = altBins.some((b) => b.count > 0);
 
@@ -75,8 +84,12 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSe
         {/* Summary stats */}
         <div className="flex gap-3 text-xs">
           <div className="flex-1 bg-slate-800/50 rounded px-2 py-1.5">
-            <div className="text-[10px] text-slate-500 uppercase">Tracks</div>
-            <div className="text-cyan-300 font-mono font-semibold">{summary.totalTracks}</div>
+            <div className="text-[10px] text-slate-500 uppercase">Aircraft</div>
+            <div className="text-cyan-300 font-mono font-semibold">{summary.totalAircraft}</div>
+          </div>
+          <div className="flex-1 bg-slate-800/50 rounded px-2 py-1.5">
+            <div className="text-[10px] text-slate-500 uppercase">Flights</div>
+            <div className="text-cyan-300 font-mono font-semibold">{summary.totalFlights}</div>
           </div>
           <div className="flex-1 bg-slate-800/50 rounded px-2 py-1.5">
             <div className="text-[10px] text-slate-500 uppercase">Positions</div>
@@ -88,7 +101,7 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSe
           </div>
           <div className="flex-1 bg-slate-800/50 rounded px-2 py-1.5">
             <div className="text-[10px] text-slate-500 uppercase">Avg Duration</div>
-            <div className="text-cyan-300 font-mono font-semibold">{formatDuration(summary.avgDurationMs)}</div>
+            <div className="text-cyan-300 font-mono font-semibold">{formatDuration(summary.avgFlightDurationMs)}</div>
           </div>
         </div>
 
@@ -113,7 +126,27 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSe
         {/* Altitude histogram */}
         {hasAltData && (
           <div>
-            <div className="text-[10px] text-slate-500 uppercase mb-1">Altitude Distribution</div>
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-[10px] text-slate-500 uppercase">Altitude Distribution</div>
+              {flightSummaries && flightSummaries.length > 0 && (
+                <div className="flex gap-0.5" data-testid="altitude-mode-toggle">
+                  {(["aircraft", "flights"] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setAltMode(m)}
+                      data-testid={`altitude-mode-${m}`}
+                      className={`px-1.5 py-0.5 text-[9px] rounded transition-colors ${
+                        altMode === m
+                          ? "bg-cyan-900/60 text-cyan-300"
+                          : "text-slate-500 hover:text-slate-400"
+                      }`}
+                    >
+                      {m === "aircraft" ? "Aircraft" : "Flights"}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <ResponsiveContainer width="100%" height={100}>
               <BarChart data={altBins} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
                 <XAxis
@@ -132,7 +165,7 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSe
                   contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #334155", borderRadius: 4, fontSize: 11 }}
                   labelStyle={{ color: "#94a3b8" }}
                   itemStyle={{ color: "#818cf8" }}
-                  formatter={(value: number | undefined) => [`${value ?? 0} aircraft`, "Count"]}
+                  formatter={(value: number | undefined) => [`${value ?? 0} ${altMode === "flights" ? "flights" : "aircraft"}`, "Count"]}
                   labelFormatter={(label: unknown) => `${String(label)} ft`}
                 />
                 <Bar dataKey="count" fill="#818cf8" opacity={0.7} radius={[2, 2, 0, 0]} />
@@ -154,6 +187,7 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSe
 
 const TIME_METRICS: { value: TimeDistributionMetric; label: string }[] = [
   { value: "aircraft", label: "Aircraft" },
+  { value: "flights", label: "Flights" },
   { value: "positions", label: "Messages" },
   { value: "raw_messages", label: "Raw Msgs" },
 ];
@@ -333,6 +367,7 @@ function DetectionRangeSection({ sectors }: { sectors: DetectionRangeSector[] })
 
 const HEATMAP_METRICS: { value: HeatmapMetric; label: string }[] = [
   { value: "aircraft", label: "Aircraft" },
+  { value: "flights", label: "Flights" },
   { value: "messages", label: "Messages" },
   { value: "raw_messages", label: "Raw Msgs" },
 ];
@@ -443,6 +478,7 @@ function ActivityHeatmap({
                 const tooltipLines = [
                   `${row.dayLabel} ${hi}:00–${hi}:59`,
                   `${(cell?.aircraft_count ?? 0).toLocaleString()} aircraft`,
+                  `${(cell?.flight_count ?? 0).toLocaleString()} flights`,
                   `${(cell?.message_count ?? 0).toLocaleString()} messages`,
                   `${(cell?.raw_message_count ?? 0).toLocaleString()} raw msgs`,
                 ];
@@ -467,4 +503,3 @@ function ActivityHeatmap({
     </div>
   );
 }
-

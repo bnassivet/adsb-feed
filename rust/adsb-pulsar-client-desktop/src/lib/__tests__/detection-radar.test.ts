@@ -17,6 +17,7 @@ function makeSectors(overrides: Partial<DetectionRangeSector>[] = []): Detection
     position_count: 0,
     min_altitude: null,
     max_altitude: null,
+    flight_count: 0,
   }));
   for (const o of overrides) {
     const idx = (o.bearing_deg ?? 0) / 10;

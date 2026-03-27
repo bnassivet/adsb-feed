@@ -99,6 +99,8 @@ pub enum TimeDistributionMetric {
     Aircraft,
     /// Count of raw SBS-1 messages.
     RawMessages,
+    /// Count of distinct flights (from flights table, bucketed by first_seen_ms).
+    Flights,
 }
 
 /// Query parameters for time distribution (histogram).
@@ -134,6 +136,8 @@ pub struct DetectionRangeSector {
     pub min_altitude: Option<f64>,
     /// Maximum altitude observed in this sector (feet), if any.
     pub max_altitude: Option<f64>,
+    /// Number of distinct flights observed in this sector.
+    pub flight_count: u64,
 }
 
 /// Query parameters for hourly activity heatmap.
@@ -156,6 +160,8 @@ pub struct HourlyHeatmapCell {
     pub message_count: u64,
     /// Total number of raw SBS-1 messages in this cell.
     pub raw_message_count: u64,
+    /// Number of distinct flights in this cell.
+    pub flight_count: u64,
 }
 
 /// Preview of a single table in an external database file.

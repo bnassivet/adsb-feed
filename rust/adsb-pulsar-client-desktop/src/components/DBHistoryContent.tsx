@@ -510,6 +510,7 @@ export function DBHistoryContent({
               rawMessageCount={rawMessageCount}
               timeMetric={timeMetric}
               onTimeMetricChange={handleTimeMetricChange}
+              flightSummaries={flightSummaries}
             />
           )}
 

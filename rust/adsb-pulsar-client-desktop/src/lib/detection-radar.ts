@@ -37,6 +37,8 @@ export interface SectorWedge {
   minAltitude: number | null;
   /** Maximum altitude in this sector (feet), or null if no altitude data. */
   maxAltitude: number | null;
+  /** Number of distinct flights observed in this sector. */
+  flightCount: number;
 }
 
 export interface DistanceRing {
@@ -134,6 +136,7 @@ export function buildSectorWedges(
         positionCount: s.position_count,
         minAltitude: s.min_altitude,
         maxAltitude: s.max_altitude,
+        flightCount: s.flight_count,
       };
     });
 }

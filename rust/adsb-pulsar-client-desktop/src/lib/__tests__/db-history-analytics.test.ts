@@ -8,7 +8,7 @@ import {
   formatAdaptiveTimeLabel,
   granularityToNumBuckets,
 } from "../db-history-analytics";
-import type { AircraftSummary, HourlyHeatmapCell, TimeDistributionBucket } from "../types";
+import type { AircraftSummary, FlightSummary, HourlyHeatmapCell, TimeDistributionBucket } from "../types";
 
 function makeSummary(overrides: Partial<AircraftSummary> = {}): AircraftSummary {
   return {
@@ -62,45 +62,76 @@ describe("buildAltitudeBins", () => {
     ]);
     expect(bins[7].count).toBe(2);
   });
+
+  it("accepts FlightSummary objects", () => {
+    const bins = buildAltitudeBins([
+      makeFlightSummary({ max_altitude: 35000 }),
+      makeFlightSummary({ max_altitude: 12000 }),
+    ]);
+    expect(bins[7].count).toBe(1); // 35-40k
+    expect(bins[2].count).toBe(1); // 10-15k
+  });
 });
+
+function makeFlightSummary(overrides: Partial<FlightSummary> = {}): FlightSummary {
+  return {
+    hex_ident: "A1B2C3",
+    flight_num: 0,
+    flight_id: "A1B2C3_0",
+    callsign: "TEST",
+    position_count: 10,
+    first_seen_ms: 1705315800000,
+    last_seen_ms: 1705316100000, // 5 min later
+    min_altitude: 30000,
+    max_altitude: 35000,
+    ...overrides,
+  };
+}
 
 describe("computeDbHistorySummary", () => {
   it("returns zeros for empty input", () => {
     const result = computeDbHistorySummary([]);
-    expect(result.totalTracks).toBe(0);
+    expect(result.totalAircraft).toBe(0);
+    expect(result.totalFlights).toBe(0);
     expect(result.totalPositions).toBe(0);
     expect(result.totalRawMessages).toBe(0);
-    expect(result.avgDurationMs).toBe(0);
+    expect(result.avgFlightDurationMs).toBe(0);
   });
 
-  it("computes correct totals and average", () => {
+  it("computes correct totals from aircraft summaries", () => {
     const summaries = [
-      makeSummary({
-        position_count: 10,
-        first_seen_ms: 1000,
-        last_seen_ms: 11000,
-      }),
-      makeSummary({
-        position_count: 20,
-        first_seen_ms: 2000,
-        last_seen_ms: 7000,
-      }),
+      makeSummary({ position_count: 10 }),
+      makeSummary({ position_count: 20 }),
     ];
     const result = computeDbHistorySummary(summaries);
-    expect(result.totalTracks).toBe(2);
+    expect(result.totalAircraft).toBe(2);
     expect(result.totalPositions).toBe(30);
     expect(result.totalRawMessages).toBe(0);
-    expect(result.avgDurationMs).toBe(7500); // (10000 + 5000) / 2
   });
 
   it("includes raw message count when provided", () => {
-    const summaries = [
-      makeSummary({ position_count: 5 }),
-    ];
+    const summaries = [makeSummary({ position_count: 5 })];
     const result = computeDbHistorySummary(summaries, 150);
-    expect(result.totalTracks).toBe(1);
+    expect(result.totalAircraft).toBe(1);
     expect(result.totalPositions).toBe(5);
     expect(result.totalRawMessages).toBe(150);
+  });
+
+  it("computes avg duration from flights", () => {
+    const summaries = [makeSummary()];
+    const flights = [
+      makeFlightSummary({ first_seen_ms: 1000, last_seen_ms: 11000 }), // 10s
+      makeFlightSummary({ first_seen_ms: 2000, last_seen_ms: 7000 }),  // 5s
+    ];
+    const result = computeDbHistorySummary(summaries, 0, flights);
+    expect(result.totalFlights).toBe(2);
+    expect(result.avgFlightDurationMs).toBe(7500); // (10000 + 5000) / 2
+  });
+
+  it("returns zero avg duration when no flights", () => {
+    const summaries = [makeSummary()];
+    const result = computeDbHistorySummary(summaries, 0, []);
+    expect(result.avgFlightDurationMs).toBe(0);
   });
 });
 
@@ -218,8 +249,8 @@ describe("buildHeatmapGrid", () => {
   const JAN16 = JAN15 + DAY_MS;
   const JAN17 = JAN16 + DAY_MS;
 
-  function makeCell(day_ms: number, hour: number, aircraft: number, messages: number, raw: number = 0): HourlyHeatmapCell {
-    return { day_ms, hour, aircraft_count: aircraft, message_count: messages, raw_message_count: raw };
+  function makeCell(day_ms: number, hour: number, aircraft: number, messages: number, raw: number = 0, flights: number = 0): HourlyHeatmapCell {
+    return { day_ms, hour, aircraft_count: aircraft, message_count: messages, raw_message_count: raw, flight_count: flights };
   }
 
   it("returns empty grid for empty input", () => {
@@ -290,6 +321,12 @@ describe("buildHeatmapGrid", () => {
     const grid = buildHeatmapGrid(cells, JAN15, JAN15 + DAY_MS, "raw_messages");
     expect(grid[0].hours[10]).toBe(3456);
   });
+
+  it("uses flight_count when metric is 'flights'", () => {
+    const cells = [makeCell(JAN15, 10, 5, 100, 3456, 7)];
+    const grid = buildHeatmapGrid(cells, JAN15, JAN15 + DAY_MS, "flights");
+    expect(grid[0].hours[10]).toBe(7);
+  });
 });
 
 // --- buildHeatmapCellLookup ---
@@ -298,8 +335,8 @@ describe("buildHeatmapCellLookup", () => {
   const DAY_MS = 24 * 60 * 60 * 1000;
   const JAN15 = Date.UTC(2024, 0, 15);
 
-  function makeCell(day_ms: number, hour: number, aircraft: number, messages: number, raw: number = 0): HourlyHeatmapCell {
-    return { day_ms, hour, aircraft_count: aircraft, message_count: messages, raw_message_count: raw };
+  function makeCell(day_ms: number, hour: number, aircraft: number, messages: number, raw: number = 0, flights: number = 0): HourlyHeatmapCell {
+    return { day_ms, hour, aircraft_count: aircraft, message_count: messages, raw_message_count: raw, flight_count: flights };
   }
 
   it("creates lookup keyed by day_ms-hour", () => {

@@ -1029,20 +1029,48 @@ impl StorageHandle {
                  GROUP BY bucket_ms
                  ORDER BY bucket_ms"
             }
+            TimeDistributionMetric::Flights => {
+                // bucket_width is safe to embed: computed from query range / num_buckets
+                &format!(
+                    "SELECT bucket_ms, COUNT(*) AS count
+                     FROM (
+                         SELECT UNNEST(generate_series(
+                             (first_seen_ms // {bw}) * {bw},
+                             (last_seen_ms  // {bw}) * {bw},
+                             CAST({bw} AS BIGINT)
+                         )) AS bucket_ms
+                         FROM flights
+                         WHERE last_seen_ms >= ? AND first_seen_ms <= ?
+                     ) expanded
+                     WHERE bucket_ms BETWEEN ? AND ?
+                     GROUP BY bucket_ms
+                     ORDER BY bucket_ms",
+                    bw = bucket_width
+                )
+            }
+        };
+
+        let row_mapper = |row: &duckdb::Row| {
+            Ok(TimeDistributionBucket {
+                bucket_ms: row.get(0)?,
+                count: row.get::<_, i64>(1)? as u64,
+            })
         };
 
         let mut stmt = storage.conn.prepare(sql)?;
-        let rows = stmt
-            .query_map(
-                params![bucket_width, bucket_width, query.start_ms, query.end_ms],
-                |row| {
-                    Ok(TimeDistributionBucket {
-                        bucket_ms: row.get(0)?,
-                        count: row.get::<_, i64>(1)? as u64,
-                    })
-                },
+        let rows = if matches!(query.metric, TimeDistributionMetric::Flights) {
+            stmt.query_map(
+                params![query.start_ms, query.end_ms, query.start_ms, query.end_ms],
+                row_mapper,
             )?
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map(
+                params![bucket_width, bucket_width, query.start_ms, query.end_ms],
+                row_mapper,
+            )?
+            .collect::<Result<Vec<_>, _>>()?
+        };
 
         Ok(rows)
     }
@@ -1063,22 +1091,26 @@ impl StorageHandle {
 
         let sql = r#"
             SELECT sector, MAX(distance_nm) AS max_distance_nm, COUNT(*) AS position_count,
-                   MIN(altitude) AS min_altitude, MAX(altitude) AS max_altitude
+                   MIN(altitude) AS min_altitude, MAX(altitude) AS max_altitude,
+                   COUNT(DISTINCT flight_id) AS flight_count
             FROM (
               SELECT
                 CAST(FLOOR(DEGREES(ATAN2(
-                  SIN(RADIANS(longitude - ?)) * COS(RADIANS(latitude)),
-                  COS(RADIANS(?)) * SIN(RADIANS(latitude))
-                    - SIN(RADIANS(?)) * COS(RADIANS(latitude)) * COS(RADIANS(longitude - ?))
+                  SIN(RADIANS(p.longitude - ?)) * COS(RADIANS(p.latitude)),
+                  COS(RADIANS(?)) * SIN(RADIANS(p.latitude))
+                    - SIN(RADIANS(?)) * COS(RADIANS(p.latitude)) * COS(RADIANS(p.longitude - ?))
                 )) + 365) AS INTEGER) % 360 / 10 AS sector,
                 2 * 3440.065 * ASIN(SQRT(
-                  POWER(SIN(RADIANS((latitude - ?) / 2)), 2) +
-                  COS(RADIANS(?)) * COS(RADIANS(latitude)) * POWER(SIN(RADIANS((longitude - ?) / 2)), 2)
+                  POWER(SIN(RADIANS((p.latitude - ?) / 2)), 2) +
+                  COS(RADIANS(?)) * COS(RADIANS(p.latitude)) * POWER(SIN(RADIANS((p.longitude - ?) / 2)), 2)
                 )) AS distance_nm,
-                altitude
-              FROM positions
-              WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-                AND timestamp_ms >= ? AND timestamp_ms <= ?
+                p.altitude,
+                f.flight_id
+              FROM positions p
+              LEFT JOIN flights f ON p.hex_ident = f.hex_ident
+                AND p.timestamp_ms BETWEEN f.first_seen_ms AND f.last_seen_ms
+              WHERE p.latitude IS NOT NULL AND p.longitude IS NOT NULL
+                AND p.timestamp_ms >= ? AND p.timestamp_ms <= ?
             ) sub GROUP BY sector ORDER BY sector
         "#;
 
@@ -1105,12 +1137,14 @@ impl StorageHandle {
                     let position_count: i64 = row.get(2)?;
                     let min_altitude: Option<f64> = row.get(3)?;
                     let max_altitude: Option<f64> = row.get(4)?;
+                    let flight_count: i64 = row.get(5)?;
                     Ok((
                         sector,
                         max_distance_nm,
                         position_count,
                         min_altitude,
                         max_altitude,
+                        flight_count,
                     ))
                 },
             )?
@@ -1124,16 +1158,18 @@ impl StorageHandle {
                 position_count: 0,
                 min_altitude: None,
                 max_altitude: None,
+                flight_count: 0,
             })
             .collect();
 
-        for (sector_idx, max_dist, count, min_alt, max_alt) in rows {
+        for (sector_idx, max_dist, count, min_alt, max_alt, fl_count) in rows {
             if (0..36).contains(&sector_idx) {
                 let s = &mut sectors[sector_idx as usize];
                 s.max_distance_nm = max_dist;
                 s.position_count = count as u64;
                 s.min_altitude = min_alt;
                 s.max_altitude = max_alt;
+                s.flight_count = fl_count as u64;
             }
         }
 
@@ -1173,22 +1209,51 @@ impl StorageHandle {
                 FROM raw_messages
                 WHERE timestamp_ms BETWEEN ? AND ?
                 GROUP BY day_ms, hour
+            ),
+            fl AS (
+                SELECT day_ms, hour, COUNT(*) AS flight_count
+                FROM (
+                    SELECT
+                        CAST(epoch_ms(CAST(epoch_ms(h.hr_ts) AS DATE)) AS BIGINT) AS day_ms,
+                        EXTRACT(HOUR FROM epoch_ms(h.hr_ts)) AS hour
+                    FROM flights f,
+                    LATERAL (
+                        SELECT UNNEST(generate_series(
+                            (f.first_seen_ms // 3600000) * 3600000,
+                            (f.last_seen_ms  // 3600000) * 3600000,
+                            CAST(3600000 AS BIGINT)
+                        )) AS hr_ts
+                    ) h
+                    WHERE f.last_seen_ms >= ? AND f.first_seen_ms <= ?
+                ) expanded
+                GROUP BY day_ms, hour
+            ),
+            pos_raw AS (
+                SELECT
+                    COALESCE(pos.day_ms, raw.day_ms) AS day_ms,
+                    COALESCE(pos.hour, raw.hour) AS hour,
+                    COALESCE(pos.aircraft_count, 0) AS aircraft_count,
+                    COALESCE(pos.message_count, 0) AS message_count,
+                    COALESCE(raw.raw_message_count, 0) AS raw_message_count
+                FROM pos
+                FULL OUTER JOIN raw ON pos.day_ms = raw.day_ms AND pos.hour = raw.hour
             )
             SELECT
-                COALESCE(pos.day_ms, raw.day_ms) AS day_ms,
-                COALESCE(pos.hour, raw.hour) AS hour,
-                COALESCE(pos.aircraft_count, 0) AS aircraft_count,
-                COALESCE(pos.message_count, 0) AS message_count,
-                COALESCE(raw.raw_message_count, 0) AS raw_message_count
-            FROM pos
-            FULL OUTER JOIN raw ON pos.day_ms = raw.day_ms AND pos.hour = raw.hour
+                COALESCE(pos_raw.day_ms, fl.day_ms) AS day_ms,
+                COALESCE(pos_raw.hour, fl.hour) AS hour,
+                COALESCE(pos_raw.aircraft_count, 0) AS aircraft_count,
+                COALESCE(pos_raw.message_count, 0) AS message_count,
+                COALESCE(pos_raw.raw_message_count, 0) AS raw_message_count,
+                COALESCE(fl.flight_count, 0) AS flight_count
+            FROM pos_raw
+            FULL OUTER JOIN fl ON pos_raw.day_ms = fl.day_ms AND pos_raw.hour = fl.hour
             ORDER BY day_ms, hour
         "#;
 
         let mut stmt = storage.conn.prepare(sql)?;
         let rows = stmt
             .query_map(
-                params![query.start_ms, query.end_ms, query.start_ms, query.end_ms],
+                params![query.start_ms, query.end_ms, query.start_ms, query.end_ms, query.start_ms, query.end_ms],
                 |row| {
                     Ok(HourlyHeatmapCell {
                         day_ms: row.get(0)?,
@@ -1196,6 +1261,7 @@ impl StorageHandle {
                         aircraft_count: row.get::<_, i64>(2)? as u64,
                         message_count: row.get::<_, i64>(3)? as u64,
                         raw_message_count: row.get::<_, i64>(4)? as u64,
+                        flight_count: row.get::<_, i64>(5)? as u64,
                     })
                 },
             )?
@@ -4062,5 +4128,144 @@ mod tests {
         assert_eq!(flights[0].position_count, 5);
         assert_eq!(flights[0].min_altitude, Some(50.0));
         assert_eq!(flights[0].max_altitude, Some(300.0));
+    }
+
+    // --- Flights metric in time distribution ---
+
+    #[test]
+    fn test_time_distribution_flights_metric() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        // A1: flight spanning 10:00–10:50 (positions at 10:00 and 10:50)
+        // A2: flight at 10:00 only (single position)
+        // Query range: 09:00–11:00 with 4 buckets → 30-min buckets
+        // Bucket 0: 09:00–09:30 → no flights
+        // Bucket 1: 09:30–10:00 → no flights (10:00:00 falls in bucket 2)
+        // Bucket 2: 10:00–10:30 → A1 active (started here), A2 active = 2 flights
+        // Bucket 3: 10:30–11:00 → A1 still active (ends 10:50) = 1 flight
+        let positions = vec![
+            sample_position("A1", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000"),
+            sample_position("A1", Some(45.6), Some(-73.6), "2024/01/15 10:50:00.000"),
+            sample_position("A2", Some(45.7), Some(-73.7), "2024/01/15 10:00:00.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let ts_start = parse_timestamp_to_ms("2024/01/15 09:00:00.000", "UTC");
+        let ts_end = parse_timestamp_to_ms("2024/01/15 11:00:00.000", "UTC");
+
+        let buckets = handle
+            .get_time_distribution_sync(crate::types::TimeDistributionQuery {
+                start_ms: ts_start,
+                end_ms: ts_end,
+                num_buckets: 4,
+                metric: crate::types::TimeDistributionMetric::Flights,
+            })
+            .unwrap();
+
+        // A1's flight spans buckets 2 and 3; A2's flight is in bucket 2 only
+        let total: u64 = buckets.iter().map(|b| b.count).sum();
+        assert_eq!(total, 3); // 2 in bucket 2 + 1 in bucket 3
+
+        // Verify per-bucket: bucket with A1+A2 has 2, bucket with only A1 has 1
+        let counts: Vec<u64> = buckets.iter().map(|b| b.count).collect();
+        assert!(counts.contains(&2), "expected a bucket with 2 flights");
+        assert!(counts.contains(&1), "expected a bucket with 1 flight");
+    }
+
+    #[test]
+    fn test_time_distribution_flights_metric_gap_splits() {
+        let mut config = test_config();
+        config.gap_threshold_ms = 1_800_000; // 30 minutes
+        let handle = StorageHandle::open(config).unwrap();
+
+        // A1 has two flights separated by >30min gap
+        let positions = vec![
+            sample_position("A1", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000"),
+            sample_position("A1", Some(45.6), Some(-73.6), "2024/01/15 10:10:00.000"),
+            // 1-hour gap → new flight
+            sample_position("A1", Some(45.7), Some(-73.7), "2024/01/15 11:10:00.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let ts_start = parse_timestamp_to_ms("2024/01/15 09:00:00.000", "UTC");
+        let ts_end = parse_timestamp_to_ms("2024/01/15 12:00:00.000", "UTC");
+
+        let buckets = handle
+            .get_time_distribution_sync(crate::types::TimeDistributionQuery {
+                start_ms: ts_start,
+                end_ms: ts_end,
+                num_buckets: 1,
+                metric: crate::types::TimeDistributionMetric::Flights,
+            })
+            .unwrap();
+        let total: u64 = buckets.iter().map(|b| b.count).sum();
+        assert_eq!(total, 2); // A1 has 2 flights due to gap
+    }
+
+    // --- Flight count in heatmap ---
+
+    #[test]
+    fn test_hourly_heatmap_includes_flight_count() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        // A1: single flight spanning hour 10 and hour 11 (10:30 → 11:15, gap 45min < 1h threshold)
+        // A2: flight within hour 10 only (10:15)
+        let positions = vec![
+            sample_position("A1", Some(45.5), Some(-73.5), "2024/01/15 10:30:00.000"),
+            sample_position("A1", Some(45.6), Some(-73.6), "2024/01/15 11:15:00.000"),
+            sample_position("A2", Some(45.7), Some(-73.7), "2024/01/15 10:15:00.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let start = parse_timestamp_to_ms("2024/01/15 00:00:00.000", "UTC");
+        let end = parse_timestamp_to_ms("2024/01/15 23:59:59.000", "UTC");
+
+        let cells = handle
+            .get_hourly_heatmap_sync(crate::types::HourlyHeatmapQuery {
+                start_ms: start,
+                end_ms: end,
+            })
+            .unwrap();
+
+        // Hour 10: A1 active (started here) + A2 active → flight_count = 2
+        // Hour 11: A1 still active (ends 11:15) → flight_count = 1
+        assert_eq!(cells.len(), 2);
+        let h10 = cells.iter().find(|c| c.hour == 10).unwrap();
+        let h11 = cells.iter().find(|c| c.hour == 11).unwrap();
+        assert_eq!(h10.flight_count, 2);
+        assert_eq!(h11.flight_count, 1);
+        assert_eq!(h10.aircraft_count, 2);
+        assert_eq!(h11.aircraft_count, 1);
+    }
+
+    // --- Flight count in detection range ---
+
+    #[test]
+    fn test_detection_range_includes_flight_count() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        // Receiver at (45.0, -73.0). Two aircraft with positions nearby.
+        let positions = vec![
+            sample_position("A1", Some(45.5), Some(-73.5), "2024/01/15 10:00:00.000"),
+            sample_position("A1", Some(45.6), Some(-73.6), "2024/01/15 10:10:00.000"),
+            sample_position("A2", Some(45.5), Some(-73.5), "2024/01/15 10:05:00.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let sectors = handle
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                receiver_lat: 45.0,
+                receiver_lon: -73.0,
+                start_ms: None,
+                end_ms: None,
+            })
+            .unwrap();
+
+        // All positions should be in the same sector (NW-ish from receiver)
+        let active: Vec<_> = sectors.iter().filter(|s| s.position_count > 0).collect();
+        assert!(!active.is_empty());
+        // The sector with positions should have 2 flights (A1 and A2)
+        let sector = active[0];
+        assert_eq!(sector.flight_count, 2);
+        assert_eq!(sector.position_count, 3);
     }
 }

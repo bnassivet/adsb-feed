@@ -235,6 +235,9 @@ export function DetectionRadar({ sectors, mode }: Props) {
           <div>
             Positions: <span className="text-white">{hovered.positionCount.toLocaleString()}</span>
           </div>
+          <div>
+            Flights: <span className="text-white">{hovered.flightCount.toLocaleString()}</span>
+          </div>
         </div>
       )}
 

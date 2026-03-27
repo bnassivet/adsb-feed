@@ -222,7 +222,7 @@ export interface TimeDistributionBucket {
 }
 
 /** Which metric to count in each histogram bucket. */
-export type TimeDistributionMetric = "positions" | "aircraft" | "raw_messages";
+export type TimeDistributionMetric = "positions" | "aircraft" | "raw_messages" | "flights";
 
 /** Query parameters for time distribution (histogram). */
 export interface TimeDistributionQuery {
@@ -252,6 +252,8 @@ export interface DetectionRangeSector {
   min_altitude: number | null;
   /** Maximum altitude observed in this sector (feet), or null if no altitude data. */
   max_altitude: number | null;
+  /** Number of distinct flights observed in this sector. */
+  flight_count: number;
 }
 
 /** Query parameters for hourly activity heatmap. */
@@ -272,10 +274,12 @@ export interface HourlyHeatmapCell {
   message_count: number;
   /** Total number of raw SBS-1 messages in this cell. */
   raw_message_count: number;
+  /** Number of distinct flights in this cell. */
+  flight_count: number;
 }
 
 /** Which metric the activity heatmap displays. */
-export type HeatmapMetric = "aircraft" | "messages" | "raw_messages";
+export type HeatmapMetric = "aircraft" | "messages" | "raw_messages" | "flights";
 
 /** Preview of a single table in an external database file. */
 export interface TablePreview {

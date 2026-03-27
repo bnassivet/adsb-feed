@@ -1,4 +1,4 @@
-import type { AircraftSummary, HeatmapMetric, HourlyHeatmapCell, TimeDistributionBucket, TimeGranularity } from "./types";
+import type { AircraftSummary, FlightSummary, HeatmapMetric, HourlyHeatmapCell, TimeDistributionBucket, TimeGranularity } from "./types";
 
 /** A single bin in an altitude histogram. */
 export interface AltitudeBin {
@@ -8,12 +8,13 @@ export interface AltitudeBin {
   maxAlt: number;
 }
 
-/** Summary statistics computed from aircraft summaries. */
+/** Summary statistics computed from aircraft and flight summaries. */
 export interface DbHistorySummary {
-  totalTracks: number;
+  totalAircraft: number;
+  totalFlights: number;
   totalPositions: number;
   totalRawMessages: number;
-  avgDurationMs: number;
+  avgFlightDurationMs: number;
 }
 
 /** A datum for the time distribution bar chart. */
@@ -99,9 +100,10 @@ const NUM_BINS = 10;
 
 /**
  * Build altitude histogram bins (10 bins of 5000ft each, 0–50000ft).
+ * Accepts any array of objects with a `max_altitude` field (AircraftSummary or FlightSummary).
  * Returns all 10 bins, even if empty.
  */
-export function buildAltitudeBins(summaries: AircraftSummary[]): AltitudeBin[] {
+export function buildAltitudeBins(items: { max_altitude: number | null }[]): AltitudeBin[] {
   const bins: AltitudeBin[] = [];
   for (let i = 0; i < NUM_BINS; i++) {
     const minAlt = i * BIN_SIZE_FT;
@@ -114,7 +116,7 @@ export function buildAltitudeBins(summaries: AircraftSummary[]): AltitudeBin[] {
     });
   }
 
-  for (const s of summaries) {
+  for (const s of items) {
     // Use max_altitude for binning (where the aircraft was flying)
     const alt = s.max_altitude;
     if (alt === null || alt === undefined) continue;
@@ -126,26 +128,34 @@ export function buildAltitudeBins(summaries: AircraftSummary[]): AltitudeBin[] {
 }
 
 /**
- * Compute aggregate summary from a list of aircraft summaries.
- * @param rawMessageCount - total raw messages in the queried time range (from backend).
+ * Compute aggregate summary from aircraft summaries and flight summaries.
+ * Avg duration is computed from flights (gap-segmented) rather than raw aircraft timespans.
  */
-export function computeDbHistorySummary(summaries: AircraftSummary[], rawMessageCount: number = 0): DbHistorySummary {
-  if (summaries.length === 0) {
-    return { totalTracks: 0, totalPositions: 0, totalRawMessages: rawMessageCount, avgDurationMs: 0 };
-  }
-
+export function computeDbHistorySummary(
+  summaries: AircraftSummary[],
+  rawMessageCount: number = 0,
+  flights: FlightSummary[] = [],
+): DbHistorySummary {
   let totalPositions = 0;
-  let totalDuration = 0;
   for (const s of summaries) {
     totalPositions += s.position_count;
-    totalDuration += s.last_seen_ms - s.first_seen_ms;
+  }
+
+  let avgFlightDurationMs = 0;
+  if (flights.length > 0) {
+    let totalDuration = 0;
+    for (const f of flights) {
+      totalDuration += f.last_seen_ms - f.first_seen_ms;
+    }
+    avgFlightDurationMs = totalDuration / flights.length;
   }
 
   return {
-    totalTracks: summaries.length,
+    totalAircraft: summaries.length,
+    totalFlights: flights.length,
     totalPositions,
     totalRawMessages: rawMessageCount,
-    avgDurationMs: totalDuration / summaries.length,
+    avgFlightDurationMs,
   };
 }
 
@@ -208,7 +218,7 @@ export function buildHeatmapGrid(
       hourMap = new Map();
       cellMap.set(c.day_ms, hourMap);
     }
-    const value = metric === "aircraft" ? c.aircraft_count : metric === "messages" ? c.message_count : c.raw_message_count;
+    const value = metric === "aircraft" ? c.aircraft_count : metric === "messages" ? c.message_count : metric === "flights" ? c.flight_count : c.raw_message_count;
     hourMap.set(c.hour, value);
   }
 
