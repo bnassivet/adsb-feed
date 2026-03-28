@@ -59,6 +59,8 @@ pub struct StorageStats {
     pub newest_timestamp_ms: Option<i64>,
     pub raw_message_count: u64,
     pub raw_db_size_bytes: u64,
+    pub flight_count: u64,
+    pub flight_size_bytes: u64,
 }
 
 /// A single raw SBS-1 message stored for audit/replay purposes.

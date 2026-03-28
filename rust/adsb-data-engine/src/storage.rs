@@ -941,18 +941,26 @@ impl StorageHandle {
                 .conn
                 .query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))?;
 
+        let flight_count: i64 =
+            storage
+                .conn
+                .query_row("SELECT COUNT(*) FROM flights", [], |row| row.get(0))?;
+
         // DuckDB database_size() returns a human-readable string for file-backed DBs.
         // For in-memory DBs it returns '0 bytes'. We approximate with row count * avg row size.
         let positions_size = (row_count as u64).saturating_mul(128);
         let raw_size = (raw_count as u64).saturating_mul(200); // ~200 bytes per raw row estimate
+        let flight_size = (flight_count as u64).saturating_mul(160); // ~160 bytes per flight row estimate
 
         Ok(StorageStats {
             row_count: row_count as u64,
-            db_size_bytes: positions_size + raw_size,
+            db_size_bytes: positions_size + raw_size + flight_size,
             oldest_timestamp_ms: oldest,
             newest_timestamp_ms: newest,
             raw_message_count: raw_count as u64,
             raw_db_size_bytes: raw_size,
+            flight_count: flight_count as u64,
+            flight_size_bytes: flight_size,
         })
     }
 
@@ -3275,6 +3283,30 @@ mod tests {
         assert_eq!(stats.raw_message_count, 2);
         // Position count should still be zero
         assert_eq!(stats.row_count, 0);
+    }
+
+    #[test]
+    fn test_stats_includes_flight_count() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        // Initially zero flights
+        let stats = handle.get_stats_sync().unwrap();
+        assert_eq!(stats.flight_count, 0);
+        assert_eq!(stats.flight_size_bytes, 0);
+
+        // Insert positions — flights table is populated incrementally
+        let positions = vec![
+            sample_position("A1B2C3", Some(45.5), Some(-73.5), "2024/01/15 10:30:00.000"),
+            sample_position("A1B2C3", Some(45.6), Some(-73.6), "2024/01/15 10:35:00.000"),
+            sample_position("D4E5F6", Some(46.0), Some(-74.0), "2024/01/15 10:30:00.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let stats = handle.get_stats_sync().unwrap();
+        assert_eq!(stats.flight_count, 2); // Two distinct aircraft = two flights
+        assert!(stats.flight_size_bytes > 0);
+        // Total DB size should include flight size
+        assert!(stats.db_size_bytes > stats.raw_db_size_bytes + stats.row_count * 128);
     }
 
     #[test]

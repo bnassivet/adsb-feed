@@ -317,6 +317,8 @@ export interface StorageStats {
   newest_timestamp_ms: number | null;
   raw_message_count: number;
   raw_db_size_bytes: number;
+  flight_count: number;
+  flight_size_bytes: number;
 }
 
 /** A single raw SBS-1 message stored for audit/replay (mirrors Rust RawSbsRecord). */

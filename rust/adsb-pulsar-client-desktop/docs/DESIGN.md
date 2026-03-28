@@ -1059,7 +1059,7 @@ useTauriEvent<AircraftPosition[]>("adsb:message", (batch) => {
 - `getAircraftSummary(startMs?: number, endMs?: number): Promise<AircraftSummary[]>`: All aircraft seen with stats
 - `getFlightSummary(query: FlightSummaryQuery): Promise<FlightSummary[]>`: Per-flight stats with segmentation
 - `getFlightSummaryArrow(query: FlightSummaryQuery): Promise<number[]>`: Same as above, returns Arrow IPC bytes
-- `getStorageStats(): Promise<StorageStats>`: Database row count, size, raw msg count, age
+- `getStorageStats(): Promise<StorageStats>`: Database row count, size, flight count, raw msg count, age
 - `getTimeDistribution(query: TimeDistributionQuery): Promise<TimeDistributionBucket[]>`: Bucketed counts over a time range for analytics charts. The `metric` field selects positions (default), distinct aircraft, or raw messages
 - `getRawMessages(query: RawMessageQuery): Promise<RawSbsRecord[]>`: Raw SBS-1 messages by hex_ident + time range
 - `getRawMessagesArrow(query: RawMessageQuery): Promise<number[]>`: Same as above, returns Arrow IPC bytes
@@ -1108,7 +1108,7 @@ export async function queryBbox(query: BboxQuery): Promise<PositionRecord[]> {
   - `AircraftSummary`: Per-aircraft statistics (`hex_ident`, `callsign`, `position_count`, `first_seen_ms`, `last_seen_ms`, `min_altitude`, `max_altitude`)
   - `FlightSummary`: Per-flight statistics with segmentation (`hex_ident`, `flight_num`, `flight_id`, `callsign`, `position_count`, `first_seen_ms`, `last_seen_ms`, `min_altitude`, `max_altitude`)
   - `FlightSummaryQuery`: Flight summary query params (`start_ms`, `end_ms`)
-  - `StorageStats`: Database health (`row_count`, `db_size_bytes`, `oldest_timestamp_ms`, `newest_timestamp_ms`, `raw_message_count`, `raw_db_size_bytes`)
+  - `StorageStats`: Database health (`row_count`, `db_size_bytes`, `oldest_timestamp_ms`, `newest_timestamp_ms`, `raw_message_count`, `raw_db_size_bytes`, `flight_count`, `flight_size_bytes`)
   - `RawSbsRecord`: Single raw SBS-1 message (`hex_ident`, `msg_type`, `transmission_type`, `timestamp`/`timestamp_ms`, `raw_message`, `source_id`)
   - `RawMessageQuery`: Raw message query params (`hex_ident`, `start_ms`, `end_ms`)
 
@@ -1402,7 +1402,7 @@ All query commands below:
 - Used by DB History panel's `doBrowse()` for efficient flight list loading
 
 ##### `get_storage_stats() -> Result<StorageStats, String>`
-- Returns database health metrics: `row_count`, `db_size_bytes`, `oldest_timestamp_ms`, `newest_timestamp_ms`, `raw_message_count`, `raw_db_size_bytes`
+- Returns database health metrics: `row_count`, `db_size_bytes`, `oldest_timestamp_ms`, `newest_timestamp_ms`, `raw_message_count`, `raw_db_size_bytes`, `flight_count`, `flight_size_bytes`
 - Useful for displaying storage status in the UI
 
 ##### `get_raw_messages(query: RawMessageQuery) -> Result<Vec<RawSbsRecord>, String>`
@@ -2485,7 +2485,7 @@ The `raw_messages` table stores every valid MSG line at full granularity (hybrid
 | `get_aircraft_summary` | `start_ms?`, `end_ms?` | `Vec<AircraftSummary>` | Stats for all aircraft seen |
 | `get_flight_summary` | `FlightSummaryQuery` | `Vec<FlightSummary>` | Per-flight stats with segmentation |
 | `get_flight_summary_arrow` | `FlightSummaryQuery` | `Vec<u8>` (IPC) | Same as `get_flight_summary` but returns Arrow IPC bytes |
-| `get_storage_stats` | — | `StorageStats` | Row count, DB size, raw msg count, age |
+| `get_storage_stats` | — | `StorageStats` | Row count, DB size, flight count, raw msg count, age |
 | `get_time_distribution` | `TimeDistributionQuery` | `Vec<TimeDistributionBucket>` | Bucketed message counts over time range |
 | `get_detection_range` | `DetectionRangeQuery` | `Vec<DetectionRangeSector>` | Max detection distance per 10-degree azimuth sector |
 | `query_raw_messages` | `RawMessageQuery` | `Vec<RawSbsRecord>` | Raw SBS lines by hex_ident + time range (limit 10k) |
@@ -2554,7 +2554,7 @@ const positions = arrowToPositionRecords(bboxBytes);
 ### UI: DB History Panel
 
 Historical queries are surfaced through the **DB History Panel** — a first-class dockable/floating panel (see [DB History Panel](#db-history-panel)). The panel provides:
-- **Stats strip**: Row count, raw message count, raw size, total DB size, oldest/newest timestamps (via `getStorageStats`)
+- **Stats strip**: Row count, flight count, flight size, raw message count, raw size, total DB size, oldest/newest timestamps (via `getStorageStats`)
 - **Time range picker**: Uncontrolled `datetime-local` inputs (WKWebView-safe pattern)
 - **Flight list**: Browse results from `getFlightSummaryArrow` → `arrowToFlightSummaries()`, load trajectories via `getTrajectoryBatchArrow` → `arrowToTracks()`. The list is virtualized with `@tanstack/react-virtual` for smooth scrolling with hundreds of flights.
 - **Analytics**: recharts-based time distribution bar chart + altitude histogram (via `getTimeDistribution`)

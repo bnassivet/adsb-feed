@@ -66,6 +66,8 @@ const sampleStats: StorageStats = {
   newest_timestamp_ms: 1705316100000,
   raw_message_count: 5000,
   raw_db_size_bytes: 1000000,
+  flight_count: 42,
+  flight_size_bytes: 6720,
 };
 
 describe("Historical query commands", () => {

@@ -56,6 +56,8 @@ const sampleStats: StorageStats = {
   newest_timestamp_ms: 1705316100000,
   raw_message_count: 5000,
   raw_db_size_bytes: 1000000,
+  flight_count: 42,
+  flight_size_bytes: 6720,
 };
 
 const sampleSummary: AircraftSummary = {
@@ -112,6 +114,17 @@ describe("DBHistoryContent", () => {
       expect(screen.getByTestId("dbhist-row-count")).toBeInTheDocument();
     });
     expect(screen.getByText("1,000")).toBeInTheDocument();
+  });
+
+  it("renders flight count and flight size in stats strip", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    render(<DBHistoryContent {...baseProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-flight-count")).toBeInTheDocument();
+    });
+    expect(screen.getByText("42")).toBeInTheDocument();
+    expect(screen.getByTestId("dbhist-flight-size")).toBeInTheDocument();
   });
 
   it("shows 'History unavailable' when storage returns error string", async () => {
