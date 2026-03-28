@@ -270,12 +270,13 @@ export function DBHistoryContent({
 
   return (
     <div className="flex flex-col gap-1">
-      {/* Stats strip */}
-      <div className="px-3 py-1.5 text-xs text-slate-400 border-b border-slate-800 space-y-0.5">
-        <div className="flex justify-between items-center">
-          <span className="text-[10px] uppercase tracking-wide text-slate-500">DB Stats</span>
+      {/* Stats — foldable section */}
+      <details open className="group border-b border-slate-800" data-testid="dbhist-stats-section">
+        <summary className="flex items-center gap-1.5 cursor-pointer select-none px-3 py-1.5 text-xs font-semibold text-slate-400 list-none [&::-webkit-details-marker]:hidden">
+          <span className="text-[10px] transition-transform duration-150 group-open:rotate-90">▶</span>
+          <span className="flex-1 text-[10px] uppercase tracking-wide text-slate-500">DB Stats</span>
           <button
-            onClick={handleRefreshStats}
+            onClick={(e) => { e.preventDefault(); handleRefreshStats(); }}
             disabled={refreshing}
             aria-label="Refresh stats"
             title="Refresh stats"
@@ -283,40 +284,42 @@ export function DBHistoryContent({
           >
             {refreshing ? "…" : "↻"}
           </button>
+        </summary>
+        <div className="px-3 pb-1.5 text-xs text-slate-400 space-y-0.5">
+          <div className="flex justify-between" data-testid="dbhist-row-count">
+            <span>Records</span>
+            <span className="text-slate-300">{stats.row_count.toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between" data-testid="dbhist-flight-count">
+            <span>Flights</span>
+            <span className="text-slate-300">{stats.flight_count.toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between" data-testid="dbhist-flight-size">
+            <span>Flights size</span>
+            <span className="text-slate-300">{formatBytes(stats.flight_size_bytes)}</span>
+          </div>
+          <div className="flex justify-between" data-testid="dbhist-raw-count">
+            <span>Raw msgs</span>
+            <span className="text-slate-300">{stats.raw_message_count.toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between" data-testid="dbhist-raw-size">
+            <span>Raw size</span>
+            <span className="text-slate-300">{formatBytes(stats.raw_db_size_bytes)}</span>
+          </div>
+          <div className="flex justify-between" data-testid="dbhist-db-size">
+            <span>Total size</span>
+            <span className="text-slate-300">{formatBytes(stats.db_size_bytes)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Oldest</span>
+            <span className="text-slate-300">{stats.oldest_timestamp_ms !== null ? formatTime(stats.oldest_timestamp_ms) : "—"}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Newest</span>
+            <span className="text-slate-300">{stats.newest_timestamp_ms !== null ? formatTime(stats.newest_timestamp_ms) : "—"}</span>
+          </div>
         </div>
-        <div className="flex justify-between" data-testid="dbhist-row-count">
-          <span>Records</span>
-          <span className="text-slate-300">{stats.row_count.toLocaleString()}</span>
-        </div>
-        <div className="flex justify-between" data-testid="dbhist-flight-count">
-          <span>Flights</span>
-          <span className="text-slate-300">{stats.flight_count.toLocaleString()}</span>
-        </div>
-        <div className="flex justify-between" data-testid="dbhist-flight-size">
-          <span>Flights size</span>
-          <span className="text-slate-300">{formatBytes(stats.flight_size_bytes)}</span>
-        </div>
-        <div className="flex justify-between" data-testid="dbhist-raw-count">
-          <span>Raw msgs</span>
-          <span className="text-slate-300">{stats.raw_message_count.toLocaleString()}</span>
-        </div>
-        <div className="flex justify-between" data-testid="dbhist-raw-size">
-          <span>Raw size</span>
-          <span className="text-slate-300">{formatBytes(stats.raw_db_size_bytes)}</span>
-        </div>
-        <div className="flex justify-between" data-testid="dbhist-db-size">
-          <span>Total size</span>
-          <span className="text-slate-300">{formatBytes(stats.db_size_bytes)}</span>
-        </div>
-        <div className="flex justify-between">
-          <span>Oldest</span>
-          <span className="text-slate-300">{stats.oldest_timestamp_ms !== null ? formatTime(stats.oldest_timestamp_ms) : "—"}</span>
-        </div>
-        <div className="flex justify-between">
-          <span>Newest</span>
-          <span className="text-slate-300">{stats.newest_timestamp_ms !== null ? formatTime(stats.newest_timestamp_ms) : "—"}</span>
-        </div>
-      </div>
+      </details>
 
       {/* Preset time range pills */}
       <div className="px-3 py-1">
@@ -395,7 +398,7 @@ export function DBHistoryContent({
           )}
 
           {flightSummaries.length > 0 && (
-            <details open className="group" data-testid="dbhist-track-list">
+            <details className="group" data-testid="dbhist-track-list">
               <summary className="flex items-center gap-1.5 cursor-pointer select-none text-xs font-semibold text-slate-400 list-none [&::-webkit-details-marker]:hidden">
                 <span className="text-[10px] transition-transform duration-150 group-open:rotate-90">▶</span>
                 <span className="flex-1">Flights ({flightSummaries.length})</span>
@@ -523,19 +526,19 @@ export function DBHistoryContent({
             />
           )}
 
-          {/* Status Timeline — lazy-loaded on expand */}
-          <details className="group" data-testid="dbhist-status-timeline">
-            <summary className="flex items-center gap-1.5 cursor-pointer select-none text-xs font-semibold text-slate-400 list-none [&::-webkit-details-marker]:hidden">
-              <span className="text-[10px] transition-transform duration-150 group-open:rotate-90">▶</span>
-              Status Timeline
-            </summary>
-            <div className="mt-1">
-              <StatusTimeline />
-            </div>
-          </details>
-
         </div>
       )}
+
+      {/* Status Timeline — always visible, independent of browse state */}
+      <details className="group" data-testid="dbhist-status-timeline">
+        <summary className="flex items-center gap-1.5 cursor-pointer select-none px-3 py-1.5 text-xs font-semibold text-slate-400 list-none [&::-webkit-details-marker]:hidden">
+          <span className="text-[10px] transition-transform duration-150 group-open:rotate-90">▶</span>
+          Status Timeline
+        </summary>
+        <div className="mt-1 px-3">
+          <StatusTimeline />
+        </div>
+      </details>
     </div>
   );
 }

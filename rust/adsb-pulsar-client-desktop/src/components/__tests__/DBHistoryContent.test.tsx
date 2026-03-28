@@ -104,6 +104,8 @@ function mockBrowseResponses(
 beforeEach(() => {
   clearMockResponses();
   vi.restoreAllMocks();
+  // StatusTimeline mounts eagerly (always visible), so all tests need this mock
+  mockInvokeResponse("get_status_timeline", []);
 });
 
 describe("DBHistoryContent", () => {
@@ -283,7 +285,7 @@ describe("DBHistoryContent", () => {
     const details = screen.getByTestId("dbhist-track-list");
     expect(details.tagName).toBe("DETAILS");
     expect(details.querySelector("summary")).toHaveTextContent("Flights (2)");
-    expect(details).toHaveAttribute("open");
+    expect(details).not.toHaveAttribute("open");
   });
 
   it("clear button calls onClearTracks when dbHistoryCount > 0", async () => {
@@ -413,6 +415,53 @@ describe("DBHistoryContent", () => {
       // 24h range / 1h granularity = 24 buckets
       expect(timeDist![1].query.num_buckets).toBe(24);
     });
+  });
+
+  it("wraps DB Stats in a foldable <details> open by default", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    render(<DBHistoryContent {...baseProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-stats-section")).toBeInTheDocument();
+    });
+
+    const details = screen.getByTestId("dbhist-stats-section");
+    expect(details.tagName).toBe("DETAILS");
+    expect(details).toHaveAttribute("open");
+    // Stats rows are visible inside it
+    expect(screen.getByTestId("dbhist-row-count")).toBeInTheDocument();
+  });
+
+  it("Status Timeline section is visible without browsing", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    render(<DBHistoryContent {...baseProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-stats-section")).toBeInTheDocument();
+    });
+
+    // Status Timeline should be present even though we haven't clicked any preset
+    expect(screen.getByTestId("dbhist-status-timeline")).toBeInTheDocument();
+  });
+
+  it("Status Timeline remains visible when browsing", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockBrowseResponses();
+
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("dbhist-preset-24h"));
+
+    await waitFor(() => {
+      expect(screen.getByText("TEST123")).toBeInTheDocument();
+    });
+
+    // Status Timeline still present
+    expect(screen.getByTestId("dbhist-status-timeline")).toBeInTheDocument();
   });
 });
 
