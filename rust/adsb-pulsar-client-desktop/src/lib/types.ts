@@ -319,6 +319,7 @@ export interface StorageStats {
   raw_db_size_bytes: number;
   flight_count: number;
   flight_size_bytes: number;
+  status_event_count: number;
 }
 
 /** A single raw SBS-1 message stored for audit/replay (mirrors Rust RawSbsRecord). */
@@ -337,6 +338,40 @@ export interface RawMessageQuery {
   hex_ident: string;
   start_ms: number;
   end_ms: number;
+}
+
+/** Category of status event (mirrors Rust StatusEventType). */
+export type StatusEventType = "feed" | "socket" | "pulsar" | "storage";
+
+/** Status value within a status event (mirrors Rust StatusEventStatus). */
+export type StatusEventStatus =
+  | "AppStart"
+  | "Started"
+  | "Stopped"
+  | "Connecting"
+  | "Connected"
+  | "Degraded"
+  | "ConnectionLost"
+  | "Disconnected"
+  | "Released"
+  | "Reclaimed"
+  | "Error";
+
+/** A status lifecycle event from the audit trail (mirrors Rust StatusEvent). */
+export interface StatusEvent {
+  timestamp_ms: number;
+  event_type: StatusEventType;
+  status: StatusEventStatus;
+  detail: string | null;
+  source_id: string | null;
+}
+
+/** Query parameters for status event retrieval (mirrors Rust StatusEventQuery). */
+export interface StatusEventQuery {
+  start_ms?: number | null;
+  end_ms?: number | null;
+  event_type?: StatusEventType | null;
+  limit?: number | null;
 }
 
 export const DEFAULT_FILTERS: Filters = {

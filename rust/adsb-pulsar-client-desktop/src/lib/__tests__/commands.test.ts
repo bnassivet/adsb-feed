@@ -19,6 +19,7 @@ import {
   previewImportDatabase,
   importDatabase,
   swapDatabase,
+  getStatusTimeline,
 } from "../commands";
 import type {
   BboxQuery,
@@ -33,6 +34,8 @@ import type {
   DetectionRangeSector,
   ImportPreview,
   ImportResult,
+  StatusEvent,
+  StatusEventQuery,
 } from "../types";
 
 const samplePosition: PositionRecord = {
@@ -68,6 +71,7 @@ const sampleStats: StorageStats = {
   raw_db_size_bytes: 1000000,
   flight_count: 42,
   flight_size_bytes: 6720,
+  status_event_count: 5,
 };
 
 describe("Historical query commands", () => {
@@ -320,6 +324,47 @@ describe("Historical query commands", () => {
 
       const result = await swapDatabase();
       expect(result).toBe(snapshotPath);
+    });
+  });
+
+  // --- Status timeline commands ---
+
+  describe("getStatusTimeline", () => {
+    it("sends query and returns status events", async () => {
+      const events: StatusEvent[] = [
+        { timestamp_ms: 1705316100000, event_type: "feed", status: "Started", detail: null, source_id: "desktop" },
+        { timestamp_ms: 1705315800000, event_type: "socket", status: "Connected", detail: "no message for 0s", source_id: "desktop" },
+      ];
+      mockInvokeResponse("get_status_timeline", events);
+
+      const query: StatusEventQuery = {
+        start_ms: 1705315800000,
+        end_ms: 1705316100000,
+      };
+
+      const result = await getStatusTimeline(query);
+      expect(result).toHaveLength(2);
+      expect(result[0].event_type).toBe("feed");
+      expect(result[0].status).toBe("Started");
+      expect(result[1].event_type).toBe("socket");
+    });
+
+    it("returns empty array for no events", async () => {
+      mockInvokeResponse("get_status_timeline", []);
+
+      const result = await getStatusTimeline({});
+      expect(result).toEqual([]);
+    });
+
+    it("supports type filter", async () => {
+      const events: StatusEvent[] = [
+        { timestamp_ms: 1705316100000, event_type: "storage", status: "Released", detail: null, source_id: null },
+      ];
+      mockInvokeResponse("get_status_timeline", events);
+
+      const result = await getStatusTimeline({ event_type: "storage" });
+      expect(result).toHaveLength(1);
+      expect(result[0].status).toBe("Released");
     });
   });
 });

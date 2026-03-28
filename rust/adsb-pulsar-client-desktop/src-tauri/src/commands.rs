@@ -9,8 +9,9 @@ use crate::state::{
 use adsb_data_engine::{
     AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, FlightSummary,
     FlightSummaryQuery, HourlyHeatmapCell, HourlyHeatmapQuery, ImportPreview, ImportResult,
-    PositionRecord, RawMessageQuery, RawSbsRecord, StorageHandle, StorageStats,
-    TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
+    PositionRecord, RawMessageQuery, RawSbsRecord, StatusEvent, StatusEventQuery,
+    StatusEventStatus, StatusEventType, StorageHandle, StorageStats, TimeDistributionBucket,
+    TimeDistributionQuery, TrajectoryQuery,
 };
 use adsb_pulsar_client::{Config, MetricsSnapshot};
 use std::sync::atomic::Ordering;
@@ -42,13 +43,28 @@ pub async fn start_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
 
     let config = { state.config.lock().map_err(|e| e.to_string())?.clone() };
 
+    let recorder = bridge::StatusEventRecorder::new(Arc::clone(&state.storage));
     let feed_handle = bridge::start_feed(
         app,
         config,
         Arc::clone(&state.storage),
         state.record_positions.clone(),
         state.record_raw.clone(),
+        recorder,
     )?;
+
+    // Record feed started event (non-fatal)
+    {
+        let guard = state.storage.read().await;
+        if let Some(ref s) = *guard {
+            let _ = s
+                .insert_status_event(StatusEvent::now(
+                    StatusEventType::Feed,
+                    StatusEventStatus::Started,
+                ))
+                .await;
+        }
+    }
 
     // Update status
     {
@@ -108,6 +124,19 @@ pub async fn stop_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
     // Emit event directly so the frontend updates immediately, even though
     // the aborted client_task never reached its own adsb:status emission.
     let _ = app.emit("adsb:status", &status);
+
+    // Record feed stopped event (non-fatal)
+    {
+        let guard = state.storage.read().await;
+        if let Some(ref s) = *guard {
+            let _ = s
+                .insert_status_event(StatusEvent::now(
+                    StatusEventType::Feed,
+                    StatusEventStatus::Stopped,
+                ))
+                .await;
+        }
+    }
 
     Ok(())
 }
@@ -419,6 +448,22 @@ pub fn set_recording_state(
     Ok(())
 }
 
+/// Queries status events for the audit timeline.
+#[tauri::command]
+pub async fn get_status_timeline(
+    query: StatusEventQuery,
+    state: State<'_, AppState>,
+) -> Result<Vec<StatusEvent>, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .query_status_events(query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // --- Storage management commands ---
 
 /// Returns the current storage availability status.
@@ -447,6 +492,13 @@ pub async fn release_storage(
 ) -> Result<(), String> {
     let mut guard = state.storage.write().await;
     if let Some(ref storage) = *guard {
+        // Record release event before dropping connection
+        let _ = storage
+            .insert_status_event(StatusEvent::now(
+                StatusEventType::Storage,
+                StatusEventStatus::Released,
+            ))
+            .await;
         storage
             .checkpoint()
             .await
@@ -478,6 +530,12 @@ pub async fn reclaim_storage(
     let handle =
         StorageHandle::open(config).map_err(|e| format!("Failed to reopen storage: {e}"))?;
     info!("Storage reclaimed — DuckDB connection reopened");
+
+    // Record reclaim event on the fresh connection
+    let _ = handle.insert_status_event(StatusEvent::now(
+        StatusEventType::Storage,
+        StatusEventStatus::Reclaimed,
+    )).await;
 
     let mut guard = state.storage.write().await;
     *guard = Some(handle);

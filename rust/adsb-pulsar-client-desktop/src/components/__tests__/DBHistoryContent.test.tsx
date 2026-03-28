@@ -58,6 +58,7 @@ const sampleStats: StorageStats = {
   raw_db_size_bytes: 1000000,
   flight_count: 42,
   flight_size_bytes: 6720,
+  status_event_count: 5,
 };
 
 const sampleSummary: AircraftSummary = {

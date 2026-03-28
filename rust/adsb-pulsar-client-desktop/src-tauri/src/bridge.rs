@@ -7,6 +7,7 @@
 use crate::state::{ConnectionStatus, FeedHandle, SharedStorage, StatusResponse};
 use adsb_data_engine::{
     extract_sbs_timestamp, parse_sbs_message, parse_sbs_raw_fields, AircraftPosition, RawSbsRecord,
+    StatusEvent, StatusEventStatus, StatusEventType,
 };
 use adsb_pulsar_client::forwarder::NoopForwarder;
 use adsb_pulsar_client::{ADSBFeedClient, Config, Metrics};
@@ -18,6 +19,31 @@ use tokio::sync::{broadcast, RwLock};
 use tokio::time::{interval, Duration, Instant};
 use tracing::{error, info, warn};
 
+/// Records status lifecycle events to DuckDB.
+///
+/// Non-fatal: failures are logged, never propagated. Wraps `SharedStorage`
+/// so it gracefully handles released/unavailable storage.
+#[derive(Clone)]
+pub(crate) struct StatusEventRecorder {
+    storage: SharedStorage,
+}
+
+impl StatusEventRecorder {
+    pub fn new(storage: SharedStorage) -> Self {
+        Self { storage }
+    }
+
+    /// Record a status event. Non-blocking, non-fatal.
+    pub async fn record(&self, event: StatusEvent) {
+        let guard = self.storage.read().await;
+        if let Some(ref s) = *guard {
+            if let Err(e) = s.insert_status_event(event).await {
+                warn!("Status event record failed: {e}");
+            }
+        }
+    }
+}
+
 /// Starts the feed client and background relay tasks.
 ///
 /// Returns a `FeedHandle` that can be used to stop the feed
@@ -28,6 +54,7 @@ pub fn start_feed(
     storage: SharedStorage,
     record_positions: Arc<AtomicBool>,
     record_raw: Arc<AtomicBool>,
+    recorder: StatusEventRecorder,
 ) -> Result<FeedHandle, String> {
     let test_mode = config.test_mode;
     let socket_read_timeout_secs = config.socket_read_timeout_secs;
@@ -66,6 +93,9 @@ pub fn start_feed(
     let app_for_metrics = app.clone();
     let app_for_watchdog = app.clone();
 
+    let recorder_client = recorder.clone();
+    let recorder_watchdog = recorder;
+
     // Task 1: Run the feed client
     let client_task = tokio::spawn(async move {
         // alive_tx is moved here: dropping this task drops alive_tx,
@@ -85,6 +115,12 @@ pub fn start_feed(
                 },
             },
         );
+        recorder_client
+            .record(StatusEvent::now(
+                StatusEventType::Feed,
+                StatusEventStatus::Connecting,
+            ))
+            .await;
 
         // Run client with shutdown signal
         tokio::select! {
@@ -92,9 +128,24 @@ pub fn start_feed(
                 match result {
                     Ok(()) => {
                         info!("Feed client stopped normally");
+                        recorder_client
+                            .record(StatusEvent::now(
+                                StatusEventType::Feed,
+                                StatusEventStatus::Stopped,
+                            ))
+                            .await;
                     }
                     Err(e) => {
                         error!("Feed client error: {}", e);
+                        recorder_client
+                            .record(
+                                StatusEvent::now(
+                                    StatusEventType::Feed,
+                                    StatusEventStatus::Error,
+                                )
+                                .with_detail(e.to_string()),
+                            )
+                            .await;
                         let _ = app_for_client.emit("adsb:error", serde_json::json!({
                             "message": e.to_string()
                         }));
@@ -118,6 +169,12 @@ pub fn start_feed(
                 pulsar_status: ConnectionStatus::Disconnected,
             },
         );
+        recorder_client
+            .record(StatusEvent::now(
+                StatusEventType::Socket,
+                StatusEventStatus::Disconnected,
+            ))
+            .await;
         // _alive_tx is dropped here, signaling background tasks to exit
     });
 
@@ -155,6 +212,7 @@ pub fn start_feed(
             test_mode,
             socket_read_timeout_secs,
             alive_rx_watchdog,
+            recorder_watchdog,
         )
         .await;
     });
@@ -524,6 +582,7 @@ async fn socket_watchdog(
     test_mode: bool,
     socket_read_timeout_secs: u64,
     mut alive_rx: tokio::sync::watch::Receiver<bool>,
+    recorder: StatusEventRecorder,
 ) {
     let degraded_threshold = Duration::from_secs(socket_read_timeout_secs + 10);
     let lost_threshold = Duration::from_secs(socket_read_timeout_secs + 30);
@@ -567,6 +626,23 @@ async fn socket_watchdog(
                         "Socket status: {:?} -> {:?} (no message for {:.0}s)",
                         current_status, new_status, elapsed.as_secs_f64()
                     );
+
+                    let event_status = match &new_status {
+                        ConnectionStatus::Connected => StatusEventStatus::Connected,
+                        ConnectionStatus::Degraded => StatusEventStatus::Degraded,
+                        ConnectionStatus::ConnectionLost => StatusEventStatus::ConnectionLost,
+                        _ => StatusEventStatus::Disconnected,
+                    };
+                    recorder
+                        .record(
+                            StatusEvent::now(StatusEventType::Socket, event_status)
+                                .with_detail(format!(
+                                    "no message for {:.0}s",
+                                    elapsed.as_secs_f64()
+                                )),
+                        )
+                        .await;
+
                     current_status = new_status.clone();
 
                     let status = StatusResponse {

@@ -9,8 +9,9 @@ use crate::sbs_parser::AircraftPosition;
 use crate::types::{
     AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, FlightSummary,
     FlightSummaryQuery, HourlyHeatmapCell, HourlyHeatmapQuery, ImportPreview, ImportResult,
-    PositionRecord, RawMessageQuery, RawSbsRecord, StorageConfig, StorageStats, TablePreview,
-    TimeDistributionBucket, TimeDistributionMetric, TimeDistributionQuery, TrajectoryQuery,
+    PositionRecord, RawMessageQuery, RawSbsRecord, StatusEvent, StatusEventQuery, StorageConfig,
+    StorageStats, TablePreview, TimeDistributionBucket, TimeDistributionMetric,
+    TimeDistributionQuery, TrajectoryQuery,
 };
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
@@ -116,6 +117,17 @@ const SCHEMA_SQL: &str = r#"
 
     CREATE INDEX IF NOT EXISTS idx_flights_hex ON flights (hex_ident);
     CREATE INDEX IF NOT EXISTS idx_flights_last_seen ON flights (last_seen_ms);
+
+    CREATE TABLE IF NOT EXISTS status_events (
+        timestamp_ms   BIGINT  NOT NULL,
+        event_type     TEXT    NOT NULL,
+        status         TEXT    NOT NULL,
+        detail         TEXT,
+        source_id      TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_status_events_ts ON status_events (timestamp_ms);
+    CREATE INDEX IF NOT EXISTS idx_status_events_type_ts ON status_events (event_type, timestamp_ms);
 "#;
 
 impl StorageHandle {
@@ -946,6 +958,10 @@ impl StorageHandle {
                 .conn
                 .query_row("SELECT COUNT(*) FROM flights", [], |row| row.get(0))?;
 
+        let status_event_count: i64 = storage
+            .conn
+            .query_row("SELECT COUNT(*) FROM status_events", [], |row| row.get(0))?;
+
         // DuckDB database_size() returns a human-readable string for file-backed DBs.
         // For in-memory DBs it returns '0 bytes'. We approximate with row count * avg row size.
         let positions_size = (row_count as u64).saturating_mul(128);
@@ -961,6 +977,7 @@ impl StorageHandle {
             raw_db_size_bytes: raw_size,
             flight_count: flight_count as u64,
             flight_size_bytes: flight_size,
+            status_event_count: status_event_count as u64,
         })
     }
 
@@ -1421,6 +1438,112 @@ impl StorageHandle {
         Ok(count as u64)
     }
 
+    // --- Status event methods ---
+
+    /// Insert a single status event (synchronous).
+    ///
+    /// If `event.source_id` is `None`, fills from the storage's configured `source_id`.
+    pub fn insert_status_event_sync(&self, event: &StatusEvent) -> Result<(), StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let source_id = event
+            .source_id
+            .as_deref()
+            .unwrap_or(&storage.source_id);
+
+        storage.conn.execute(
+            "INSERT INTO status_events (timestamp_ms, event_type, status, detail, source_id)
+             VALUES (?, ?, ?, ?, ?)",
+            params![
+                event.timestamp_ms,
+                event.event_type.to_string(),
+                event.status.to_string(),
+                event.detail,
+                source_id,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Query status events with optional filters (synchronous).
+    ///
+    /// Returns events in reverse chronological order (newest first).
+    /// Default limit is 500.
+    pub fn query_status_events_sync(
+        &self,
+        query: &StatusEventQuery,
+    ) -> Result<Vec<StatusEvent>, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let mut sql = String::from(
+            "SELECT timestamp_ms, event_type, status, detail, source_id FROM status_events",
+        );
+        let mut conditions = Vec::new();
+        let mut params_vec: Vec<Box<dyn duckdb::ToSql>> = Vec::new();
+
+        if let Some(start) = query.start_ms {
+            conditions.push("timestamp_ms >= ?");
+            params_vec.push(Box::new(start));
+        }
+        if let Some(end) = query.end_ms {
+            conditions.push("timestamp_ms <= ?");
+            params_vec.push(Box::new(end));
+        }
+        if let Some(ref et) = query.event_type {
+            conditions.push("event_type = ?");
+            params_vec.push(Box::new(et.to_string()));
+        }
+
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+
+        sql.push_str(" ORDER BY timestamp_ms DESC");
+
+        let limit = query.limit.unwrap_or(500);
+        sql.push_str(&format!(" LIMIT {limit}"));
+
+        let params_refs: Vec<&dyn duckdb::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = storage.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
+            let event_type_str: String = row.get(1)?;
+            let status_str: String = row.get(2)?;
+            Ok((
+                row.get::<_, i64>(0)?,
+                event_type_str,
+                status_str,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        })?;
+
+        let mut events = Vec::new();
+        for row in rows {
+            let (timestamp_ms, event_type_str, status_str, detail, source_id) = row?;
+            let event_type = event_type_str
+                .parse()
+                .map_err(|e: String| StorageError::Query(e))?;
+            let status = status_str
+                .parse()
+                .map_err(|e: String| StorageError::Query(e))?;
+            events.push(StatusEvent {
+                timestamp_ms,
+                event_type,
+                status,
+                detail,
+                source_id,
+            });
+        }
+        Ok(events)
+    }
+
     // --- Async wrappers (Step 3) ---
 
     /// Batch insert parsed positions (async via spawn_blocking).
@@ -1772,6 +1895,27 @@ impl StorageHandle {
     ) -> Result<ImportResult, StorageError> {
         let handle = self.clone();
         tokio::task::spawn_blocking(move || handle.import_database_sync(&path))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    // --- Status event async wrappers ---
+
+    /// Insert a single status event (async via spawn_blocking).
+    pub async fn insert_status_event(&self, event: StatusEvent) -> Result<(), StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.insert_status_event_sync(&event))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Query status events (async via spawn_blocking).
+    pub async fn query_status_events(
+        &self,
+        query: StatusEventQuery,
+    ) -> Result<Vec<StatusEvent>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.query_status_events_sync(&query))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
@@ -4299,5 +4443,204 @@ mod tests {
         let sector = active[0];
         assert_eq!(sector.flight_count, 2);
         assert_eq!(sector.position_count, 3);
+    }
+
+    // --- Status event tests ---
+
+    use crate::types::{StatusEventStatus, StatusEventType};
+
+    #[test]
+    fn test_status_event_now_timestamp() {
+        let before = chrono::Utc::now().timestamp_millis();
+        let event = StatusEvent::now(StatusEventType::Feed, StatusEventStatus::AppStart);
+        let after = chrono::Utc::now().timestamp_millis();
+        assert!(event.timestamp_ms >= before);
+        assert!(event.timestamp_ms <= after);
+        assert_eq!(event.event_type, StatusEventType::Feed);
+        assert_eq!(event.status, StatusEventStatus::AppStart);
+        assert!(event.detail.is_none());
+        assert!(event.source_id.is_none());
+    }
+
+    #[test]
+    fn test_status_event_builder_chain() {
+        let event = StatusEvent::now(StatusEventType::Socket, StatusEventStatus::Error)
+            .with_detail("connection refused")
+            .with_source_id("test-source");
+        assert_eq!(event.detail.as_deref(), Some("connection refused"));
+        assert_eq!(event.source_id.as_deref(), Some("test-source"));
+    }
+
+    #[test]
+    fn test_insert_and_query_status_event() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        let event = StatusEvent {
+            timestamp_ms: 1000,
+            event_type: StatusEventType::Feed,
+            status: StatusEventStatus::Started,
+            detail: Some("test detail".to_string()),
+            source_id: Some("my-source".to_string()),
+        };
+        handle.insert_status_event_sync(&event).unwrap();
+
+        let results = handle
+            .query_status_events_sync(&StatusEventQuery::default())
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].timestamp_ms, 1000);
+        assert_eq!(results[0].event_type, StatusEventType::Feed);
+        assert_eq!(results[0].status, StatusEventStatus::Started);
+        assert_eq!(results[0].detail.as_deref(), Some("test detail"));
+        assert_eq!(results[0].source_id.as_deref(), Some("my-source"));
+    }
+
+    #[test]
+    fn test_query_status_events_time_range() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        for ts in [1000, 2000, 3000] {
+            handle
+                .insert_status_event_sync(&StatusEvent {
+                    timestamp_ms: ts,
+                    event_type: StatusEventType::Socket,
+                    status: StatusEventStatus::Connected,
+                    detail: None,
+                    source_id: None,
+                })
+                .unwrap();
+        }
+
+        let results = handle
+            .query_status_events_sync(&StatusEventQuery {
+                start_ms: Some(1500),
+                end_ms: Some(2500),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].timestamp_ms, 2000);
+    }
+
+    #[test]
+    fn test_query_status_events_type_filter() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        handle
+            .insert_status_event_sync(&StatusEvent {
+                timestamp_ms: 1000,
+                event_type: StatusEventType::Feed,
+                status: StatusEventStatus::Started,
+                detail: None,
+                source_id: None,
+            })
+            .unwrap();
+        handle
+            .insert_status_event_sync(&StatusEvent {
+                timestamp_ms: 2000,
+                event_type: StatusEventType::Socket,
+                status: StatusEventStatus::Connected,
+                detail: None,
+                source_id: None,
+            })
+            .unwrap();
+        handle
+            .insert_status_event_sync(&StatusEvent {
+                timestamp_ms: 3000,
+                event_type: StatusEventType::Storage,
+                status: StatusEventStatus::Released,
+                detail: None,
+                source_id: None,
+            })
+            .unwrap();
+
+        let results = handle
+            .query_status_events_sync(&StatusEventQuery {
+                event_type: Some(StatusEventType::Socket),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].event_type, StatusEventType::Socket);
+    }
+
+    #[test]
+    fn test_query_status_events_limit() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        for i in 0..10 {
+            handle
+                .insert_status_event_sync(&StatusEvent {
+                    timestamp_ms: (i + 1) * 1000,
+                    event_type: StatusEventType::Feed,
+                    status: StatusEventStatus::Connected,
+                    detail: None,
+                    source_id: None,
+                })
+                .unwrap();
+        }
+
+        let results = handle
+            .query_status_events_sync(&StatusEventQuery {
+                limit: Some(3),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(results.len(), 3);
+        // DESC order: newest first
+        assert_eq!(results[0].timestamp_ms, 10000);
+        assert_eq!(results[1].timestamp_ms, 9000);
+        assert_eq!(results[2].timestamp_ms, 8000);
+    }
+
+    #[test]
+    fn test_query_status_events_empty() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let results = handle
+            .query_status_events_sync(&StatusEventQuery::default())
+            .unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_insert_status_event_auto_source_id() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        handle
+            .insert_status_event_sync(&StatusEvent {
+                timestamp_ms: 1000,
+                event_type: StatusEventType::Feed,
+                status: StatusEventStatus::AppStart,
+                detail: None,
+                source_id: None, // should auto-fill from config
+            })
+            .unwrap();
+
+        let results = handle
+            .query_status_events_sync(&StatusEventQuery::default())
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].source_id.as_deref(), Some("test"));
+    }
+
+    #[test]
+    fn test_status_event_count_in_stats() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        let stats = handle.get_stats_sync().unwrap();
+        assert_eq!(stats.status_event_count, 0);
+
+        handle
+            .insert_status_event_sync(&StatusEvent {
+                timestamp_ms: 1000,
+                event_type: StatusEventType::Feed,
+                status: StatusEventStatus::AppStart,
+                detail: None,
+                source_id: None,
+            })
+            .unwrap();
+
+        let stats = handle.get_stats_sync().unwrap();
+        assert_eq!(stats.status_event_count, 1);
     }
 }

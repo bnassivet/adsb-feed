@@ -17,6 +17,8 @@ import type {
   RawMessageQuery,
   RawSbsRecord,
   RecordingState,
+  StatusEvent,
+  StatusEventQuery,
   StatusResponse,
   StorageAvailability,
   StorageStats,
@@ -185,4 +187,12 @@ export async function importDatabase(path: string): Promise<ImportResult> {
 
 export async function swapDatabase(): Promise<string> {
   return invoke("swap_database");
+}
+
+// --- Status timeline commands ---
+
+export async function getStatusTimeline(
+  query: StatusEventQuery
+): Promise<StatusEvent[]> {
+  return invoke("get_status_timeline", { query });
 }

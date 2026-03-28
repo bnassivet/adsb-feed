@@ -8,7 +8,7 @@ mod bridge;
 mod commands;
 mod state;
 
-use adsb_data_engine::{StorageConfig, StorageHandle};
+use adsb_data_engine::{StatusEvent, StatusEventStatus, StatusEventType, StorageConfig, StorageHandle};
 use adsb_pulsar_client::Config;
 use state::AppState;
 use tauri::Manager;
@@ -76,6 +76,7 @@ pub fn run() {
             commands::preview_import_database,
             commands::import_database,
             commands::swap_database,
+            commands::get_status_timeline,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -140,6 +141,10 @@ fn init_storage(app: &tauri::App) -> (Option<StorageHandle>, Option<StorageConfi
     match StorageHandle::open(config.clone()) {
         Ok(handle) => {
             info!("Storage initialized: {}", db_path.display());
+            let _ = handle.insert_status_event_sync(&StatusEvent::now(
+                StatusEventType::Feed,
+                StatusEventStatus::AppStart,
+            ));
             (Some(handle), Some(config))
         }
         Err(e) => {

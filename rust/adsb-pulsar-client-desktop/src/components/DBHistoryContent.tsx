@@ -8,6 +8,7 @@ import { useDisplayTz } from "@/hooks/useDisplayTz";
 import { formatBytes } from "@/lib/format";
 import { granularityToNumBuckets } from "@/lib/db-history-analytics";
 import { DBHistoryAnalytics } from "./DBHistoryAnalytics";
+import { StatusTimeline } from "./StatusTimeline";
 import { browseReducer, initialBrowseState } from "@/lib/browse-reducer";
 
 interface Props {
@@ -521,6 +522,17 @@ export function DBHistoryContent({
               flightSummaries={flightSummaries}
             />
           )}
+
+          {/* Status Timeline — lazy-loaded on expand */}
+          <details className="group" data-testid="dbhist-status-timeline">
+            <summary className="flex items-center gap-1.5 cursor-pointer select-none text-xs font-semibold text-slate-400 list-none [&::-webkit-details-marker]:hidden">
+              <span className="text-[10px] transition-transform duration-150 group-open:rotate-90">▶</span>
+              Status Timeline
+            </summary>
+            <div className="mt-1">
+              <StatusTimeline />
+            </div>
+          </details>
 
         </div>
       )}

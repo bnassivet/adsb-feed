@@ -61,6 +61,7 @@ pub struct StorageStats {
     pub raw_db_size_bytes: u64,
     pub flight_count: u64,
     pub flight_size_bytes: u64,
+    pub status_event_count: u64,
 }
 
 /// A single raw SBS-1 message stored for audit/replay purposes.
@@ -213,6 +214,138 @@ pub struct FlightSummary {
 pub struct FlightSummaryQuery {
     pub start_ms: Option<i64>,
     pub end_ms: Option<i64>,
+}
+
+/// Category of status event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StatusEventType {
+    Feed,
+    Socket,
+    Pulsar,
+    Storage,
+}
+
+impl std::fmt::Display for StatusEventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Feed => write!(f, "feed"),
+            Self::Socket => write!(f, "socket"),
+            Self::Pulsar => write!(f, "pulsar"),
+            Self::Storage => write!(f, "storage"),
+        }
+    }
+}
+
+/// Status value within a status event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StatusEventStatus {
+    AppStart,
+    Started,
+    Stopped,
+    Connecting,
+    Connected,
+    Degraded,
+    ConnectionLost,
+    Disconnected,
+    Released,
+    Reclaimed,
+    Error,
+}
+
+impl std::fmt::Display for StatusEventStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AppStart => write!(f, "AppStart"),
+            Self::Started => write!(f, "Started"),
+            Self::Stopped => write!(f, "Stopped"),
+            Self::Connecting => write!(f, "Connecting"),
+            Self::Connected => write!(f, "Connected"),
+            Self::Degraded => write!(f, "Degraded"),
+            Self::ConnectionLost => write!(f, "ConnectionLost"),
+            Self::Disconnected => write!(f, "Disconnected"),
+            Self::Released => write!(f, "Released"),
+            Self::Reclaimed => write!(f, "Reclaimed"),
+            Self::Error => write!(f, "Error"),
+        }
+    }
+}
+
+impl std::str::FromStr for StatusEventStatus {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "AppStart" => Ok(Self::AppStart),
+            "Started" => Ok(Self::Started),
+            "Stopped" => Ok(Self::Stopped),
+            "Connecting" => Ok(Self::Connecting),
+            "Connected" => Ok(Self::Connected),
+            "Degraded" => Ok(Self::Degraded),
+            "ConnectionLost" => Ok(Self::ConnectionLost),
+            "Disconnected" => Ok(Self::Disconnected),
+            "Released" => Ok(Self::Released),
+            "Reclaimed" => Ok(Self::Reclaimed),
+            "Error" => Ok(Self::Error),
+            other => Err(format!("unknown StatusEventStatus: {other}")),
+        }
+    }
+}
+
+impl std::str::FromStr for StatusEventType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "feed" => Ok(Self::Feed),
+            "socket" => Ok(Self::Socket),
+            "pulsar" => Ok(Self::Pulsar),
+            "storage" => Ok(Self::Storage),
+            other => Err(format!("unknown StatusEventType: {other}")),
+        }
+    }
+}
+
+/// A status lifecycle event for the audit trail.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusEvent {
+    pub timestamp_ms: i64,
+    pub event_type: StatusEventType,
+    pub status: StatusEventStatus,
+    pub detail: Option<String>,
+    pub source_id: Option<String>,
+}
+
+impl StatusEvent {
+    /// Create a new event with the current UTC timestamp.
+    pub fn now(event_type: StatusEventType, status: StatusEventStatus) -> Self {
+        Self {
+            timestamp_ms: chrono::Utc::now().timestamp_millis(),
+            event_type,
+            status,
+            detail: None,
+            source_id: None,
+        }
+    }
+
+    /// Builder: attach a detail string.
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
+    /// Builder: attach a source_id.
+    pub fn with_source_id(mut self, id: impl Into<String>) -> Self {
+        self.source_id = Some(id.into());
+        self
+    }
+}
+
+/// Query parameters for status event retrieval.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StatusEventQuery {
+    pub start_ms: Option<i64>,
+    pub end_ms: Option<i64>,
+    pub event_type: Option<StatusEventType>,
+    pub limit: Option<usize>,
 }
 
 /// Configuration for opening a storage handle.

@@ -1300,6 +1300,20 @@ graph TD
     commands::get_hourly_heatmap,
     commands::get_raw_messages,
     commands::get_raw_messages_arrow,
+    commands::get_raw_message_count,
+    // Recording state commands:
+    commands::get_recording_state,
+    commands::set_recording_state,
+    // Storage management commands:
+    commands::get_storage_status,
+    commands::release_storage,
+    commands::reclaim_storage,
+    commands::export_database,
+    commands::preview_import_database,
+    commands::import_database,
+    commands::swap_database,
+    // Status timeline:
+    commands::get_status_timeline,
 ])
 ```
 
@@ -1310,8 +1324,15 @@ fn init_storage(app: &tauri::App) -> Option<StorageHandle> {
     match StorageHandle::open(StorageConfig {
         db_path: Some(db_path),
         source_id: "desktop".to_string(),
+        gap_threshold_ms: 3_600_000,
     }) {
-        Ok(handle) => Some(handle),
+        Ok(handle) => {
+            // Record AppStart event for audit trail
+            let _ = handle.insert_status_event_sync(&StatusEvent::now(
+                StatusEventType::Feed, StatusEventStatus::AppStart,
+            ));
+            Some(handle)
+        },
         Err(e) => {
             warn!("Storage init failed: {e}");
             None  // App continues in real-time-only mode
@@ -1456,6 +1477,22 @@ All query commands below:
 - INSERTs with dedup: `WHERE NOT EXISTS` anti-join on `(hex_ident, timestamp_ms)` for positions, `(hex_ident, timestamp_ms, raw_message)` for raw_messages
 - Returns count of newly imported rows per table
 - Always DETACHes even on error
+
+##### Status Timeline Commands
+
+##### `get_status_timeline(query: StatusEventQuery) -> Result<Vec<StatusEvent>, String>`
+- Queries persistent status events from DuckDB `status_events` table
+- Supports optional filters: `start_ms`, `end_ms`, `event_type`, `limit` (default 500)
+- Results sorted by `timestamp_ms DESC` (newest first)
+- Used by `StatusTimeline` component in DB History panel
+
+##### Lifecycle Event Recording
+
+Several commands record status events via `StatusEventRecorder`:
+- `start_feed`: records `Feed`/`Started` after spawning the feed
+- `stop_feed`: records `Feed`/`Stopped` after emitting stopped status
+- `release_storage`: records `Storage`/`Released` before checkpoint and drop
+- `reclaim_storage`: records `Storage`/`Reclaimed` after reopening
 
 **File**: `src-tauri/src/commands.rs`
 
@@ -1606,6 +1643,20 @@ The `adsb:metrics` event emits a `DesktopMetrics` struct that flattens the core 
 - `messages_received` (from core): all TCP lines including heartbeats
 - `messages_parsed` (bridge-level): SBS-1 messages successfully parsed into `AircraftPosition`
 - `reconnection_attempts` (from core): TCP reconnection count since start
+
+**Status Event Recording** (`StatusEventRecorder`):
+
+A thin wrapper that records lifecycle events to DuckDB — non-fatal, non-blocking:
+```rust
+#[derive(Clone)]
+pub(crate) struct StatusEventRecorder {
+    storage: SharedStorage,
+}
+```
+- `record(event)` — read-locks storage, inserts event; failures logged with `warn!`, never propagated
+- Cloned into `client_task` and `socket_watchdog` — cheap (Arc<RwLock> clone)
+- Records on **transitions only** (not heartbeats): Connecting, Error, Stopped, Disconnected (client_task); Connected, Degraded, ConnectionLost (watchdog)
+- Watchdog events include detail string: `"no message for {elapsed}s"`
 
 **Shutdown Mechanism**:
 - Uses `tokio::sync::oneshot` channel to signal shutdown
@@ -2434,7 +2485,7 @@ The two systems are complementary:
 
 **Database**: `StorageHandle` wraps an `Arc<Mutex<Connection>>` (thread-safe DuckDB connection).
 
-**Schema** (two tables: merged positions + raw messages):
+**Schema** (four tables: merged positions, raw messages, flights, status events):
 
 ```sql
 -- Merged positions: one row per aircraft per 500ms flush window
@@ -2466,7 +2517,20 @@ CREATE TABLE raw_messages (
 );
 CREATE INDEX idx_raw_msgs_ts     ON raw_messages(timestamp_ms);
 CREATE INDEX idx_raw_msgs_hex_ts ON raw_messages(hex_ident, timestamp_ms);
+
+-- Status events: connection/feed/storage lifecycle audit trail
+CREATE TABLE status_events (
+    timestamp_ms   BIGINT  NOT NULL,
+    event_type     TEXT    NOT NULL,  -- "feed", "socket", "pulsar", "storage"
+    status         TEXT    NOT NULL,  -- "AppStart", "Connected", "Error", etc.
+    detail         TEXT,
+    source_id      TEXT
+);
+CREATE INDEX idx_status_events_ts      ON status_events(timestamp_ms);
+CREATE INDEX idx_status_events_type_ts ON status_events(event_type, timestamp_ms);
 ```
+
+The `status_events` table records connection and feed lifecycle events for audit purposes. Events are inserted via `StatusEventRecorder` (non-fatal). This table is **excluded from export/import** — status events are instance-local audit data. See [Status Event Audit Trail](#status-event-audit-trail) for full details.
 
 The `raw_messages` table stores every valid MSG line at full granularity (hybrid format: raw CSV line + indexed key columns). It grows ~50x faster than `positions` since positions are merged per-aircraft per flush window. Both tables are pruned together by `prune(older_than_ms)`.
 
@@ -2490,6 +2554,8 @@ The `raw_messages` table stores every valid MSG line at full granularity (hybrid
 | `get_detection_range` | `DetectionRangeQuery` | `Vec<DetectionRangeSector>` | Max detection distance per 10-degree azimuth sector |
 | `query_raw_messages` | `RawMessageQuery` | `Vec<RawSbsRecord>` | Raw SBS lines by hex_ident + time range (limit 10k) |
 | `get_raw_messages_arrow` | `RawMessageQuery` | `Vec<u8>` (IPC) | Same as `query_raw_messages` but returns Arrow IPC bytes |
+| `insert_status_event` | `StatusEvent` | — | Persist a single status lifecycle event (low-frequency `execute`, not Appender) |
+| `query_status_events` | `StatusEventQuery` | `Vec<StatusEvent>` | Query events with optional time/type filters, DESC order, default limit 500 |
 | `prune` | `older_than_ms` | deleted row count | Delete old data from both tables |
 | `checkpoint` | — | — | Flush WAL to disk (call before releasing connection) |
 | `export_database` | `PathBuf` | — | Copy DB to target path via ATTACH + CREATE TABLE AS (non-blocking to recording) |
@@ -2787,6 +2853,109 @@ Tauri's WKWebView on macOS has a bug where controlled React inputs (`value + onC
 - `src/contexts/AircraftTrackingContext.tsx` — `dbHistoryRef`, `loadDbHistoryTracks`, `clearDbHistory`, `analysisRef`, `addAnalysisTracks`, `removeAnalysisTrack`, `clearAnalysis`
 - `src/hooks/useAircraftTracks.ts` — Exposes `dbHistory` array (unfiltered) + `analysis` array (filtered)
 - `src/app/page.tsx` — 10 localStorage state variables, header toggle, dual-mode rendering, mode-conditional props
+
+---
+
+## Status Event Audit Trail
+
+### Overview
+
+The application records connection and feed lifecycle events to a DuckDB `status_events` table for persistent audit purposes. This provides a historical timeline of app starts, feed starts/stops, connection state changes, storage release/reclaim, and errors — surviving app restarts.
+
+### Architecture
+
+```
+[bridge.rs — client_task, socket_watchdog]
+        ↓ (on transitions only)
+  StatusEventRecorder.record(event)
+        ↓ (read-lock SharedStorage)
+  StorageHandle.insert_status_event(event)
+        ↓
+  DuckDB: status_events table
+        ↓
+  get_status_timeline Tauri command
+        ↓
+  StatusTimeline React component (DB History panel)
+```
+
+**`StatusEventRecorder`** is a thin wrapper around `SharedStorage`:
+- Non-fatal: failures are logged with `warn!`, never propagated
+- Non-blocking: read-locks storage, uses async `insert_status_event`
+- Cheap to clone (Arc<RwLock> internals) — cloned into background tasks
+
+### Instrumented Events
+
+| Source | Event Type | Status | When |
+|--------|-----------|--------|------|
+| `lib.rs` init | Feed | AppStart | App launches with storage available |
+| `commands.rs` | Feed | Started | User clicks Start |
+| `bridge.rs` client_task | Feed | Connecting | Feed client starting |
+| `bridge.rs` watchdog | Socket | Connected | First message received |
+| `bridge.rs` watchdog | Socket | Degraded | No message for `read_timeout + 10s` |
+| `bridge.rs` watchdog | Socket | ConnectionLost | No message for `read_timeout + 30s` |
+| `bridge.rs` client_task | Feed | Error | Fatal error (with detail) |
+| `bridge.rs` client_task | Feed | Stopped | Client task exits normally |
+| `commands.rs` | Feed | Stopped | User clicks Stop |
+| `bridge.rs` client_task | Socket | Disconnected | Final state on exit |
+| `commands.rs` | Storage | Released | User releases DB |
+| `commands.rs` | Storage | Reclaimed | User reclaims DB |
+
+### Schema
+
+Enum types (`StatusEventType`, `StatusEventStatus`) provide compile-time safety. They serialize to strings via `Display`/`FromStr` for DuckDB TEXT columns and JSON frontend consumption.
+
+```rust
+pub enum StatusEventType { Feed, Socket, Pulsar, Storage }
+pub enum StatusEventStatus {
+    AppStart, Started, Stopped, Connecting, Connected,
+    Degraded, ConnectionLost, Disconnected, Released, Reclaimed, Error,
+}
+
+pub struct StatusEvent {
+    pub timestamp_ms: i64,
+    pub event_type: StatusEventType,
+    pub status: StatusEventStatus,
+    pub detail: Option<String>,
+    pub source_id: Option<String>,
+}
+```
+
+Builder API: `StatusEvent::now(type, status).with_detail("...").with_source_id("...")`
+
+### Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| `StatusEventRecorder` not observer pattern | One consumer (DuckDB). Refactor to observer when second consumer appears — `record()` call sites become `emit()` with no other changes |
+| Enums for `event_type` and `status` | Compile-time safety, no typos. Serde serializes to strings for DuckDB/JSON |
+| `execute` not Appender | Low-frequency single inserts (a few per session) |
+| Non-fatal persistence | Recorder failure must never block feed operation |
+| No heartbeat persistence | Would bloat table with ~1440 redundant "Connected" rows/day |
+| Excluded from export/import | Status events are instance-local audit data, not flight data |
+| Recorder cloned into tasks | Cheap (Arc clone), same pattern as existing SharedStorage cloning |
+
+### Frontend
+
+`StatusTimeline` component in the DB History panel:
+- Collapsible `<details>` section, lazy-loaded on expand
+- Vertical timeline with color-coded dots per status (green/red/orange/yellow/gray/blue)
+- Duration between consecutive events displayed
+- Filter pill buttons: All / Feed / Socket / Pulsar / Storage
+- Scrollable container (max 200 events), empty state message
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `adsb-data-engine/src/types.rs` | `StatusEvent`, `StatusEventType`, `StatusEventStatus`, `StatusEventQuery` enums and structs |
+| `adsb-data-engine/src/storage.rs` | `status_events` table schema, `insert_status_event_sync`, `query_status_events_sync`, async wrappers |
+| `src-tauri/src/bridge.rs` | `StatusEventRecorder` struct, instrumentation of client_task and socket_watchdog |
+| `src-tauri/src/commands.rs` | `get_status_timeline` command, lifecycle recording in start/stop/release/reclaim |
+| `src-tauri/src/lib.rs` | AppStart recording in `init_storage`, command registration |
+| `src/lib/types.ts` | TypeScript types: `StatusEvent`, `StatusEventType`, `StatusEventStatus`, `StatusEventQuery` |
+| `src/lib/commands.ts` | `getStatusTimeline` invoke wrapper |
+| `src/components/StatusTimeline.tsx` | Timeline component with filtering and color-coded dots |
+| `src/components/__tests__/StatusTimeline.test.tsx` | 11 tests (rendering, filtering, duration, colors) |
 
 ---
 
@@ -3371,4 +3540,4 @@ This design prioritizes developer experience (hot reload, TypeScript, TDD), user
 
 ---
 
-*Last updated: March 2026 — Added Arrow IPC query pipeline (4 Arrow commands: flight summary, batch trajectory, bbox, raw messages), `write_arrow_ipc` shared helper, `arrow-utils.ts` converters, `useReducer` state batching in DB History, `@tanstack/react-virtual` flight list virtualization, unified single/batch trajectory loading. Previous: storage management (release/reclaim/export/swap/import), section-aware track visibility, analysis mode, config persistence, `adsb-data-engine` workspace crate, DB History panel (docked/floating).*
+*Last updated: March 2026 — Added status event audit trail (`status_events` DuckDB table, `StatusEventRecorder` in bridge.rs, `get_status_timeline` command, `StatusTimeline` component with color-coded timeline and filter pills). Previous: Arrow IPC query pipeline, `write_arrow_ipc` shared helper, `arrow-utils.ts` converters, `useReducer` state batching in DB History, `@tanstack/react-virtual` flight list virtualization, storage management (release/reclaim/export/swap/import), section-aware track visibility, analysis mode, config persistence, `adsb-data-engine` workspace crate, DB History panel (docked/floating).*
