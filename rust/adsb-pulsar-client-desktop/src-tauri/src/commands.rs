@@ -7,11 +7,11 @@ use crate::state::{
     AppState, ConnectionStatus, RecordingState, StatusResponse, StorageAvailability,
 };
 use adsb_data_engine::{
-    AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, FlightSummary,
-    FlightSummaryQuery, HourlyHeatmapCell, HourlyHeatmapQuery, ImportPreview, ImportResult,
-    PositionRecord, RawMessageQuery, RawSbsRecord, StatusEvent, StatusEventQuery,
-    StatusEventStatus, StatusEventType, StorageHandle, StorageStats, TimeDistributionBucket,
-    TimeDistributionQuery, TrajectoryQuery,
+    AircraftSummary, BboxQuery, CreateEventOfInterest, DetectionRangeQuery, DetectionRangeSector,
+    EventOfInterest, EventOfInterestQuery, FlightSummary, FlightSummaryQuery, HourlyHeatmapCell,
+    HourlyHeatmapQuery, ImportPreview, ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord,
+    StatusEvent, StatusEventQuery, StatusEventStatus, StatusEventType, StorageHandle, StorageStats,
+    TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery, UpdateEventOfInterest,
 };
 use adsb_pulsar_client::{Config, MetricsSnapshot};
 use std::sync::atomic::Ordering;
@@ -696,4 +696,81 @@ pub async fn import_database(
         .import_database(path)
         .await
         .map_err(|e| format!("Import failed: {e}"))
+}
+
+// --- Events of interest commands ---
+
+#[tauri::command]
+pub async fn create_event_of_interest(
+    event: CreateEventOfInterest,
+    state: State<'_, AppState>,
+) -> Result<EventOfInterest, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .insert_event_of_interest(event)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_events_of_interest(
+    query: EventOfInterestQuery,
+    state: State<'_, AppState>,
+) -> Result<Vec<EventOfInterest>, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .query_events_of_interest(query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_event_of_interest(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<EventOfInterest, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .get_event_of_interest(id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_event_of_interest(
+    event: UpdateEventOfInterest,
+    state: State<'_, AppState>,
+) -> Result<EventOfInterest, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .update_event_of_interest(event)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_event_of_interest(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .delete_event_of_interest(id)
+        .await
+        .map_err(|e| e.to_string())
 }

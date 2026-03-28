@@ -131,6 +131,25 @@ export type DensityTooltipMode = "compact" | "extended";
 /** How trajectory positions are colored: by each position's altitude or the track's latest altitude. */
 export type AltitudeColorMode = "plot" | "track";
 
+export type EventFilterMode = "all" | "upcoming" | "range";
+
+/** Result of a map location pick (point click or area two-click drawing). */
+export type MapPickResult =
+  | { type: "point"; lat: number; lng: number }
+  | { type: "area"; north: number; south: number; east: number; west: number };
+
+/** Computes a bounding box from two arbitrary corner points. */
+export function cornersToBox(
+  lat1: number, lng1: number, lat2: number, lng2: number,
+): { north: number; south: number; east: number; west: number } {
+  return {
+    north: Math.max(lat1, lat2),
+    south: Math.min(lat1, lat2),
+    east: Math.max(lng1, lng2),
+    west: Math.min(lng1, lng2),
+  };
+}
+
 /** Which view mode the dashboard is in: live monitoring or historical analysis. */
 export type ActiveMode = "live" | "analysis";
 
@@ -371,6 +390,71 @@ export interface StatusEventQuery {
   start_ms?: number | null;
   end_ms?: number | null;
   event_type?: StatusEventType | null;
+  limit?: number | null;
+}
+
+// --- Events of Interest ---
+
+export interface EventOfInterest {
+  id: string;
+  title: string;
+  description: string;
+  timestamp_ms: number;
+  end_timestamp_ms: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  bbox_north: number | null;
+  bbox_south: number | null;
+  bbox_east: number | null;
+  bbox_west: number | null;
+  source: string;
+  category: string | null;
+  metadata: string | null;
+  linked_hex_idents: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CreateEventOfInterest {
+  title: string;
+  description: string;
+  timestamp_ms: number;
+  end_timestamp_ms?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  bbox_north?: number | null;
+  bbox_south?: number | null;
+  bbox_east?: number | null;
+  bbox_west?: number | null;
+  source?: string | null;
+  category?: string | null;
+  metadata?: string | null;
+  linked_hex_idents?: string | null;
+}
+
+export interface UpdateEventOfInterest {
+  id: string;
+  title: string;
+  description: string;
+  timestamp_ms: number;
+  end_timestamp_ms?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  bbox_north?: number | null;
+  bbox_south?: number | null;
+  bbox_east?: number | null;
+  bbox_west?: number | null;
+  source?: string | null;
+  category?: string | null;
+  metadata?: string | null;
+  linked_hex_idents?: string | null;
+}
+
+export interface EventOfInterestQuery {
+  start_ms?: number | null;
+  end_ms?: number | null;
+  source?: string | null;
+  category?: string | null;
   limit?: number | null;
 }
 

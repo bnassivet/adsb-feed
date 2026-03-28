@@ -7,11 +7,12 @@
 use crate::error::StorageError;
 use crate::sbs_parser::AircraftPosition;
 use crate::types::{
-    AircraftSummary, BboxQuery, DetectionRangeQuery, DetectionRangeSector, FlightSummary,
-    FlightSummaryQuery, HourlyHeatmapCell, HourlyHeatmapQuery, ImportPreview, ImportResult,
-    PositionRecord, RawMessageQuery, RawSbsRecord, StatusEvent, StatusEventQuery, StorageConfig,
-    StorageStats, TablePreview, TimeDistributionBucket, TimeDistributionMetric,
-    TimeDistributionQuery, TrajectoryQuery,
+    AircraftSummary, BboxQuery, CreateEventOfInterest, DetectionRangeQuery, DetectionRangeSector,
+    EventOfInterest, EventOfInterestQuery, FlightSummary, FlightSummaryQuery, HourlyHeatmapCell,
+    HourlyHeatmapQuery, ImportPreview, ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord,
+    StatusEvent, StatusEventQuery, StorageConfig, StorageStats, TablePreview,
+    TimeDistributionBucket, TimeDistributionMetric, TimeDistributionQuery, TrajectoryQuery,
+    UpdateEventOfInterest,
 };
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
@@ -128,6 +129,31 @@ const SCHEMA_SQL: &str = r#"
 
     CREATE INDEX IF NOT EXISTS idx_status_events_ts ON status_events (timestamp_ms);
     CREATE INDEX IF NOT EXISTS idx_status_events_type_ts ON status_events (event_type, timestamp_ms);
+
+    CREATE TABLE IF NOT EXISTS events_of_interest (
+        id                  TEXT    PRIMARY KEY,
+        title               TEXT    NOT NULL,
+        description         TEXT    NOT NULL,
+        timestamp_ms        BIGINT  NOT NULL,
+        end_timestamp_ms    BIGINT,
+        latitude            DOUBLE,
+        longitude           DOUBLE,
+        bbox_north          DOUBLE,
+        bbox_south          DOUBLE,
+        bbox_east           DOUBLE,
+        bbox_west           DOUBLE,
+        source              TEXT    NOT NULL DEFAULT 'user',
+        category            TEXT,
+        metadata            TEXT,
+        linked_hex_idents   TEXT,
+        created_at_ms       BIGINT  NOT NULL,
+        updated_at_ms       BIGINT  NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_eoi_ts ON events_of_interest (timestamp_ms);
+    CREATE INDEX IF NOT EXISTS idx_eoi_created ON events_of_interest (created_at_ms);
+    CREATE INDEX IF NOT EXISTS idx_eoi_source ON events_of_interest (source);
+    CREATE INDEX IF NOT EXISTS idx_eoi_category ON events_of_interest (category);
 "#;
 
 impl StorageHandle {
@@ -962,6 +988,12 @@ impl StorageHandle {
             .conn
             .query_row("SELECT COUNT(*) FROM status_events", [], |row| row.get(0))?;
 
+        let eoi_count: i64 = storage.conn.query_row(
+            "SELECT COUNT(*) FROM events_of_interest",
+            [],
+            |row| row.get(0),
+        )?;
+
         // DuckDB database_size() returns a human-readable string for file-backed DBs.
         // For in-memory DBs it returns '0 bytes'. We approximate with row count * avg row size.
         let positions_size = (row_count as u64).saturating_mul(128);
@@ -978,6 +1010,7 @@ impl StorageHandle {
             flight_count: flight_count as u64,
             flight_size_bytes: flight_size,
             status_event_count: status_event_count as u64,
+            event_of_interest_count: eoi_count as u64,
         })
     }
 
@@ -1544,6 +1577,278 @@ impl StorageHandle {
         Ok(events)
     }
 
+    // --- Events of interest CRUD (synchronous) ---
+
+    /// Insert a new event of interest (synchronous).
+    ///
+    /// Generates a UUID and sets created_at/updated_at to now.
+    /// Returns the created event with all generated fields populated.
+    pub fn insert_event_of_interest_sync(
+        &self,
+        event: &CreateEventOfInterest,
+    ) -> Result<EventOfInterest, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+        let source = event.source.as_deref().unwrap_or("user");
+
+        storage.conn.execute(
+            "INSERT INTO events_of_interest
+             (id, title, description, timestamp_ms, end_timestamp_ms,
+              latitude, longitude, bbox_north, bbox_south, bbox_east, bbox_west,
+              source, category, metadata, linked_hex_idents,
+              created_at_ms, updated_at_ms)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                id,
+                event.title,
+                event.description,
+                event.timestamp_ms,
+                event.end_timestamp_ms,
+                event.latitude,
+                event.longitude,
+                event.bbox_north,
+                event.bbox_south,
+                event.bbox_east,
+                event.bbox_west,
+                source,
+                event.category,
+                event.metadata,
+                event.linked_hex_idents,
+                now,
+                now,
+            ],
+        )?;
+
+        Ok(EventOfInterest {
+            id,
+            title: event.title.clone(),
+            description: event.description.clone(),
+            timestamp_ms: event.timestamp_ms,
+            end_timestamp_ms: event.end_timestamp_ms,
+            latitude: event.latitude,
+            longitude: event.longitude,
+            bbox_north: event.bbox_north,
+            bbox_south: event.bbox_south,
+            bbox_east: event.bbox_east,
+            bbox_west: event.bbox_west,
+            source: source.to_string(),
+            category: event.category.clone(),
+            metadata: event.metadata.clone(),
+            linked_hex_idents: event.linked_hex_idents.clone(),
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+    }
+
+    /// Query events of interest with optional filters (synchronous).
+    ///
+    /// Returns events in reverse chronological order (newest created first).
+    /// Default limit is 500.
+    pub fn query_events_of_interest_sync(
+        &self,
+        query: &EventOfInterestQuery,
+    ) -> Result<Vec<EventOfInterest>, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let mut sql = String::from(
+            "SELECT id, title, description, timestamp_ms, end_timestamp_ms,
+                    latitude, longitude, bbox_north, bbox_south, bbox_east, bbox_west,
+                    source, category, metadata, linked_hex_idents,
+                    created_at_ms, updated_at_ms
+             FROM events_of_interest",
+        );
+        let mut conditions = Vec::new();
+        let mut params_vec: Vec<Box<dyn duckdb::ToSql>> = Vec::new();
+
+        if let Some(start) = query.start_ms {
+            conditions.push("timestamp_ms >= ?");
+            params_vec.push(Box::new(start));
+        }
+        if let Some(end) = query.end_ms {
+            conditions.push("timestamp_ms <= ?");
+            params_vec.push(Box::new(end));
+        }
+        if let Some(ref source) = query.source {
+            conditions.push("source = ?");
+            params_vec.push(Box::new(source.clone()));
+        }
+        if let Some(ref category) = query.category {
+            conditions.push("category = ?");
+            params_vec.push(Box::new(category.clone()));
+        }
+
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+
+        sql.push_str(" ORDER BY created_at_ms DESC");
+
+        let limit = query.limit.unwrap_or(500);
+        sql.push_str(&format!(" LIMIT {limit}"));
+
+        let params_refs: Vec<&dyn duckdb::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = storage.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
+            Ok(EventOfInterest {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                description: row.get(2)?,
+                timestamp_ms: row.get(3)?,
+                end_timestamp_ms: row.get(4)?,
+                latitude: row.get(5)?,
+                longitude: row.get(6)?,
+                bbox_north: row.get(7)?,
+                bbox_south: row.get(8)?,
+                bbox_east: row.get(9)?,
+                bbox_west: row.get(10)?,
+                source: row.get(11)?,
+                category: row.get(12)?,
+                metadata: row.get(13)?,
+                linked_hex_idents: row.get(14)?,
+                created_at_ms: row.get(15)?,
+                updated_at_ms: row.get(16)?,
+            })
+        })?;
+
+        let mut events = Vec::new();
+        for row in rows {
+            events.push(row?);
+        }
+        Ok(events)
+    }
+
+    /// Get a single event of interest by ID (synchronous).
+    pub fn get_event_of_interest_sync(
+        &self,
+        id: &str,
+    ) -> Result<EventOfInterest, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        storage
+            .conn
+            .query_row(
+                "SELECT id, title, description, timestamp_ms, end_timestamp_ms,
+                        latitude, longitude, bbox_north, bbox_south, bbox_east, bbox_west,
+                        source, category, metadata, linked_hex_idents,
+                        created_at_ms, updated_at_ms
+                 FROM events_of_interest WHERE id = ?",
+                params![id],
+                |row| {
+                    Ok(EventOfInterest {
+                        id: row.get(0)?,
+                        title: row.get(1)?,
+                        description: row.get(2)?,
+                        timestamp_ms: row.get(3)?,
+                        end_timestamp_ms: row.get(4)?,
+                        latitude: row.get(5)?,
+                        longitude: row.get(6)?,
+                        bbox_north: row.get(7)?,
+                        bbox_south: row.get(8)?,
+                        bbox_east: row.get(9)?,
+                        bbox_west: row.get(10)?,
+                        source: row.get(11)?,
+                        category: row.get(12)?,
+                        metadata: row.get(13)?,
+                        linked_hex_idents: row.get(14)?,
+                        created_at_ms: row.get(15)?,
+                        updated_at_ms: row.get(16)?,
+                    })
+                },
+            )
+            .map_err(|e| match e {
+                duckdb::Error::QueryReturnedNoRows => {
+                    StorageError::Query(format!("Event not found: {id}"))
+                }
+                other => StorageError::DuckDb(other),
+            })
+    }
+
+    /// Update an existing event of interest (synchronous).
+    ///
+    /// All fields are replaced. Returns the updated event.
+    pub fn update_event_of_interest_sync(
+        &self,
+        event: &UpdateEventOfInterest,
+    ) -> Result<EventOfInterest, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let source = event.source.as_deref().unwrap_or("user");
+
+        let rows_affected = storage.conn.execute(
+            "UPDATE events_of_interest SET
+                title = ?, description = ?, timestamp_ms = ?, end_timestamp_ms = ?,
+                latitude = ?, longitude = ?,
+                bbox_north = ?, bbox_south = ?, bbox_east = ?, bbox_west = ?,
+                source = ?, category = ?, metadata = ?, linked_hex_idents = ?,
+                updated_at_ms = ?
+             WHERE id = ?",
+            params![
+                event.title,
+                event.description,
+                event.timestamp_ms,
+                event.end_timestamp_ms,
+                event.latitude,
+                event.longitude,
+                event.bbox_north,
+                event.bbox_south,
+                event.bbox_east,
+                event.bbox_west,
+                source,
+                event.category,
+                event.metadata,
+                event.linked_hex_idents,
+                now,
+                event.id,
+            ],
+        )?;
+
+        if rows_affected == 0 {
+            return Err(StorageError::Query(format!(
+                "Event not found: {}",
+                event.id
+            )));
+        }
+
+        // Read back the full row to return consistent data (includes created_at_ms).
+        drop(storage);
+        self.get_event_of_interest_sync(&event.id)
+    }
+
+    /// Delete an event of interest by ID (synchronous).
+    pub fn delete_event_of_interest_sync(&self, id: &str) -> Result<(), StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let rows_affected = storage.conn.execute(
+            "DELETE FROM events_of_interest WHERE id = ?",
+            params![id],
+        )?;
+
+        if rows_affected == 0 {
+            return Err(StorageError::Query(format!("Event not found: {id}")));
+        }
+
+        Ok(())
+    }
+
     // --- Async wrappers (Step 3) ---
 
     /// Batch insert parsed positions (async via spawn_blocking).
@@ -1916,6 +2221,60 @@ impl StorageHandle {
     ) -> Result<Vec<StatusEvent>, StorageError> {
         let handle = self.clone();
         tokio::task::spawn_blocking(move || handle.query_status_events_sync(&query))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    // --- Events of interest async wrappers ---
+
+    /// Insert a new event of interest (async via spawn_blocking).
+    pub async fn insert_event_of_interest(
+        &self,
+        event: CreateEventOfInterest,
+    ) -> Result<EventOfInterest, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.insert_event_of_interest_sync(&event))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Query events of interest (async via spawn_blocking).
+    pub async fn query_events_of_interest(
+        &self,
+        query: EventOfInterestQuery,
+    ) -> Result<Vec<EventOfInterest>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.query_events_of_interest_sync(&query))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Get a single event of interest by ID (async via spawn_blocking).
+    pub async fn get_event_of_interest(
+        &self,
+        id: String,
+    ) -> Result<EventOfInterest, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.get_event_of_interest_sync(&id))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Update an existing event of interest (async via spawn_blocking).
+    pub async fn update_event_of_interest(
+        &self,
+        event: UpdateEventOfInterest,
+    ) -> Result<EventOfInterest, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.update_event_of_interest_sync(&event))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Delete an event of interest by ID (async via spawn_blocking).
+    pub async fn delete_event_of_interest(&self, id: String) -> Result<(), StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.delete_event_of_interest_sync(&id))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
@@ -4642,5 +5001,332 @@ mod tests {
 
         let stats = handle.get_stats_sync().unwrap();
         assert_eq!(stats.status_event_count, 1);
+    }
+
+    // --- Events of interest tests ---
+
+    fn make_create_event(title: &str, ts: i64) -> CreateEventOfInterest {
+        CreateEventOfInterest {
+            title: title.to_string(),
+            description: format!("Description for {title}"),
+            timestamp_ms: ts,
+            end_timestamp_ms: None,
+            latitude: None,
+            longitude: None,
+            bbox_north: None,
+            bbox_south: None,
+            bbox_east: None,
+            bbox_west: None,
+            source: None,
+            category: None,
+            metadata: None,
+            linked_hex_idents: None,
+        }
+    }
+
+    #[test]
+    fn test_insert_event_of_interest() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let event = handle
+            .insert_event_of_interest_sync(&make_create_event("Test Event", 1000))
+            .unwrap();
+
+        assert!(!event.id.is_empty());
+        assert_eq!(event.title, "Test Event");
+        assert_eq!(event.description, "Description for Test Event");
+        assert_eq!(event.timestamp_ms, 1000);
+        assert_eq!(event.source, "user");
+        assert!(event.category.is_none());
+        assert!(event.created_at_ms > 0);
+        assert_eq!(event.created_at_ms, event.updated_at_ms);
+    }
+
+    #[test]
+    fn test_insert_event_of_interest_custom_source() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let mut create = make_create_event("Detector Event", 2000);
+        create.source = Some("detector".to_string());
+        create.category = Some("anomaly".to_string());
+
+        let event = handle.insert_event_of_interest_sync(&create).unwrap();
+        assert_eq!(event.source, "detector");
+        assert_eq!(event.category.as_deref(), Some("anomaly"));
+    }
+
+    #[test]
+    fn test_query_events_of_interest_empty() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let events = handle
+            .query_events_of_interest_sync(&EventOfInterestQuery::default())
+            .unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_query_events_of_interest_time_filter() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_event_of_interest_sync(&make_create_event("E1", 1000))
+            .unwrap();
+        handle
+            .insert_event_of_interest_sync(&make_create_event("E2", 2000))
+            .unwrap();
+        handle
+            .insert_event_of_interest_sync(&make_create_event("E3", 3000))
+            .unwrap();
+
+        let query = EventOfInterestQuery {
+            start_ms: Some(1500),
+            end_ms: Some(2500),
+            ..Default::default()
+        };
+        let events = handle.query_events_of_interest_sync(&query).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].title, "E2");
+    }
+
+    #[test]
+    fn test_query_events_of_interest_source_filter() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_event_of_interest_sync(&make_create_event("User Event", 1000))
+            .unwrap();
+        let mut det = make_create_event("Detector Event", 2000);
+        det.source = Some("detector".to_string());
+        handle.insert_event_of_interest_sync(&det).unwrap();
+
+        let query = EventOfInterestQuery {
+            source: Some("detector".to_string()),
+            ..Default::default()
+        };
+        let events = handle.query_events_of_interest_sync(&query).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].title, "Detector Event");
+    }
+
+    #[test]
+    fn test_query_events_of_interest_category_filter() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let mut e1 = make_create_event("Military", 1000);
+        e1.category = Some("military".to_string());
+        handle.insert_event_of_interest_sync(&e1).unwrap();
+
+        let mut e2 = make_create_event("Emergency", 2000);
+        e2.category = Some("emergency".to_string());
+        handle.insert_event_of_interest_sync(&e2).unwrap();
+
+        let query = EventOfInterestQuery {
+            category: Some("military".to_string()),
+            ..Default::default()
+        };
+        let events = handle.query_events_of_interest_sync(&query).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].title, "Military");
+    }
+
+    #[test]
+    fn test_query_events_of_interest_limit() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        for i in 0..5 {
+            handle
+                .insert_event_of_interest_sync(&make_create_event(&format!("E{i}"), i * 1000))
+                .unwrap();
+        }
+
+        let query = EventOfInterestQuery {
+            limit: Some(2),
+            ..Default::default()
+        };
+        let events = handle.query_events_of_interest_sync(&query).unwrap();
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn test_get_event_of_interest_found() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let created = handle
+            .insert_event_of_interest_sync(&make_create_event("Find Me", 1000))
+            .unwrap();
+
+        let found = handle.get_event_of_interest_sync(&created.id).unwrap();
+        assert_eq!(found.id, created.id);
+        assert_eq!(found.title, "Find Me");
+    }
+
+    #[test]
+    fn test_get_event_of_interest_not_found() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let result = handle.get_event_of_interest_sync("nonexistent-id");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Event not found"), "got: {err}");
+    }
+
+    #[test]
+    fn test_update_event_of_interest() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let created = handle
+            .insert_event_of_interest_sync(&make_create_event("Original", 1000))
+            .unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let updated = handle
+            .update_event_of_interest_sync(&UpdateEventOfInterest {
+                id: created.id.clone(),
+                title: "Updated".to_string(),
+                description: "New description".to_string(),
+                timestamp_ms: 2000,
+                end_timestamp_ms: None,
+                latitude: None,
+                longitude: None,
+                bbox_north: None,
+                bbox_south: None,
+                bbox_east: None,
+                bbox_west: None,
+                source: None,
+                category: Some("emergency".to_string()),
+                metadata: None,
+                linked_hex_idents: None,
+            })
+            .unwrap();
+
+        assert_eq!(updated.id, created.id);
+        assert_eq!(updated.title, "Updated");
+        assert_eq!(updated.description, "New description");
+        assert_eq!(updated.timestamp_ms, 2000);
+        assert_eq!(updated.category.as_deref(), Some("emergency"));
+        assert!(updated.updated_at_ms > created.updated_at_ms);
+        assert_eq!(updated.created_at_ms, created.created_at_ms);
+    }
+
+    #[test]
+    fn test_update_event_of_interest_not_found() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let result = handle.update_event_of_interest_sync(&UpdateEventOfInterest {
+            id: "nonexistent-id".to_string(),
+            title: "X".to_string(),
+            description: "X".to_string(),
+            timestamp_ms: 1000,
+            end_timestamp_ms: None,
+            latitude: None,
+            longitude: None,
+            bbox_north: None,
+            bbox_south: None,
+            bbox_east: None,
+            bbox_west: None,
+            source: None,
+            category: None,
+            metadata: None,
+            linked_hex_idents: None,
+        });
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Event not found"));
+    }
+
+    #[test]
+    fn test_delete_event_of_interest() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let created = handle
+            .insert_event_of_interest_sync(&make_create_event("Delete Me", 1000))
+            .unwrap();
+
+        handle.delete_event_of_interest_sync(&created.id).unwrap();
+
+        let events = handle
+            .query_events_of_interest_sync(&EventOfInterestQuery::default())
+            .unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_delete_event_of_interest_not_found() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let result = handle.delete_event_of_interest_sync("nonexistent-id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Event not found"));
+    }
+
+    #[test]
+    fn test_event_with_point_location() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let mut create = make_create_event("Point Event", 1000);
+        create.latitude = Some(45.5);
+        create.longitude = Some(-73.6);
+
+        let event = handle.insert_event_of_interest_sync(&create).unwrap();
+        assert_eq!(event.latitude, Some(45.5));
+        assert_eq!(event.longitude, Some(-73.6));
+
+        let found = handle.get_event_of_interest_sync(&event.id).unwrap();
+        assert_eq!(found.latitude, Some(45.5));
+        assert_eq!(found.longitude, Some(-73.6));
+    }
+
+    #[test]
+    fn test_event_with_bbox() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let mut create = make_create_event("Area Event", 1000);
+        create.bbox_north = Some(46.0);
+        create.bbox_south = Some(45.0);
+        create.bbox_east = Some(-73.0);
+        create.bbox_west = Some(-74.0);
+
+        let event = handle.insert_event_of_interest_sync(&create).unwrap();
+        let found = handle.get_event_of_interest_sync(&event.id).unwrap();
+        assert_eq!(found.bbox_north, Some(46.0));
+        assert_eq!(found.bbox_south, Some(45.0));
+        assert_eq!(found.bbox_east, Some(-73.0));
+        assert_eq!(found.bbox_west, Some(-74.0));
+    }
+
+    #[test]
+    fn test_event_with_time_range() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let mut create = make_create_event("Time Range Event", 1000);
+        create.end_timestamp_ms = Some(5000);
+
+        let event = handle.insert_event_of_interest_sync(&create).unwrap();
+        assert_eq!(event.end_timestamp_ms, Some(5000));
+
+        let found = handle.get_event_of_interest_sync(&event.id).unwrap();
+        assert_eq!(found.timestamp_ms, 1000);
+        assert_eq!(found.end_timestamp_ms, Some(5000));
+    }
+
+    #[test]
+    fn test_event_with_metadata_and_linked_aircraft() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let mut create = make_create_event("Linked Event", 1000);
+        create.metadata = Some(r#"{"confidence":0.95}"#.to_string());
+        create.linked_hex_idents = Some("A1B2C3,D4E5F6".to_string());
+
+        let event = handle.insert_event_of_interest_sync(&create).unwrap();
+        assert_eq!(
+            event.metadata.as_deref(),
+            Some(r#"{"confidence":0.95}"#)
+        );
+        assert_eq!(
+            event.linked_hex_idents.as_deref(),
+            Some("A1B2C3,D4E5F6")
+        );
+
+        let found = handle.get_event_of_interest_sync(&event.id).unwrap();
+        assert_eq!(found.metadata, event.metadata);
+        assert_eq!(found.linked_hex_idents, event.linked_hex_idents);
+    }
+
+    #[test]
+    fn test_event_of_interest_stats_count() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let stats = handle.get_stats_sync().unwrap();
+        assert_eq!(stats.event_of_interest_count, 0);
+
+        handle
+            .insert_event_of_interest_sync(&make_create_event("E1", 1000))
+            .unwrap();
+
+        let stats = handle.get_stats_sync().unwrap();
+        assert_eq!(stats.event_of_interest_count, 1);
     }
 }

@@ -1,9 +1,9 @@
 "use client";
-import { useEffect, useMemo, useCallback } from "react";
+import { useEffect, useMemo, useCallback, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Polyline, GeoJSON, Tooltip, CircleMarker, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
-import type { AircraftTrack, DensityMetric, DensityTooltipMode, AltitudeColorMode } from "@/lib/types";
-import { zoomToH3Resolution, trackKey } from "@/lib/types";
+import type { AircraftTrack, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventOfInterest, MapPickResult } from "@/lib/types";
+import { zoomToH3Resolution, trackKey, cornersToBox } from "@/lib/types";
 import { altitudeToColor, densityColor, cachedAltitudeToColor, type MapTheme } from "@/lib/colors";
 import { computeH3Density } from "@/lib/h3-density";
 import type { DensityProperties, DensityAltitudeRange } from "@/lib/h3-density";
@@ -75,6 +75,166 @@ function MapClickHandler({ onDeselect }: { onDeselect: () => void }) {
   return null;
 }
 
+/** Captures map right-click and passes lat/lng + pixel position to parent. */
+function ContextMenuHandler({ onContextMenu }: { onContextMenu: (lat: number, lng: number, x: number, y: number) => void }) {
+  useMapEvents({
+    contextmenu: (e) => {
+      const { lat, lng } = e.latlng;
+      const point = e.containerPoint;
+      onContextMenu(lat, lng, point.x, point.y);
+    },
+  });
+  return null;
+}
+
+/** Renders event-of-interest markers imperatively via Leaflet API. */
+function EventMarkersLayer({ events, theme }: { events: EventOfInterest[]; theme: "light" | "dark" }) {
+  const map = useMap();
+
+  useEffect(() => {
+    const layers: L.Layer[] = [];
+
+    for (const ev of events) {
+      // Point event marker
+      if (ev.latitude != null && ev.longitude != null) {
+        const marker = L.circleMarker([ev.latitude, ev.longitude], {
+          radius: 7,
+          color: "#f59e0b",
+          fillColor: "#f59e0b",
+          fillOpacity: 0.6,
+          weight: 2,
+        });
+
+        const time = new Date(ev.timestamp_ms).toLocaleString();
+        const catLine = ev.category ? `<div>Category: <span style="color:#fff">${ev.category}</span></div>` : "";
+        marker.bindTooltip(() =>
+          `<div style="font-weight:600;color:#f59e0b">${ev.title}</div>${catLine}<div>${time}</div><div style="color:#94a3b8;margin-top:2px;font-style:italic">Event of Interest</div>`
+        );
+
+        marker.addTo(map);
+        layers.push(marker);
+      }
+
+      // Area event rectangle
+      if (ev.bbox_north != null && ev.bbox_south != null && ev.bbox_east != null && ev.bbox_west != null) {
+        const rect = L.rectangle(
+          [[ev.bbox_south, ev.bbox_west], [ev.bbox_north, ev.bbox_east]],
+          {
+            color: "#f59e0b",
+            fillColor: "#f59e0b",
+            fillOpacity: 0.1,
+            weight: 1.5,
+            dashArray: "4 4",
+          },
+        );
+
+        const time = new Date(ev.timestamp_ms).toLocaleString();
+        rect.bindTooltip(() =>
+          `<div style="font-weight:600;color:#f59e0b">${ev.title}</div><div>${time}</div><div style="color:#94a3b8;margin-top:2px;font-style:italic">Event Area</div>`
+        );
+
+        rect.addTo(map);
+        layers.push(rect);
+      }
+    }
+
+    return () => {
+      for (const l of layers) l.remove();
+    };
+  }, [map, events, theme]);
+
+  return null;
+}
+
+/** Interactive map picker for point (single click) or area (two-click corners) selection. */
+function MapPickerLayer({ mode, onComplete, onCancel }: {
+  mode: "point" | "area";
+  onComplete: (result: MapPickResult) => void;
+  onCancel: () => void;
+}) {
+  const map = useMap();
+  const firstCorner = useRef<L.LatLng | null>(null);
+  const rubberBand = useRef<L.Rectangle | null>(null);
+
+  // Set crosshair cursor on mount, restore on unmount
+  useEffect(() => {
+    const container = map.getContainer();
+    const prev = container.style.cursor;
+    container.style.cursor = "crosshair";
+    return () => { container.style.cursor = prev; };
+  }, [map]);
+
+  // Escape key cancels picking
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onCancel]);
+
+  // Clean up rubber-band rectangle on unmount
+  useEffect(() => {
+    return () => {
+      if (rubberBand.current) {
+        rubberBand.current.remove();
+        rubberBand.current = null;
+      }
+    };
+  }, []);
+
+  useMapEvents({
+    click: (e) => {
+      // Prevent the click from reaching MapClickHandler (deselect)
+      L.DomEvent.stop(e.originalEvent);
+
+      if (mode === "point") {
+        onComplete({ type: "point", lat: e.latlng.lat, lng: e.latlng.lng });
+        return;
+      }
+
+      // Area mode: two-click
+      if (!firstCorner.current) {
+        firstCorner.current = e.latlng;
+        return;
+      }
+
+      // Second click — complete the area
+      const box = cornersToBox(
+        firstCorner.current.lat, firstCorner.current.lng,
+        e.latlng.lat, e.latlng.lng,
+      );
+      if (rubberBand.current) {
+        rubberBand.current.remove();
+        rubberBand.current = null;
+      }
+      firstCorner.current = null;
+      onComplete({ type: "area", ...box });
+    },
+    mousemove: (e) => {
+      // Rubber-band rectangle for area mode after first click
+      if (mode !== "area" || !firstCorner.current) return;
+      const bounds: L.LatLngBoundsExpression = [
+        [firstCorner.current.lat, firstCorner.current.lng],
+        [e.latlng.lat, e.latlng.lng],
+      ];
+      if (rubberBand.current) {
+        rubberBand.current.setBounds(bounds);
+      } else {
+        rubberBand.current = L.rectangle(bounds, {
+          color: "#f59e0b",
+          fillColor: "#f59e0b",
+          fillOpacity: 0.15,
+          weight: 2,
+          dashArray: "6 4",
+        }).addTo(map);
+      }
+    },
+  });
+
+  return null;
+}
+
 interface Props {
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];
@@ -94,6 +254,11 @@ interface Props {
   selectedHexIdents: Set<string>;
   onSelectTrack: (hex: string | null) => void;
   receiverLocation?: { lat: number; lng: number; alt: number | null };
+  eventsOfInterest?: EventOfInterest[];
+  onContextMenu?: (lat: number, lng: number, x: number, y: number) => void;
+  mapPickingMode?: "point" | "area" | null;
+  onMapPickComplete?: (result: MapPickResult) => void;
+  onMapPickCancel?: () => void;
 }
 
 /** Build compact (single-line) tooltip for density cell. */
@@ -294,7 +459,7 @@ function DotsLayer({
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation }: Props) {
+export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
@@ -454,6 +619,17 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
             </Tooltip>
           </Marker>
         )}
+
+        {/* Context menu handler (disabled during picking) */}
+        {onContextMenu && !mapPickingMode && <ContextMenuHandler onContextMenu={onContextMenu} />}
+
+        {/* Map location picker (point click or area two-click) */}
+        {mapPickingMode && onMapPickComplete && onMapPickCancel && (
+          <MapPickerLayer mode={mapPickingMode} onComplete={onMapPickComplete} onCancel={onMapPickCancel} />
+        )}
+
+        {/* Events of interest markers */}
+        {eventsOfInterest.length > 0 && <EventMarkersLayer events={eventsOfInterest} theme={mapTheme} />}
 
         {/* Active tracks — aircraft markers and line trajectories */}
         {orderedTracks.map((t) => {

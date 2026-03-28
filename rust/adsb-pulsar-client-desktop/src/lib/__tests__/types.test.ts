@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { zoomToH3Resolution, trackKey } from "../types";
+import { zoomToH3Resolution, trackKey, cornersToBox } from "../types";
 import type { AircraftTrack } from "../types";
 
 describe("zoomToH3Resolution", () => {
@@ -57,5 +57,27 @@ describe("trackKey", () => {
 
   it("returns track_id when set", () => {
     expect(trackKey({ ...base, track_id: "flight-42" })).toBe("flight-42");
+  });
+});
+
+describe("cornersToBox", () => {
+  it("computes bbox from top-left to bottom-right corners", () => {
+    const box = cornersToBox(46, -74, 44, -72);
+    expect(box).toEqual({ north: 46, south: 44, east: -72, west: -74 });
+  });
+
+  it("computes bbox from bottom-right to top-left corners", () => {
+    const box = cornersToBox(44, -72, 46, -74);
+    expect(box).toEqual({ north: 46, south: 44, east: -72, west: -74 });
+  });
+
+  it("handles identical corners", () => {
+    const box = cornersToBox(45, -73, 45, -73);
+    expect(box).toEqual({ north: 45, south: 45, east: -73, west: -73 });
+  });
+
+  it("handles diagonal corners in any order", () => {
+    const box = cornersToBox(46, -72, 44, -74);
+    expect(box).toEqual({ north: 46, south: 44, east: -72, west: -74 });
   });
 });

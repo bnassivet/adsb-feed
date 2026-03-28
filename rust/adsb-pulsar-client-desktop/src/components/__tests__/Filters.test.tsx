@@ -47,6 +47,16 @@ function renderFilters(overrides = {}) {
     historySliderMax: 24,
     historySliderRange: 24,
     onHistoryTimeChange: vi.fn(),
+    showEvents: false,
+    onToggleEvents: vi.fn(),
+    eventsCount: 0,
+    eventFilterMode: "all" as const,
+    onEventFilterModeChange: vi.fn(),
+    eventUpcomingDays: 7,
+    onEventUpcomingDaysChange: vi.fn(),
+    eventTimeRangeStart: Date.now(),
+    eventTimeRangeEnd: Date.now() + 86400000,
+    onEventTimeRangeChange: vi.fn(),
     ...overrides,
   };
   return { ...render(<FiltersPanel {...defaultProps} />), props: defaultProps };
@@ -321,5 +331,69 @@ describe("density altitude range", () => {
       densityAltitudeMax: 40000,
     });
     expect(screen.getByText("10,000 ft – 40,000 ft")).toBeInTheDocument();
+  });
+});
+
+describe("events of interest toggle", () => {
+  it("renders Show events toggle with count", () => {
+    renderFilters({ showEvents: false, eventsCount: 5 });
+    expect(screen.getByText(/Show events/)).toBeInTheDocument();
+    expect(screen.getByText("(5)")).toBeInTheDocument();
+  });
+
+  it("calls onToggleEvents when checkbox clicked", async () => {
+    const user = userEvent.setup();
+    const onToggleEvents = vi.fn();
+    renderFilters({ showEvents: false, onToggleEvents });
+    const checkbox = screen.getByText(/Show events/).closest("label")!.querySelector("input")!;
+    await user.click(checkbox);
+    expect(onToggleEvents).toHaveBeenCalledOnce();
+  });
+
+  it("shows filter mode radios when showEvents is true", () => {
+    renderFilters({ showEvents: true });
+    expect(screen.getByText("All events")).toBeInTheDocument();
+    expect(screen.getByText("Upcoming")).toBeInTheDocument();
+    expect(screen.getByText("Time range")).toBeInTheDocument();
+  });
+
+  it("hides filter mode radios when showEvents is false", () => {
+    renderFilters({ showEvents: false });
+    expect(screen.queryByText("All events")).not.toBeInTheDocument();
+    expect(screen.queryByText("Upcoming")).not.toBeInTheDocument();
+  });
+
+  it("calls onEventFilterModeChange when radio selected", async () => {
+    const user = userEvent.setup();
+    const onEventFilterModeChange = vi.fn();
+    renderFilters({ showEvents: true, eventFilterMode: "all", onEventFilterModeChange });
+    const radio = screen.getByText("Upcoming").closest("label")!.querySelector("input")!;
+    await user.click(radio);
+    expect(onEventFilterModeChange).toHaveBeenCalledWith("upcoming");
+  });
+
+  it("shows upcoming days input when mode is upcoming", () => {
+    renderFilters({ showEvents: true, eventFilterMode: "upcoming", eventUpcomingDays: 7 });
+    expect(screen.getByText("Next")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("7")).toBeInTheDocument();
+    expect(screen.getByText("days")).toBeInTheDocument();
+  });
+
+  it("hides upcoming days input when mode is not upcoming", () => {
+    renderFilters({ showEvents: true, eventFilterMode: "all" });
+    expect(screen.queryByText("days")).not.toBeInTheDocument();
+  });
+
+  it("shows datetime inputs when mode is range", () => {
+    renderFilters({ showEvents: true, eventFilterMode: "range" });
+    const datetimeInputs = screen.getAllByDisplayValue(/.+/);
+    const dtInputs = datetimeInputs.filter(el => el.getAttribute("type") === "datetime-local");
+    expect(dtInputs.length).toBe(2);
+  });
+
+  it("hides datetime inputs when mode is not range", () => {
+    renderFilters({ showEvents: true, eventFilterMode: "all" });
+    const allInputs = document.querySelectorAll('input[type="datetime-local"]');
+    expect(allInputs.length).toBe(0);
   });
 });

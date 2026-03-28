@@ -20,6 +20,11 @@ import {
   importDatabase,
   swapDatabase,
   getStatusTimeline,
+  createEventOfInterest,
+  getEventsOfInterest,
+  getEventOfInterest,
+  updateEventOfInterest,
+  deleteEventOfInterest,
 } from "../commands";
 import type {
   BboxQuery,
@@ -36,6 +41,7 @@ import type {
   ImportResult,
   StatusEvent,
   StatusEventQuery,
+  EventOfInterest,
 } from "../types";
 
 const samplePosition: PositionRecord = {
@@ -365,6 +371,77 @@ describe("Historical query commands", () => {
       const result = await getStatusTimeline({ event_type: "storage" });
       expect(result).toHaveLength(1);
       expect(result[0].status).toBe("Released");
+    });
+  });
+
+  describe("events of interest", () => {
+    const sampleEvent: EventOfInterest = {
+      id: "test-uuid",
+      title: "Test Event",
+      description: "A test event",
+      timestamp_ms: 1705315800000,
+      end_timestamp_ms: null,
+      latitude: 45.5,
+      longitude: -73.6,
+      bbox_north: null,
+      bbox_south: null,
+      bbox_east: null,
+      bbox_west: null,
+      source: "user",
+      category: null,
+      metadata: null,
+      linked_hex_idents: null,
+      created_at_ms: 1705315800000,
+      updated_at_ms: 1705315800000,
+    };
+
+    it("createEventOfInterest invokes correct command", async () => {
+      mockInvokeResponse("create_event_of_interest", sampleEvent);
+
+      const result = await createEventOfInterest({
+        title: "Test Event",
+        description: "A test event",
+        timestamp_ms: 1705315800000,
+        latitude: 45.5,
+        longitude: -73.6,
+      });
+      expect(result.id).toBe("test-uuid");
+      expect(result.title).toBe("Test Event");
+      expect(result.source).toBe("user");
+    });
+
+    it("getEventsOfInterest invokes correct command", async () => {
+      mockInvokeResponse("get_events_of_interest", [sampleEvent]);
+
+      const result = await getEventsOfInterest({});
+      expect(result).toHaveLength(1);
+      expect(result[0].title).toBe("Test Event");
+    });
+
+    it("getEventOfInterest invokes correct command", async () => {
+      mockInvokeResponse("get_event_of_interest", sampleEvent);
+
+      const result = await getEventOfInterest("test-uuid");
+      expect(result.id).toBe("test-uuid");
+    });
+
+    it("updateEventOfInterest invokes correct command", async () => {
+      const updated = { ...sampleEvent, title: "Updated" };
+      mockInvokeResponse("update_event_of_interest", updated);
+
+      const result = await updateEventOfInterest({
+        id: "test-uuid",
+        title: "Updated",
+        description: "A test event",
+        timestamp_ms: 1705315800000,
+      });
+      expect(result.title).toBe("Updated");
+    });
+
+    it("deleteEventOfInterest invokes correct command", async () => {
+      mockInvokeResponse("delete_event_of_interest", undefined);
+
+      await expect(deleteEventOfInterest("test-uuid")).resolves.toBeUndefined();
     });
   });
 });

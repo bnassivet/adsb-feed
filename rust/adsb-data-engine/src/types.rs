@@ -62,6 +62,7 @@ pub struct StorageStats {
     pub flight_count: u64,
     pub flight_size_bytes: u64,
     pub status_event_count: u64,
+    pub event_of_interest_count: u64,
 }
 
 /// A single raw SBS-1 message stored for audit/replay purposes.
@@ -345,6 +346,89 @@ pub struct StatusEventQuery {
     pub start_ms: Option<i64>,
     pub end_ms: Option<i64>,
     pub event_type: Option<StatusEventType>,
+    pub limit: Option<usize>,
+}
+
+/// A user-created or system-generated event of interest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventOfInterest {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    /// Point-in-time or start of interval (epoch ms).
+    pub timestamp_ms: i64,
+    /// End of interval (epoch ms). None for point-in-time events.
+    pub end_timestamp_ms: Option<i64>,
+    /// Point location latitude. None if no point geo reference.
+    pub latitude: Option<f64>,
+    /// Point location longitude. None if no point geo reference.
+    pub longitude: Option<f64>,
+    /// Bounding box north. None if no area geo reference.
+    pub bbox_north: Option<f64>,
+    pub bbox_south: Option<f64>,
+    pub bbox_east: Option<f64>,
+    pub bbox_west: Option<f64>,
+    /// Origin of the event: "user", "detector", "news_feed", etc.
+    pub source: String,
+    /// Classification: "military", "emergency", "anomaly", "observation", etc.
+    pub category: Option<String>,
+    /// JSON blob for source-specific data (detection confidence, article URL, etc.)
+    pub metadata: Option<String>,
+    /// Comma-separated hex_idents of associated aircraft.
+    pub linked_hex_idents: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// Parameters for creating a new event of interest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateEventOfInterest {
+    pub title: String,
+    pub description: String,
+    pub timestamp_ms: i64,
+    pub end_timestamp_ms: Option<i64>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub bbox_north: Option<f64>,
+    pub bbox_south: Option<f64>,
+    pub bbox_east: Option<f64>,
+    pub bbox_west: Option<f64>,
+    /// Defaults to "user" if not provided.
+    pub source: Option<String>,
+    pub category: Option<String>,
+    pub metadata: Option<String>,
+    pub linked_hex_idents: Option<String>,
+}
+
+/// Parameters for updating an existing event of interest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateEventOfInterest {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub timestamp_ms: i64,
+    pub end_timestamp_ms: Option<i64>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub bbox_north: Option<f64>,
+    pub bbox_south: Option<f64>,
+    pub bbox_east: Option<f64>,
+    pub bbox_west: Option<f64>,
+    pub source: Option<String>,
+    pub category: Option<String>,
+    pub metadata: Option<String>,
+    pub linked_hex_idents: Option<String>,
+}
+
+/// Query parameters for event of interest retrieval.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EventOfInterestQuery {
+    pub start_ms: Option<i64>,
+    pub end_ms: Option<i64>,
+    /// Filter by source (e.g., "user", "detector").
+    pub source: Option<String>,
+    /// Filter by category (e.g., "military", "emergency").
+    pub category: Option<String>,
     pub limit: Option<usize>,
 }
 

@@ -9,11 +9,16 @@ import { LeftPanel } from "@/components/LeftPanel";
 import { AircraftDetailsPanel } from "@/components/AircraftDetailsPanel";
 import { DBHistoryPanel } from "@/components/DBHistoryPanel";
 import { DBHistoryContent } from "@/components/DBHistoryContent";
+import { EventsOfInterestPanel } from "@/components/EventsOfInterestPanel";
+import { EventsOfInterestContent } from "@/components/EventsOfInterestContent";
+import { EventFormDialog } from "@/components/EventFormDialog";
+import { MapContextMenu } from "@/components/MapContextMenu";
 import { useAircraftTracks } from "@/hooks/useAircraftTracks";
 import { useSimulatedTracks } from "@/hooks/useSimulatedTracks";
 import { useMetrics } from "@/hooks/useMetrics";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { useRecordingState } from "@/hooks/useRecordingState";
+import { useEventsOfInterest } from "@/hooks/useEventsOfInterest";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { startFeed, stopFeed, getConfig, getStorageStatus, releaseStorage, reclaimStorage, exportDatabase, previewImportDatabase, importDatabase, swapDatabase, getStorageStats } from "@/lib/commands";
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
@@ -22,7 +27,7 @@ import { ask, message, save, open } from "@tauri-apps/plugin-dialog";
 import { sortTracks, type SortKey } from "@/lib/sort-tracks";
 import { filterHistoryByTimeRange } from "@/lib/history-time-filter";
 import { DEFAULT_FILTERS, trackKey } from "@/lib/types";
-import type { AircraftTrack, ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, TrackSection, StorageAvailability } from "@/lib/types";
+import type { AircraftTrack, ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, TrackSection, StorageAvailability, CreateEventOfInterest, UpdateEventOfInterest, EventOfInterest, EventFilterMode, MapPickResult } from "@/lib/types";
 import type { SelectEvent } from "@/components/AircraftTable";
 import { ModeTabs } from "@/components/ModeTabs";
 import Link from "next/link";
@@ -66,6 +71,50 @@ export default function Dashboard() {
   const [dbHistoryFloatW, setDbHistoryFloatW] = useLocalStorage<number>("adsb-dbhistory-float-w", 400);
   const [dbHistoryFloatH, setDbHistoryFloatH] = useLocalStorage<number>("adsb-dbhistory-float-h", 600);
   const [showDbHistory, setShowDbHistory] = useLocalStorage<boolean>("adsb-show-dbhistory", true);
+
+  // Events of Interest state
+  const [eventsOpen, setEventsOpen] = useLocalStorage<boolean>("adsb-events-open", false);
+  const [eventsDockedExpanded, setEventsDockedExpanded] = useLocalStorage<boolean>("adsb-events-docked-expanded", true);
+  const [eventsWidth, setEventsWidth] = useLocalStorage<number>("adsb-events-width", 340);
+  const [eventsFloating, setEventsFloating] = useLocalStorage<boolean>("adsb-events-floating", true);
+  const [eventsPanelX, setEventsPanelX] = useLocalStorage<number>("adsb-events-panel-x", 100);
+  const [eventsPanelY, setEventsPanelY] = useLocalStorage<number>("adsb-events-panel-y", 80);
+  const [eventsPanelW, setEventsPanelW] = useLocalStorage<number>("adsb-events-panel-w", 360);
+  const [eventsPanelH, setEventsPanelH] = useLocalStorage<number>("adsb-events-panel-h", 400);
+  const [eventFormOpen, setEventFormOpen] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<EventOfInterest | undefined>(undefined);
+  const [eventFormInitialLat, setEventFormInitialLat] = useState<number | null>(null);
+  const [eventFormInitialLng, setEventFormInitialLng] = useState<number | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; lat: number; lng: number } | null>(null);
+  const [mapPickingMode, setMapPickingMode] = useState<"point" | "area" | null>(null);
+  const [mapPickResult, setMapPickResult] = useState<MapPickResult | null>(null);
+  const [showEvents, setShowEvents] = useLocalStorage<boolean>("adsb-show-events", true);
+  const [eventFilterMode, setEventFilterMode] = useLocalStorage<EventFilterMode>("adsb-event-filter-mode", "all");
+  const [eventUpcomingDays, setEventUpcomingDays] = useLocalStorage<number>("adsb-event-upcoming-days", 7);
+  const [eventTimeRangeStart, setEventTimeRangeStart] = useLocalStorage<number>("adsb-event-time-start", Date.now());
+  const [eventTimeRangeEnd, setEventTimeRangeEnd] = useLocalStorage<number>("adsb-event-time-end", Date.now() + 86400000);
+
+  const { events: eventsOfInterest, loading: eventsLoading, createEvent, updateEvent, removeEvent, removeEvents } = useEventsOfInterest();
+  const [hiddenEventIds, setHiddenEventIds] = useState<Set<string>>(new Set());
+
+  const handleToggleEventVisibility = useCallback((id: string) => {
+    setHiddenEventIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const allEventsHidden = eventsOfInterest.length > 0 && hiddenEventIds.size >= eventsOfInterest.length;
+
+  const handleToggleAllVisibility = useCallback(() => {
+    if (allEventsHidden) {
+      setHiddenEventIds(new Set());
+    } else {
+      setHiddenEventIds(new Set(eventsOfInterest.map(e => e.id)));
+    }
+  }, [allEventsHidden, eventsOfInterest]);
 
   const [appConfig, setAppConfig] = useState<Config | null>(null);
   useEffect(() => {
@@ -328,6 +377,8 @@ export default function Dashboard() {
 
   // Multi-select handler: plain click = single, ctrl/cmd = toggle, shift = range
   const handleSelectTrack = useCallback((hexIdent: string | null, event?: SelectEvent) => {
+    // Dismiss context menu on any map click
+    setContextMenu(null);
     if (hexIdent === null) {
       // Map click on empty space — deselect all
       setSelectedHexIdents(new Set());
@@ -434,6 +485,98 @@ export default function Dashboard() {
   function handleToggleReceiver() {
     setShowReceiver((prev: boolean) => !prev);
   }
+
+  function handleToggleEvents() {
+    setShowEvents((prev: boolean) => !prev);
+  }
+
+  const handleEventTimeRangeChange = useCallback((startMs: number, endMs: number) => {
+    setEventTimeRangeStart(startMs);
+    setEventTimeRangeEnd(endMs);
+  }, [setEventTimeRangeStart, setEventTimeRangeEnd]);
+
+  const filteredEvents = useMemo(() => {
+    if (!showEvents) return [];
+    let result = eventsOfInterest;
+    if (eventFilterMode === "upcoming") {
+      const now = Date.now();
+      const horizon = now + eventUpcomingDays * 86400000;
+      result = result.filter(e =>
+        (e.timestamp_ms >= now && e.timestamp_ms <= horizon) ||
+        (e.end_timestamp_ms != null && e.end_timestamp_ms >= now && e.timestamp_ms <= horizon)
+      );
+    } else if (eventFilterMode === "range") {
+      result = result.filter(e => {
+        const eventEnd = e.end_timestamp_ms ?? e.timestamp_ms;
+        return e.timestamp_ms <= eventTimeRangeEnd && eventEnd >= eventTimeRangeStart;
+      });
+    }
+    if (hiddenEventIds.size > 0) {
+      result = result.filter(e => !hiddenEventIds.has(e.id));
+    }
+    return result;
+  }, [showEvents, eventFilterMode, eventUpcomingDays, eventTimeRangeStart, eventTimeRangeEnd, eventsOfInterest, hiddenEventIds]);
+
+  // Events of Interest handlers
+  const handleNewEvent = useCallback(() => {
+    setEditingEvent(undefined);
+    setEventFormInitialLat(null);
+    setEventFormInitialLng(null);
+    setEventFormOpen(true);
+  }, []);
+
+  const handleEditEvent = useCallback((event: EventOfInterest) => {
+    setEditingEvent(event);
+    setEventFormInitialLat(null);
+    setEventFormInitialLng(null);
+    setEventFormOpen(true);
+  }, []);
+
+  const handleEventFormSave = useCallback(async (data: CreateEventOfInterest | UpdateEventOfInterest) => {
+    if ("id" in data) {
+      await updateEvent(data as UpdateEventOfInterest);
+    } else {
+      await createEvent(data as CreateEventOfInterest);
+    }
+    setEventFormOpen(false);
+    setEditingEvent(undefined);
+  }, [createEvent, updateEvent]);
+
+  const handleEventFormCancel = useCallback(() => {
+    setEventFormOpen(false);
+    setEditingEvent(undefined);
+  }, []);
+
+  const handleMapContextMenu = useCallback((lat: number, lng: number, x: number, y: number) => {
+    if (mapPickingMode) return;
+    setContextMenu({ x, y, lat, lng });
+  }, [mapPickingMode]);
+
+  const handleCreateEventFromMap = useCallback((lat: number, lng: number) => {
+    setEditingEvent(undefined);
+    setEventFormInitialLat(lat);
+    setEventFormInitialLng(lng);
+    setEventFormOpen(true);
+    setContextMenu(null);
+  }, []);
+
+  const handleCloseContextMenu = useCallback(() => {
+    setContextMenu(null);
+  }, []);
+
+  const handleStartMapPick = useCallback((mode: "point" | "area") => {
+    setMapPickResult(null);
+    setMapPickingMode(mode);
+  }, []);
+
+  const handleMapPickComplete = useCallback((result: MapPickResult) => {
+    setMapPickResult(result);
+    setMapPickingMode(null);
+  }, []);
+
+  const handleMapPickCancel = useCallback(() => {
+    setMapPickingMode(null);
+  }, []);
 
   const handleToggleMapVisibility = useCallback((hexIdent: string, section: TrackSection) => {
     setHiddenSections(prev => {
@@ -543,6 +686,13 @@ export default function Dashboard() {
           >
             DB History
           </button>
+          <button
+            onClick={() => setEventsOpen((prev: boolean) => !prev)}
+            className={`px-2 py-1 text-xs rounded transition ${eventsOpen ? "bg-amber-800/40 text-amber-200 border border-amber-700/30" : "text-slate-400 hover:text-slate-200 hover:bg-slate-700"}`}
+            title={eventsOpen ? "Hide Events panel" : "Show Events panel"}
+          >
+            Events{filteredEvents.length > 0 ? ` (${filteredEvents.length})` : ""}
+          </button>
         </div>
         <div className="flex items-center gap-3">
           {error && (
@@ -640,6 +790,16 @@ export default function Dashboard() {
           historySliderMax={effectiveSliderMax}
           historySliderRange={trackHistoryHours}
           onHistoryTimeChange={handleHistoryTimeChange}
+          showEvents={showEvents}
+          onToggleEvents={handleToggleEvents}
+          eventsCount={eventsOfInterest.length}
+          eventFilterMode={eventFilterMode}
+          onEventFilterModeChange={setEventFilterMode}
+          eventUpcomingDays={eventUpcomingDays}
+          onEventUpcomingDaysChange={setEventUpcomingDays}
+          eventTimeRangeStart={eventTimeRangeStart}
+          eventTimeRangeEnd={eventTimeRangeEnd}
+          onEventTimeRangeChange={handleEventTimeRangeChange}
         />
 
         {/* Map + Table */}
@@ -647,7 +807,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} />
+              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel
@@ -688,6 +848,38 @@ export default function Dashboard() {
                   onSwitchToAnalysis={() => setActiveMode("analysis")}
                 />
               </DBHistoryPanel>
+            )}
+            {/* Events panel — docked mode (in flex row) */}
+            {eventsOpen && !eventsFloating && (
+              <EventsOfInterestPanel
+                isOpen={eventsOpen}
+                onToggle={() => setEventsOpen(false)}
+                onNewEvent={handleNewEvent}
+                allHidden={allEventsHidden}
+                onToggleAllVisibility={handleToggleAllVisibility}
+                width={eventsWidth}
+                onWidthChange={setEventsWidth}
+                dockedExpanded={eventsDockedExpanded}
+                onDockedExpandedChange={setEventsDockedExpanded}
+                floating={false}
+                onFloatingChange={setEventsFloating}
+                floatX={eventsPanelX}
+                floatY={eventsPanelY}
+                floatW={eventsPanelW}
+                floatH={eventsPanelH}
+                onFloatPosChange={(x: number, y: number) => { setEventsPanelX(x); setEventsPanelY(y); }}
+                onFloatSizeChange={(w: number, h: number) => { setEventsPanelW(w); setEventsPanelH(h); }}
+              >
+                <EventsOfInterestContent
+                  events={eventsOfInterest}
+                  loading={eventsLoading}
+                  onEditEvent={handleEditEvent}
+                  onDeleteEvent={removeEvent}
+                  onDeleteEvents={removeEvents}
+                  hiddenEventIds={hiddenEventIds}
+                  onToggleEventVisibility={handleToggleEventVisibility}
+                />
+              </EventsOfInterestPanel>
             )}
           </div>
 
@@ -776,6 +968,65 @@ export default function Dashboard() {
             receiverLon={receiverLocation?.lng}
           />
         </DBHistoryPanel>
+      )}
+
+      {/* Events panel — floating mode (portal-like, fixed position) */}
+      {eventsOpen && eventsFloating && (
+        <EventsOfInterestPanel
+          isOpen={eventsOpen}
+          onToggle={() => setEventsOpen(false)}
+          onNewEvent={handleNewEvent}
+          allHidden={allEventsHidden}
+          onToggleAllVisibility={handleToggleAllVisibility}
+          width={eventsWidth}
+          onWidthChange={setEventsWidth}
+          dockedExpanded={eventsDockedExpanded}
+          onDockedExpandedChange={setEventsDockedExpanded}
+          floating={true}
+          onFloatingChange={setEventsFloating}
+          floatX={eventsPanelX}
+          floatY={eventsPanelY}
+          floatW={eventsPanelW}
+          floatH={eventsPanelH}
+          onFloatPosChange={(x: number, y: number) => { setEventsPanelX(x); setEventsPanelY(y); }}
+          onFloatSizeChange={(w: number, h: number) => { setEventsPanelW(w); setEventsPanelH(h); }}
+        >
+          <EventsOfInterestContent
+            events={eventsOfInterest}
+            loading={eventsLoading}
+            onEditEvent={handleEditEvent}
+            onDeleteEvent={removeEvent}
+            onDeleteEvents={removeEvents}
+            hiddenEventIds={hiddenEventIds}
+            onToggleEventVisibility={handleToggleEventVisibility}
+          />
+        </EventsOfInterestPanel>
+      )}
+
+      {/* Event form dialog (create/edit) */}
+      {eventFormOpen && (
+        <EventFormDialog
+          editEvent={editingEvent}
+          initialLat={eventFormInitialLat}
+          initialLng={eventFormInitialLng}
+          onSave={handleEventFormSave}
+          onCancel={handleEventFormCancel}
+          isPickingFromMap={mapPickingMode !== null}
+          onStartMapPick={handleStartMapPick}
+          mapPickResult={mapPickResult}
+        />
+      )}
+
+      {/* Map context menu */}
+      {contextMenu && (
+        <MapContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          lat={contextMenu.lat}
+          lng={contextMenu.lng}
+          onCreateEvent={handleCreateEventFromMap}
+          onClose={handleCloseContextMenu}
+        />
       )}
     </div>
   );

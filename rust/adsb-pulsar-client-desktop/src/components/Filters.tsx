@@ -1,5 +1,5 @@
 "use client";
-import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode } from "@/lib/types";
+import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventFilterMode } from "@/lib/types";
 import { RangeSlider } from "@/components/RangeSlider";
 import type { ReactNode } from "react";
 
@@ -39,6 +39,22 @@ interface Props {
   historySliderMax: number;
   historySliderRange: number;
   onHistoryTimeChange: (min: number, max: number) => void;
+  showEvents: boolean;
+  onToggleEvents: () => void;
+  eventsCount: number;
+  eventFilterMode: EventFilterMode;
+  onEventFilterModeChange: (mode: EventFilterMode) => void;
+  eventUpcomingDays: number;
+  onEventUpcomingDaysChange: (days: number) => void;
+  eventTimeRangeStart: number;
+  eventTimeRangeEnd: number;
+  onEventTimeRangeChange: (startMs: number, endMs: number) => void;
+}
+
+function msToDatetimeLocal(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function Section({ title, defaultOpen, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
@@ -55,7 +71,7 @@ function Section({ title, defaultOpen, children }: { title: string; defaultOpen?
   );
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange, showEvents, onToggleEvents, eventsCount, eventFilterMode, onEventFilterModeChange, eventUpcomingDays, onEventUpcomingDaysChange, eventTimeRangeStart, eventTimeRangeEnd, onEventTimeRangeChange }: Props) {
   return (
     <div className="flex flex-col gap-2 p-4">
 
@@ -163,6 +179,88 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
             </label>
           </div>
         )}
+
+        <div>
+          <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showEvents}
+              onChange={onToggleEvents}
+              className="accent-amber-500"
+            />
+            <span>
+              Show events{" "}
+              <span className="text-slate-500 font-mono">({eventsCount})</span>
+            </span>
+          </label>
+          {showEvents && (
+            <div className="ml-5 mt-1 flex flex-col gap-1">
+              <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer">
+                <input
+                  type="radio"
+                  name="event-filter-mode"
+                  checked={eventFilterMode === "all"}
+                  onChange={() => onEventFilterModeChange("all")}
+                  className="accent-amber-500"
+                />
+                All events
+              </label>
+              <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer">
+                <input
+                  type="radio"
+                  name="event-filter-mode"
+                  checked={eventFilterMode === "upcoming"}
+                  onChange={() => onEventFilterModeChange("upcoming")}
+                  className="accent-amber-500"
+                />
+                Upcoming
+              </label>
+              {eventFilterMode === "upcoming" && (
+                <div className="ml-5 flex items-center gap-1.5 text-xs text-slate-500">
+                  <span>Next</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={eventUpcomingDays}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      if (!isNaN(v) && v >= 1) onEventUpcomingDaysChange(v);
+                    }}
+                    className="w-14 px-1.5 py-0.5 bg-slate-700 border border-slate-600 rounded text-xs text-slate-200 text-center"
+                  />
+                  <span>days</span>
+                </div>
+              )}
+              <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer">
+                <input
+                  type="radio"
+                  name="event-filter-mode"
+                  checked={eventFilterMode === "range"}
+                  onChange={() => onEventFilterModeChange("range")}
+                  className="accent-amber-500"
+                />
+                Time range
+              </label>
+              {eventFilterMode === "range" && (
+                <div className="ml-5 mt-1 flex flex-col gap-1">
+                  <input
+                    type="datetime-local"
+                    className="w-full px-2 py-1 bg-slate-700 border border-slate-600 rounded text-xs text-slate-200"
+                    value={msToDatetimeLocal(eventTimeRangeStart)}
+                    onChange={(e) => onEventTimeRangeChange(new Date(e.target.value).getTime(), eventTimeRangeEnd)}
+                  />
+                  <input
+                    type="datetime-local"
+                    className="w-full px-2 py-1 bg-slate-700 border border-slate-600 rounded text-xs text-slate-200"
+                    value={msToDatetimeLocal(eventTimeRangeEnd)}
+                    onChange={(e) => onEventTimeRangeChange(eventTimeRangeStart, new Date(e.target.value).getTime())}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {importedCount > 0 && (
           <div>

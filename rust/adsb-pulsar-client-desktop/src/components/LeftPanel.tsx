@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useRef } from "react";
 import { FiltersPanel } from "@/components/Filters";
-import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode } from "@/lib/types";
+import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventFilterMode } from "@/lib/types";
 
 const MIN_PANEL_WIDTH = 180;
 const MAX_PANEL_WIDTH = 400;
@@ -48,6 +48,16 @@ interface LeftPanelProps {
   historySliderMax: number;
   historySliderRange: number;
   onHistoryTimeChange: (min: number, max: number) => void;
+  showEvents: boolean;
+  onToggleEvents: () => void;
+  eventsCount: number;
+  eventFilterMode: EventFilterMode;
+  onEventFilterModeChange: (mode: EventFilterMode) => void;
+  eventUpcomingDays: number;
+  onEventUpcomingDaysChange: (days: number) => void;
+  eventTimeRangeStart: number;
+  eventTimeRangeEnd: number;
+  onEventTimeRangeChange: (startMs: number, endMs: number) => void;
 }
 
 export function LeftPanel({ isOpen, width, onToggle, onWidthChange, ...filterProps }: LeftPanelProps) {

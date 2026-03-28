@@ -4,8 +4,11 @@ import type {
   AircraftSummary,
   BboxQuery,
   Config,
+  CreateEventOfInterest,
   DetectionRangeQuery,
   DetectionRangeSector,
+  EventOfInterest,
+  EventOfInterestQuery,
   FlightSummary,
   FlightSummaryQuery,
   HourlyHeatmapCell,
@@ -25,6 +28,7 @@ import type {
   TimeDistributionBucket,
   TimeDistributionQuery,
   TrajectoryQuery,
+  UpdateEventOfInterest,
 } from "./types";
 
 export async function startFeed(): Promise<void> {
@@ -195,4 +199,34 @@ export async function getStatusTimeline(
   query: StatusEventQuery
 ): Promise<StatusEvent[]> {
   return invoke("get_status_timeline", { query });
+}
+
+// --- Events of interest commands ---
+
+export async function createEventOfInterest(
+  event: CreateEventOfInterest
+): Promise<EventOfInterest> {
+  return invoke("create_event_of_interest", { event });
+}
+
+export async function getEventsOfInterest(
+  query: EventOfInterestQuery
+): Promise<EventOfInterest[]> {
+  return invoke("get_events_of_interest", { query });
+}
+
+export async function getEventOfInterest(
+  id: string
+): Promise<EventOfInterest> {
+  return invoke("get_event_of_interest", { id });
+}
+
+export async function updateEventOfInterest(
+  event: UpdateEventOfInterest
+): Promise<EventOfInterest> {
+  return invoke("update_event_of_interest", { event });
+}
+
+export async function deleteEventOfInterest(id: string): Promise<void> {
+  return invoke("delete_event_of_interest", { id });
 }

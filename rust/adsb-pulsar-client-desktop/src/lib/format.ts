@@ -9,6 +9,43 @@ export function timeAgo(lastSeen: number): string {
   return `${hours}h ${remainMin}m ago`;
 }
 
+/**
+ * Format a timestamp delta as a long-form relative string using months, days, hours.
+ * Cascades from months → days → hours → minutes → seconds, showing up to two significant units.
+ */
+export function timeAgoLong(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const totalHours = Math.floor(totalMinutes / 60);
+  const totalDays = Math.floor(totalHours / 24);
+  const months = Math.floor(totalDays / 30);
+
+  if (months > 0) {
+    const remainDays = totalDays - months * 30;
+    return remainDays > 0 ? `${months}mo ${remainDays}d ago` : `${months}mo ago`;
+  }
+  if (totalDays > 0) {
+    const remainHours = totalHours - totalDays * 24;
+    return remainHours > 0 ? `${totalDays}d ${remainHours}h ago` : `${totalDays}d ago`;
+  }
+  if (totalHours > 0) {
+    const remainMin = totalMinutes - totalHours * 60;
+    return `${totalHours}h ${remainMin}m ago`;
+  }
+  if (totalMinutes > 0) return `${totalMinutes}m ago`;
+  return `${totalSeconds}s ago`;
+}
+
+/**
+ * Format an epoch ms as a compact local datetime string for event display.
+ * Example: "2026-02-23 15:30"
+ */
+export function formatEventTime(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** Format a byte count as a human-readable string (B, KB, MB). */
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

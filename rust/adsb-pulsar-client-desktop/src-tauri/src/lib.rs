@@ -77,6 +77,11 @@ pub fn run() {
             commands::import_database,
             commands::swap_database,
             commands::get_status_timeline,
+            commands::create_event_of_interest,
+            commands::get_events_of_interest,
+            commands::get_event_of_interest,
+            commands::update_event_of_interest,
+            commands::delete_event_of_interest,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
