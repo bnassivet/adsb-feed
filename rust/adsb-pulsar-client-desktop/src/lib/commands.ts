@@ -69,7 +69,7 @@ export async function queryBbox(
 
 export async function queryBboxArrow(
   query: BboxQuery
-): Promise<number[]> {
+): Promise<ArrayBuffer> {
   return invoke("query_bbox_arrow", { query });
 }
 
@@ -81,8 +81,18 @@ export async function getTrajectory(
 
 export async function getTrajectoryBatchArrow(
   queries: [TrajectoryQuery, string][]
-): Promise<number[]> {
+): Promise<ArrayBuffer> {
   return invoke("get_trajectories_batch_arrow", { queries });
+}
+
+export async function getAllTrajectoriesArrow(
+  startMs?: number | null,
+  endMs?: number | null
+): Promise<ArrayBuffer> {
+  return invoke("get_all_trajectories_arrow", {
+    startMs: startMs ?? null,
+    endMs: endMs ?? null,
+  });
 }
 
 export async function getAircraftSummary(
@@ -103,7 +113,7 @@ export async function getFlightSummary(
 
 export async function getFlightSummaryArrow(
   query: FlightSummaryQuery
-): Promise<number[]> {
+): Promise<ArrayBuffer> {
   return invoke("get_flight_summary_arrow", { query });
 }
 
@@ -147,7 +157,7 @@ export async function getRawMessages(
 
 export async function getRawMessagesArrow(
   query: RawMessageQuery
-): Promise<number[]> {
+): Promise<ArrayBuffer> {
   return invoke("get_raw_messages_arrow", { query });
 }
 

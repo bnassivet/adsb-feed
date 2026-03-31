@@ -14,6 +14,49 @@ export interface AircraftPosition {
   message_count: number;
 }
 
+/**
+ * Columnar position storage for batch-loaded tracks (DB history, imported).
+ * Keeps Arrow Float64Array columns instead of materializing 1M [lat,lng,alt] tuples.
+ * NaN in alt array represents null altitude.
+ */
+export class ColumnarPositions {
+  readonly lat: Float64Array;
+  readonly lng: Float64Array;
+  readonly alt: Float64Array;
+  readonly length: number;
+
+  constructor(lat: Float64Array, lng: Float64Array, alt: Float64Array) {
+    this.lat = lat;
+    this.lng = lng;
+    this.alt = alt;
+    this.length = lat.length;
+  }
+
+  get(i: number): [number, number, number | null] {
+    const a = this.alt[i];
+    return [this.lat[i], this.lng[i], Number.isNaN(a) ? null : a];
+  }
+
+  [Symbol.iterator](): Iterator<[number, number, number | null]> {
+    let i = 0;
+    const self = this;
+    return {
+      next(): IteratorResult<[number, number, number | null]> {
+        if (i >= self.length) return { done: true, value: undefined };
+        return { done: false, value: self.get(i++) };
+      },
+    };
+  }
+}
+
+/** Union type: live tracks use tuple arrays, batch tracks use columnar. */
+export type Positions = [number, number, number | null][] | ColumnarPositions;
+
+/** Type guard for columnar position data. */
+export function isColumnar(p: Positions): p is ColumnarPositions {
+  return p instanceof ColumnarPositions;
+}
+
 /** Accumulated track state for a single aircraft (built from multiple positions). */
 export interface AircraftTrack {
   hex_ident: string;
@@ -27,8 +70,8 @@ export interface AircraftTrack {
   squawk: string | null;
   is_on_ground: boolean | null;
   timestamp: string;
-  /** Position history for trajectory line drawing: [lat, lng, altitude | null] */
-  positions: [number, number, number | null][];
+  /** Position history: tuple arrays for live tracks, ColumnarPositions for batch-loaded. */
+  positions: Positions;
   /** Time of first detection (ms since epoch). Set once, never updated. */
   first_seen: number;
   /** Last update time for TTL expiry */

@@ -70,7 +70,7 @@ describe("recordsToTrack", () => {
   it("handles null altitude in positions", () => {
     const record = makeRecord({ altitude: null });
     const track = recordsToTrack([record]);
-    expect(track.positions[0][2]).toBeNull();
+    expect((track.positions as [number, number, number | null][])[0][2]).toBeNull();
   });
 
   it("uses last record callsign (callers override with richer data)", () => {
@@ -120,8 +120,9 @@ describe("recordsToTracks", () => {
     expect(tracks).toHaveLength(1);
     expect(tracks[0].first_seen).toBe(1_000);
     expect(tracks[0].last_seen).toBe(5_000);
-    expect(tracks[0].positions[0][0]).toBe(48.0); // earlier record first
-    expect(tracks[0].positions[1][0]).toBe(48.5);
+    const pos = tracks[0].positions as [number, number, number | null][];
+    expect(pos[0][0]).toBe(48.0); // earlier record first
+    expect(pos[1][0]).toBe(48.5);
   });
 });
 

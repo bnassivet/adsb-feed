@@ -25,6 +25,7 @@ import {
   getEventOfInterest,
   updateEventOfInterest,
   deleteEventOfInterest,
+  getAllTrajectoriesArrow,
 } from "../commands";
 import type {
   BboxQuery,
@@ -137,6 +138,24 @@ describe("Historical query commands", () => {
       };
       const result = await getTrajectory(query);
       expect(result).toHaveLength(1);
+    });
+  });
+
+  describe("getAllTrajectoriesArrow", () => {
+    it("invokes get_all_trajectories_arrow with null defaults", async () => {
+      const fakeBuffer = new ArrayBuffer(8);
+      mockInvokeResponse("get_all_trajectories_arrow", fakeBuffer);
+
+      const result = await getAllTrajectoriesArrow();
+      expect(result).toBe(fakeBuffer);
+    });
+
+    it("passes time bounds to backend", async () => {
+      const fakeBuffer = new ArrayBuffer(8);
+      mockInvokeResponse("get_all_trajectories_arrow", fakeBuffer);
+
+      const result = await getAllTrajectoriesArrow(1000, 2000);
+      expect(result).toBe(fakeBuffer);
     });
   });
 

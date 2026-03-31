@@ -48,7 +48,8 @@ export function useAircraftTracks(filters: Filters) {
     imported: importedMap,
     dbHistory: dbHistoryMap,
     analysis: analysisMap,
-    version,
+    liveVersion,
+    staticVersion,
     importTracks,
     clearImported,
     loadDbHistoryTracks,
@@ -59,19 +60,21 @@ export function useAircraftTracks(filters: Filters) {
     trackHistoryHours,
   } = useAircraftTrackingContext();
 
+  // Live tracks & history recompute on every feed batch (~500ms)
   const tracks = useMemo(
     () => Array.from(tracksMap.values()).filter((t) => matchesFilters(t, filters)),
-    // version changes on every batch, ensuring useMemo recomputes even though tracksMap is the same ref
+    // liveVersion changes on every batch, ensuring useMemo recomputes even though tracksMap is the same ref
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [version, filters],
+    [liveVersion, filters],
   );
 
   const history = useMemo(
     () => Array.from(historyMap.values()).filter((t) => matchesFilters(t, filters)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [version, filters],
+    [liveVersion, filters],
   );
 
+  // Static track categories only recompute on explicit user actions (load, clear, import)
   const imported = useMemo(
     () => {
       const all = Array.from(importedMap.values());
@@ -80,20 +83,20 @@ export function useAircraftTracks(filters: Filters) {
         : all;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [version, filters],
+    [staticVersion, filters],
   );
 
   // dbHistory is NOT filtered by live Filters — controlled by DBHistoryPanel
   const dbHistory = useMemo(
     () => Array.from(dbHistoryMap.values()),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [version],
+    [staticVersion],
   );
 
   const analysis = useMemo(
     () => Array.from(analysisMap.values()).filter((t) => matchesFilters(t, filters)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [version, filters],
+    [staticVersion, filters],
   );
 
   return {

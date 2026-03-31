@@ -1,9 +1,9 @@
 "use client";
-import { useEffect, useMemo, useCallback, useRef } from "react";
-import { MapContainer, TileLayer, Marker, Polyline, GeoJSON, Tooltip, CircleMarker, useMap, useMapEvents } from "react-leaflet";
+import { useEffect, useMemo, useCallback, useRef, useState } from "react";
+import { MapContainer, TileLayer, Marker, Polyline, GeoJSON, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
-import type { AircraftTrack, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventOfInterest, MapPickResult } from "@/lib/types";
-import { zoomToH3Resolution, trackKey, cornersToBox } from "@/lib/types";
+import type { AircraftTrack, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventOfInterest, MapPickResult, Positions } from "@/lib/types";
+import { zoomToH3Resolution, trackKey, cornersToBox, isColumnar } from "@/lib/types";
 import { altitudeToColor, densityColor, cachedAltitudeToColor, type MapTheme } from "@/lib/colors";
 import { computeH3Density } from "@/lib/h3-density";
 import type { DensityProperties, DensityAltitudeRange } from "@/lib/h3-density";
@@ -11,6 +11,7 @@ import { useMapZoom } from "@/hooks/useMapZoom";
 import { aircraftIconHtml } from "@/lib/aircraft-icon";
 import { haversineDistanceNm } from "@/lib/geo";
 import { orderTracksWithSelectedLast } from "@/lib/track-ordering";
+import { subsamplePositions } from "@/lib/subsample";
 import { MapTileToggle } from "./MapTileToggle";
 import { AltitudeLegend } from "./AltitudeLegend";
 
@@ -372,12 +373,37 @@ function formatAlt(alt: number | null | undefined): string {
   return `${alt.toLocaleString()} ft`;
 }
 
-/** Extract [lat, lng] pairs from position tuples for Leaflet Polyline. */
-function toLatLngs(positions: [number, number, number | null][]): [number, number][] {
-  return positions.map(p => [p[0], p[1]]);
+/**
+ * Cached [lat, lng] extraction from positions.
+ * Supports both tuple arrays (live tracks) and ColumnarPositions (batch tracks).
+ * WeakMap keyed on positions reference — static tracks have stable refs, so cache hits.
+ */
+const latLngCache = new WeakMap<object, [number, number][]>();
+function toLatLngs(positions: Positions): [number, number][] {
+  const existing = latLngCache.get(positions);
+  if (existing) return existing;
+
+  let result: [number, number][];
+  if (isColumnar(positions)) {
+    result = new Array(positions.length);
+    for (let i = 0; i < positions.length; i++) {
+      result[i] = [positions.lat[i], positions.lng[i]];
+    }
+  } else {
+    result = positions.map(p => [p[0], p[1]]);
+  }
+  latLngCache.set(positions, result);
+  return result;
 }
 
-/** Renders dots imperatively via Leaflet API — bypasses React per-dot reconciliation. */
+/**
+ * Renders dots imperatively via Leaflet API — bypasses React per-dot reconciliation.
+ *
+ * Split into two effects:
+ * 1. Marker creation: runs when tracks/colorMode/type/theme change (heavy — creates all markers)
+ * 2. Selection restyle: runs when selectedHexIdents change (light — only updates radius/opacity
+ *    on the 2 affected tracks: previously selected + newly selected)
+ */
 function DotsLayer({
   tracks,
   colorMode,
@@ -392,25 +418,73 @@ function DotsLayer({
   theme: MapTheme;
 }) {
   const map = useMap();
+  // Per-track marker groups for targeted restyle on selection change
+  const markersByTrack = useRef<Map<string, L.CircleMarker[]>>(new Map());
+  const prevSelected = useRef<Set<string>>(new Set());
+  // Track zoom/bounds for subsampling — triggers re-render on viewport change
+  const [viewState, setViewState] = useState({ zoom: map.getZoom(), bounds: map.getBounds() });
+  useMapEvents({
+    zoomend: () => setViewState({ zoom: map.getZoom(), bounds: map.getBounds() }),
+    moveend: () => setViewState({ zoom: map.getZoom(), bounds: map.getBounds() }),
+  });
 
+  const baseRadius = type === "history" ? 2 : type === "imported" ? 2.5 : type === "dbHistory" ? 2.5 : 3;
+  const baseFillOpacity = type === "history" ? 0.2 : type === "imported" ? 0.35 : type === "dbHistory" ? 0.4 : 0.6;
+
+  // Effect 1: Create/destroy markers when tracks or visual config change
   useEffect(() => {
-    const markers: L.CircleMarker[] = [];
-    const baseRadius = type === "history" ? 2 : type === "imported" ? 2.5 : type === "dbHistory" ? 2.5 : 3;
-    const baseFillOpacity = type === "history" ? 0.2 : type === "imported" ? 0.35 : type === "dbHistory" ? 0.4 : 0.6;
+    const groupMap = markersByTrack.current;
+    // Clear previous markers
+    for (const markers of groupMap.values()) {
+      for (const m of markers) m.remove();
+    }
+    groupMap.clear();
+
+    const mapBounds = {
+      north: viewState.bounds.getNorth(),
+      south: viewState.bounds.getSouth(),
+      east: viewState.bounds.getEast(),
+      west: viewState.bounds.getWest(),
+    };
 
     for (const t of tracks) {
       if (t.positions.length < 2) continue;
+      const key = trackKey(t);
       const trackColor = cachedAltitudeToColor(t.altitude, theme);
-      const isSelected = selectedHexIdents.has(trackKey(t));
+      const isSelected = selectedHexIdents.has(key);
       const radius = isSelected ? baseRadius + 2 : baseRadius;
       const fillOpacity = isSelected ? 0.9 : baseFillOpacity;
+      const trackMarkers: L.CircleMarker[] = [];
 
-      for (let i = 0; i < t.positions.length; i++) {
-        const pos = t.positions[i];
-        const dotColor = colorMode === "plot" ? cachedAltitudeToColor(pos[2], theme) : trackColor;
+      // Extract position accessors — columnar (Float64Array) or tuple ([lat,lng,alt][])
+      const positions = t.positions;
+      const columnar = isColumnar(positions);
+      const pLat = columnar ? positions.lat : null;
+      const pLng = columnar ? positions.lng : null;
+      const pAlt = columnar ? positions.alt : null;
+
+      // Subsample: skip positions that map to the same pixel at current zoom
+      // Selected tracks render at full detail for inspection
+      const indices = isSelected
+        ? null  // full detail
+        : subsamplePositions(positions, viewState.zoom, mapBounds);
+
+      const count = indices ? indices.length : positions.length;
+
+      for (let idx = 0; idx < count; idx++) {
+        const i = indices ? indices[idx] : idx;
+        let lat: number, lng: number, alt: number | null;
+        if (columnar) {
+          lat = pLat![i]; lng = pLng![i];
+          const a = pAlt![i]; alt = Number.isNaN(a) ? null : a;
+        } else {
+          const p = (positions as [number, number, number | null][])[i];
+          lat = p[0]; lng = p[1]; alt = p[2];
+        }
+        const dotColor = colorMode === "plot" ? cachedAltitudeToColor(alt, theme) : trackColor;
         const isLast = i === t.positions.length - 1;
 
-        const marker = L.circleMarker([pos[0], pos[1]], {
+        const marker = L.circleMarker([lat, lng], {
           radius,
           color: dotColor,
           fillColor: dotColor,
@@ -425,36 +499,72 @@ function DotsLayer({
             const parts = [
               `<div style="font-weight:600;color:#fff">${label}</div>`,
               `<div>Hex: ${t.hex_ident}</div>`,
-              `<div>Alt: <span style="color:#fff">${formatAlt(pos[2])}</span></div>`,
+              `<div>Alt: <span style="color:#fff">${formatAlt(alt)}</span></div>`,
             ];
             if (isLast) parts.push(`<div>Last seen: ${timeAgo(t.last_seen)}</div>`);
             return parts.join("");
           });
         } else if (type === "dbHistory") {
           marker.bindTooltip(() =>
-            `<div style="font-weight:600;color:#fff">${label}</div><div>Hex: ${t.hex_ident}</div><div>Alt: <span style="color:#fff">${formatAlt(pos[2])}</span></div><div style="color:#22d3ee;margin-top:2px">DB History</div>`
+            `<div style="font-weight:600;color:#fff">${label}</div><div>Hex: ${t.hex_ident}</div><div>Alt: <span style="color:#fff">${formatAlt(alt)}</span></div><div style="color:#22d3ee;margin-top:2px">DB History</div>`
           );
         } else if (type === "imported") {
           marker.bindTooltip(() =>
-            `<div style="font-weight:600;color:#fff">${label}</div><div>Hex: ${t.hex_ident}</div><div>Alt: <span style="color:#fff">${formatAlt(pos[2])}</span></div><div style="color:#818cf8;margin-top:2px">Imported</div>`
+            `<div style="font-weight:600;color:#fff">${label}</div><div>Hex: ${t.hex_ident}</div><div>Alt: <span style="color:#fff">${formatAlt(alt)}</span></div><div style="color:#818cf8;margin-top:2px">Imported</div>`
           );
         } else {
           marker.bindTooltip(() =>
-            `<div style="font-weight:600;color:#fff">${label}</div><div>Alt: <span style="color:#fff">${formatAlt(pos[2])}</span></div>`
+            `<div style="font-weight:600;color:#fff">${label}</div><div>Alt: <span style="color:#fff">${formatAlt(alt)}</span></div>`
           );
         }
 
         marker.addTo(map);
-        markers.push(marker);
+        trackMarkers.push(marker);
+      }
+      groupMap.set(key, trackMarkers);
+    }
+
+    prevSelected.current = new Set(selectedHexIdents);
+
+    return () => {
+      for (const markers of groupMap.values()) {
+        for (const m of markers) m.remove();
+      }
+      groupMap.clear();
+    };
+    // Intentionally excludes selectedHexIdents — handled by Effect 2
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, tracks, colorMode, type, theme, baseRadius, baseFillOpacity, viewState]);
+
+  // Effect 2: Restyle only changed tracks on selection change (no marker recreation)
+  useEffect(() => {
+    const groupMap = markersByTrack.current;
+    if (groupMap.size === 0) return;
+
+    const prev = prevSelected.current;
+    // Find tracks that changed selection state
+    const changed = new Set<string>();
+    for (const key of selectedHexIdents) {
+      if (!prev.has(key)) changed.add(key);
+    }
+    for (const key of prev) {
+      if (!selectedHexIdents.has(key)) changed.add(key);
+    }
+
+    for (const key of changed) {
+      const markers = groupMap.get(key);
+      if (!markers) continue;
+      const isNowSelected = selectedHexIdents.has(key);
+      const radius = isNowSelected ? baseRadius + 2 : baseRadius;
+      const fillOpacity = isNowSelected ? 0.9 : baseFillOpacity;
+      for (const m of markers) {
+        m.setRadius(radius);
+        m.setStyle({ fillOpacity });
       }
     }
 
-    return () => {
-      for (const m of markers) {
-        m.remove();
-      }
-    };
-  }, [map, tracks, colorMode, type, selectedHexIdents, theme]);
+    prevSelected.current = new Set(selectedHexIdents);
+  }, [selectedHexIdents, baseRadius, baseFillOpacity]);
 
   return null;
 }

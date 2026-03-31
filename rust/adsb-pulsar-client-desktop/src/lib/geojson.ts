@@ -1,4 +1,5 @@
 import type { AircraftTrack } from "./types";
+import { isColumnar } from "./types";
 
 /** GeoJSON coordinate: [lng, lat] or [lng, lat, altitude]. */
 type GeoJSONCoordinate = [number, number] | [number, number, number | null];
@@ -128,21 +129,26 @@ function trackToFeature(t: AircraftTrack): TrackFeature {
   }
 
   if (t.positions.length === 1) {
+    const p = isColumnar(t.positions) ? t.positions.get(0) : t.positions[0];
     return {
       type: "Feature",
       geometry: {
         type: "Point",
-        coordinates: positionToCoordinate(t.positions[0]),
+        coordinates: positionToCoordinate(p),
       },
       properties,
     };
   }
 
+  const coords: GeoJSONCoordinate[] = [];
+  for (const pos of t.positions) {
+    coords.push(positionToCoordinate(pos));
+  }
   return {
     type: "Feature",
     geometry: {
       type: "LineString",
-      coordinates: t.positions.map(positionToCoordinate),
+      coordinates: coords,
     },
     properties,
   };

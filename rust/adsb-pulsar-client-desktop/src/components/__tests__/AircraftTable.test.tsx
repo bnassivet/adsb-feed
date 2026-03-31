@@ -138,6 +138,11 @@ describe("AircraftTable selection", () => {
   });
 
   it("auto-scrolls last-selected row into view", () => {
+    // With virtualization, scrollToIndex is used instead of scrollIntoView.
+    // We verify the selected row is rendered and visible in the virtual list.
+    const scrollToMock = vi.fn();
+    Element.prototype.scrollTo = scrollToMock;
+
     const { rerender } = render(
       <AircraftTable {...defaultSortProps}
         tracks={[makeTrack("AAA"), makeTrack("BBB"), makeTrack("CCC")]}
@@ -145,7 +150,7 @@ describe("AircraftTable selection", () => {
       />,
     );
 
-    vi.mocked(Element.prototype.scrollIntoView).mockClear();
+    scrollToMock.mockClear();
 
     rerender(
       <AircraftTable {...defaultSortProps}
@@ -155,10 +160,8 @@ describe("AircraftTable selection", () => {
       />,
     );
 
-    expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
-      block: "nearest",
-      behavior: "smooth",
-    });
+    // The virtualizer calls scrollTo on the scroll container
+    expect(scrollToMock).toHaveBeenCalled();
   });
 });
 

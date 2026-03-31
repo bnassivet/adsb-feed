@@ -767,6 +767,79 @@ impl StorageHandle {
         Ok(buf)
     }
 
+    /// Fetch ALL trajectories as Arrow IPC bytes (synchronous).
+    ///
+    /// Joins positions with the flights table to get flight_id.
+    /// Single query — much faster than per-flight batch when loading all flights.
+    /// Optional time bounds filter positions globally.
+    pub fn get_all_trajectories_arrow_sync(
+        &self,
+        start_ms: Option<i64>,
+        end_ms: Option<i64>,
+    ) -> Result<Vec<u8>, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let mut sql = String::from(
+            "SELECT p.hex_ident, p.callsign, p.latitude, p.longitude, p.altitude,
+                    p.ground_speed, p.track, p.vertical_rate, p.squawk, p.is_on_ground,
+                    p.timestamp_ms, f.flight_id
+             FROM positions p
+             JOIN flights f ON p.hex_ident = f.hex_ident
+               AND p.timestamp_ms >= f.first_seen_ms
+               AND p.timestamp_ms <= f.last_seen_ms
+             WHERE p.latitude IS NOT NULL
+               AND p.longitude IS NOT NULL",
+        );
+
+        let mut params_vec: Vec<Box<dyn duckdb::ToSql>> = Vec::new();
+        if let Some(start) = start_ms {
+            sql.push_str(" AND p.timestamp_ms >= ?");
+            params_vec.push(Box::new(start));
+        }
+        if let Some(end) = end_ms {
+            sql.push_str(" AND p.timestamp_ms <= ?");
+            params_vec.push(Box::new(end));
+        }
+        sql.push_str(" ORDER BY f.flight_id, p.timestamp_ms");
+
+        let params_refs: Vec<&dyn duckdb::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let mut stmt = storage.conn.prepare(&sql)?;
+        let arrow_result = stmt.query_arrow(params_refs.as_slice())?;
+
+        let mut buf = Vec::new();
+        let mut writer: Option<StreamWriter<&mut Vec<u8>>> = None;
+
+        for batch in arrow_result {
+            if batch.num_rows() == 0 {
+                continue;
+            }
+            if writer.is_none() {
+                let schema = batch.schema();
+                writer = Some(
+                    StreamWriter::try_new(&mut buf, &schema)
+                        .map_err(|e| StorageError::Query(format!("Arrow writer init: {e}")))?,
+                );
+            }
+            writer
+                .as_mut()
+                .unwrap()
+                .write(&batch)
+                .map_err(|e| StorageError::Query(format!("Arrow write: {e}")))?;
+        }
+
+        if let Some(w) = writer.as_mut() {
+            w.finish()
+                .map_err(|e| StorageError::Query(format!("Arrow finish: {e}")))?;
+        }
+
+        Ok(buf)
+    }
+
     /// Get summary of distinct aircraft in a time window (synchronous).
     pub fn get_aircraft_summary_sync(
         &self,
@@ -1899,6 +1972,20 @@ impl StorageHandle {
         tokio::task::spawn_blocking(move || handle.get_trajectories_batch_arrow_sync(&queries))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Fetch ALL trajectories as Arrow IPC bytes (async via spawn_blocking).
+    pub async fn get_all_trajectories_arrow(
+        &self,
+        start_ms: Option<i64>,
+        end_ms: Option<i64>,
+    ) -> Result<Vec<u8>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || {
+            handle.get_all_trajectories_arrow_sync(start_ms, end_ms)
+        })
+        .await
+        .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
 
     /// Get aircraft summary (async via spawn_blocking).
@@ -5328,5 +5415,110 @@ mod tests {
 
         let stats = handle.get_stats_sync().unwrap();
         assert_eq!(stats.event_of_interest_count, 1);
+    }
+
+    // --- get_all_trajectories_arrow_sync tests ---
+
+    #[test]
+    fn test_get_all_trajectories_returns_all_flights() {
+        use arrow::ipc::reader::StreamReader;
+
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let positions = vec![
+            sample_position("A1B2C3", Some(45.5), Some(-73.5), "2024/01/15 10:30:00.000"),
+            sample_position("A1B2C3", Some(45.6), Some(-73.6), "2024/01/15 10:31:00.000"),
+            sample_position("D4E5F6", Some(46.0), Some(-74.0), "2024/01/15 10:30:00.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let bytes = handle.get_all_trajectories_arrow_sync(None, None).unwrap();
+        assert!(!bytes.is_empty());
+
+        let reader =
+            StreamReader::try_new(std::io::Cursor::new(&bytes), None).unwrap();
+        let schema = reader.schema();
+        assert_eq!(schema.fields().len(), 12); // 11 + flight_id
+        assert!(schema.field_with_name("flight_id").is_ok());
+
+        let batches: Vec<_> = reader.collect::<Result<Vec<_>, _>>().unwrap();
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 3); // 2 for A1B2C3 + 1 for D4E5F6
+    }
+
+    #[test]
+    fn test_get_all_trajectories_empty_table() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let bytes = handle.get_all_trajectories_arrow_sync(None, None).unwrap();
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn test_get_all_trajectories_matches_batch_query() {
+        use arrow::array::{Array, StringArray};
+        use arrow::ipc::reader::StreamReader;
+        use arrow::record_batch::RecordBatch;
+
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let positions = vec![
+            sample_position("A1B2C3", Some(45.5), Some(-73.5), "2024/01/15 10:30:00.000"),
+            sample_position("A1B2C3", Some(45.6), Some(-73.6), "2024/01/15 10:31:00.000"),
+            sample_position("D4E5F6", Some(46.0), Some(-74.0), "2024/01/15 10:30:00.000"),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        // Get all trajectories
+        let all_bytes = handle.get_all_trajectories_arrow_sync(None, None).unwrap();
+
+        // Build equivalent batch query
+        let queries = vec![
+            (
+                TrajectoryQuery {
+                    hex_ident: "A1B2C3".to_string(),
+                    start_ms: None,
+                    end_ms: None,
+                },
+                "A1B2C3_0".to_string(),
+            ),
+            (
+                TrajectoryQuery {
+                    hex_ident: "D4E5F6".to_string(),
+                    start_ms: None,
+                    end_ms: None,
+                },
+                "D4E5F6_0".to_string(),
+            ),
+        ];
+        let batch_bytes = handle.get_trajectories_batch_arrow_sync(&queries).unwrap();
+
+        // Both should have same total rows
+        let all_reader =
+            StreamReader::try_new(std::io::Cursor::new(&all_bytes), None).unwrap();
+        let batch_reader =
+            StreamReader::try_new(std::io::Cursor::new(&batch_bytes), None).unwrap();
+
+        let all_batches: Vec<RecordBatch> =
+            all_reader.collect::<Result<Vec<_>, _>>().unwrap();
+        let batch_batches: Vec<RecordBatch> =
+            batch_reader.collect::<Result<Vec<_>, _>>().unwrap();
+
+        let all_rows: usize = all_batches.iter().map(|b| b.num_rows()).sum();
+        let batch_rows: usize = batch_batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(all_rows, batch_rows);
+
+        // Verify flight_id column values in all-trajectories result
+        let mut flight_ids: Vec<String> = Vec::new();
+        for batch in &all_batches {
+            let fid_col = batch
+                .column_by_name("flight_id")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+            for i in 0..fid_col.len() {
+                flight_ids.push(fid_col.value(i).to_string());
+            }
+        }
+        assert!(flight_ids.contains(&"A1B2C3_0".to_string()));
+        assert!(flight_ids.contains(&"D4E5F6_0".to_string()));
     }
 }

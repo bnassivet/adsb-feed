@@ -45,7 +45,7 @@ describe("appendPosition", () => {
     }
     expect(track.positions.length).toBe(MAX);
     // Oldest positions were shifted out — first position should be the (OVER+1)th added
-    expect(track.positions[0][0]).toBeCloseTo(45.0 + OVER * 0.0001);
+    expect((track.positions as [number, number, number | null][])[0][0]).toBeCloseTo(45.0 + OVER * 0.0001);
   });
 });
 

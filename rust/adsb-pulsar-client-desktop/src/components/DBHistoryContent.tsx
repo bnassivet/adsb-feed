@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { getStorageStats, getAircraftSummary, getFlightSummaryArrow, getTrajectoryBatchArrow, getTimeDistribution, getDetectionRange, getHourlyHeatmap, getRawMessageCount } from "@/lib/commands";
+import { getStorageStats, getAircraftSummary, getFlightSummaryArrow, getTrajectoryBatchArrow, getAllTrajectoriesArrow, getTimeDistribution, getDetectionRange, getHourlyHeatmap, getRawMessageCount } from "@/lib/commands";
 import { arrowToTracks, arrowToFlightSummaries } from "@/lib/arrow-utils";
 import type { AircraftSummary, AircraftTrack, DetectionRangeSector, FlightSummary, HourlyHeatmapCell, StorageStats, TimeDistributionBucket, TimeDistributionMetric, TimeGranularity, TimeRangePreset } from "@/lib/types";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
@@ -110,7 +110,7 @@ export function DBHistoryContent({
     ] = [
       getAircraftSummary(start, end),
       getFlightSummaryArrow({ start_ms: start, end_ms: end })
-        .then(bytes => typeof bytes === "string" ? bytes : arrowToFlightSummaries(bytes as number[])),
+        .then(bytes => bytes instanceof ArrayBuffer ? arrowToFlightSummaries(bytes) : []),
       getTimeDistribution({ start_ms: start, end_ms: end, num_buckets: numBuckets, metric: met }),
       hasReceiver
         ? getDetectionRange({
@@ -209,7 +209,7 @@ export function DBHistoryContent({
     const bytes = await getTrajectoryBatchArrow([
       [{ hex_ident: flight.hex_ident, start_ms: flight.first_seen_ms, end_ms: flight.last_seen_ms }, flight.flight_id],
     ]);
-    if (typeof bytes === "string" || !Array.isArray(bytes) || bytes.length === 0) return;
+    if (!(bytes instanceof ArrayBuffer) || bytes.byteLength === 0) return;
     const tracks = arrowToTracks(bytes, [flight]);
     if (tracks.length > 0) onLoadTracks(tracks);
   }
@@ -221,6 +221,9 @@ export function DBHistoryContent({
   function toggleSelectAll() {
     dispatch({ type: "TOGGLE_ALL" });
   }
+
+  /** Chunk size for batched IPC — large enough to minimize round-trips, small enough to avoid one giant transfer. */
+  const BATCH_CHUNK_SIZE = 1000;
 
   async function fetchSelectedTracks(): Promise<AircraftTrack[]> {
     const selected = flightSummaries.filter(f => selectedFlights.has(f.flight_id));
@@ -234,13 +237,52 @@ export function DBHistoryContent({
       ]);
 
     const bytes = await getTrajectoryBatchArrow(queries);
-    if (typeof bytes === "string" || !Array.isArray(bytes)) return [];
+    if (!(bytes instanceof ArrayBuffer) || bytes.byteLength === 0) return [];
     return arrowToTracks(bytes, selected);
+  }
+
+  /**
+   * Chunked batch fetch: detects "select all" for fast-path single query,
+   * otherwise splits into groups of BATCH_CHUNK_SIZE. Accumulates all tracks
+   * and returns them in a single batch to avoid O(n²) marker cascades.
+   */
+  async function fetchSelectedTracksChunked(): Promise<AircraftTrack[]> {
+    const selected = flightSummaries.filter(f => selectedFlights.has(f.flight_id));
+    if (selected.length === 0) return [];
+
+    // Fast path: "select all" — single query joining positions with flights, filtered by time range
+    if (selected.length === flightSummaries.length) {
+      const bytes = await getAllTrajectoriesArrow(startMs, endMs);
+      if (!(bytes instanceof ArrayBuffer) || bytes.byteLength === 0) return [];
+      return arrowToTracks(bytes, flightSummaries);
+    }
+
+    // Small selections: single IPC call (no chunking overhead)
+    if (selected.length <= BATCH_CHUNK_SIZE) {
+      return fetchSelectedTracks();
+    }
+
+    const allTracks: AircraftTrack[] = [];
+    for (let i = 0; i < selected.length; i += BATCH_CHUNK_SIZE) {
+      const chunk = selected.slice(i, i + BATCH_CHUNK_SIZE);
+      const queries: [{ hex_ident: string; start_ms?: number | null; end_ms?: number | null }, string][] =
+        chunk.map(f => [
+          { hex_ident: f.hex_ident, start_ms: f.first_seen_ms, end_ms: f.last_seen_ms },
+          f.flight_id,
+        ]);
+
+      const bytes = await getTrajectoryBatchArrow(queries);
+      if (bytes instanceof ArrayBuffer && bytes.byteLength > 0) {
+        const tracks = arrowToTracks(bytes, chunk);
+        allTracks.push(...tracks);
+      }
+    }
+    return allTracks;
   }
 
   async function handleBatchLoadToLive() {
     dispatch({ type: "SET_BATCH_LOADING", loading: true });
-    const tracks = await fetchSelectedTracks();
+    const tracks = await fetchSelectedTracksChunked();
     if (tracks.length > 0) onLoadTracks(tracks);
     dispatch({ type: "SET_BATCH_LOADING", loading: false });
   }
@@ -248,7 +290,7 @@ export function DBHistoryContent({
   async function handleBatchLoadToAnalysis() {
     if (!onAddToAnalysis) return;
     dispatch({ type: "SET_BATCH_LOADING", loading: true });
-    const tracks = await fetchSelectedTracks();
+    const tracks = await fetchSelectedTracksChunked();
     if (tracks.length > 0) {
       onAddToAnalysis(tracks);
       onSwitchToAnalysis?.();

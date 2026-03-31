@@ -13,7 +13,7 @@ function buildMockArrowIPC(rows: {
   altitude: number | null; ground_speed: number | null; track: number | null;
   vertical_rate: number | null; squawk: string | null; is_on_ground: boolean | null;
   timestamp_ms: bigint; flight_id: string;
-}[]): number[] {
+}[]): ArrayBuffer {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const table = makeTable({
     hex_ident: vectorFromArray(rows.map(r => r.hex_ident), new Utf8()),
@@ -29,11 +29,12 @@ function buildMockArrowIPC(rows: {
     timestamp_ms: vectorFromArray(rows.map(r => r.timestamp_ms), new Int64()),
     flight_id: vectorFromArray(rows.map(r => r.flight_id), new Utf8()),
   } as any);
-  return Array.from(new Uint8Array(tableToIPC(table, "stream")));
+  const u8 = tableToIPC(table, "stream");
+  return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer;
 }
 
 /** Build Arrow IPC bytes matching get_flight_summary_arrow output schema. */
-function buildFlightSummaryIPC(flights: FlightSummary[]): number[] {
+function buildFlightSummaryIPC(flights: FlightSummary[]): ArrayBuffer {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const table = makeTable({
     hex_ident: vectorFromArray(flights.map(f => f.hex_ident), new Utf8()),
@@ -46,7 +47,8 @@ function buildFlightSummaryIPC(flights: FlightSummary[]): number[] {
     min_altitude: vectorFromArray(flights.map(f => f.min_altitude), new Float64()),
     max_altitude: vectorFromArray(flights.map(f => f.max_altitude), new Float64()),
   } as any);
-  return Array.from(new Uint8Array(tableToIPC(table, "stream")));
+  const u8 = tableToIPC(table, "stream");
+  return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer;
 }
 
 const sampleStats: StorageStats = {

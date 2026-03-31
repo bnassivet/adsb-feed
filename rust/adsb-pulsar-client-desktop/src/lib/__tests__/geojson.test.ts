@@ -198,7 +198,8 @@ describe("geoJSONToTracks", () => {
     const geojson = tracksToGeoJSON([track]);
     const result = geoJSONToTracks(geojson);
 
-    expect(result[0].positions[0][2]).toBeNull();
-    expect(result[0].positions[1][2]).toBe(10000);
+    const pos = result[0].positions as [number, number, number | null][];
+    expect(pos[0][2]).toBeNull();
+    expect(pos[1][2]).toBe(10000);
   });
 });

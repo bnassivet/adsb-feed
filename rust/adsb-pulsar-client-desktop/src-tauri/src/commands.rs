@@ -16,7 +16,7 @@ use adsb_data_engine::{
 use adsb_pulsar_client::{Config, MetricsSnapshot};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tauri::{Emitter, State};
+use tauri::{ipc::Response, Emitter, State};
 use tracing::info;
 
 /// Starts the ADS-B feed client with the current configuration.
@@ -210,19 +210,24 @@ pub async fn query_bbox(
 }
 
 /// Query positions in a bounding box as Arrow IPC bytes.
+///
+/// Returns raw binary via `tauri::ipc::Response` — bypasses JSON serialization
+/// of `Vec<u8>` (which would encode each byte as a JSON number, ~3x size amplification).
+/// The frontend receives an `ArrayBuffer` directly.
 #[tauri::command]
 pub async fn query_bbox_arrow(
     query: BboxQuery,
     state: State<'_, AppState>,
-) -> Result<Vec<u8>, String> {
+) -> Result<Response, String> {
     let guard = state.storage.read().await;
     let storage = guard
         .as_ref()
         .ok_or_else(|| "Storage not available".to_string())?;
-    storage
+    let bytes = storage
         .query_bbox_arrow(query)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(Response::new(bytes))
 }
 
 /// Get trajectory for a single aircraft.
@@ -248,20 +253,41 @@ pub async fn get_trajectory(
 /// to parse in the browser via `apache-arrow`'s `tableFromIPC()`.
 ///
 /// Each query is paired with a `flight_id` string so the frontend can partition rows.
-/// Tauri serializes `Vec<u8>` as a JSON array of numbers over IPC.
+/// Returns raw binary via `tauri::ipc::Response` — the frontend receives an `ArrayBuffer`.
 #[tauri::command]
 pub async fn get_trajectories_batch_arrow(
     queries: Vec<(TrajectoryQuery, String)>,
     state: State<'_, AppState>,
-) -> Result<Vec<u8>, String> {
+) -> Result<Response, String> {
     let guard = state.storage.read().await;
     let storage = guard
         .as_ref()
         .ok_or_else(|| "Storage not available".to_string())?;
-    storage
+    let bytes = storage
         .get_trajectories_batch_arrow(queries)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(Response::new(bytes))
+}
+
+/// Fetch ALL trajectories in a single query (joins positions with flights table).
+/// Much faster than per-flight batch when loading all flights.
+/// Returns raw binary via `tauri::ipc::Response` — the frontend receives an `ArrayBuffer`.
+#[tauri::command]
+pub async fn get_all_trajectories_arrow(
+    start_ms: Option<i64>,
+    end_ms: Option<i64>,
+    state: State<'_, AppState>,
+) -> Result<Response, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    let bytes = storage
+        .get_all_trajectories_arrow(start_ms, end_ms)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(Response::new(bytes))
 }
 
 /// Get summary of distinct aircraft in a time window.
@@ -298,19 +324,22 @@ pub async fn get_flight_summary(
 }
 
 /// Get flight-segmented summaries as Arrow IPC bytes.
+///
+/// Returns raw binary via `tauri::ipc::Response` — the frontend receives an `ArrayBuffer`.
 #[tauri::command]
 pub async fn get_flight_summary_arrow(
     query: FlightSummaryQuery,
     state: State<'_, AppState>,
-) -> Result<Vec<u8>, String> {
+) -> Result<Response, String> {
     let guard = state.storage.read().await;
     let storage = guard
         .as_ref()
         .ok_or_else(|| "Storage not available".to_string())?;
-    storage
+    let bytes = storage
         .get_flight_summary_arrow(query)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(Response::new(bytes))
 }
 
 /// Get time distribution histogram for a time range.
@@ -405,19 +434,22 @@ pub async fn get_raw_messages(
 }
 
 /// Get raw SBS messages as Arrow IPC bytes.
+///
+/// Returns raw binary via `tauri::ipc::Response` — the frontend receives an `ArrayBuffer`.
 #[tauri::command]
 pub async fn get_raw_messages_arrow(
     query: RawMessageQuery,
     state: State<'_, AppState>,
-) -> Result<Vec<u8>, String> {
+) -> Result<Response, String> {
     let guard = state.storage.read().await;
     let storage = guard
         .as_ref()
         .ok_or_else(|| "Storage not available".to_string())?;
-    storage
+    let bytes = storage
         .query_raw_messages_arrow(query)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(Response::new(bytes))
 }
 
 // --- Recording state commands ---

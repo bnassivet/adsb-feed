@@ -10,6 +10,7 @@ import {
   Int64,
 } from "apache-arrow";
 import { arrowToTracks, arrowToFlightSummaries, arrowToPositionRecords, arrowToRawSbsRecords } from "../arrow-utils";
+import { ColumnarPositions, isColumnar } from "../types";
 import type { FlightSummary } from "../types";
 
 /**
@@ -35,7 +36,7 @@ function buildIPC(
     timestamp_ms: bigint;
     flight_id: string;
   }[],
-): number[] {
+): ArrayBuffer {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- makeTable generics don't match Vector types
   const table = makeTable({
     hex_ident: vectorFromArray(rows.map((r) => r.hex_ident), new Utf8()),
@@ -53,7 +54,12 @@ function buildIPC(
   } as any);
 
   const ipcBytes = tableToIPC(table, "stream");
-  return Array.from(new Uint8Array(ipcBytes));
+  return toArrayBuffer(ipcBytes);
+}
+
+/** Convert Uint8Array to a clean ArrayBuffer (handles SharedArrayBuffer and offset views). */
+function toArrayBuffer(u8: Uint8Array): ArrayBuffer {
+  return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer;
 }
 
 const flight1: FlightSummary = {
@@ -106,10 +112,10 @@ function makeRow(
 
 describe("arrowToTracks", () => {
   it("returns empty array for empty bytes", () => {
-    expect(arrowToTracks([], [flight1])).toEqual([]);
+    expect(arrowToTracks(new ArrayBuffer(0), [flight1])).toEqual([]);
   });
 
-  it("converts single flight with 2 positions", () => {
+  it("converts single flight with 2 positions as ColumnarPositions", () => {
     const ipc = buildIPC([
       makeRow("A1B2C3", "A1B2C3_0", 45.5, -73.5, 1000),
       makeRow("A1B2C3", "A1B2C3_0", 45.6, -73.4, 2000),
@@ -122,9 +128,16 @@ describe("arrowToTracks", () => {
     expect(t.hex_ident).toBe("A1B2C3");
     expect(t.track_id).toBe("A1B2C3_0");
     expect(t.callsign).toBe("UAL123"); // from FlightSummary
+    // Positions should be ColumnarPositions, not tuple array
+    expect(isColumnar(t.positions)).toBe(true);
     expect(t.positions).toHaveLength(2);
-    expect(t.positions[0]).toEqual([45.5, -73.5, 35000]);
-    expect(t.positions[1]).toEqual([45.6, -73.4, 35000]);
+    const pos = t.positions as ColumnarPositions;
+    expect(pos.get(0)).toEqual([45.5, -73.5, 35000]);
+    expect(pos.get(1)).toEqual([45.6, -73.4, 35000]);
+    // Verify raw typed array access
+    expect(pos.lat[0]).toBe(45.5);
+    expect(pos.lng[1]).toBe(-73.4);
+    expect(pos.alt[0]).toBe(35000);
     expect(t.first_seen).toBe(1000);
     expect(t.last_seen).toBe(2000);
     expect(t.message_count).toBe(2);
@@ -133,7 +146,7 @@ describe("arrowToTracks", () => {
     expect(t.longitude).toBe(-73.4);
   });
 
-  it("partitions multiple flights correctly", () => {
+  it("partitions multiple flights correctly with ColumnarPositions", () => {
     const ipc = buildIPC([
       // Flight A1B2C3_0 (2 positions)
       makeRow("A1B2C3", "A1B2C3_0", 45.5, -73.5, 1000),
@@ -146,13 +159,20 @@ describe("arrowToTracks", () => {
     expect(tracks).toHaveLength(2);
 
     expect(tracks[0].track_id).toBe("A1B2C3_0");
+    expect(isColumnar(tracks[0].positions)).toBe(true);
     expect(tracks[0].positions).toHaveLength(2);
     expect(tracks[0].callsign).toBe("UAL123");
 
     expect(tracks[1].track_id).toBe("D4E5F6_0");
+    expect(isColumnar(tracks[1].positions)).toBe(true);
     expect(tracks[1].positions).toHaveLength(1);
     expect(tracks[1].callsign).toBe("DAL456");
     expect(tracks[1].altitude).toBe(20000);
+    // Verify each flight has independent typed arrays (not shared)
+    const pos0 = tracks[0].positions as ColumnarPositions;
+    const pos1 = tracks[1].positions as ColumnarPositions;
+    expect(pos0.lat[0]).toBe(45.5);
+    expect(pos1.lat[0]).toBe(40.7);
   });
 
   it("uses Arrow callsign when FlightSummary callsign is null", () => {
@@ -169,13 +189,17 @@ describe("arrowToTracks", () => {
     expect(tracks[0].callsign).toBe("ARROW_CS");
   });
 
-  it("handles null altitude in positions", () => {
+  it("handles null altitude as NaN in ColumnarPositions", () => {
     const ipc = buildIPC([
       makeRow("A1B2C3", "A1B2C3_0", 45.5, -73.5, 1000, null),
     ]);
 
     const tracks = arrowToTracks(ipc, [flight1]);
-    expect(tracks[0].positions[0][2]).toBeNull();
+    const pos = tracks[0].positions as ColumnarPositions;
+    // Raw alt array stores NaN for null
+    expect(Number.isNaN(pos.alt[0])).toBe(true);
+    // get() converts NaN back to null for backward compat
+    expect(pos.get(0)[2]).toBeNull();
     expect(tracks[0].altitude).toBeNull();
   });
 
@@ -197,7 +221,7 @@ function buildFlightIPC(
     position_count: bigint; first_seen_ms: bigint; last_seen_ms: bigint;
     min_altitude: number | null; max_altitude: number | null;
   }[],
-): number[] {
+): ArrayBuffer {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const table = makeTable({
     hex_ident: vectorFromArray(rows.map(r => r.hex_ident), new Utf8()),
@@ -210,12 +234,12 @@ function buildFlightIPC(
     min_altitude: vectorFromArray(rows.map(r => r.min_altitude), new Float64()),
     max_altitude: vectorFromArray(rows.map(r => r.max_altitude), new Float64()),
   } as any);
-  return Array.from(new Uint8Array(tableToIPC(table, "stream")));
+  return toArrayBuffer(tableToIPC(table, "stream"));
 }
 
 describe("arrowToFlightSummaries", () => {
   it("returns empty array for empty bytes", () => {
-    expect(arrowToFlightSummaries([])).toEqual([]);
+    expect(arrowToFlightSummaries(new ArrayBuffer(0))).toEqual([]);
   });
 
   it("converts flight summaries correctly", () => {
@@ -252,7 +276,7 @@ describe("arrowToFlightSummaries", () => {
 
 describe("arrowToPositionRecords", () => {
   it("returns empty array for empty bytes", () => {
-    expect(arrowToPositionRecords([])).toEqual([]);
+    expect(arrowToPositionRecords(new ArrayBuffer(0))).toEqual([]);
   });
 
   it("converts position records correctly", () => {
@@ -278,7 +302,7 @@ function buildRawMsgIPC(
     hex_ident: string; msg_type: string; transmission_type: number | null;
     timestamp_ms: bigint; raw_message: string; source_id: string;
   }[],
-): number[] {
+): ArrayBuffer {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const table = makeTable({
     hex_ident: vectorFromArray(rows.map(r => r.hex_ident), new Utf8()),
@@ -288,12 +312,12 @@ function buildRawMsgIPC(
     raw_message: vectorFromArray(rows.map(r => r.raw_message), new Utf8()),
     source_id: vectorFromArray(rows.map(r => r.source_id), new Utf8()),
   } as any);
-  return Array.from(new Uint8Array(tableToIPC(table, "stream")));
+  return toArrayBuffer(tableToIPC(table, "stream"));
 }
 
 describe("arrowToRawSbsRecords", () => {
   it("returns empty array for empty bytes", () => {
-    expect(arrowToRawSbsRecords([])).toEqual([]);
+    expect(arrowToRawSbsRecords(new ArrayBuffer(0))).toEqual([]);
   });
 
   it("converts raw SBS records correctly", () => {

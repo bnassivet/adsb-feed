@@ -57,6 +57,7 @@ pub fn run() {
             commands::query_bbox_arrow,
             commands::get_trajectory,
             commands::get_trajectories_batch_arrow,
+            commands::get_all_trajectories_arrow,
             commands::get_aircraft_summary,
             commands::get_flight_summary,
             commands::get_flight_summary_arrow,

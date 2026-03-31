@@ -1,3 +1,6 @@
+import type { Positions } from "./types";
+import { isColumnar } from "./types";
+
 /** Vertical tendency threshold in ft/min. */
 const VERTICAL_RATE_THRESHOLD = 200;
 
@@ -20,9 +23,17 @@ export function formatVerticalRate(vr: number | null): string {
 
 /**
  * Extract altitude values from position history, filtering out null altitudes.
- * Positions are [lat, lng, altitude | null][].
+ * Supports both tuple arrays and ColumnarPositions.
  */
-export function altitudeHistory(positions: [number, number, number | null][]): number[] {
+export function altitudeHistory(positions: Positions): number[] {
+  if (isColumnar(positions)) {
+    const result: number[] = [];
+    for (let i = 0; i < positions.length; i++) {
+      const a = positions.alt[i];
+      if (!Number.isNaN(a)) result.push(a);
+    }
+    return result;
+  }
   return positions
     .map(p => p[2])
     .filter((alt): alt is number => alt !== null);

@@ -24,7 +24,12 @@ interface AircraftTrackingContextValue {
   imported: Map<string, AircraftTrack>;
   dbHistory: Map<string, AircraftTrack>;
   analysis: Map<string, AircraftTrack>;
+  /** @deprecated Use liveVersion or staticVersion instead */
   version: number;
+  /** Bumped on every live feed batch + TTL cleanup (every ~500ms when feed is active) */
+  liveVersion: number;
+  /** Bumped only on explicit user actions: import, dbHistory load, analysis add/remove/clear */
+  staticVersion: number;
   importTracks: (tracks: AircraftTrack[]) => void;
   clearImported: () => void;
   loadDbHistoryTracks: (tracks: AircraftTrack[]) => void;
@@ -38,11 +43,12 @@ interface AircraftTrackingContextValue {
 
 const AircraftTrackingContext = createContext<AircraftTrackingContextValue | null>(null);
 
-/** Append a position to a track's positions array, capping at MAX_POSITIONS. Mutates in place. */
+/** Append a position to a live track's tuple positions array, capping at MAX_POSITIONS. Mutates in place. */
 export function appendPosition(track: AircraftTrack, lat: number, lng: number, altitude: number | null) {
-  track.positions.push([lat, lng, altitude]);
-  if (track.positions.length > MAX_POSITIONS) {
-    track.positions.shift();
+  const pos = track.positions as [number, number, number | null][];
+  pos.push([lat, lng, altitude]);
+  if (pos.length > MAX_POSITIONS) {
+    pos.shift();
   }
 }
 
@@ -76,7 +82,8 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
   const importedRef = useRef<Map<string, AircraftTrack>>(new Map());
   const dbHistoryRef = useRef<Map<string, AircraftTrack>>(new Map());
   const analysisRef = useRef<Map<string, AircraftTrack>>(new Map());
-  const [updateCounter, setUpdateCounter] = useState(0);
+  const [liveVersion, setLiveVersion] = useState(0);
+  const [staticVersion, setStaticVersion] = useState(0);
   const [trackHistoryHours, setTrackHistoryHours] = useLocalStorage<number>(
     TRACK_HISTORY_HOURS_KEY,
     DEFAULT_TRACK_HISTORY_HOURS,
@@ -88,12 +95,12 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
     for (const t of tracks) {
       map.set(trackKey(t), t);
     }
-    setUpdateCounter((c) => c + 1);
+    setStaticVersion((c) => c + 1);
   }, []);
 
   const clearImported = useCallback(() => {
     importedRef.current.clear();
-    setUpdateCounter((c) => c + 1);
+    setStaticVersion((c) => c + 1);
   }, []);
 
   const loadDbHistoryTracks = useCallback((tracks: AircraftTrack[]) => {
@@ -102,12 +109,12 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
     for (const t of tracks) {
       map.set(trackKey(t), t);
     }
-    setUpdateCounter((c) => c + 1);
+    setStaticVersion((c) => c + 1);
   }, []);
 
   const clearDbHistory = useCallback(() => {
     dbHistoryRef.current.clear();
-    setUpdateCounter((c) => c + 1);
+    setStaticVersion((c) => c + 1);
   }, []);
 
   const addAnalysisTracks = useCallback((tracks: AircraftTrack[]) => {
@@ -115,17 +122,17 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
     for (const t of tracks) {
       map.set(trackKey(t), t);
     }
-    setUpdateCounter((c) => c + 1);
+    setStaticVersion((c) => c + 1);
   }, []);
 
   const removeAnalysisTrack = useCallback((trackId: string) => {
     analysisRef.current.delete(trackId);
-    setUpdateCounter((c) => c + 1);
+    setStaticVersion((c) => c + 1);
   }, []);
 
   const clearAnalysis = useCallback(() => {
     analysisRef.current.clear();
-    setUpdateCounter((c) => c + 1);
+    setStaticVersion((c) => c + 1);
   }, []);
 
   const handleBatch = useCallback((batch: AircraftPosition[]) => {
@@ -159,7 +166,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
           message_count: pos.message_count,
         };
         if (pos.latitude !== null && pos.longitude !== null) {
-          track.positions.push([pos.latitude, pos.longitude, pos.altitude ?? null]);
+          (track.positions as [number, number, number | null][]).push([pos.latitude, pos.longitude, pos.altitude ?? null]);
         }
         map.set(pos.hex_ident, track);
       }
@@ -171,7 +178,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
       }
     }
 
-    setUpdateCounter((c) => c + 1);
+    setLiveVersion((c) => c + 1);
   }, []);
 
   // Fix 6: TTL cleanup on a separate interval instead of every batch
@@ -201,7 +208,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
       }
 
       if (changed) {
-        setUpdateCounter((c) => c + 1);
+        setLiveVersion((c) => c + 1);
       }
     }, CLEANUP_INTERVAL_MS);
 
@@ -228,7 +235,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
           for (const t of tracks) {
             map.set(trackKey(t), t);
           }
-          setUpdateCounter((c) => c + 1);
+          setLiveVersion((c) => c + 1);
         }
       })
       .catch(() => {
@@ -238,7 +245,10 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
 
   useTauriEvent<AircraftPosition[]>("adsb:message", handleBatch);
 
-  // Fix 4: memoize context value — only creates new object when updateCounter changes
+  // Composite version for backward compat — bumps on either live or static change
+  const version = liveVersion + staticVersion;
+
+  // Fix 4: memoize context value — only creates new object when a version changes
   const value = useMemo<AircraftTrackingContextValue>(
     () => ({
       tracks: tracksRef.current,
@@ -246,7 +256,9 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
       imported: importedRef.current,
       dbHistory: dbHistoryRef.current,
       analysis: analysisRef.current,
-      version: updateCounter,
+      version,
+      liveVersion,
+      staticVersion,
       importTracks,
       clearImported,
       loadDbHistoryTracks,
@@ -257,7 +269,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
       trackHistoryHours,
       setTrackHistoryHours,
     }),
-    [updateCounter, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory, addAnalysisTracks, removeAnalysisTrack, clearAnalysis, trackHistoryHours, setTrackHistoryHours],
+    [version, liveVersion, staticVersion, importTracks, clearImported, loadDbHistoryTracks, clearDbHistory, addAnalysisTracks, removeAnalysisTrack, clearAnalysis, trackHistoryHours, setTrackHistoryHours],
   );
 
   return (
