@@ -51,6 +51,7 @@ pub async fn start_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
         state.record_positions.clone(),
         state.record_raw.clone(),
         recorder,
+        Arc::clone(&state.connection_status),
     )?;
 
     // Record feed started event (non-fatal)
@@ -66,17 +67,9 @@ pub async fn start_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
         }
     }
 
-    // Update status
-    {
-        let mut status = state.connection_status.lock().map_err(|e| e.to_string())?;
-        status.is_running = true;
-        status.socket_status = ConnectionStatus::Connecting;
-        if state.config.lock().map_err(|e| e.to_string())?.test_mode {
-            status.pulsar_status = ConnectionStatus::Disconnected;
-        } else {
-            status.pulsar_status = ConnectionStatus::Connecting;
-        }
-    }
+    // Note: connection_status is now updated by the bridge tasks (client_task sets
+    // Connecting on start, watchdog syncs on every status transition, client_task
+    // sets Disconnected on stop). No manual update needed here.
 
     // Store the handle
     {

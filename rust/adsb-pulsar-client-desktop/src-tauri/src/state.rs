@@ -74,14 +74,20 @@ pub enum StorageAvailability {
 /// Reclaim reopens from the stored `StorageConfig`.
 pub type SharedStorage = Arc<RwLock<Option<StorageHandle>>>;
 
+/// Shared connection status: `Arc<Mutex<StatusResponse>>`.
+///
+/// Updated by both the `start_feed`/`stop_feed` commands and background tasks
+/// (socket watchdog), and read by `get_status`.
+pub type SharedConnectionStatus = Arc<Mutex<StatusResponse>>;
+
 /// Top-level application state managed by Tauri.
 pub struct AppState {
     /// Current configuration (persisted via tauri-plugin-store)
     pub config: Mutex<Config>,
     /// Handle to the running feed (None when stopped)
     pub feed_handle: Mutex<Option<FeedHandle>>,
-    /// Current connection status
-    pub connection_status: Mutex<StatusResponse>,
+    /// Current connection status (Arc-wrapped so background tasks can update it)
+    pub connection_status: Arc<Mutex<StatusResponse>>,
     /// DuckDB storage handle, shared with the relay task via Arc<RwLock<...>>
     pub storage: SharedStorage,
     /// Config used to reopen storage after release (None if storage was never available)
@@ -106,11 +112,11 @@ impl AppState {
         Self {
             config: Mutex::new(config),
             feed_handle: Mutex::new(None),
-            connection_status: Mutex::new(StatusResponse {
+            connection_status: Arc::new(Mutex::new(StatusResponse {
                 is_running: false,
                 socket_status: ConnectionStatus::Disconnected,
                 pulsar_status: ConnectionStatus::Disconnected,
-            }),
+            })),
             storage: Arc::new(RwLock::new(storage)),
             storage_config,
             record_positions: Arc::new(AtomicBool::new(true)),
