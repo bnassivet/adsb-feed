@@ -108,10 +108,11 @@ export function useVoiceInput(): UseVoiceInputReturn {
         }
       };
       es.onerror = () => {
-        // SSE connection lost — stop listening
+        // SSE connection lost — show error but keep listening state so the
+        // user can still click stop to end the session cleanly.
         es.close();
         eventSourceRef.current = null;
-        setIsListening(false);
+        setError("Voice stream disconnected");
       };
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start voice");

@@ -81,7 +81,11 @@ class AudioCapture:
             stream.start()
             return stream
 
-        self._stream = await asyncio.to_thread(_open_stream)
+        try:
+            self._stream = await asyncio.to_thread(_open_stream)
+        except OSError as e:
+            self._running = False
+            raise RuntimeError(f"Microphone unavailable: {e}") from e
         logger.info("Audio capture started: %d Hz, %d-sample chunks", self._sample_rate, self._chunk_samples)
 
     async def stop(self) -> None:

@@ -8,39 +8,7 @@ import { useRef } from "react";
 import { CopilotChat } from "@copilotkit/react-core/v2";
 import "@copilotkit/react-core/v2/styles.css";
 import { useVoiceInput, type VoiceBackendId } from "@/hooks/useVoiceInput";
-
-function MicButton({
-  isListening,
-  onToggle,
-}: {
-  isListening: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      onClick={onToggle}
-      className={`
-        flex items-center justify-center w-8 h-8 rounded-full transition-all
-        ${isListening
-          ? "bg-red-500/80 text-white shadow-lg shadow-red-500/30 animate-pulse"
-          : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-        }
-      `}
-      title={isListening ? "Stop listening" : "Start voice input"}
-      aria-label={isListening ? "Stop listening" : "Start voice input"}
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-        {isListening ? (
-          // Stop icon (square)
-          <rect x="6" y="6" width="12" height="12" rx="2" />
-        ) : (
-          // Mic icon
-          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zM19 10v2a7 7 0 0 1-14 0v-2H3v2a9 9 0 0 0 8 8.94V23h2v-2.06A9 9 0 0 0 21 12v-2h-2z" />
-        )}
-      </svg>
-    </button>
-  );
-}
+import { MicButton } from "./MicButton";
 
 function BackendSelector({
   backend,
@@ -154,7 +122,11 @@ export function AIChatContent() {
         </div>
       )}
       {/* Voice controls bar */}
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 border-t border-slate-700">
+      <div className={`flex items-center gap-2 px-3 py-1.5 border-t transition-colors duration-200 ${
+        isListening
+          ? "bg-red-950/60 border-red-800/50"
+          : "bg-slate-800 border-slate-700"
+      }`}>
         <MicButton isListening={isListening} onToggle={toggleListening} />
         <BackendSelector
           backend={backend}
@@ -162,8 +134,14 @@ export function AIChatContent() {
           backends={backends}
         />
         {isListening && (
-          <span className="text-xs text-slate-400 truncate flex-1">
-            Listening...
+          <span className="flex items-center gap-1.5 text-xs text-red-300 truncate flex-1">
+            <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0" />
+            Recording
+          </span>
+        )}
+        {!isListening && !error && (
+          <span className="text-xs text-slate-500 truncate flex-1">
+            Voice off
           </span>
         )}
         {error && (

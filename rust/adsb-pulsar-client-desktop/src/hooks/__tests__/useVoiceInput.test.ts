@@ -140,6 +140,30 @@ describe("useVoiceInput", () => {
     expect(result.current.isListening).toBe(false);
   });
 
+  it("SSE onerror shows error but does not turn off listening", async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/voice/start")) {
+        return Promise.resolve({ json: () => Promise.resolve({ status: "listening", backend: "voxtral" }) });
+      }
+      return Promise.resolve({ json: () => Promise.resolve({ backends: {} }) });
+    });
+
+    const { result } = renderHook(() => useVoiceInput());
+
+    await act(async () => {
+      await result.current.startListening();
+    });
+    expect(result.current.isListening).toBe(true);
+
+    // Simulate SSE connection drop
+    // Factory returns new MockEventSource() explicitly, so value is in results not instances
+    const es = (EventSource as unknown as ReturnType<typeof vi.fn>).mock.results[0].value as MockEventSource;
+    act(() => { es.onerror?.(); });
+
+    expect(result.current.isListening).toBe(true);   // button stays on
+    expect(result.current.error).toBeTruthy();        // error message shown
+  });
+
   it("can switch backend", () => {
     const { result } = renderHook(() => useVoiceInput());
     expect(result.current.backend).toBe("voxtral");

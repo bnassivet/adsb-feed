@@ -141,28 +141,56 @@ class TestVoxtralBackend:
 # ---------------------------------------------------------------------------
 class TestLFM2AudioBackend:
     def test_not_ready_when_model_missing(self):
-        backend = LFM2AudioBackend(model_path="/nonexistent/model.gguf")
+        backend = LFM2AudioBackend(model_dir="/nonexistent")
         assert backend.name == "lfm2-audio"
         assert backend.supports_end_to_end is True
 
     @pytest.mark.asyncio
     async def test_get_status_not_ready(self):
-        backend = LFM2AudioBackend(model_path="/nonexistent/model.gguf")
+        backend = LFM2AudioBackend(model_dir="/nonexistent")
         status = await backend.get_status()
         assert status == VoiceBackendStatus.NOT_READY
 
     @pytest.mark.asyncio
     async def test_get_info(self):
-        backend = LFM2AudioBackend(model_path="/nonexistent/model.gguf")
+        backend = LFM2AudioBackend(model_dir="/nonexistent")
         info = await backend.get_info()
         assert info.name == "lfm2-audio"
         assert info.supports_end_to_end is True
 
     @pytest.mark.asyncio
     async def test_start_listening_raises_when_not_ready(self):
-        backend = LFM2AudioBackend(model_path="/nonexistent/model.gguf")
+        backend = LFM2AudioBackend(model_dir="/nonexistent")
         with pytest.raises(RuntimeError, match="not found"):
             await backend.start_listening()
+
+    @pytest.mark.asyncio
+    async def test_ensure_server_uses_liquid_audio_flags(self):
+        """_ensure_server() must pass all 4 model files to llama-liquid-audio-server."""
+        import asyncio
+
+        backend = LFM2AudioBackend(model_dir="/fake/lfm2", quant="Q4_0")
+        captured_cmd: list[str] = []
+
+        async def mock_create_subprocess(*cmd, **kwargs):
+            captured_cmd.extend(cmd)
+            proc = AsyncMock()
+            proc.returncode = None
+            return proc
+
+        with patch.object(asyncio, "create_subprocess_exec", side_effect=mock_create_subprocess), \
+             patch.object(backend, "_wait_for_server_ready", AsyncMock()):
+            await backend._ensure_server()
+
+        assert "-m" in captured_cmd
+        assert "-mm" in captured_cmd
+        assert "-mv" in captured_cmd
+        assert "--tts-speaker-file" in captured_cmd
+        assert "--port" in captured_cmd
+        assert any("LFM2.5-Audio-1.5B-Q4_0.gguf" in arg for arg in captured_cmd)
+        assert any("mmproj-" in arg for arg in captured_cmd)
+        assert any("vocoder-" in arg for arg in captured_cmd)
+        assert any("tokenizer-" in arg for arg in captured_cmd)
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +267,7 @@ class TestAsyncCheckReady:
     async def test_lfm2_start_uses_async_check(self):
         """LFM2 start_listening should use async _acheck_ready."""
         import asyncio
-        backend = LFM2AudioBackend(model_path="/nonexistent/model.gguf")
+        backend = LFM2AudioBackend(model_dir="/nonexistent")
         calls = []
         original_to_thread = asyncio.to_thread
 
@@ -259,10 +287,12 @@ class TestAsyncCheckReady:
 class TestLFM2HealthCheck:
     @pytest.mark.asyncio
     async def test_wait_for_server_polls_health(self):
-        """_wait_for_server_ready should poll /health and return on 200."""
+        """_wait_for_server_ready should poll /health and return on any HTTP response.
+        llama-liquid-audio-server has no /health endpoint (returns 404), so any
+        HTTP response (not ConnectError) means the server is up."""
         import httpx
 
-        backend = LFM2AudioBackend(model_path="/nonexistent/model.gguf")
+        backend = LFM2AudioBackend(model_dir="/nonexistent")
         call_count = 0
 
         async def mock_get(url, **kwargs):
@@ -271,7 +301,7 @@ class TestLFM2HealthCheck:
             if call_count < 3:
                 raise httpx.ConnectError("not ready")
             resp = MagicMock()
-            resp.status_code = 200
+            resp.status_code = 404  # llama-liquid-audio-server returns 404 for /health
             return resp
 
         with patch("httpx.AsyncClient") as mock_client_cls:
@@ -289,7 +319,7 @@ class TestLFM2HealthCheck:
         """_wait_for_server_ready should raise RuntimeError on timeout."""
         import httpx
 
-        backend = LFM2AudioBackend(model_path="/nonexistent/model.gguf")
+        backend = LFM2AudioBackend(model_dir="/nonexistent")
 
         async def mock_get(url, **kwargs):
             raise httpx.ConnectError("not ready")
@@ -343,6 +373,22 @@ class TestLifespan:
         mock_backend.stop_listening.assert_called_once()
         assert main_mod._active_voice_backend is None
 
+    @pytest.mark.asyncio
+    async def test_lifespan_sets_shutdown_event(self):
+        """_shutdown_event must be set during lifespan teardown so SSE generators can exit."""
+        import adsb_agent.main as main_mod
+        from adsb_agent.main import app, lifespan
+
+        main_mod._voice_backends.clear()
+
+        async with lifespan(app):
+            # During startup the event must exist and NOT be set
+            assert main_mod._shutdown_event is not None
+            assert not main_mod._shutdown_event.is_set()
+
+        # After shutdown it must be set
+        assert main_mod._shutdown_event.is_set()
+
 
 class TestVoiceEndpoints:
     @pytest.fixture
@@ -390,3 +436,226 @@ class TestVoiceEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "not_listening"
+
+
+# ---------------------------------------------------------------------------
+# Error handling: unhandled exceptions surface as VoiceErrorResponse
+# ---------------------------------------------------------------------------
+class TestTranscriptSSEContract:
+    """Verify /voice/transcript always returns a proper SSE stream."""
+
+    @pytest.mark.asyncio
+    async def test_transcript_stream_no_backend_returns_sse_error(self):
+        """GET /voice/transcript with no active backend must return text/event-stream,
+        not a JSON dict. A bare dict causes EventSource to error immediately."""
+        from httpx import ASGITransport, AsyncClient
+        from adsb_agent.main import app
+        import adsb_agent.main as main_mod
+
+        saved = main_mod._active_voice_backend
+        main_mod._active_voice_backend = None
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get("/voice/transcript")
+        finally:
+            main_mod._active_voice_backend = saved
+
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers.get("content-type", "")
+        assert "error" in response.text
+
+    @pytest.mark.asyncio
+    async def test_lfm2_transcribe_calls_chat_completions_endpoint(self):
+        """_transcribe() must use /v1/chat/completions (streaming) with ASR system
+        prompt and input_audio content, returning the concatenated delta text."""
+        backend = LFM2AudioBackend(model_dir="/nonexistent")
+        backend._audio_buffer = [b"\x00\x01" * 800] * 10
+
+        # Build SSE lines a real server would emit
+        sse_lines = [
+            'data: {"choices":[{"index":0,"delta":{"content":"hello "},"finish_reason":null}]}',
+            'data: {"choices":[{"index":0,"delta":{"content":"from lfm2"},"finish_reason":null}]}',
+            'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+        ]
+
+        async def fake_aiter_lines():
+            for line in sse_lines:
+                yield line
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.aiter_lines = fake_aiter_lines
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_stream = MagicMock()
+        mock_stream.return_value = mock_response
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            instance = MagicMock()
+            instance.stream = mock_stream
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = instance
+
+            result = await backend._transcribe()
+
+        assert result == "hello from lfm2"
+        assert backend._audio_buffer == [], "Buffer should be cleared after transcription"
+        # Verify the correct endpoint and payload
+        call_args = mock_stream.call_args
+        assert call_args.args[1].endswith("/v1/chat/completions")
+        payload = call_args.kwargs["json"]
+        assert payload["stream"] is True
+        assert payload["messages"][0]["content"] == "Perform ASR."
+        assert payload["messages"][1]["content"][0]["type"] == "input_audio"
+
+    @pytest.mark.asyncio
+    async def test_lfm2_transcribe_logs_error_on_non_200(self):
+        """_transcribe() returns None and reads the error body on non-200 responses."""
+        backend = LFM2AudioBackend(model_dir="/nonexistent")
+        backend._audio_buffer = [b"\x00\x01" * 800]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.aread = AsyncMock(return_value=b'{"error": "audio format not supported"}')
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_stream = MagicMock()
+        mock_stream.return_value = mock_response
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            instance = MagicMock()
+            instance.stream = mock_stream
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = instance
+
+            result = await backend._transcribe()
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_lfm2_transcript_stream_idle_while_recording(self):
+        """LFM2 get_transcript_stream() must not yield immediately during recording.
+        It should block (idle) until _stopped_event is set by stop_listening().
+        Regression for: SSE closing immediately → onerror → button goes off."""
+        import asyncio
+
+        backend = LFM2AudioBackend(model_dir="/nonexistent")
+        backend._status = VoiceBackendStatus.LISTENING
+        backend._stopped_event.clear()  # Simulate active recording
+
+        chunks: list = []
+
+        async def collect():
+            async for chunk in backend.get_transcript_stream():
+                chunks.append(chunk)
+
+        task = asyncio.create_task(collect())
+        # Short wait: if the stream returned immediately (old bug), chunks would
+        # already be populated; if idle (correct), chunks stay empty.
+        await asyncio.sleep(0.1)
+        assert chunks == [], "LFM2 transcript stream must not yield during recording"
+
+        # Unblock: simulate stop_listening() signalling completion
+        backend._stopped_event.set()
+        await asyncio.wait_for(task, timeout=1.0)
+        # Stream exits cleanly with no chunks (transcript comes via _last_transcript)
+        assert chunks == []
+
+
+class TestVoiceErrorHandling:
+    """Verify that non-RuntimeError exceptions from voice backends are returned
+    as VoiceErrorResponse (not unhandled 500s)."""
+
+    def _make_ready_backend(self) -> LFM2AudioBackend:
+        """Create an LFM2AudioBackend whose status is already READY."""
+        backend = LFM2AudioBackend(model_dir="/nonexistent")
+        backend._status = VoiceBackendStatus.READY
+        return backend
+
+    @pytest.mark.asyncio
+    async def test_start_voice_sounddevice_portaudio_error(self):
+        """OSError (e.g. PortAudioError 'load failed') from AudioCapture.start
+        must be returned as VoiceErrorResponse, not cause a 500."""
+        from httpx import ASGITransport, AsyncClient
+        from adsb_agent.main import app
+        import adsb_agent.main as main_mod
+
+        fresh = self._make_ready_backend()
+        saved = main_mod._voice_backends.get("lfm2-audio")
+        main_mod._voice_backends["lfm2-audio"] = fresh
+
+        try:
+            with patch.object(LFM2AudioBackend, "_ensure_server", AsyncMock()), \
+                 patch.object(AudioCapture, "start", AsyncMock(side_effect=OSError("load failed"))):
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as client:
+                    response = await client.post("/voice/start", json={"backend": "lfm2-audio"})
+        finally:
+            if saved is not None:
+                main_mod._voice_backends["lfm2-audio"] = saved
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "error" in data
+        assert "load failed" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_start_voice_llama_server_not_found(self):
+        """FileNotFoundError from missing llama-server binary must be returned
+        as VoiceErrorResponse, not cause a 500."""
+        from httpx import ASGITransport, AsyncClient
+        from adsb_agent.main import app
+        import adsb_agent.main as main_mod
+
+        fresh = self._make_ready_backend()
+        saved = main_mod._voice_backends.get("lfm2-audio")
+        main_mod._voice_backends["lfm2-audio"] = fresh
+
+        try:
+            with patch.object(
+                LFM2AudioBackend,
+                "_ensure_server",
+                AsyncMock(side_effect=FileNotFoundError("No such file or directory: 'llama-server'")),
+            ):
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as client:
+                    response = await client.post("/voice/start", json={"backend": "lfm2-audio"})
+        finally:
+            if saved is not None:
+                main_mod._voice_backends["lfm2-audio"] = saved
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "error" in data
+
+    @pytest.mark.asyncio
+    async def test_wait_for_server_early_exit(self):
+        """_wait_for_server_ready must detect a crashed process immediately
+        (returncode set) instead of waiting for the full timeout."""
+        import httpx
+
+        backend = LFM2AudioBackend(model_dir="/nonexistent")
+        mock_process = MagicMock()
+        mock_process.returncode = 1
+        mock_process.stderr.read = AsyncMock(return_value=b"load failed: model not found")
+        backend._server_process = mock_process
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            instance = AsyncMock()
+            instance.get = AsyncMock(side_effect=httpx.ConnectError("not ready"))
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = instance
+
+            with pytest.raises(RuntimeError, match="llama-server exited"):
+                # Use a generous timeout — the fix must raise before it expires
+                await backend._wait_for_server_ready(timeout=5.0)

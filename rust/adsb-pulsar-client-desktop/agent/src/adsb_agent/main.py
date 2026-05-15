@@ -6,6 +6,7 @@ to the CopilotKit frontend which executes them via Tauri invoke.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -21,7 +22,7 @@ from ag_ui.core import (
 from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from .llm import stream_llm_response
 from .models import (
@@ -48,14 +49,24 @@ logger = logging.getLogger("adsb_agent")
 _voice_backends: dict[str, VoxtralBackend | LFM2AudioBackend] = {}
 _active_voice_backend: VoxtralBackend | LFM2AudioBackend | None = None
 
+# Signalled during lifespan teardown so SSE generators exit cleanly before
+# uvicorn waits for connections to close.
+_shutdown_event: asyncio.Event | None = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize voice backends at startup, clean up on shutdown."""
+    global _shutdown_event
+    _shutdown_event = asyncio.Event()
     _voice_backends["voxtral"] = VoxtralBackend()
     _voice_backends["lfm2-audio"] = LFM2AudioBackend()
     logger.info("Voice backends initialized: %s", list(_voice_backends.keys()))
     yield
+    # Signal SSE generators to exit before backend teardown so connections
+    # close before uvicorn starts waiting for them.
+    _shutdown_event.set()
+    await asyncio.sleep(0)  # yield to event loop so generators see the event
     # Shutdown: stop any active backend and kill llama-server if running
     global _active_voice_backend
     if _active_voice_backend is not None:
@@ -196,6 +207,9 @@ async def _run_agent(input_data: RunAgentInput, request: Request):
     )
 
     async def event_generator():
+        def _shutting_down() -> bool:
+            return _shutdown_event is not None and _shutdown_event.is_set()
+
         # Run started
         event = RunStartedEvent(
             type=EventType.RUN_STARTED,
@@ -212,6 +226,9 @@ async def _run_agent(input_data: RunAgentInput, request: Request):
                 messages=input_data.messages,
                 tools=None,  # Use default tool definitions
             ):
+                if _shutting_down() or await request.is_disconnected():
+                    logger.info("AG-UI stream: client disconnected or server shutting down")
+                    return
                 logger.debug("Event: %s", event.type)
                 yield encoder.encode(event)
 
@@ -226,7 +243,7 @@ async def _run_agent(input_data: RunAgentInput, request: Request):
             )
 
         # RUN_FINISHED only if no error — AG-UI considers RUN_ERROR terminal
-        if not errored:
+        if not errored and not _shutting_down():
             event = RunFinishedEvent(
                 type=EventType.RUN_FINISHED,
                 thread_id=thread_id,
@@ -375,8 +392,11 @@ async def start_voice(body: VoiceStartRequest) -> VoiceStartResponse | VoiceErro
         await backend.start_listening()
         _active_voice_backend = backend
         return VoiceStartResponse(status="listening", backend=body.backend)
-    except RuntimeError as e:
-        return VoiceErrorResponse(error=str(e))
+    except (RuntimeError, OSError) as e:
+        return JSONResponse(content={"error": str(e)})
+    except Exception as e:
+        logger.error("Unexpected error starting voice backend %s: %s", body.backend, e, exc_info=True)
+        return JSONResponse(content={"error": f"Voice backend error: {e}"})
 
 
 @app.post(
@@ -430,17 +450,27 @@ async def voice_status() -> VoiceStatusResponse:
     responses=VOICE_SSE_RESPONSES,
     summary="SSE stream of transcript chunks from active voice backend",
 )
-async def voice_transcript_stream():
+async def voice_transcript_stream(request: Request):
     """SSE stream of transcript chunks from the active voice backend.
 
     Each event is JSON: { "text": "...", "is_final": true/false }
     """
     if _active_voice_backend is None:
-        return {"error": "No active voice backend"}
+        async def _no_backend_error():
+            yield 'data: {"error": "No active voice backend"}\n\n'
+        return StreamingResponse(
+            _no_backend_error(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        )
 
     async def event_generator():
         full_transcript = []
         async for chunk in _active_voice_backend.get_transcript_stream():
+            if (_shutdown_event is not None and _shutdown_event.is_set()) \
+                    or await request.is_disconnected():
+                logger.info("Voice transcript stream: exiting (shutdown or disconnect)")
+                break
             data = json.dumps({"text": chunk.text, "is_final": chunk.is_final})
             logger.debug("[voice/transcript SSE] %s", data)
             if chunk.is_final:
