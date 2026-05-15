@@ -78,6 +78,29 @@ async def test_chat_endpoint_returns_sse(client: AsyncClient, monkeypatch):
     assert "RUN_FINISHED" in events[-1]
 
 
+async def test_chat_rejects_invalid_body(client: AsyncClient):
+    """Typed RunAgentInput body → 422 on missing required fields."""
+    resp = await client.post("/ag-ui/chat", json={"not_valid": True})
+    assert resp.status_code == 422
+    assert "detail" in resp.json()
+
+
+async def test_agui_single_endpoint_info(client: AsyncClient):
+    """POST /ag-ui with method=info returns runtime info JSON."""
+    resp = await client.post("/ag-ui", json={"method": "info", "params": {}, "body": {}})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "agents" in data
+
+
+async def test_agui_single_endpoint_connect(client: AsyncClient):
+    """POST /ag-ui with method=agent/connect returns runtime info (CopilotKit lifecycle)."""
+    resp = await client.post("/ag-ui", json={"method": "agent/connect", "params": {}, "body": {}})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "agents" in data
+
+
 async def test_chat_endpoint_handles_error(client: AsyncClient, monkeypatch):
     """Chat endpoint should emit RUN_ERROR on LLM failure."""
     import adsb_agent.main as main_mod

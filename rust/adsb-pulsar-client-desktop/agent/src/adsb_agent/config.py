@@ -13,8 +13,8 @@ class Settings(BaseSettings):
     # LLM endpoint (OpenAI-compatible)
     llm_base_url: str = "http://localhost:1234/v1"
     llm_api_key: str = "lm-studio"
-    model: str = "lmstudio-community/Meta-Llama-3.1-8B-Instruct"
-    max_tokens: int = 4096
+    model: str = "liquidai/lfm2.5-1.2b-instruct-mlx"
+    max_tokens: int = 8192
     temperature: float = 0.1
 
     # Agent service

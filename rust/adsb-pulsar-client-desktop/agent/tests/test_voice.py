@@ -380,9 +380,9 @@ class TestVoiceEndpoints:
             "/voice/start",
             json={"backend": "nonexistent"},
         )
-        assert response.status_code == 200
-        data = response.json()
-        assert "error" in data
+        # VoiceStartRequest uses Literal["voxtral", "lfm2-audio"] — Pydantic rejects
+        # invalid values before the handler runs, so FastAPI returns 422
+        assert response.status_code == 422
 
     @pytest.mark.asyncio
     async def test_stop_when_not_listening(self, client):

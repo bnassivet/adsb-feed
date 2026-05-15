@@ -24,6 +24,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from .llm import stream_llm_response
+from .models import (
+    AgUiErrorResponse,
+    AgUiRequest,
+    HealthResponse,
+    RuntimeInfoResponse,
+    SSE_RESPONSES,
+    VOICE_SSE_RESPONSES,
+    VoiceBackendsResponse,
+    VoiceErrorResponse,
+    VoiceStartRequest,
+    VoiceStartResponse,
+    VoiceStopResponse,
+    VoiceStatusResponse,
+)
 from .voice.voxtral import VoxtralBackend
 from .voice.lfm2_audio import LFM2AudioBackend
 
@@ -53,7 +67,17 @@ async def lifespan(app: FastAPI):
     _voice_backends.clear()
     logger.info("Voice backends shut down")
 
-app = FastAPI(title="ADS-B AG-UI Agent", lifespan=lifespan)
+
+app = FastAPI(
+    title="ADS-B AG-UI Agent",
+    version="0.1.0",
+    description=(
+        "LLM-powered aircraft-tracker assistant. "
+        "Streams AG-UI Server-Sent Events; integrates with CopilotKit REST and single-endpoint transports."
+    ),
+    contact={"name": "ADS-B Project"},
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -222,13 +246,25 @@ async def _run_agent(input_data: RunAgentInput, request: Request):
     )
 
 
-@app.post("/ag-ui/agent/{agent_id}/run")
+@app.post(
+    "/ag-ui/agent/{agent_id}/run",
+    tags=["ag-ui"],
+    response_class=StreamingResponse,
+    responses=SSE_RESPONSES,
+    summary="CopilotKit REST transport — stream agent run",
+)
 async def agent_run(agent_id: str, input_data: RunAgentInput, request: Request):
     """CopilotKit REST transport — POST /ag-ui/agent/{agent_id}/run."""
     return await _run_agent(input_data, request)
 
 
-@app.post("/ag-ui/chat")
+@app.post(
+    "/ag-ui/chat",
+    tags=["ag-ui"],
+    response_class=StreamingResponse,
+    responses=SSE_RESPONSES,
+    summary="Direct AG-UI SSE endpoint",
+)
 async def agentic_chat(input_data: RunAgentInput, request: Request):
     """Direct AG-UI SSE endpoint (for curl/testing)."""
     return await _run_agent(input_data, request)
@@ -243,43 +279,55 @@ _RUNTIME_INFO = {
 }
 
 
-@app.get("/ag-ui/info")
-async def runtime_info():
+@app.get(
+    "/ag-ui/info",
+    tags=["ag-ui"],
+    response_model=RuntimeInfoResponse,
+    summary="CopilotKit runtime discovery",
+)
+async def runtime_info() -> RuntimeInfoResponse:
     """CopilotKit runtime discovery — REST transport."""
-    return _RUNTIME_INFO
+    return RuntimeInfoResponse(**_RUNTIME_INFO)
 
 
-@app.get("/info")
-async def runtime_info_root():
+@app.get(
+    "/info",
+    tags=["ag-ui"],
+    response_model=RuntimeInfoResponse,
+    summary="CopilotKit runtime discovery (root fallback)",
+)
+async def runtime_info_root() -> RuntimeInfoResponse:
     """CopilotKit runtime discovery — fallback at root."""
-    return _RUNTIME_INFO
+    return RuntimeInfoResponse(**_RUNTIME_INFO)
 
 
-@app.post("/ag-ui")
-async def runtime_single_endpoint(request: Request):
-    """CopilotKit single-endpoint transport — handles method dispatch.
-
-    CopilotKit sends all requests to the runtimeUrl as POST with:
-      { "method": "info" | "agent/run", "params": {...}, "body": {...} }
-    """
-    raw = await request.json()
-    method = raw.get("method")
-
-    if method == "info":
+@app.post(
+    "/ag-ui",
+    tags=["ag-ui"],
+    summary="CopilotKit single-endpoint transport",
+    responses={200: {"description": "SSE stream (agent/run) or JSON object (info)"}},
+)
+async def runtime_single_endpoint(body: AgUiRequest, request: Request):
+    """CopilotKit single-endpoint transport — handles method dispatch."""
+    if body.method in ("info", "agent/connect"):
         return _RUNTIME_INFO
 
-    if method == "agent/run":
-        # body contains the RunAgentInput fields
-        input_data = RunAgentInput(**raw.get("body", {}))
+    if body.method == "agent/run":
+        input_data = RunAgentInput(**body.body)
         return await _run_agent(input_data, request)
 
-    return {"error": f"Unknown method: {method}"}
+    return AgUiErrorResponse(error=f"Unknown method: {body.method}")
 
 
-@app.get("/health")
-async def health():
+@app.get(
+    "/health",
+    tags=["health"],
+    response_model=HealthResponse,
+    summary="Health check",
+)
+async def health() -> HealthResponse:
     """Health check endpoint."""
-    return {"status": "healthy", "service": "adsb-agent"}
+    return HealthResponse(status="healthy", service="adsb-agent")
 
 
 # ---------------------------------------------------------------------------
@@ -287,91 +335,101 @@ async def health():
 # ---------------------------------------------------------------------------
 
 
-@app.get("/voice/backends")
-async def list_voice_backends():
+@app.get(
+    "/voice/backends",
+    tags=["voice"],
+    response_model=VoiceBackendsResponse,
+    summary="List available voice backends",
+)
+async def list_voice_backends() -> VoiceBackendsResponse:
     """List available voice backends with their status."""
-    backends = _voice_backends
     result = {}
-    for name, backend in backends.items():
+    for name, backend in _voice_backends.items():
         info = await backend.get_info()
         result[name] = {
             "name": info.name,
             "description": info.description,
-            "status": info.status.value,
+            "status": info.status,
             "supports_end_to_end": info.supports_end_to_end,
             "model_size": info.model_size,
         }
-    return {"backends": result}
+    return VoiceBackendsResponse(backends=result)
 
 
-@app.post("/voice/start")
-async def start_voice(request: Request):
-    """Start voice capture with selected backend.
-
-    Body: { "backend": "voxtral" | "lfm2-audio" }
-    """
+@app.post(
+    "/voice/start",
+    tags=["voice"],
+    response_model=VoiceStartResponse,
+    responses={400: {"model": VoiceErrorResponse}},
+    summary="Start voice capture",
+)
+async def start_voice(body: VoiceStartRequest) -> VoiceStartResponse | VoiceErrorResponse:
+    """Start voice capture with selected backend."""
     global _active_voice_backend
-    body = await request.json()
-    backend_name = body.get("backend", "voxtral")
 
-    backends = _voice_backends
-    if backend_name not in backends:
-        return {"error": f"Unknown backend: {backend_name}"}
-
-    # Stop any currently active backend
     if _active_voice_backend is not None:
         await _active_voice_backend.stop_listening()
 
-    backend = backends[backend_name]
+    backend = _voice_backends[body.backend]
     try:
         await backend.start_listening()
         _active_voice_backend = backend
-        return {"status": "listening", "backend": backend_name}
+        return VoiceStartResponse(status="listening", backend=body.backend)
     except RuntimeError as e:
-        return {"error": str(e)}
+        return VoiceErrorResponse(error=str(e))
 
 
-@app.post("/voice/stop")
-async def stop_voice():
+@app.post(
+    "/voice/stop",
+    tags=["voice"],
+    response_model=VoiceStopResponse,
+    summary="Stop voice capture",
+)
+async def stop_voice() -> VoiceStopResponse:
     """Stop voice capture."""
     global _active_voice_backend
     if _active_voice_backend is None:
-        return {"status": "not_listening"}
+        return VoiceStopResponse(status="not_listening")
 
     # Grab and clear immediately so concurrent requests get "not_listening"
     backend = _active_voice_backend
     _active_voice_backend = None
 
     await backend.stop_listening()
-    name = backend.name
     transcript = getattr(backend, "_last_transcript", None)
 
-    result = {"status": "stopped", "backend": name}
     if transcript:
-        result["transcript"] = transcript
         logger.info("[voice/stop] Final transcript: %r", transcript)
-    return result
+    return VoiceStopResponse(status="stopped", backend=backend.name, transcript=transcript)
 
 
-@app.get("/voice/status")
-async def voice_status():
+@app.get(
+    "/voice/status",
+    tags=["voice"],
+    response_model=VoiceStatusResponse,
+    summary="Current voice subsystem status",
+)
+async def voice_status() -> VoiceStatusResponse:
     """Get current voice status."""
-    backends = _voice_backends
     active_name = _active_voice_backend.name if _active_voice_backend else None
-    active_status = None
-    if _active_voice_backend:
-        active_status = (await _active_voice_backend.get_status()).value
+    active_status = (await _active_voice_backend.get_status()).value if _active_voice_backend else None
 
-    return {
-        "active_backend": active_name,
-        "status": active_status,
-        "backends": {
-            name: (await b.get_status()).value for name, b in backends.items()
+    return VoiceStatusResponse(
+        active_backend=active_name,
+        status=active_status,
+        backends={
+            name: (await b.get_status()).value for name, b in _voice_backends.items()
         },
-    }
+    )
 
 
-@app.get("/voice/transcript")
+@app.get(
+    "/voice/transcript",
+    tags=["voice"],
+    response_class=StreamingResponse,
+    responses=VOICE_SSE_RESPONSES,
+    summary="SSE stream of transcript chunks from active voice backend",
+)
 async def voice_transcript_stream():
     """SSE stream of transcript chunks from the active voice backend.
 
