@@ -375,3 +375,5 @@ tsconfig.tsbuildinfo
 src/notebooks/figures/
 src/notebooks/figures_copy/
 src/notebooks/data_cache/
+
+adsb-feed/rust/adsb-pulsar-client-desktop/agent/models/
