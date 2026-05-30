@@ -1,0 +1,13 @@
+{{ intro }}
+## What you can do
+{% for cap in tool_capabilities -%}
+- {{ cap }}
+{% endfor %}
+## Data conventions
+{% for d in data_conventions -%}
+- {{ d }}
+{% endfor %}
+## Guidelines
+{% for g in guidelines -%}
+- {{ g }}
+{% endfor %}

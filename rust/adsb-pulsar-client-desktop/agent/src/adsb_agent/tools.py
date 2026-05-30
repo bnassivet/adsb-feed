@@ -1,7 +1,11 @@
-"""Tool definitions for the ADS-B agent.
+"""Dev/test fallback tool definitions for the ADS-B agent.
 
-These are sent to the LLM as available functions. Tool names match the frontend
-useFrontendTool registrations so CopilotKit routes calls correctly.
+In production, the canonical tool surface is the frontend `useFrontendTool`
+registrations in `useCopilotTools.ts`; CopilotKit transmits them on every
+chat turn via `RunAgentInput.tools` and the agent forwards them to the LLM.
+This list is only used when the agent is invoked without a frontend
+(CLI / unit tests / health checks). Keep it broadly representative but do
+not treat it as the source of truth — it is not, and it will atrophy.
 """
 
 # OpenAI function-calling format
@@ -510,37 +514,6 @@ TOOLS: list[dict] = [
         },
     },
 ]
-
-SYSTEM_PROMPT = """\
-You are an AI assistant embedded in an ADS-B aircraft tracking desktop application.
-You help the user analyze aircraft surveillance data collected from dump1090 receivers.
-
-## What you can do
-- Get the current date/time to resolve relative references ("last hour", "today") into epoch timestamps
-- Query the local DuckDB database for aircraft positions, flight summaries, and statistics
-- Analyze detection range and activity patterns
-- Control the live data feed (start/stop)
-- Start/stop demo flights (simulated aircraft tracks)
-- Create events of interest on the map
-- Select aircraft, adjust display filters, and navigate/pan the map to specific locations
-- Control map display: theme (day/night), layer visibility, color modes, density config, event filters
-- Toggle the sidebar panel and switch between live/analysis modes
-
-## Data conventions
-- Timestamps are in milliseconds since Unix epoch
-- Altitude is in feet, ground speed in knots
-- hex_ident is the 6-character ICAO transponder code (e.g. "A1B2C3")
-- Callsign is the flight number or registration (e.g. "UAL123", "N12345")
-- Detection range is in nautical miles, divided into 36 sectors of 10 degrees each
-
-## Guidelines
-- When the user asks about "recent" data, query the last 24 hours unless they specify otherwise
-- For large result sets, summarize the key findings rather than listing every record
-- Always include units when reporting values (feet, knots, nautical miles)
-- If the database is unavailable, inform the user and suggest they check storage status
-- Only start/stop the feed when explicitly asked — never do it proactively
-"""
-
 
 def get_tool_names() -> list[str]:
     """Return list of all tool names."""

@@ -22,7 +22,8 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionChunk
 
 from .config import settings
-from .tools import SYSTEM_PROMPT, TOOLS
+from .system_prompt import render_system_prompt
+from .tools import TOOLS
 
 # Reuse a single client instance (connection pooling)
 _client: AsyncOpenAI | None = None
@@ -65,6 +66,21 @@ def _convert_messages(messages: list) -> list[dict]:
     return result
 
 
+def _to_openai_tools(tools: list) -> list[dict]:
+    """Convert AG-UI Tool objects to OpenAI function-calling format."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.parameters or {"type": "object", "properties": {}},
+            },
+        }
+        for t in tools
+    ]
+
+
 async def stream_llm_response(messages: list, tools: list | None = None) -> AsyncIterator:
     """Stream LLM response, yielding AG-UI event objects.
 
@@ -74,10 +90,10 @@ async def stream_llm_response(messages: list, tools: list | None = None) -> Asyn
     """
     client = get_client()
 
-    openai_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    openai_messages = [{"role": "system", "content": render_system_prompt(tools)}]
     openai_messages.extend(_convert_messages(messages))
 
-    tool_defs = tools if tools is not None else TOOLS
+    tool_defs = _to_openai_tools(tools) if tools else TOOLS
 
     try:
         stream = await client.chat.completions.create(
