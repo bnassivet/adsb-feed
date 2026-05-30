@@ -375,27 +375,21 @@ export default function Dashboard() {
 
   // CopilotKit — provide live app state to the agent
   useCopilotContext({
-    liveTrackCount: allTracks.length,
     connectionStatus: copilotConnectionStatus,
+    mapTheme,
+    sidebarOpen,
     activeMode,
+    showHistory,
+    showDensity,
+    showSimulation,
+    showImported,
+    showReceiver,
+    showEvents,
+    selectedHexIdents,
+    lastSelectedHexIdent,
+    activeFilters,
+    tracks: allTracks,
     storageStatus,
-    receiverLocation,
-    displayState: {
-      mapTheme,
-      sidebarOpen,
-      layers: {
-        history: showHistory,
-        density: showDensity,
-        simulation: showSimulation,
-        imported: showImported,
-        receiver: showReceiver,
-        events: showEvents,
-      },
-      liveColorMode,
-      historyColorMode,
-      densityMetric,
-      eventFilterMode,
-    },
   });
 
   // Reset slider when trackHistoryHours changes (e.g. user changes setting)

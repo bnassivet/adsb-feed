@@ -1,7 +1,8 @@
-"""Frontend tools (RunAgentInput.tools) must be forwarded to the LLM, not discarded.
+"""RunAgentInput.context (AG-UI Context list) must be forwarded to the LLM layer.
 
-Regression guard for the bug where main.py hardcoded `tools=None` and threw away
-the AG-UI Tool list that CopilotKit transmits on every chat turn.
+Regression guard for the bug where main.py only forwarded messages + tools and
+silently dropped input_data.context — the ambient app-state that CopilotKit
+populates via useCopilotReadable on the frontend.
 """
 
 from __future__ import annotations
@@ -19,14 +20,12 @@ def client():
     return AsyncClient(transport=transport, base_url="http://test")
 
 
-async def test_chat_forwards_frontend_tools_to_llm(client: AsyncClient, monkeypatch):
-    """tools array on RunAgentInput must reach stream_llm_response, not be replaced with None."""
+async def test_chat_forwards_frontend_context_to_llm(client: AsyncClient, monkeypatch):
     import adsb_agent.main as main_mod
 
     captured: dict = {}
 
-    async def mock_stream(*, messages, tools, context=None):
-        captured["tools"] = tools
+    async def mock_stream(*, messages, tools, context):
         captured["context"] = context
         yield TextMessageStartEvent(
             type=EventType.TEXT_MESSAGE_START, message_id="m", role="assistant"
@@ -35,12 +34,9 @@ async def test_chat_forwards_frontend_tools_to_llm(client: AsyncClient, monkeypa
 
     monkeypatch.setattr(main_mod, "stream_llm_response", mock_stream)
 
-    frontend_tools = [
-        {
-            "name": "doFooBar",
-            "description": "A tool the frontend just invented.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        }
+    context_entries = [
+        {"description": "Selected aircraft", "value": '{"selected":["A1B2C3"]}'},
+        {"description": "Active mode", "value": "live"},
     ]
 
     resp = await client.post(
@@ -49,15 +45,16 @@ async def test_chat_forwards_frontend_tools_to_llm(client: AsyncClient, monkeypa
             "threadId": "t1",
             "runId": "r1",
             "messages": [{"id": "m1", "role": "user", "content": "hi"}],
-            "tools": frontend_tools,
-            "context": [],
+            "tools": [],
+            "context": context_entries,
             "state": {},
             "forwardedProps": {},
         },
     )
 
     assert resp.status_code == 200
-    assert "tools" in captured, "stream_llm_response was never called"
-    assert captured["tools"] is not None, "tools forwarded as None — frontend list dropped"
-    assert len(captured["tools"]) == 1
-    assert captured["tools"][0].name == "doFooBar"
+    assert "context" in captured, "stream_llm_response was never called with context kw"
+    assert captured["context"] is not None, "context forwarded as None — frontend list dropped"
+    assert len(captured["context"]) == 2
+    assert captured["context"][0].description == "Selected aircraft"
+    assert captured["context"][1].value == "live"

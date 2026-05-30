@@ -3,11 +3,23 @@ import { renderHook } from "@testing-library/react";
 import { useCopilotTools, type DisplayToolsConfig } from "../useCopilotTools";
 
 // Capture all tool registrations from useFrontendTool calls
-const registeredTools = new Map<string, { handler: Function; parameters?: unknown }>();
+const registeredTools = new Map<
+  string,
+  { handler: Function; parameters?: unknown; description?: string }
+>();
 
 vi.mock("@copilotkit/react-core/v2", () => ({
-  useFrontendTool: (opts: { name: string; handler: Function; parameters?: unknown }) => {
-    registeredTools.set(opts.name, { handler: opts.handler, parameters: opts.parameters });
+  useFrontendTool: (opts: {
+    name: string;
+    handler: Function;
+    parameters?: unknown;
+    description?: string;
+  }) => {
+    registeredTools.set(opts.name, {
+      handler: opts.handler,
+      parameters: opts.parameters,
+      description: opts.description,
+    });
   },
 }));
 
@@ -101,6 +113,38 @@ describe("useCopilotTools — display control tools", () => {
 
   it("registers all 24 tools", () => {
     expect(registeredTools.size).toBe(24);
+  });
+
+  describe("count-question tool descriptions", () => {
+    function descOf(name: string): string {
+      const desc = registeredTools.get(name)?.description;
+      if (!desc) throw new Error(`Tool "${name}" missing description`);
+      return desc;
+    }
+
+    it("searchLiveFlights is labeled Live and advertises total for active-count questions", () => {
+      const desc = descOf("searchLiveFlights");
+      expect(desc).toMatch(/\bLive\b/);
+      expect(desc).toMatch(/\btotal\b/);
+      expect(desc.toLowerCase()).toContain("how many");
+    });
+
+    it("getFlightSummary is labeled Historical and advertises total", () => {
+      const desc = descOf("getFlightSummary");
+      expect(desc).toMatch(/\bHistorical\b/);
+      expect(desc).toMatch(/\btotal\b/);
+    });
+
+    it("getAircraftSummary is labeled Historical and advertises total", () => {
+      const desc = descOf("getAircraftSummary");
+      expect(desc).toMatch(/\bHistorical\b/);
+      expect(desc).toMatch(/\btotal\b/);
+    });
+
+    it("getStorageStats advertises flight_count for in-total questions", () => {
+      const desc = descOf("getStorageStats");
+      expect(desc).toContain("flight_count");
+    });
   });
 
   describe("getCurrentDateTime", () => {

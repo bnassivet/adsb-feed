@@ -81,16 +81,24 @@ def _to_openai_tools(tools: list) -> list[dict]:
     ]
 
 
-async def stream_llm_response(messages: list, tools: list | None = None) -> AsyncIterator:
+async def stream_llm_response(
+    messages: list,
+    tools: list | None = None,
+    context: list | None = None,
+) -> AsyncIterator:
     """Stream LLM response, yielding AG-UI event objects.
 
     Args:
         messages: AG-UI message objects from RunAgentInput.
         tools: Optional tool definitions. If None, uses the default TOOLS.
+        context: Optional AG-UI Context entries — ambient UI state to inject
+            into the system prompt. Empty/None → no Ambient context section.
     """
     client = get_client()
 
-    openai_messages = [{"role": "system", "content": render_system_prompt(tools)}]
+    openai_messages = [
+        {"role": "system", "content": render_system_prompt(tools, context)}
+    ]
     openai_messages.extend(_convert_messages(messages))
 
     tool_defs = _to_openai_tools(tools) if tools else TOOLS

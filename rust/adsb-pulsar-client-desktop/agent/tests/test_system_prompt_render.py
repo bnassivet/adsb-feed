@@ -7,13 +7,17 @@ TOOLS list so CLI invocations still get a usable prompt.
 
 from __future__ import annotations
 
-from ag_ui.core import Tool
+from ag_ui.core import Context, Tool
 
 from adsb_agent.system_prompt import render_system_prompt
 
 
 def _tool(name: str, description: str) -> Tool:
     return Tool(name=name, description=description, parameters={"type": "object", "properties": {}})
+
+
+def _ctx(description: str, value: str) -> Context:
+    return Context(description=description, value=value)
 
 
 def test_render_includes_capability_for_each_tool():
@@ -34,6 +38,7 @@ def test_render_includes_yaml_prose_verbatim():
     assert "milliseconds since Unix epoch" in prompt
     assert "feet, ground speed in knots" in prompt
     assert "Only start/stop the feed when explicitly asked" in prompt
+    assert "Never answer count questions from prior knowledge" in prompt
 
 
 def test_render_intro_present():
@@ -59,3 +64,28 @@ def test_render_returns_non_empty_string():
     prompt = render_system_prompt([_tool("noop", "Does nothing.")])
     assert isinstance(prompt, str)
     assert len(prompt) > 100
+
+
+def test_render_includes_context_entries():
+    prompt = render_system_prompt(
+        [_tool("noop", "Does nothing.")],
+        context=[
+            _ctx("Selected aircraft", '{"selected":["A1B2C3"]}'),
+            _ctx("Active mode", "live"),
+        ],
+    )
+    assert "Ambient context" in prompt
+    assert "Selected aircraft" in prompt
+    assert "A1B2C3" in prompt
+    assert "Active mode" in prompt
+    assert "live" in prompt
+
+
+def test_render_omits_ambient_section_when_no_context():
+    """Empty/None context → no stub heading."""
+    assert "Ambient context" not in render_system_prompt(
+        [_tool("noop", "Does nothing.")], context=None
+    )
+    assert "Ambient context" not in render_system_prompt(
+        [_tool("noop", "Does nothing.")], context=[]
+    )

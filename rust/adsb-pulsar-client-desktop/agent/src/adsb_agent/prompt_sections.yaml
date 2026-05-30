@@ -15,3 +15,4 @@ guidelines:
   - "Always include units when reporting values (feet, knots, nautical miles)"
   - "If the database is unavailable, inform the user and suggest they check storage status"
   - "Only start/stop the feed when explicitly asked — never do it proactively"
+  - "To answer counting questions: \"how many active flights / planes right now\" → call searchLiveFlights and report `total`. \"How many flights today/yesterday/in [range]\" → call getFlightSummary with epoch ms bounds and report `total` (or array length). \"How many flights in total / in the database\" → call getStorageStats and report `flight_count`. Never answer count questions from prior knowledge."

@@ -110,7 +110,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
   useFrontendTool({
     name: "getStorageStats",
     description:
-      "Get database storage statistics including total record count, file size, and date range of stored data.",
+      "Historical — database overview. Returns counts and metadata for the persistent store: row_count (position records), flight_count (segmented flights ever recorded), event_count (events of interest), file size, and date range. Use flight_count to answer 'how many flights in the database / in total'. Does not reflect currently-active aircraft — use searchLiveFlights for that.",
     handler: async () => {
       const stats = await getStorageStats();
       return JSON.stringify(stats);
@@ -125,7 +125,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
   useFrontendTool({
     name: "getAircraftSummary",
     description:
-      "Get summary of all aircraft seen in a time range. Returns hex_ident, callsign, position count, altitude/speed ranges, first/last seen timestamps.",
+      "Historical — queries the database. Summary of unique aircraft (by hex_ident) seen in a time range. Returns hex_ident, callsign, position count, altitude/speed ranges, first/last seen timestamps. Either an array (≤50) or { total, showing, data, note }; use total (or array length) to answer 'how many distinct aircraft did we see in [time range]'.",
     parameters: z.object({
       startMs: z.number().optional().describe("Start time in ms since epoch"),
       endMs: z.number().optional().describe("End time in ms since epoch"),
@@ -152,7 +152,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
   useFrontendTool({
     name: "getFlightSummary",
     description:
-      "Get summary of flights in a time range. Returns hex_ident, callsign, position count, duration, distance.",
+      "Historical — queries the database. Get a summary of flights in a time range, automatically segmented by >1 hour gaps in coverage. Returns either an array of flights (≤30) or { total, showing, data, note }; use total (or array length) to answer 'how many flights were there in [time range]'. Provide startMs/endMs to bound the query — without them this can be expensive.",
     parameters: z.object({
       startMs: z.number().optional().describe("Start time in ms since epoch"),
       endMs: z.number().optional().describe("End time in ms since epoch"),
@@ -353,7 +353,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
   useFrontendTool({
     name: "searchLiveFlights",
     description:
-      "Search and list currently active live flights. Filter by callsign, altitude range, speed range, heading, squawk code, or airborne/ground status. Sort results by altitude, speed, callsign, message count, or recency. Returns flight details including position, altitude, speed, heading, and squawk. Call with no parameters to list all active flights.",
+      "Live — currently tracked aircraft (in-memory). Search, count, and list active flights. Filter by callsign, altitude/speed/heading ranges, squawk, or airborne/ground status; sort by altitude/speed/callsign/messages/recency. Returns { total, showing, flights } — use the total field to answer 'how many planes are flying right now' or 'how many active flights'. Call with no parameters to list all active flights. Returns total: 0 if the data feed is stopped.",
     parameters: z.object({
       callsign: z.string().optional().describe("Substring match on callsign or hex ident (case-insensitive)"),
       altitudeMin: z.number().optional().describe("Minimum altitude in feet"),

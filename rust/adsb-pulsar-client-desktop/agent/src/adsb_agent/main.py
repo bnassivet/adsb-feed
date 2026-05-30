@@ -225,6 +225,7 @@ async def _run_agent(input_data: RunAgentInput, request: Request):
             async for event in stream_llm_response(
                 messages=input_data.messages,
                 tools=input_data.tools,
+                context=input_data.context,
             ):
                 if _shutting_down() or await request.is_disconnected():
                     logger.info("AG-UI stream: client disconnected or server shutting down")

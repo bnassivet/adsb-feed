@@ -70,13 +70,42 @@ def _capabilities_from_dev_tools() -> list[str]:
     return [_first_sentence(t["function"]["description"]) for t in TOOLS]
 
 
-def render_system_prompt(tools: Iterable[Any] | None) -> str:
+def _format_context(context: Iterable[Any] | None) -> list[str]:
+    """Render AG-UI Context entries as bullet lines.
+
+    Each entry becomes `**{description}:** {value}`. Empty descriptions and
+    empty values are skipped so the LLM never sees blank bullets.
+    """
+    if not context:
+        return []
+    out: list[str] = []
+    for c in context:
+        desc = (getattr(c, "description", None) or "").strip()
+        value = getattr(c, "value", None)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            value = str(value)
+        value = value.strip()
+        if not desc or not value:
+            continue
+        out.append(f"**{desc}:** {value}")
+    return out
+
+
+def render_system_prompt(
+    tools: Iterable[Any] | None,
+    context: Iterable[Any] | None = None,
+) -> str:
     """Render the system prompt for the current chat turn.
 
     Args:
         tools: AG-UI Tool objects from RunAgentInput.tools (frontend-supplied).
                If None or empty, falls back to the dev TOOLS list so CLI and
                unit-test invocations still produce a usable prompt.
+        context: AG-UI Context entries from RunAgentInput.context — ambient
+               UI state the LLM should know without making a tool call.
+               If None or empty, the "Ambient context" section is omitted.
     """
     capabilities = _capabilities_from_agui_tools(tools) if tools else []
     if not capabilities:
@@ -86,9 +115,12 @@ def render_system_prompt(tools: Iterable[Any] | None) -> str:
         )
         capabilities = _capabilities_from_dev_tools()
 
+    context_entries = _format_context(context)
+
     return _template.render(
         intro=_sections["intro"],
         tool_capabilities=capabilities,
+        context_entries=context_entries,
         data_conventions=_sections["data_conventions"],
         guidelines=_sections["guidelines"],
     )
