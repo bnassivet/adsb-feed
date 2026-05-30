@@ -61,6 +61,9 @@ class VoxtralBackend:
         self._reader_done = asyncio.Event()  # Set when no reader is active on stdout
         self._reader_done.set()  # No reader active initially
         self._stop_event = asyncio.Event()  # Signals transcript stream to exit
+        self._bytes_fed: int = 0  # total PCM bytes sent to voxtral stdin this session
+        self._trace_enabled: bool = False
+        self._trace_audio_buffer: list[bytes] = []
         self._check_ready()
 
     def _check_ready(self) -> None:
@@ -105,6 +108,25 @@ class VoxtralBackend:
             },
         )
 
+    def _build_trace_attachment(self):
+        """Wrap buffered PCM in a WAV container and return an mlflow Attachment.
+
+        Returns None when the trace buffer is empty (tracing disabled or no audio).
+        Caller is responsible for clearing _trace_audio_buffer after use.
+        """
+        if not self._trace_audio_buffer:
+            return None
+        import io
+        import wave
+        from mlflow.tracing.attachments import Attachment
+        wav_buf = io.BytesIO()
+        with wave.open(wav_buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)   # int16
+            wf.setframerate(16000)
+            wf.writeframes(b"".join(self._trace_audio_buffer))
+        return Attachment(content_type="audio/wav", content_bytes=wav_buf.getvalue())
+
     async def start_listening(self) -> None:
         """Start voxtral.c subprocess and microphone capture."""
         if self._status == VoiceBackendStatus.LISTENING:
@@ -136,6 +158,13 @@ class VoxtralBackend:
         self._stderr_task = asyncio.create_task(self._read_stderr())
 
         # Start mic capture
+        self._bytes_fed = 0
+        try:
+            from adsb_agent.config import settings as _s
+            self._trace_enabled = _s.mlflow_enabled
+        except Exception:
+            self._trace_enabled = False
+        self._trace_audio_buffer.clear()
         await self._capture.start()
 
         # Feed audio to voxtral stdin in background
@@ -168,6 +197,9 @@ class VoxtralBackend:
                 await self._process.stdin.drain()
                 chunks_fed += 1
                 bytes_fed += len(pcm_bytes)
+                self._bytes_fed += len(pcm_bytes)
+                if self._trace_enabled:
+                    self._trace_audio_buffer.append(pcm_bytes)
                 if chunks_fed % 50 == 0:  # Log every ~5s (50 x 100ms)
                     logger.info("[voxtral feed] %d chunks, %d bytes (%.1fs audio)",
                                 chunks_fed, bytes_fed, bytes_fed / (16000 * 2))
@@ -243,7 +275,24 @@ class VoxtralBackend:
                             logger.info("[voxtral stdout] %r", line)
                             stdout_lines.append(line)
 
-                await asyncio.wait_for(_drain_stdout(), timeout=15.0)
+                from adsb_agent.tracing import make_span
+                with make_span("voxtral_stt") as span:
+                    if span is not None:
+                        inputs: dict = {
+                            "model": "voxtral",
+                            "audio_duration_s": round(self._bytes_fed / (16000 * 2), 2),
+                        }
+                        attachment = self._build_trace_attachment()
+                        if attachment is not None:
+                            inputs["audio"] = attachment
+                        self._trace_audio_buffer.clear()
+                        span.set_inputs(inputs)
+                    try:
+                        await asyncio.wait_for(_drain_stdout(), timeout=15.0)
+                    except asyncio.TimeoutError:
+                        logger.warning("Voxtral stdout drain timed out after 15s")
+                    if span is not None:
+                        span.set_outputs({"transcript": " ".join(stdout_lines) or None})
             except asyncio.TimeoutError:
                 logger.warning("Voxtral stdout drain timed out after 15s")
 

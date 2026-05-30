@@ -10,6 +10,9 @@ dependencies = [
     "openai>=1.60",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
+    "mlflow-tracing>=3.12",
+    "boto3>=1.35",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]

@@ -244,6 +244,7 @@ class LFM2AudioBackend:
         import io
         import wave
         import httpx
+        from adsb_agent.tracing import make_span
 
         if not self._audio_buffer:
             logger.warning("LFM2 transcribe: no audio buffered — nothing to send")
@@ -262,6 +263,7 @@ class LFM2AudioBackend:
             wf.setframerate(self._capture.sample_rate)
             wf.writeframes(audio_pcm)
         wav_b64 = base64.b64encode(wav_buf.getvalue()).decode()
+        audio_bytes = len(wav_buf.getvalue())
 
         payload = {
             "model": "lfm2",
@@ -274,42 +276,59 @@ class LFM2AudioBackend:
             ],
         }
 
-        try:
-            parts: list[str] = []
-            async with httpx.AsyncClient() as client:
-                async with client.stream(
-                    "POST",
-                    f"http://localhost:{self._llama_port}/v1/chat/completions",
-                    json=payload,
-                    timeout=60.0,
-                ) as response:
-                    if response.status_code != 200:
-                        body = await response.aread()
-                        logger.error(
-                            "[lfm2] Transcription error %d: %s",
-                            response.status_code,
-                            body.decode(errors="replace")[:500],
-                        )
-                        return None
-                    async for line in response.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        raw = line[6:]
-                        if raw == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(raw)
-                            delta = chunk["choices"][0]["delta"].get("content", "")
-                            if delta:
-                                parts.append(delta)
-                        except (json.JSONDecodeError, KeyError, IndexError):
-                            pass
-            text = "".join(parts).strip()
-            logger.info("[lfm2] Transcript: %r", text)
-            return text or None
-        except Exception as e:
-            logger.error("[lfm2] Transcription request failed: %s", e, exc_info=True)
-            return None
+        with make_span("lfm2_audio_transcribe") as span:
+            if span is not None:
+                from mlflow.tracing.attachments import Attachment
+                span.set_inputs({
+                    "model": "lfm2",
+                    "duration_s": round(duration_s, 2),
+                    "audio_bytes": audio_bytes,
+                    "audio": Attachment(
+                        content_type="audio/wav",
+                        content_bytes=wav_buf.getvalue(),
+                    ),
+                })
+
+            try:
+                parts: list[str] = []
+                async with httpx.AsyncClient() as client:
+                    async with client.stream(
+                        "POST",
+                        f"http://localhost:{self._llama_port}/v1/chat/completions",
+                        json=payload,
+                        timeout=60.0,
+                    ) as response:
+                        if response.status_code != 200:
+                            body = await response.aread()
+                            logger.error(
+                                "[lfm2] Transcription error %d: %s",
+                                response.status_code,
+                                body.decode(errors="replace")[:500],
+                            )
+                            if span is not None:
+                                span.set_outputs({"transcript": None, "error": response.status_code})
+                            return None
+                        async for line in response.aiter_lines():
+                            if not line.startswith("data: "):
+                                continue
+                            raw = line[6:]
+                            if raw == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(raw)
+                                delta = chunk["choices"][0]["delta"].get("content", "")
+                                if delta:
+                                    parts.append(delta)
+                            except (json.JSONDecodeError, KeyError, IndexError):
+                                pass
+                text = "".join(parts).strip()
+                logger.info("[lfm2] Transcript: %r", text)
+                if span is not None:
+                    span.set_outputs({"transcript": text or None})
+                return text or None
+            except Exception as e:
+                logger.error("[lfm2] Transcription request failed: %s", e, exc_info=True)
+                return None
 
     async def get_transcript_stream(self) -> AsyncIterator[TranscriptChunk]:
         """LFM2 is batch: no real-time transcript during capture.

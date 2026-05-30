@@ -659,3 +659,132 @@ class TestVoiceErrorHandling:
             with pytest.raises(RuntimeError, match="llama-server exited"):
                 # Use a generous timeout — the fix must raise before it expires
                 await backend._wait_for_server_ready(timeout=5.0)
+
+
+# ---------------------------------------------------------------------------
+# MLflow audio attachment logging — LFM2.5-Audio
+# ---------------------------------------------------------------------------
+
+class TestLFM2AttachmentLogging:
+    """Verify _transcribe() attaches WAV audio to the MLflow span inputs."""
+
+    def _make_sse_mock(self, lines: list[str]):
+        """Return (mock_client_cls, mock_stream) wired to emit given SSE lines."""
+        async def fake_aiter_lines():
+            for line in lines:
+                yield line
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.aiter_lines = fake_aiter_lines
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_stream = MagicMock()
+        mock_stream.return_value = mock_response
+
+        mock_client_cls = MagicMock()
+        instance = MagicMock()
+        instance.stream = mock_stream
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = instance
+        return mock_client_cls, mock_stream
+
+    @pytest.mark.asyncio
+    async def test_transcribe_logs_audio_attachment_when_tracing_enabled(self):
+        """span.set_inputs() must include an audio/wav Attachment when a span is active."""
+        from mlflow.tracing.attachments import Attachment
+
+        backend = LFM2AudioBackend(model_dir="/nonexistent")
+        backend._audio_buffer = [b"\x00\x01" * 800] * 5
+
+        sse_lines = [
+            'data: {"choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}',
+            "data: [DONE]",
+        ]
+        mock_client_cls, _ = self._make_sse_mock(sse_lines)
+
+        mock_span = MagicMock()
+        mock_span.__enter__ = MagicMock(return_value=mock_span)
+        mock_span.__exit__ = MagicMock(return_value=False)
+
+        with patch("httpx.AsyncClient", mock_client_cls), \
+             patch("adsb_agent.tracing.make_span", return_value=mock_span):
+            result = await backend._transcribe()
+
+        assert result == "hello"
+        mock_span.set_inputs.assert_called_once()
+        inputs = mock_span.set_inputs.call_args[0][0]
+        assert "audio" in inputs, "span.set_inputs() must include 'audio' key"
+        assert isinstance(inputs["audio"], Attachment)
+        assert inputs["audio"].content_type == "audio/wav"
+        assert len(inputs["audio"].content_bytes) > 44  # WAV header alone is 44 bytes
+
+    @pytest.mark.asyncio
+    async def test_transcribe_includes_metadata_alongside_attachment(self):
+        """span.set_inputs() must still include model and duration_s alongside audio."""
+        backend = LFM2AudioBackend(model_dir="/nonexistent")
+        backend._audio_buffer = [b"\x00\x00" * 1600]  # 100ms of silence
+
+        sse_lines = ["data: [DONE]"]
+        mock_client_cls, _ = self._make_sse_mock(sse_lines)
+
+        mock_span = MagicMock()
+        mock_span.__enter__ = MagicMock(return_value=mock_span)
+        mock_span.__exit__ = MagicMock(return_value=False)
+
+        with patch("httpx.AsyncClient", mock_client_cls), \
+             patch("adsb_agent.tracing.make_span", return_value=mock_span):
+            await backend._transcribe()
+
+        inputs = mock_span.set_inputs.call_args[0][0]
+        assert "model" in inputs
+        assert inputs["model"] == "lfm2"
+        assert "duration_s" in inputs
+        assert "audio_bytes" in inputs
+
+
+# ---------------------------------------------------------------------------
+# MLflow audio attachment logging — Voxtral
+# ---------------------------------------------------------------------------
+
+class TestVoxtralAttachmentLogging:
+    """Verify Voxtral buffers and logs WAV audio in MLflow spans."""
+
+    def test_trace_buffer_initially_empty(self):
+        backend = VoxtralBackend(binary_path="/fake", model_dir="/fake")
+        assert backend._trace_audio_buffer == []
+        assert backend._trace_enabled is False
+
+    def test_build_trace_attachment_returns_valid_wav(self):
+        """_build_trace_attachment() wraps buffered PCM in a proper WAV file."""
+        import io
+        import wave
+        from mlflow.tracing.attachments import Attachment
+
+        backend = VoxtralBackend(binary_path="/fake", model_dir="/fake")
+        backend._trace_audio_buffer = [b"\x00\x00" * 1600]  # 100ms silence at 16kHz
+
+        attachment = backend._build_trace_attachment()
+
+        assert attachment is not None
+        assert isinstance(attachment, Attachment)
+        assert attachment.content_type == "audio/wav"
+        assert len(attachment.content_bytes) > 44  # WAV header is 44 bytes min
+        with wave.open(io.BytesIO(attachment.content_bytes), "rb") as wf:
+            assert wf.getnchannels() == 1
+            assert wf.getsampwidth() == 2
+            assert wf.getframerate() == 16000
+
+    def test_build_trace_attachment_returns_none_when_empty(self):
+        backend = VoxtralBackend(binary_path="/fake", model_dir="/fake")
+        assert backend._build_trace_attachment() is None
+
+    def test_trace_buffer_cleared_after_build(self):
+        """_build_trace_attachment() does NOT clear the buffer — caller is responsible."""
+        backend = VoxtralBackend(binary_path="/fake", model_dir="/fake")
+        backend._trace_audio_buffer = [b"\x00\x01" * 100]
+        backend._build_trace_attachment()
+        # Buffer should still be populated — clearing is stop_listening()'s responsibility
+        assert len(backend._trace_audio_buffer) == 1

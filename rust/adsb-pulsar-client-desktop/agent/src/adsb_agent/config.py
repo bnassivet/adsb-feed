@@ -17,11 +17,16 @@ class Settings(BaseSettings):
     max_tokens: int = 8192
     temperature: float = 0.1
 
+    # MLflow tracing
+    mlflow_enabled: bool = True
+    mlflow_tracking_uri: str = "http://localhost:5010"
+    mlflow_experiment: str = "adsb-agent"
+
     # Agent service
     port: int = 8000
     host: str = "0.0.0.0"
 
-    model_config = {"env_prefix": "ADSB_AGENT_"}
+    model_config = {"env_prefix": "ADSB_AGENT_", "env_file": ".env", "extra": "ignore"}
 
 
 settings = Settings()
