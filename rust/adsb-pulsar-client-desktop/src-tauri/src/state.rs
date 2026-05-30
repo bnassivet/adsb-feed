@@ -5,7 +5,7 @@
 use adsb_data_engine::{StorageConfig, StorageHandle};
 use adsb_pulsar_client::{Config, Metrics};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
@@ -41,6 +41,9 @@ pub struct StatusResponse {
 pub struct FeedHandle {
     /// Metrics handle (lock-free reads)
     pub metrics: Metrics,
+    /// Bridge-level parsed-message counter (distinct from core messages_received
+    /// which counts every TCP line). Shared with bridge tasks.
+    pub messages_parsed: Arc<AtomicU64>,
     /// Shutdown function — sends signal to stop the client
     pub shutdown_fn: Box<dyn Fn() + Send + Sync>,
     /// Background task handles for cleanup

@@ -28,8 +28,12 @@ interface Props {
   result?: string;
 }
 
+function num(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
 export function FeedMetricsCard({ status, result }: Props) {
-  let metrics: MetricsSnapshot | null = null;
+  let metrics: Partial<MetricsSnapshot> | null = null;
   if (status === "complete" && result) {
     try {
       const parsed = JSON.parse(result);
@@ -44,14 +48,14 @@ export function FeedMetricsCard({ status, result }: Props) {
     <ChatCard title="Feed Metrics" icon="📊" status={status}>
       {metrics && (
         <div className="space-y-1 text-xs">
-          <Stat label="Messages received" value={metrics.messages_received.toLocaleString()} />
-          <Stat label="Messages parsed" value={metrics.messages_parsed.toLocaleString()} />
-          <Stat label="Messages sent" value={metrics.messages_sent.toLocaleString()} />
-          <Stat label="Errors" value={metrics.errors.toLocaleString()} />
-          <Stat label="Bytes received" value={formatBytes(metrics.bytes_received)} />
-          <Stat label="Throughput" value={`${metrics.throughput_msg_per_sec.toFixed(1)} msg/s`} />
-          <Stat label="Uptime" value={formatUptime(metrics.elapsed_secs)} />
-          <Stat label="Reconnections" value={metrics.reconnection_attempts} />
+          <Stat label="Messages received" value={num(metrics.messages_received).toLocaleString()} />
+          <Stat label="Messages parsed" value={num(metrics.messages_parsed).toLocaleString()} />
+          <Stat label="Messages sent" value={num(metrics.messages_sent).toLocaleString()} />
+          <Stat label="Errors" value={num(metrics.errors).toLocaleString()} />
+          <Stat label="Bytes received" value={formatBytes(num(metrics.bytes_received))} />
+          <Stat label="Throughput" value={`${num(metrics.throughput_msg_per_sec).toFixed(1)} msg/s`} />
+          <Stat label="Uptime" value={formatUptime(num(metrics.elapsed_secs))} />
+          <Stat label="Reconnections" value={num(metrics.reconnection_attempts)} />
         </div>
       )}
     </ChatCard>

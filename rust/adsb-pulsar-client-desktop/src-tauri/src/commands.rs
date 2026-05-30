@@ -13,7 +13,9 @@ use adsb_data_engine::{
     StatusEvent, StatusEventQuery, StatusEventStatus, StatusEventType, StorageHandle, StorageStats,
     TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery, UpdateEventOfInterest,
 };
-use adsb_pulsar_client::{Config, MetricsSnapshot};
+use adsb_pulsar_client::Config;
+
+use crate::bridge::DesktopMetrics;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{ipc::Response, Emitter, State};
@@ -141,13 +143,20 @@ pub fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, String> 
     Ok(status.clone())
 }
 
-/// Returns the current metrics snapshot.
+/// Returns the current metrics snapshot, including bridge-level counters
+/// (`messages_parsed`) that the TS `MetricsSnapshot` type expects to be present.
 #[tauri::command]
-pub fn get_metrics(state: State<'_, AppState>) -> Result<MetricsSnapshot, String> {
+pub fn get_metrics(state: State<'_, AppState>) -> Result<DesktopMetrics, String> {
     let handle = state.feed_handle.lock().map_err(|e| e.to_string())?;
     match handle.as_ref() {
-        Some(h) => Ok(h.metrics.snapshot()),
-        None => Ok(adsb_pulsar_client::Metrics::new().snapshot()),
+        Some(h) => Ok(DesktopMetrics {
+            base: h.metrics.snapshot(),
+            messages_parsed: h.messages_parsed.load(Ordering::Relaxed),
+        }),
+        None => Ok(DesktopMetrics {
+            base: adsb_pulsar_client::Metrics::new().snapshot(),
+            messages_parsed: 0,
+        }),
     }
 }
 

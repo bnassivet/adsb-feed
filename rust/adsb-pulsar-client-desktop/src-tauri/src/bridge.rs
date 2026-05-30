@@ -74,6 +74,7 @@ pub fn start_feed(
     let messages_parsed = Arc::new(AtomicU64::new(0));
     let messages_parsed_for_relay = messages_parsed.clone();
     let messages_parsed_for_metrics = messages_parsed.clone();
+    let messages_parsed_for_handle = messages_parsed.clone();
 
     // Shared state for last message time (for socket watchdog)
     let last_message_time = Arc::new(RwLock::new(Instant::now()));
@@ -235,6 +236,7 @@ pub fn start_feed(
 
     Ok(FeedHandle {
         metrics,
+        messages_parsed: messages_parsed_for_handle,
         shutdown_fn,
         task_handles: vec![client_task, message_task, metrics_task, watchdog_task],
     })
@@ -391,12 +393,12 @@ async fn persist_raw_batch(storage: &SharedStorage, batch: &[RawSbsRecord], tz: 
 
 /// Extended metrics snapshot with bridge-level counters.
 #[derive(Debug, Clone, serde::Serialize)]
-struct DesktopMetrics {
+pub struct DesktopMetrics {
     #[serde(flatten)]
-    base: adsb_pulsar_client::MetricsSnapshot,
+    pub base: adsb_pulsar_client::MetricsSnapshot,
     /// Total raw SBS-1 messages successfully parsed into AircraftPosition (pre-throttle).
     /// Distinct from `messages_received` (in base) which counts ALL TCP lines including heartbeats.
-    messages_parsed: u64,
+    pub messages_parsed: u64,
 }
 
 /// Emits metrics snapshots to the frontend every second.

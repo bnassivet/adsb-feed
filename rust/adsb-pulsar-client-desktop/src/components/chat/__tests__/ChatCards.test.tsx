@@ -123,6 +123,28 @@ describe("FeedMetricsCard", () => {
     expect(screen.getByText("12.5 msg/s")).toBeInTheDocument();
     expect(screen.getByText("1h 1m")).toBeInTheDocument();
   });
+
+  it("does not crash when messages_parsed is missing (legacy backend shape)", () => {
+    // Regression: the bare MetricsSnapshot from get_metrics used to omit
+    // messages_parsed; if the LLM ever returns a payload missing it, the
+    // card must degrade gracefully instead of throwing.
+    const result = JSON.stringify({
+      messages_sent: 1000,
+      messages_received: 5000,
+      errors: 0,
+      bytes_received: 1024,
+      bytes_sent: 512,
+      retry_queue_size: 0,
+      reconnection_attempts: 0,
+      elapsed_secs: 60,
+      throughput_msg_per_sec: 5.0,
+      // messages_parsed intentionally omitted
+    });
+    expect(() =>
+      render(<FeedMetricsCard status="complete" result={result} />),
+    ).not.toThrow();
+    expect(screen.getByText("5,000")).toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------
