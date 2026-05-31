@@ -122,6 +122,21 @@ class TestVoxtralBackend:
         await backend.stop_listening()
 
     @pytest.mark.asyncio
+    async def test_start_listening_clears_stale_last_transcript(self):
+        """start_listening must wipe any prior recording's transcript so it
+        cannot leak into the next /voice/stop response — even when start
+        fails because the backend is not ready."""
+        backend = VoxtralBackend(
+            binary_path="/nonexistent/voxtral",
+            model_dir="/nonexistent/model",
+        )
+        # Simulate prior recording's residue
+        backend._last_transcript = "stale-from-previous-recording"
+        with pytest.raises(RuntimeError, match="not ready"):
+            await backend.start_listening()
+        assert backend._last_transcript is None
+
+    @pytest.mark.asyncio
     async def test_reader_done_event_lifecycle(self):
         """_reader_done event should be set initially and after stream ends."""
         backend = VoxtralBackend(
@@ -163,6 +178,16 @@ class TestLFM2AudioBackend:
         backend = LFM2AudioBackend(model_dir="/nonexistent")
         with pytest.raises(RuntimeError, match="not found"):
             await backend.start_listening()
+
+    @pytest.mark.asyncio
+    async def test_start_listening_clears_stale_last_transcript(self):
+        """start_listening must wipe any prior recording's transcript so it
+        cannot leak into the next /voice/stop response."""
+        backend = LFM2AudioBackend(model_dir="/nonexistent")
+        backend._last_transcript = "stale-from-previous-recording"
+        with pytest.raises(RuntimeError, match="not found"):
+            await backend.start_listening()
+        assert backend._last_transcript is None
 
     @pytest.mark.asyncio
     async def test_ensure_server_uses_liquid_audio_flags(self):
@@ -236,6 +261,38 @@ class TestAudioCapture:
         assert len(calls) == 1, f"Expected 1 to_thread call, got {len(calls)}"
         mock_stream.stop.assert_called_once()
         mock_stream.close.assert_called_once()
+
+
+    @pytest.mark.asyncio
+    async def test_start_drains_stale_queue_from_previous_session(self):
+        """REGRESSION: leftover audio chunks and the None sentinel from a prior
+        stop() must not survive into the next start() — otherwise the next
+        recording's _collect_audio reads stale audio and exits early on None,
+        leaking the prior recording's audio into the new transcription."""
+        import asyncio
+        import numpy as np
+
+        capture = AudioCapture()
+        # Simulate residue from a previous stop(): a couple of audio chunks
+        # plus the None end-of-stream sentinel.
+        stale_chunk_a = np.zeros(1600, dtype=np.int16)
+        stale_chunk_b = np.ones(1600, dtype=np.int16)
+        capture._queue.put_nowait(stale_chunk_a)
+        capture._queue.put_nowait(stale_chunk_b)
+        capture._queue.put_nowait(None)
+        assert capture._queue.qsize() == 3
+
+        mock_stream = MagicMock()
+        with patch("sounddevice.InputStream", return_value=mock_stream):
+            await capture.start()
+
+        # After start(), the queue must be empty so that the new session's
+        # _collect_audio only sees fresh audio.
+        assert capture._queue.empty(), (
+            f"queue should be empty after start(), got qsize={capture._queue.qsize()}"
+        )
+
+        await capture.stop()
 
 
 # ---------------------------------------------------------------------------

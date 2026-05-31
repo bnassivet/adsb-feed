@@ -91,7 +91,7 @@ export function AIChatContent({ threadId }: { threadId?: string } = {}) {
           welcomeMessageText: "Ask me about aircraft, flights, or database stats.",
           chatInputPlaceholder: "Ask about aircraft tracking...",
         }}
-        className="h-full"
+        className="flex-1 min-h-0"
       />
       {/* Voice transcript banner */}
       {finalTranscript && (

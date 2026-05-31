@@ -55,6 +55,17 @@ class AudioCapture:
         if self._running:
             return
 
+        # Drain any residue from a previous session: leftover audio chunks
+        # the consumer never read, and the None end-of-stream sentinel that
+        # stop() pushed. If not drained, the next session's consumer reads
+        # the prior recording's audio and exits early on the None — leaking
+        # the previous recording's audio into the new transcription.
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
         import sounddevice as sd
 
         self._loop = asyncio.get_running_loop()

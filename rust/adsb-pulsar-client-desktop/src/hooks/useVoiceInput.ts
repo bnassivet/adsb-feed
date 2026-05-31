@@ -69,6 +69,11 @@ export function useVoiceInput(threadId?: string): UseVoiceInputReturn {
 
   const startListening = useCallback(async () => {
     setError(null);
+    // Drop the previous recording's final transcript immediately, before any
+    // network call, so the banner doesn't show stale text during the new
+    // recording — even if /voice/start fails.
+    setFinalTranscript(null);
+    setTranscript("");
     try {
       const res = await fetch(`${AGENT_BASE}/voice/start`, {
         method: "POST",
@@ -81,7 +86,6 @@ export function useVoiceInput(threadId?: string): UseVoiceInputReturn {
         return;
       }
       setIsListening(true);
-      setTranscript("");
 
       // Open SSE stream for transcript
       const es = new EventSource(`${AGENT_BASE}/voice/transcript`);
@@ -125,6 +129,10 @@ export function useVoiceInput(threadId?: string): UseVoiceInputReturn {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
+    // Clear the banner the instant the user clicks stop. /voice/stop can
+    // take many seconds (voxtral's stdout drain), and during that wait the
+    // previous recording's transcript must NOT remain on screen.
+    setFinalTranscript(null);
     try {
       const res = await fetch(`${AGENT_BASE}/voice/stop`, { method: "POST" });
       const data = await res.json();
@@ -132,7 +140,7 @@ export function useVoiceInput(threadId?: string): UseVoiceInputReturn {
         setFinalTranscript(data.transcript);
       }
     } catch {
-      // Agent may be unavailable
+      // Agent unavailable — banner stays cleared from the synchronous reset above.
     }
     setIsListening(false);
   }, []);
@@ -153,6 +161,24 @@ export function useVoiceInput(threadId?: string): UseVoiceInputReturn {
       }
     };
   }, []);
+
+  // Auto-stop voice + clear stale transcript when the chat thread changes.
+  // The previous thread's voice session must not bleed into the new one.
+  const prevThreadIdRef = useRef<string | undefined>(threadId);
+  const isListeningRef = useRef(isListening);
+  isListeningRef.current = isListening;
+  useEffect(() => {
+    if (prevThreadIdRef.current !== threadId) {
+      prevThreadIdRef.current = threadId;
+      if (isListeningRef.current) {
+        // Stop first; stopListening reads /voice/stop which may set finalTranscript
+        // — clear AFTER it resolves so the stale transcript doesn't leak into the new thread.
+        void stopListening().then(() => setFinalTranscript(null));
+      } else {
+        setFinalTranscript(null);
+      }
+    }
+  }, [threadId, stopListening]);
 
   const clearFinalTranscript = useCallback(() => {
     setFinalTranscript(null);

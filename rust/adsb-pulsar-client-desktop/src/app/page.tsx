@@ -95,7 +95,7 @@ export default function Dashboard() {
   const [mapPickResult, setMapPickResult] = useState<MapPickResult | null>(null);
   // AI Chat Panel state
   const [aiChatOpen, setAiChatOpen] = useLocalStorage<boolean>("adsb-aichat-open", false);
-  const chatThreadId = useChatThreadId(aiChatOpen);
+  const { threadId: chatThreadId, resetThread: resetChatThread } = useChatThreadId(aiChatOpen);
   const [aiChatDockedExpanded, setAiChatDockedExpanded] = useLocalStorage<boolean>("adsb-aichat-docked-expanded", true);
   const [aiChatWidth, setAiChatWidth] = useLocalStorage<number>("adsb-aichat-width", 360);
   const [aiChatFloating, setAiChatFloating] = useLocalStorage<boolean>("adsb-aichat-floating", true);
@@ -975,6 +975,7 @@ export default function Dashboard() {
                 floatH={aiChatFloatH}
                 onFloatPosChange={(x, y) => { setAiChatFloatX(x); setAiChatFloatY(y); }}
                 onFloatSizeChange={(w, h) => { setAiChatFloatW(w); setAiChatFloatH(h); }}
+                onNewConversation={resetChatThread}
               >
                 <AIChatContent threadId={chatThreadId} />
               </AIChatPanel>
@@ -1150,6 +1151,7 @@ export default function Dashboard() {
           floatH={aiChatFloatH}
           onFloatPosChange={(x, y) => { setAiChatFloatX(x); setAiChatFloatY(y); }}
           onFloatSizeChange={(w, h) => { setAiChatFloatW(w); setAiChatFloatH(h); }}
+          onNewConversation={resetChatThread}
         >
           <AIChatContent threadId={chatThreadId} />
         </AIChatPanel>

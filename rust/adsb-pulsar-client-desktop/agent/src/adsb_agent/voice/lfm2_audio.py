@@ -191,6 +191,10 @@ class LFM2AudioBackend:
         """Start audio capture. Audio is buffered until stop_listening triggers inference."""
         if self._status == VoiceBackendStatus.LISTENING:
             return
+        # Wipe any prior recording's transcript before doing anything else, so
+        # an aborted/failed stop_listening can never leak stale text into the
+        # next /voice/stop response.
+        self._last_transcript = None
         if self._status == VoiceBackendStatus.NOT_READY:
             await self._acheck_ready()
             if self._status == VoiceBackendStatus.NOT_READY:

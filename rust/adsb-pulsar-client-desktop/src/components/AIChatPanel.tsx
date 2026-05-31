@@ -20,7 +20,28 @@ interface Props {
   floatH: number;
   onFloatPosChange: (x: number, y: number) => void;
   onFloatSizeChange: (w: number, h: number) => void;
+  onNewConversation?: () => void;
   children?: ReactNode;
+}
+
+function NewConversationButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title="New Conversation"
+      aria-label="New Conversation"
+      className="p-1 text-slate-400 hover:text-violet-300 hover:bg-slate-700 rounded transition"
+    >
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path
+          d="M7 2v10M2 7h10"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
+      </svg>
+    </button>
+  );
 }
 
 export function AIChatPanel({
@@ -38,6 +59,7 @@ export function AIChatPanel({
   floatH,
   onFloatPosChange,
   onFloatSizeChange,
+  onNewConversation,
   children,
 }: Props) {
   if (!isOpen) return null;
@@ -53,6 +75,7 @@ export function AIChatPanel({
         onSizeChange={onFloatSizeChange}
         onClose={onToggle}
         onPin={() => onFloatingChange(false)}
+        onNewConversation={onNewConversation}
       >
         {children}
       </FloatingPanel>
@@ -83,6 +106,7 @@ export function AIChatPanel({
       onWidthChange={onWidthChange}
       onCollapse={() => onDockedExpandedChange(false)}
       onUnpin={() => onFloatingChange(true)}
+      onNewConversation={onNewConversation}
     >
       {children}
     </DockedPanel>
@@ -94,12 +118,14 @@ function DockedPanel({
   onWidthChange,
   onCollapse,
   onUnpin,
+  onNewConversation,
   children,
 }: {
   width: number;
   onWidthChange: (w: number) => void;
   onCollapse: () => void;
   onUnpin: () => void;
+  onNewConversation?: () => void;
   children?: ReactNode;
 }) {
   const lastX = useRef(0);
@@ -158,6 +184,9 @@ function DockedPanel({
             AI Chat
           </span>
           <div className="flex items-center gap-1">
+            {onNewConversation && (
+              <NewConversationButton onClick={onNewConversation} />
+            )}
             <button
               onClick={onUnpin}
               title="Undock to floating window"
@@ -193,6 +222,7 @@ function FloatingPanel({
   onSizeChange,
   onClose,
   onPin,
+  onNewConversation,
   children,
 }: {
   x: number;
@@ -203,6 +233,7 @@ function FloatingPanel({
   onSizeChange: (w: number, h: number) => void;
   onClose: () => void;
   onPin: () => void;
+  onNewConversation?: () => void;
   children?: ReactNode;
 }) {
   const isDragging = useRef(false);
@@ -289,6 +320,9 @@ function FloatingPanel({
           AI Chat
         </span>
         <div className="flex items-center gap-1">
+          {onNewConversation && (
+            <NewConversationButton onClick={onNewConversation} />
+          )}
           <button
             onClick={onPin}
             title="Dock to right side"

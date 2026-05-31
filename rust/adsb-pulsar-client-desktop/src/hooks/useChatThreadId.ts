@@ -1,16 +1,24 @@
 "use client";
 /**
- * Mint a fresh AG-UI thread id on each chat-panel open.
+ * Mint a fresh AG-UI thread id per chat-panel conversation.
  *
- * Returns `undefined` while the panel is closed; on every false→true
- * transition of `isOpen`, a new UUID v7 is generated and held stable until
- * the panel closes again. This makes one chat-panel lifetime correspond to
- * one AG-UI thread — and, on the agent side, one MLflow session.
+ * - Returns `threadId === undefined` while the panel is closed.
+ * - On every false→true transition of `isOpen`, mints a new UUID v7.
+ * - `resetThread()` mints a new UUID v7 in place (no close/open flicker)
+ *   so the user can start a fresh conversation while keeping panel state.
+ *
+ * One thread id corresponds to one AG-UI thread and, on the agent side,
+ * one MLflow session.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { v7 as uuidv7 } from "uuid";
 
-export function useChatThreadId(isOpen: boolean): string | undefined {
+export interface UseChatThreadIdReturn {
+  threadId: string | undefined;
+  resetThread: () => void;
+}
+
+export function useChatThreadId(isOpen: boolean): UseChatThreadIdReturn {
   const [threadId, setThreadId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
@@ -21,5 +29,11 @@ export function useChatThreadId(isOpen: boolean): string | undefined {
     }
   }, [isOpen]);
 
-  return threadId;
+  const resetThread = useCallback(() => {
+    // Only mint a new id if the panel is open — otherwise we'd resurrect
+    // a thread for a closed panel and the next open would mint another.
+    setThreadId((prev) => (prev === undefined ? prev : uuidv7()));
+  }, []);
+
+  return { threadId, resetThread };
 }
