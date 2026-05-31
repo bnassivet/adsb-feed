@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .llm import stream_llm_response
+from .tracing import make_span, set_session_tag
 from .models import (
     AgUiErrorResponse,
     AgUiRequest,
@@ -210,48 +211,81 @@ async def _run_agent(input_data: RunAgentInput, request: Request):
         def _shutting_down() -> bool:
             return _shutdown_event is not None and _shutdown_event.is_set()
 
-        # Run started
-        event = RunStartedEvent(
-            type=EventType.RUN_STARTED,
-            thread_id=thread_id,
-            run_id=run_id,
-        )
-        logger.debug("Event: %s", event.type)
-        yield encoder.encode(event)
+        # Root span for the whole turn — becomes the trace root, so its
+        # inputs/outputs populate the trace Request/Response columns and all
+        # auto-logged LLM child spans roll up under it.
+        with make_span("chat_turn", span_type="CHAIN") as span:
+            set_session_tag(thread_id, run_id=run_id)
+            if span is not None:
+                span.set_inputs({
+                    "thread_id": thread_id,
+                    "run_id": run_id,
+                    "messages": [
+                        {"role": m.role, "content": getattr(m, "content", None)}
+                        for m in input_data.messages
+                    ],
+                })
 
-        errored = False
-        try:
-            # Stream LLM response as AG-UI events
-            async for event in stream_llm_response(
-                messages=input_data.messages,
-                tools=input_data.tools,
-                context=input_data.context,
-            ):
-                if _shutting_down() or await request.is_disconnected():
-                    logger.info("AG-UI stream: client disconnected or server shutting down")
-                    return
-                logger.debug("Event: %s", event.type)
-                yield encoder.encode(event)
+            assistant_text_parts: list[str] = []
+            tool_call_names: list[str] = []
 
-        except Exception as e:
-            errored = True
-            logger.error("Agent error: %s", e, exc_info=True)
-            yield encoder.encode(
-                RunErrorEvent(
-                    type=EventType.RUN_ERROR,
-                    message=f"Agent error: {e}",
-                )
-            )
-
-        # RUN_FINISHED only if no error — AG-UI considers RUN_ERROR terminal
-        if not errored and not _shutting_down():
-            event = RunFinishedEvent(
-                type=EventType.RUN_FINISHED,
+            # Run started
+            event = RunStartedEvent(
+                type=EventType.RUN_STARTED,
                 thread_id=thread_id,
                 run_id=run_id,
             )
             logger.debug("Event: %s", event.type)
             yield encoder.encode(event)
+
+            errored = False
+            try:
+                # Stream LLM response as AG-UI events
+                async for event in stream_llm_response(
+                    messages=input_data.messages,
+                    tools=input_data.tools,
+                    context=input_data.context,
+                ):
+                    if _shutting_down() or await request.is_disconnected():
+                        logger.info("AG-UI stream: client disconnected or server shutting down")
+                        return
+                    # Capture assistant text deltas and tool-call names for the
+                    # root span's output payload.
+                    if event.type == EventType.TEXT_MESSAGE_CONTENT:
+                        assistant_text_parts.append(getattr(event, "delta", "") or "")
+                    elif event.type == EventType.TOOL_CALL_START:
+                        name = getattr(event, "tool_call_name", None)
+                        if name:
+                            tool_call_names.append(name)
+                    logger.debug("Event: %s", event.type)
+                    yield encoder.encode(event)
+
+            except Exception as e:
+                errored = True
+                logger.error("Agent error: %s", e, exc_info=True)
+                yield encoder.encode(
+                    RunErrorEvent(
+                        type=EventType.RUN_ERROR,
+                        message=f"Agent error: {e}",
+                    )
+                )
+
+            # RUN_FINISHED only if no error — AG-UI considers RUN_ERROR terminal
+            if not errored and not _shutting_down():
+                event = RunFinishedEvent(
+                    type=EventType.RUN_FINISHED,
+                    thread_id=thread_id,
+                    run_id=run_id,
+                )
+                logger.debug("Event: %s", event.type)
+                yield encoder.encode(event)
+
+            if span is not None:
+                span.set_outputs({
+                    "text": "".join(assistant_text_parts),
+                    "tool_calls": tool_call_names,
+                    "errored": errored,
+                })
 
     return StreamingResponse(
         event_generator(),
@@ -389,6 +423,10 @@ async def start_voice(body: VoiceStartRequest) -> VoiceStartResponse | VoiceErro
         await _active_voice_backend.stop_listening()
 
     backend = _voice_backends[body.backend]
+    # Chat session id forwarded from the panel — used to tag the MLflow trace
+    # produced when this capture is transcribed, so voice and chat traces
+    # share an MLflow session.
+    backend.session_id = body.session_id
     try:
         await backend.start_listening()
         _active_voice_backend = backend

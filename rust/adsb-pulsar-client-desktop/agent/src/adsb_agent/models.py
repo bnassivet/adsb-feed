@@ -46,6 +46,9 @@ class VoiceBackendsResponse(BaseModel):
 
 class VoiceStartRequest(BaseModel):
     backend: Literal["voxtral", "lfm2-audio"] = "voxtral"
+    # Optional chat-session id (AG-UI thread_id) — used to tag the resulting
+    # MLflow trace so voice traces group under the same session as chat turns.
+    session_id: str | None = None
 
 
 class VoiceStartResponse(BaseModel):

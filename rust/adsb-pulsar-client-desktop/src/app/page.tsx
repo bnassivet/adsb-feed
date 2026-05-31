@@ -11,6 +11,7 @@ import { DBHistoryPanel } from "@/components/DBHistoryPanel";
 import { DBHistoryContent } from "@/components/DBHistoryContent";
 import { AIChatPanel } from "@/components/AIChatPanel";
 import { AIChatContent } from "@/components/AIChatContent";
+import { useChatThreadId } from "@/hooks/useChatThreadId";
 import { EventsOfInterestPanel } from "@/components/EventsOfInterestPanel";
 import { EventsOfInterestContent } from "@/components/EventsOfInterestContent";
 import { EventFormDialog } from "@/components/EventFormDialog";
@@ -94,6 +95,7 @@ export default function Dashboard() {
   const [mapPickResult, setMapPickResult] = useState<MapPickResult | null>(null);
   // AI Chat Panel state
   const [aiChatOpen, setAiChatOpen] = useLocalStorage<boolean>("adsb-aichat-open", false);
+  const chatThreadId = useChatThreadId(aiChatOpen);
   const [aiChatDockedExpanded, setAiChatDockedExpanded] = useLocalStorage<boolean>("adsb-aichat-docked-expanded", true);
   const [aiChatWidth, setAiChatWidth] = useLocalStorage<number>("adsb-aichat-width", 360);
   const [aiChatFloating, setAiChatFloating] = useLocalStorage<boolean>("adsb-aichat-floating", true);
@@ -974,7 +976,7 @@ export default function Dashboard() {
                 onFloatPosChange={(x, y) => { setAiChatFloatX(x); setAiChatFloatY(y); }}
                 onFloatSizeChange={(w, h) => { setAiChatFloatW(w); setAiChatFloatH(h); }}
               >
-                <AIChatContent />
+                <AIChatContent threadId={chatThreadId} />
               </AIChatPanel>
             )}
             {/* Events panel — docked mode (in flex row) */}
@@ -1149,7 +1151,7 @@ export default function Dashboard() {
           onFloatPosChange={(x, y) => { setAiChatFloatX(x); setAiChatFloatY(y); }}
           onFloatSizeChange={(w, h) => { setAiChatFloatW(w); setAiChatFloatH(h); }}
         >
-          <AIChatContent />
+          <AIChatContent threadId={chatThreadId} />
         </AIChatPanel>
       )}
 

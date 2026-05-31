@@ -43,7 +43,7 @@ export interface UseVoiceInputReturn {
 
 const AGENT_BASE = "http://localhost:8000";
 
-export function useVoiceInput(): UseVoiceInputReturn {
+export function useVoiceInput(threadId?: string): UseVoiceInputReturn {
   const [backend, setBackend] = useLocalStorage<VoiceBackendId>(
     "adsb-voice-backend",
     "voxtral",
@@ -73,7 +73,7 @@ export function useVoiceInput(): UseVoiceInputReturn {
       const res = await fetch(`${AGENT_BASE}/voice/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ backend }),
+        body: JSON.stringify({ backend, session_id: threadId ?? null }),
       });
       const data = await res.json();
       if (data.error) {
@@ -117,7 +117,7 @@ export function useVoiceInput(): UseVoiceInputReturn {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start voice");
     }
-  }, [backend]);
+  }, [backend, threadId]);
 
   const stopListening = useCallback(async () => {
     // Close transcript stream

@@ -78,6 +78,9 @@ class LFM2AudioBackend:
         # get_transcript_stream() can idle safely during capture.
         self._stopped_event = asyncio.Event()
         self._stopped_event.set()
+        # Chat session id — set by /voice/start so the MLflow trace for this
+        # capture rolls up under the same MLflow session as the chat turns.
+        self.session_id: str | None = None
         self._check_ready()
 
     def _check_ready(self) -> None:
@@ -244,7 +247,7 @@ class LFM2AudioBackend:
         import io
         import wave
         import httpx
-        from adsb_agent.tracing import make_span
+        from adsb_agent.tracing import make_span, set_session_tag
 
         if not self._audio_buffer:
             logger.warning("LFM2 transcribe: no audio buffered — nothing to send")
@@ -277,6 +280,8 @@ class LFM2AudioBackend:
         }
 
         with make_span("lfm2_audio_transcribe") as span:
+            if self.session_id:
+                set_session_tag(self.session_id, voice_backend="lfm2-audio")
             if span is not None:
                 from mlflow.tracing.attachments import Attachment
                 span.set_inputs({

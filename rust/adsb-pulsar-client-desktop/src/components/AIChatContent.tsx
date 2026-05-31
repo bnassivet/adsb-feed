@@ -36,7 +36,7 @@ function BackendSelector({
   );
 }
 
-export function AIChatContent() {
+export function AIChatContent({ threadId }: { threadId?: string } = {}) {
   const {
     backend,
     setBackend,
@@ -46,7 +46,7 @@ export function AIChatContent() {
     error,
     finalTranscript,
     clearFinalTranscript,
-  } = useVoiceInput();
+  } = useVoiceInput(threadId);
 
   // Ref to programmatically set the CopilotChat input via DOM
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -85,6 +85,7 @@ export function AIChatContent() {
   return (
     <div ref={chatContainerRef} className="flex-1 overflow-hidden flex flex-col [&_.copilotkit-chat-messages]:bg-slate-900 [&_.copilotkit-chat-input]:bg-slate-800">
       <CopilotChat
+        threadId={threadId}
         labels={{
           modalHeaderTitle: "ADS-B Assistant",
           welcomeMessageText: "Ask me about aircraft, flights, or database stats.",

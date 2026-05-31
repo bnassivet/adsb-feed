@@ -164,6 +164,46 @@ describe("useVoiceInput", () => {
     expect(result.current.error).toBeTruthy();        // error message shown
   });
 
+  it("forwards threadId as session_id in /voice/start body", async () => {
+    const startCalls: Array<{ url: string; init?: RequestInit }> = [];
+    mockFetch.mockImplementation((url: string, init?: RequestInit) => {
+      if (typeof url === "string" && url.includes("/voice/start")) {
+        startCalls.push({ url, init });
+        return Promise.resolve({ json: () => Promise.resolve({ status: "listening" }) });
+      }
+      return Promise.resolve({ json: () => Promise.resolve({ backends: {} }) });
+    });
+
+    const { result } = renderHook(() => useVoiceInput("thread-7"));
+    await act(async () => {
+      await result.current.startListening();
+    });
+
+    expect(startCalls).toHaveLength(1);
+    const body = JSON.parse(startCalls[0].init!.body as string);
+    expect(body.session_id).toBe("thread-7");
+    expect(body.backend).toBe("voxtral");
+  });
+
+  it("sends session_id=null when no threadId provided", async () => {
+    const startCalls: Array<{ url: string; init?: RequestInit }> = [];
+    mockFetch.mockImplementation((url: string, init?: RequestInit) => {
+      if (typeof url === "string" && url.includes("/voice/start")) {
+        startCalls.push({ url, init });
+        return Promise.resolve({ json: () => Promise.resolve({ status: "listening" }) });
+      }
+      return Promise.resolve({ json: () => Promise.resolve({ backends: {} }) });
+    });
+
+    const { result } = renderHook(() => useVoiceInput());
+    await act(async () => {
+      await result.current.startListening();
+    });
+
+    const body = JSON.parse(startCalls[0].init!.body as string);
+    expect(body.session_id).toBeNull();
+  });
+
   it("can switch backend", () => {
     const { result } = renderHook(() => useVoiceInput());
     expect(result.current.backend).toBe("voxtral");

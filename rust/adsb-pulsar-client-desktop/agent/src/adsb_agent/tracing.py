@@ -43,6 +43,30 @@ def setup_tracing() -> None:
     logger.info("MLflow OpenAI autolog enabled (chat completions will be traced)")
 
 
+def set_session_tag(thread_id: str, **extra: str) -> None:
+    """Attach the chat session id (AG-UI ``thread_id``) to the active trace.
+
+    Uses MLflow 3.11+ ``session_id=`` parameter on ``update_current_trace`` —
+    this is what feeds the MLflow Sessions view. Extra keyword args are
+    forwarded as plain trace tags (useful for ``run_id``, etc.).
+
+    Safe to call when MLflow is disabled, the mlflow package is unimportable,
+    or no trace is currently active — all failure paths are swallowed.
+    """
+    try:
+        from .config import settings
+        if not settings.mlflow_enabled:
+            return
+        import mlflow
+        if extra:
+            mlflow.update_current_trace(session_id=thread_id, tags=dict(extra))
+        else:
+            mlflow.update_current_trace(session_id=thread_id)
+    except Exception:
+        # Tagging is observability, not application logic — never raise.
+        pass
+
+
 def make_span(name: str, span_type: str = "LLM"):
     """Return an MLflow span context manager, or nullcontext when disabled.
 

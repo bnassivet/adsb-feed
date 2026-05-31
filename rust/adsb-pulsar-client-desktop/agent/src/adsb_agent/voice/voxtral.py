@@ -64,6 +64,9 @@ class VoxtralBackend:
         self._bytes_fed: int = 0  # total PCM bytes sent to voxtral stdin this session
         self._trace_enabled: bool = False
         self._trace_audio_buffer: list[bytes] = []
+        # Chat session id — set by /voice/start so the MLflow trace for this
+        # capture rolls up under the same MLflow session as the chat turns.
+        self.session_id: str | None = None
         self._check_ready()
 
     def _check_ready(self) -> None:
@@ -275,8 +278,10 @@ class VoxtralBackend:
                             logger.info("[voxtral stdout] %r", line)
                             stdout_lines.append(line)
 
-                from adsb_agent.tracing import make_span
+                from adsb_agent.tracing import make_span, set_session_tag
                 with make_span("voxtral_stt") as span:
+                    if self.session_id:
+                        set_session_tag(self.session_id, voice_backend="voxtral")
                     if span is not None:
                         inputs: dict = {
                             "model": "voxtral",
