@@ -178,6 +178,25 @@ async def stream_llm_response(
                             message_id=message_id,
                         )
                         text_started = False
+                    elif not any(i["started"] for i in active_tool_calls.values()):
+                        # First emission of the run is a tool call (LLM went
+                        # straight to the tool with no preamble text). Emit an
+                        # empty TEXT_MESSAGE envelope so the AG-UI client has
+                        # an assistant message of `message_id` to attach the
+                        # tool_calls to — otherwise the reconstructed message
+                        # history on the next runAgent may lack the assistant
+                        # message that owns this tool call, and CopilotKit /
+                        # the LLM API will be unable to pair the tool result
+                        # with its originating tool_call.
+                        yield TextMessageStartEvent(
+                            type=EventType.TEXT_MESSAGE_START,
+                            message_id=message_id,
+                            role="assistant",
+                        )
+                        yield TextMessageEndEvent(
+                            type=EventType.TEXT_MESSAGE_END,
+                            message_id=message_id,
+                        )
 
                     yield ToolCallStartEvent(
                         type=EventType.TOOL_CALL_START,

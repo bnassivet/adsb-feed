@@ -8,8 +8,8 @@
  * Phase 3: Each tool includes a `render` callback that displays
  * a rich card component in the chat instead of raw JSON.
  */
-import { createElement } from "react";
-import { useFrontendTool } from "@copilotkit/react-core/v2";
+import { createElement, useRef } from "react";
+import { useFrontendTool, type ReactFrontendTool } from "@copilotkit/react-core/v2";
 import { z } from "zod";
 import {
   getStorageStats,
@@ -106,8 +106,55 @@ function toCardStatus(s: string): RenderStatus {
   return "in_progress";
 }
 
+/**
+ * Wraps useFrontendTool so every handler is guaranteed to:
+ *   - return a string (CopilotKit feeds that string back to the LLM as the
+ *     tool result message; undefined/null becomes "" and the LLM is left to
+ *     guess what happened)
+ *   - never throw (an exception short-circuits CopilotKit's follow-up
+ *     runAgent, so the LLM only sees the tool call with no result and
+ *     hedges with "no data available")
+ *   - emit a brief console breadcrumb so future failures are diagnosable
+ *     from Tauri devtools without redeploying.
+ */
+function useSafeFrontendTool<T extends Record<string, unknown> = Record<string, unknown>>(
+  tool: ReactFrontendTool<T>,
+) {
+  const original = tool.handler;
+  const wrapped: ReactFrontendTool<T> = {
+    ...tool,
+    handler: original
+      ? async (args, ctx) => {
+          try {
+            const result = await original(args, ctx);
+            const out =
+              typeof result === "string"
+                ? result
+                : result == null
+                  ? ""
+                  : JSON.stringify(result);
+            console.debug(`[copilot-tool] ${tool.name} ok len=${out.length}`);
+            return out;
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.warn(`[copilot-tool] ${tool.name} threw:`, msg);
+            return JSON.stringify({ error: msg });
+          }
+        }
+      : undefined,
+  };
+  useFrontendTool(wrapped);
+}
+
 export function useCopilotTools(config: DisplayToolsConfig) {
-  useFrontendTool({
+  // CopilotKit's useFrontendTool registers via useEffect with deps that do
+  // NOT include the tool object — so the handler closure captured on first
+  // render lives forever. Reading state through this ref (updated on every
+  // render) lets handlers always see current values without re-registering.
+  const configRef = useRef(config);
+  configRef.current = config;
+
+  useSafeFrontendTool({
     name: "getStorageStats",
     description:
       "Historical — database overview. Returns counts and metadata for the persistent store: row_count (position records), flight_count (segmented flights ever recorded), event_count (events of interest), file size, and date range. Use flight_count to answer 'how many flights in the database / in total'. Does not reflect currently-active aircraft — use searchLiveFlights for that.",
@@ -122,7 +169,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "getAircraftSummary",
     description:
       "Historical — queries the database. Summary of unique aircraft (by hex_ident) seen in a time range. Returns hex_ident, callsign, position count, altitude/speed ranges, first/last seen timestamps. Either an array (≤50) or { total, showing, data, note }; use total (or array length) to answer 'how many distinct aircraft did we see in [time range]'.",
@@ -149,7 +196,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "getFlightSummary",
     description:
       "Historical — queries the database. Get a summary of flights in a time range, automatically segmented by >1 hour gaps in coverage. Returns either an array of flights (≤30) or { total, showing, data, note }; use total (or array length) to answer 'how many flights were there in [time range]'. Provide startMs/endMs to bound the query — without them this can be expensive.",
@@ -179,7 +226,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "getFeedStatus",
     description:
       "Get the current feed connection status (socket and Pulsar connection states, running/stopped).",
@@ -194,7 +241,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "getFeedMetrics",
     description:
       "Get feed performance metrics: messages received/sent, errors, uptime, throughput.",
@@ -209,7 +256,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "getTrajectory",
     description:
       "Get the position history (trajectory) of a specific aircraft. Returns list of lat/lon/altitude/speed/timestamp records.",
@@ -241,7 +288,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "getEventsOfInterest",
     description:
       "Search events of interest stored in the database. Filter by time range and/or category. Returns event title, description, location, category, linked aircraft, and timestamps.",
@@ -273,7 +320,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "createEventOfInterest",
     description:
       "Create a new event of interest marker. Requires a title and location. Only call when the user explicitly asks to create an event.",
@@ -314,7 +361,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
 
   // --- Track navigation tools ---
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "selectAircraft",
     description:
       "Select and highlight an aircraft on the map by its ICAO hex identifier. The aircraft must be currently visible in the tracked list.",
@@ -322,7 +369,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       hexIdent: z.string().describe("ICAO hex identifier (e.g. 'A1B2C3')"),
     }),
     handler: async (args: { hexIdent: string }) => {
-      const found = config.tracks.find(
+      const found = configRef.current.tracks.find(
         (t) => trackKey(t) === args.hexIdent
       );
       if (!found) {
@@ -330,8 +377,8 @@ export function useCopilotTools(config: DisplayToolsConfig) {
           error: `Aircraft ${args.hexIdent} not found in current tracks`,
         });
       }
-      config.setSelectedHexIdents(new Set([args.hexIdent]));
-      config.setLastSelectedHexIdent(args.hexIdent);
+      configRef.current.setSelectedHexIdents(new Set([args.hexIdent]));
+      configRef.current.setLastSelectedHexIdent(args.hexIdent);
       return JSON.stringify({
         selected: args.hexIdent,
         callsign: found.callsign ?? null,
@@ -350,7 +397,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "searchLiveFlights",
     description:
       "Live — currently tracked aircraft (in-memory). Search, count, and list active flights. Filter by callsign, altitude/speed/heading ranges, squawk, or airborne/ground status; sort by altitude/speed/callsign/messages/recency. Returns { total, showing, flights } — use the total field to answer 'how many planes are flying right now' or 'how many active flights'. Call with no parameters to list all active flights. Returns total: 0 if the data feed is stopped.",
@@ -382,7 +429,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       sortOrder?: "asc" | "desc";
       limit?: number;
     }) => {
-      let filtered = [...config.tracks];
+      let filtered = [...configRef.current.tracks];
 
       // Callsign/hex substring filter
       if (args.callsign) {
@@ -500,7 +547,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "setFilters",
     description:
       "Update aircraft display filters. Filters by callsign (substring match), altitude range, and speed range. Only provided fields are changed; omitted fields keep their current value.",
@@ -519,14 +566,14 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       speedMax?: number;
     }) => {
       const newFilters: Filters = {
-        ...config.activeFilters,
+        ...configRef.current.activeFilters,
         ...(args.callsign !== undefined && { callsign: args.callsign }),
         ...(args.altitudeMin !== undefined && { altitudeMin: args.altitudeMin }),
         ...(args.altitudeMax !== undefined && { altitudeMax: args.altitudeMax }),
         ...(args.speedMin !== undefined && { speedMin: args.speedMin }),
         ...(args.speedMax !== undefined && { speedMax: args.speedMax }),
       };
-      config.setActiveFilters(newFilters);
+      configRef.current.setActiveFilters(newFilters);
       return JSON.stringify(newFilters);
     },
     render: (props) =>
@@ -537,7 +584,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "panMapTo",
     description:
       "Pan and zoom the map to a specific location. Use to navigate to coordinates, an aircraft position, or a point of interest.",
@@ -548,7 +595,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
     }),
     handler: async (args: { latitude: number; longitude: number; zoom?: number }) => {
       const zoom = args.zoom ?? 12;
-      config.flyTo(args.latitude, args.longitude, zoom);
+      configRef.current.flyTo(args.latitude, args.longitude, zoom);
       return JSON.stringify({
         latitude: args.latitude,
         longitude: args.longitude,
@@ -563,7 +610,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "startFeed",
     description:
       "Start the ADS-B feed connection. Only call when the user explicitly asks to start the feed.",
@@ -579,7 +626,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "stopFeed",
     description:
       "Stop the ADS-B feed connection. Only call when the user explicitly asks to stop the feed.",
@@ -597,7 +644,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
 
   // --- Date/time utility ---
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "getCurrentDateTime",
     description:
       "Get the current date, time, timezone, and epoch milliseconds. Use this to resolve relative time references (e.g. 'last hour', 'today') into absolute timestamps for other tools.",
@@ -621,16 +668,16 @@ export function useCopilotTools(config: DisplayToolsConfig) {
 
   // --- Display control tools ---
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "getConnectionStatus",
     description:
       "Get current connection status and display state without querying the backend. Returns connection status, active mode, map theme, and sidebar state.",
     handler: async () =>
       JSON.stringify({
-        connectionStatus: config.connectionStatus,
-        activeMode: config.activeMode,
-        mapTheme: config.mapTheme,
-        sidebarOpen: config.sidebarOpen,
+        connectionStatus: configRef.current.connectionStatus,
+        activeMode: configRef.current.activeMode,
+        mapTheme: configRef.current.mapTheme,
+        sidebarOpen: configRef.current.sidebarOpen,
       }),
     render: (props) =>
       createElement(DisplaySettingCard, {
@@ -640,7 +687,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "toggleSidebar",
     description:
       "Toggle the left sidebar panel open or closed. Omit 'open' to toggle.",
@@ -651,8 +698,8 @@ export function useCopilotTools(config: DisplayToolsConfig) {
         .describe("Set to true to open, false to close. Omit to toggle."),
     }),
     handler: async (args: { open?: boolean }) => {
-      const newValue = args.open ?? !config.sidebarOpen;
-      config.setSidebarOpen(newValue);
+      const newValue = args.open ?? !configRef.current.sidebarOpen;
+      configRef.current.setSidebarOpen(newValue);
       return JSON.stringify({ sidebarOpen: newValue });
     },
     render: (props) =>
@@ -663,7 +710,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "setMapTheme",
     description:
       "Set the map theme to light (day) or dark (night) mode.",
@@ -671,7 +718,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       theme: z.enum(["light", "dark"]).describe("Map theme: 'light' for day, 'dark' for night"),
     }),
     handler: async (args: { theme: "light" | "dark" }) => {
-      config.setMapTheme(args.theme);
+      configRef.current.setMapTheme(args.theme);
       return JSON.stringify({ mapTheme: args.theme });
     },
     render: (props) =>
@@ -682,7 +729,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "setActiveMode",
     description:
       "Switch between live tracking mode and analysis mode.",
@@ -690,7 +737,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       mode: z.enum(["live", "analysis"]).describe("Active mode"),
     }),
     handler: async (args: { mode: ActiveMode }) => {
-      config.setActiveMode(args.mode);
+      configRef.current.setActiveMode(args.mode);
       return JSON.stringify({ activeMode: args.mode });
     },
     render: (props) =>
@@ -701,7 +748,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "toggleDemoFlights",
     description:
       "Start or stop simulated demo flights on the map. Omit 'enabled' to toggle.",
@@ -712,8 +759,8 @@ export function useCopilotTools(config: DisplayToolsConfig) {
         .describe("Set to true to start, false to stop. Omit to toggle."),
     }),
     handler: async (args: { enabled?: boolean }) => {
-      const newValue = args.enabled ?? !config.showSimulation;
-      config.setShowSimulation(() => newValue);
+      const newValue = args.enabled ?? !configRef.current.showSimulation;
+      configRef.current.setShowSimulation(() => newValue);
       return JSON.stringify({ demoFlights: newValue });
     },
     render: (props) =>
@@ -724,7 +771,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "setLayerVisibility",
     description:
       "Show or hide map layers. Only provided layers are changed; omitted layers keep their current state. Available layers: history, density, simulation, imported, receiver, events.",
@@ -746,27 +793,27 @@ export function useCopilotTools(config: DisplayToolsConfig) {
     }) => {
       const changes: Record<string, boolean> = {};
       if (args.history !== undefined) {
-        config.setShowHistory(() => args.history!);
+        configRef.current.setShowHistory(() => args.history!);
         changes.history = args.history!;
       }
       if (args.density !== undefined) {
-        config.setShowDensity(() => args.density!);
+        configRef.current.setShowDensity(() => args.density!);
         changes.density = args.density!;
       }
       if (args.simulation !== undefined) {
-        config.setShowSimulation(() => args.simulation!);
+        configRef.current.setShowSimulation(() => args.simulation!);
         changes.simulation = args.simulation!;
       }
       if (args.imported !== undefined) {
-        config.setShowImported(() => args.imported!);
+        configRef.current.setShowImported(() => args.imported!);
         changes.imported = args.imported!;
       }
       if (args.receiver !== undefined) {
-        config.setShowReceiver(() => args.receiver!);
+        configRef.current.setShowReceiver(() => args.receiver!);
         changes.receiver = args.receiver!;
       }
       if (args.events !== undefined) {
-        config.setShowEvents(() => args.events!);
+        configRef.current.setShowEvents(() => args.events!);
         changes.events = args.events!;
       }
       return JSON.stringify({ updated: changes });
@@ -779,7 +826,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "setColorMode",
     description:
       "Set how aircraft tracks are colored. 'plot' colors each position by altitude; 'track' colors the entire track uniformly.",
@@ -797,12 +844,12 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       liveColorMode?: AltitudeColorMode;
       historyColorMode?: AltitudeColorMode;
     }) => {
-      if (args.liveColorMode) config.setLiveColorMode(args.liveColorMode);
+      if (args.liveColorMode) configRef.current.setLiveColorMode(args.liveColorMode);
       if (args.historyColorMode)
-        config.setHistoryColorMode(args.historyColorMode);
+        configRef.current.setHistoryColorMode(args.historyColorMode);
       return JSON.stringify({
-        liveColorMode: args.liveColorMode ?? config.liveColorMode,
-        historyColorMode: args.historyColorMode ?? config.historyColorMode,
+        liveColorMode: args.liveColorMode ?? configRef.current.liveColorMode,
+        historyColorMode: args.historyColorMode ?? configRef.current.historyColorMode,
       });
     },
     render: (props) =>
@@ -813,7 +860,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "setDensityConfig",
     description:
       "Configure the density heatmap: metric type, altitude range filter, and tooltip detail level.",
@@ -835,17 +882,17 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       altitudeMax?: number;
       tooltipMode?: DensityTooltipMode;
     }) => {
-      if (args.metric) config.setDensityMetric(args.metric);
+      if (args.metric) configRef.current.setDensityMetric(args.metric);
       if (args.altitudeMin !== undefined)
-        config.setDensityAltitudeMin(args.altitudeMin);
+        configRef.current.setDensityAltitudeMin(args.altitudeMin);
       if (args.altitudeMax !== undefined)
-        config.setDensityAltitudeMax(args.altitudeMax);
-      if (args.tooltipMode) config.setDensityTooltipMode(args.tooltipMode);
+        configRef.current.setDensityAltitudeMax(args.altitudeMax);
+      if (args.tooltipMode) configRef.current.setDensityTooltipMode(args.tooltipMode);
       return JSON.stringify({
-        metric: args.metric ?? config.densityMetric,
-        altitudeMin: args.altitudeMin ?? config.densityAltitudeMin,
-        altitudeMax: args.altitudeMax ?? config.densityAltitudeMax,
-        tooltipMode: args.tooltipMode ?? config.densityTooltipMode,
+        metric: args.metric ?? configRef.current.densityMetric,
+        altitudeMin: args.altitudeMin ?? configRef.current.densityAltitudeMin,
+        altitudeMax: args.altitudeMax ?? configRef.current.densityAltitudeMax,
+        tooltipMode: args.tooltipMode ?? configRef.current.densityTooltipMode,
       });
     },
     render: (props) =>
@@ -856,7 +903,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
-  useFrontendTool({
+  useSafeFrontendTool({
     name: "setEventFilter",
     description:
       "Configure how events of interest are filtered: show all, upcoming N days, or a specific time range.",
@@ -881,16 +928,16 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       timeRangeStartMs?: number;
       timeRangeEndMs?: number;
     }) => {
-      if (args.mode) config.setEventFilterMode(args.mode);
+      if (args.mode) configRef.current.setEventFilterMode(args.mode);
       if (args.upcomingDays !== undefined)
-        config.setEventUpcomingDays(args.upcomingDays);
+        configRef.current.setEventUpcomingDays(args.upcomingDays);
       if (args.timeRangeStartMs !== undefined)
-        config.setEventTimeRangeStart(args.timeRangeStartMs);
+        configRef.current.setEventTimeRangeStart(args.timeRangeStartMs);
       if (args.timeRangeEndMs !== undefined)
-        config.setEventTimeRangeEnd(args.timeRangeEndMs);
+        configRef.current.setEventTimeRangeEnd(args.timeRangeEndMs);
       return JSON.stringify({
-        mode: args.mode ?? config.eventFilterMode,
-        upcomingDays: args.upcomingDays ?? config.eventUpcomingDays,
+        mode: args.mode ?? configRef.current.eventFilterMode,
+        upcomingDays: args.upcomingDays ?? configRef.current.eventUpcomingDays,
       });
     },
     render: (props) =>

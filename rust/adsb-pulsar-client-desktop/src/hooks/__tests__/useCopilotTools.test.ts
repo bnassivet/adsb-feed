@@ -8,6 +8,11 @@ const registeredTools = new Map<
   { handler: Function; parameters?: unknown; description?: string }
 >();
 
+// Mirror production v2 semantics: useFrontendTool registers via useEffect with
+// deps [name, available, copilotkit, ...extraDeps]. Calling the hook multiple
+// times with the same name (e.g. on every render) does NOT replace the handler
+// — the first registration wins. Tests that rely on "latest handler wins" are
+// lying about production behavior and will hide stale-closure bugs.
 vi.mock("@copilotkit/react-core/v2", () => ({
   useFrontendTool: (opts: {
     name: string;
@@ -15,6 +20,7 @@ vi.mock("@copilotkit/react-core/v2", () => ({
     parameters?: unknown;
     description?: string;
   }) => {
+    if (registeredTools.has(opts.name)) return;
     registeredTools.set(opts.name, {
       handler: opts.handler,
       parameters: opts.parameters,
@@ -580,6 +586,23 @@ describe("useCopilotTools — display control tools", () => {
       );
       expect(result.total).toBe(1);
       expect(result.flights[0].hex_ident).toBe("A1B2C3");
+    });
+
+    it("sees tracks that arrived AFTER first render (no stale closure)", async () => {
+      // Regression for the stale-closure bug: useFrontendTool's useEffect
+      // registers the handler once on mount, so handlers must read live state
+      // via a ref — not by capturing config.tracks in the closure. Without
+      // the configRef pattern, the handler returns the snapshot from first
+      // render (empty) forever, no matter what subsequent renders provide.
+      registeredTools.clear();
+      const emptyCfg = makeConfig({ tracks: [] });
+      const { rerender } = renderHook((c: DisplayToolsConfig) => useCopilotTools(c), {
+        initialProps: emptyCfg,
+      });
+      // Aircraft arrive after the chat opened: re-render with three tracks.
+      rerender(makeConfig());
+      const result = JSON.parse(await getHandler("searchLiveFlights")({}));
+      expect(result.total).toBe(3);
     });
   });
 });
