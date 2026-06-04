@@ -238,14 +238,7 @@ pub async fn get_trajectory(
     query: TrajectoryQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<PositionRecord>, String> {
-    let guard = state.storage.read().await;
-    let storage = guard
-        .as_ref()
-        .ok_or_else(|| "Storage not available".to_string())?;
-    storage
-        .get_trajectory(query)
-        .await
-        .map_err(|e| e.to_string())
+    crate::tool_service::get_trajectory(&state.storage, query).await
 }
 
 /// Get trajectories for multiple flights in a single batch, returned as Arrow IPC.
@@ -299,14 +292,7 @@ pub async fn get_aircraft_summary(
     end_ms: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<Vec<AircraftSummary>, String> {
-    let guard = state.storage.read().await;
-    let storage = guard
-        .as_ref()
-        .ok_or_else(|| "Storage not available".to_string())?;
-    storage
-        .get_aircraft_summary(start_ms, end_ms)
-        .await
-        .map_err(|e| e.to_string())
+    crate::tool_service::get_aircraft_summary(&state.storage, start_ms, end_ms).await
 }
 
 /// Get flight-segmented summaries for a time window.
@@ -315,14 +301,7 @@ pub async fn get_flight_summary(
     query: FlightSummaryQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<FlightSummary>, String> {
-    let guard = state.storage.read().await;
-    let storage = guard
-        .as_ref()
-        .ok_or_else(|| "Storage not available".to_string())?;
-    storage
-        .get_flight_summary(query)
-        .await
-        .map_err(|e| e.to_string())
+    crate::tool_service::get_flight_summary(&state.storage, query).await
 }
 
 /// Get flight-segmented summaries as Arrow IPC bytes.
@@ -350,24 +329,13 @@ pub async fn get_time_distribution(
     query: TimeDistributionQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<TimeDistributionBucket>, String> {
-    let guard = state.storage.read().await;
-    let storage = guard
-        .as_ref()
-        .ok_or_else(|| "Storage not available".to_string())?;
-    storage
-        .get_time_distribution(query)
-        .await
-        .map_err(|e| e.to_string())
+    crate::tool_service::get_time_distribution(&state.storage, query).await
 }
 
 /// Get storage statistics (row count, time range, estimated size).
 #[tauri::command]
 pub async fn get_storage_stats(state: State<'_, AppState>) -> Result<StorageStats, String> {
-    let guard = state.storage.read().await;
-    let storage = guard
-        .as_ref()
-        .ok_or_else(|| "Storage not available".to_string())?;
-    storage.get_stats().await.map_err(|e| e.to_string())
+    crate::tool_service::get_storage_stats(&state.storage).await
 }
 
 /// Get detection range by 10° azimuth sectors.
@@ -392,14 +360,7 @@ pub async fn get_hourly_heatmap(
     query: HourlyHeatmapQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<HourlyHeatmapCell>, String> {
-    let guard = state.storage.read().await;
-    let storage = guard
-        .as_ref()
-        .ok_or_else(|| "Storage not available".to_string())?;
-    storage
-        .get_hourly_heatmap(query)
-        .await
-        .map_err(|e| e.to_string())
+    crate::tool_service::get_hourly_heatmap(&state.storage, query).await
 }
 
 /// Count raw messages in an optional time range.
@@ -566,10 +527,12 @@ pub async fn reclaim_storage(
     info!("Storage reclaimed — DuckDB connection reopened");
 
     // Record reclaim event on the fresh connection
-    let _ = handle.insert_status_event(StatusEvent::now(
-        StatusEventType::Storage,
-        StatusEventStatus::Reclaimed,
-    )).await;
+    let _ = handle
+        .insert_status_event(StatusEvent::now(
+            StatusEventType::Storage,
+            StatusEventStatus::Reclaimed,
+        ))
+        .await;
 
     let mut guard = state.storage.write().await;
     *guard = Some(handle);
@@ -754,14 +717,7 @@ pub async fn get_events_of_interest(
     query: EventOfInterestQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<EventOfInterest>, String> {
-    let guard = state.storage.read().await;
-    let storage = guard
-        .as_ref()
-        .ok_or_else(|| "Storage not available".to_string())?;
-    storage
-        .query_events_of_interest(query)
-        .await
-        .map_err(|e| e.to_string())
+    crate::tool_service::get_events_of_interest(&state.storage, query).await
 }
 
 #[tauri::command]

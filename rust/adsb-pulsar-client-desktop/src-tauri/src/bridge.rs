@@ -4,7 +4,9 @@
 //! to the frontend via Tauri events, with throttling to prevent
 //! overwhelming the webview.
 
-use crate::state::{ConnectionStatus, FeedHandle, SharedConnectionStatus, SharedStorage, StatusResponse};
+use crate::state::{
+    ConnectionStatus, FeedHandle, SharedConnectionStatus, SharedStorage, StatusResponse,
+};
 use adsb_data_engine::{
     extract_sbs_timestamp, parse_sbs_message, parse_sbs_raw_fields, AircraftPosition, RawSbsRecord,
     StatusEvent, StatusEventStatus, StatusEventType,

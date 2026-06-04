@@ -15,6 +15,11 @@ dependencies = [
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
     "jinja2>=3.1",
+    "httpx>=0.28",
+    "langgraph>=1.0",
+    "langchain>=1.0",
+    "langchain-core>=0.3",
+    "langchain-openai>=0.2",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +28,7 @@ dev = [
     "httpx>=0.28",
     "pytest-asyncio>=0.25",
     "ruff>=0.11",
+    "langgraph-cli[inmem]>=0.2",
 ]
 voice = [
     "sounddevice>=0.5",

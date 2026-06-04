@@ -26,10 +26,25 @@ All settings are environment variables with the `ADSB_AGENT_` prefix:
 |----------|---------|-------------|
 | `ADSB_AGENT_LLM_BASE_URL` | `http://localhost:1234/v1` | OpenAI-compatible LLM endpoint |
 | `ADSB_AGENT_LLM_API_KEY` | `lm-studio` | API key (any string for local servers) |
-| `ADSB_AGENT_MODEL` | `liquidai/lfm2.5-1.2b-instruct-mlx` | Model name |
+| `ADSB_AGENT_MODEL` | `qwen2.5-7b-instruct` | Model name — **must be a capable tool-caller** (see below) |
 | `ADSB_AGENT_MAX_TOKENS` | `8192` | Max tokens per response |
+| `ADSB_AGENT_TOOL_SERVER_URL` | `http://127.0.0.1:8787` | Tauri tool server (read-only data plane) |
 | `ADSB_AGENT_PORT` | `8000` | Service port |
 | `ADSB_AGENT_HOST` | `0.0.0.0` | Bind address |
+
+### Model requirement
+
+The agent runs a **server-side LangGraph ReAct loop**: it chains read-only data
+tools (aircraft/flight summaries, trajectories, stats) internally before
+answering, then forwards UI actions to the app. This multi-hop reasoning needs a
+model that can plan and call tools reliably — pull **Qwen2.5-7B-Instruct** (or
+14B if you have the RAM) in LM Studio/Ollama. The previous 1.2B model cannot
+chain tool calls and is only viable as a weak fallback on tiny devices.
+
+The data tools are executed against the desktop app's DuckDB store via a
+loopback HTTP **tool server** the Tauri backend starts on `127.0.0.1:8787`
+(`ADSB_AGENT_TOOL_SERVER_PORT` on the Rust side). UI/action tools and sensitive
+mutations remain client-executed via the AG-UI/CopilotKit round-trip.
 
 ## API
 

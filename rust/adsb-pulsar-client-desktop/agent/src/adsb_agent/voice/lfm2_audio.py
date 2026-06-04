@@ -33,6 +33,38 @@ from .base import BackendInfo, TranscriptChunk, VoiceBackendStatus
 
 logger = logging.getLogger("adsb_agent.voice.lfm2")
 
+
+def _strip_sse_data_prefix(line: str) -> str | None:
+    """Return the payload after an SSE ``data:`` field, or None if not a data line.
+
+    The SSE spec makes the space after ``data:`` optional, so a server may emit
+    either ``data: {...}`` or ``data:{...}``. The previous parser only accepted
+    the spaced form and silently dropped every event from servers that omit it —
+    producing an empty transcript despite a healthy 200 stream.
+    """
+    if not line.startswith("data:"):
+        return None
+    payload = line[len("data:"):]
+    if payload.startswith(" "):
+        payload = payload[1:]
+    return payload
+
+
+def _content_from_chunk(chunk: dict) -> str | None:
+    """Extract assistant text from an OpenAI-style chunk (streaming or whole).
+
+    Handles both the streaming ``choices[0].delta.content`` shape and the
+    non-streaming ``choices[0].message.content`` shape some servers return.
+    """
+    choices = chunk.get("choices") or []
+    if not choices:
+        return None
+    choice = choices[0]
+    content = (choice.get("delta") or {}).get("content")
+    if content is None:
+        content = (choice.get("message") or {}).get("content")
+    return content or None
+
 # Default paths — llama-liquid-audio-server (LiquidAI custom build with audio support)
 DEFAULT_MODEL_DIR = os.environ.get(
     "ADSB_AGENT_LFM2_MODEL_DIR",
@@ -317,20 +349,31 @@ class LFM2AudioBackend:
                             if span is not None:
                                 span.set_outputs({"transcript": None, "error": response.status_code})
                             return None
+                        raw_lines: list[str] = []
                         async for line in response.aiter_lines():
-                            if not line.startswith("data: "):
+                            if not line:
                                 continue
-                            raw = line[6:]
+                            raw_lines.append(line)
+                            raw = _strip_sse_data_prefix(line)
+                            if raw is None:
+                                continue
                             if raw == "[DONE]":
                                 break
                             try:
                                 chunk = json.loads(raw)
-                                delta = chunk["choices"][0]["delta"].get("content", "")
-                                if delta:
-                                    parts.append(delta)
-                            except (json.JSONDecodeError, KeyError, IndexError):
-                                pass
+                            except json.JSONDecodeError:
+                                continue
+                            content = _content_from_chunk(chunk)
+                            if content:
+                                parts.append(content)
                 text = "".join(parts).strip()
+                if not text:
+                    # Surface what the server actually sent so format mismatches
+                    # are diagnosable instead of silently yielding an empty result.
+                    logger.warning(
+                        "[lfm2] Empty transcript — raw SSE (first 1000 chars): %s",
+                        " ⏎ ".join(raw_lines)[:1000] or "(no lines)",
+                    )
                 logger.info("[lfm2] Transcript: %r", text)
                 if span is not None:
                     span.set_outputs({"transcript": text or None})

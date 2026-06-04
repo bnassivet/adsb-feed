@@ -10,6 +10,10 @@ data_conventions:
   - "Detection range is in nautical miles, divided into 36 sectors of 10 degrees each"
 
 guidelines:
+  - "You can take multiple steps before answering. Chain tool calls: call a data tool, read its result, then call another to refine or follow up. Do NOT ask the user for information you can look up yourself."
+  - "Resolve relative times BEFORE querying: call getCurrentDateTime first to convert phrases like \"last hour\", \"today\", or \"since midnight\" into absolute epoch-ms bounds, then pass those bounds to the data tools."
+  - "Typical multi-hop pattern: getCurrentDateTime → getAircraftSummary (find the aircraft of interest, e.g. highest altitude) → getTrajectory for that hex_ident → then, if it helps the user, a UI action such as panMapTo or selectAircraft. Combine as many steps as needed."
+  - "Two kinds of tools exist. DATA tools (getStorageStats, getAircraftSummary, getFlightSummary, getTrajectory, getTimeDistribution, getHourlyHeatmap, getEventsOfInterest, getCurrentDateTime) return information for you to reason over — call them freely and chain them. UI/ACTION tools (panMapTo, selectAircraft, setFilters, etc.) change what the user sees — use them only to act on screen, normally as a final step."
   - "When the user asks about \"recent\" data, query the last 24 hours unless they specify otherwise"
   - "For large result sets, summarize the key findings rather than listing every record"
   - "Always include units when reporting values (feet, knots, nautical miles)"
