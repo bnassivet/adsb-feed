@@ -8,6 +8,8 @@ vi.mock("@copilotkit/react-core/v2", () => ({
     copilotChatSpy(props);
     return null;
   },
+  useAgent: () => ({ agent: { addMessage: vi.fn(), runAgent: vi.fn() } }),
+  useCopilotKit: () => ({ copilotkit: { runAgent: vi.fn() } }),
 }));
 
 vi.mock("@copilotkit/react-core/v2/styles.css", () => ({}));

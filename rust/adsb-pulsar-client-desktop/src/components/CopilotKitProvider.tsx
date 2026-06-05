@@ -8,9 +8,12 @@ import type { ReactNode } from "react";
 
 const AGENT_URL = "http://localhost:8000/ag-ui";
 
+/** Agent id registered by the Python AG-UI runtime (must match its /info). */
+export const AGENT_ID = "adsb_agent";
+
 export function CopilotKitProvider({ children }: { children: ReactNode }) {
   return (
-    <CopilotKit runtimeUrl={AGENT_URL} agent="adsb_agent">
+    <CopilotKit runtimeUrl={AGENT_URL} agent={AGENT_ID}>
       {children}
     </CopilotKit>
   );
