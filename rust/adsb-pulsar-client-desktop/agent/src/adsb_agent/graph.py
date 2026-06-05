@@ -45,6 +45,7 @@ from ag_ui.core import (
 )
 
 from .config import settings
+from .tracing import make_span
 
 logger = logging.getLogger("adsb_agent.graph")
 
@@ -122,7 +123,26 @@ async def execute_server_tool(
     ``getCurrentDateTime`` is resolved locally. Everything else is POSTed to the
     Tauri tool server. Transport/HTTP failures and ``ok:false`` envelopes are
     returned as readable error strings so the model can react instead of crashing.
+
+    The whole execution is wrapped in a ``TOOL``-type MLflow span so each tool
+    call appears nested under the active ``chat_turn`` root in the trace, with
+    the args as inputs and the result/error as outputs.
     """
+    with make_span(f"tool.{name}", span_type="TOOL") as span:
+        if span is not None:
+            span.set_inputs({"name": name, "args": args})
+        result = await _execute_server_tool_inner(name, args, client)
+        if span is not None:
+            span.set_outputs({"result": result})
+        return result
+
+
+async def _execute_server_tool_inner(
+    name: str,
+    args: dict[str, Any],
+    client: httpx.AsyncClient,
+) -> str:
+    """Run one server tool and return its string result (see execute_server_tool)."""
     if name == "getCurrentDateTime":
         return json.dumps(_current_datetime_payload())
 
@@ -202,40 +222,52 @@ def convert_agui_messages_to_lc(messages: Iterable[Any]) -> list[Any]:
     return result
 
 
-def build_agent_graph(tools: Iterable[Any] | None):
+def build_agent_graph(tools: Iterable[Any] | None, *, model: Any | None = None):
     """Compile a per-request LangGraph ReAct agent.
 
     A fresh graph is built per turn because the available tool surface arrives
     with each request (``RunAgentInput.tools``). Compilation is cheap.
+
+    ``model`` lets tests inject a fake chat model (returning canned ``AIMessage``s)
+    so the node-span instrumentation can be exercised without a live LLM. In
+    production it is None and a ``ChatOpenAI`` is constructed from settings.
     """
-    from langchain_openai import ChatOpenAI
     from langchain_core.messages import ToolMessage
     from langgraph.graph import END, START, StateGraph, MessagesState
 
     schemas = _to_openai_tools(tools)
     server_names, _client_names = partition_tool_names(tools)
 
-    model = ChatOpenAI(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.model,
-        temperature=settings.temperature,
-        max_tokens=settings.max_tokens,
-    )
-    model = model.bind_tools(schemas) if schemas else model
+    if model is None:
+        from langchain_openai import ChatOpenAI
+
+        model = ChatOpenAI(
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            model=settings.model,
+            temperature=settings.temperature,
+            max_tokens=settings.max_tokens,
+        )
+        model = model.bind_tools(schemas) if schemas else model
 
     async def agent_node(state: dict) -> dict:
-        response = await model.ainvoke(state["messages"])
+        # Manual span so the openai-autolog LLM call (`AsyncCompletions`) nests
+        # under it via the fluent context (langchain autolog is intentionally off).
+        with make_span("agent", span_type="AGENT"):
+            response = await model.ainvoke(state["messages"])
         return {"messages": [response]}
 
     async def server_tools_node(state: dict) -> dict:
         last = state["messages"][-1]
         results: list[Any] = []
-        async with httpx.AsyncClient() as client:
-            for tc in getattr(last, "tool_calls", None) or []:
-                if tc["name"] in server_names:
-                    content = await execute_server_tool(tc["name"], tc.get("args", {}), client)
-                    results.append(ToolMessage(content=content, tool_call_id=tc["id"]))
+        with make_span("server_tools", span_type="CHAIN"):
+            async with httpx.AsyncClient() as client:
+                for tc in getattr(last, "tool_calls", None) or []:
+                    if tc["name"] in server_names:
+                        content = await execute_server_tool(
+                            tc["name"], tc.get("args", {}), client
+                        )
+                        results.append(ToolMessage(content=content, tool_call_id=tc["id"]))
         return {"messages": results}
 
     def route(state: dict) -> str:
@@ -344,6 +376,13 @@ async def run_graph_to_agui(graph, lc_messages: list[Any]) -> AsyncIterator:
         yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
 
     for tc in tool_calls:
+        # Client tools execute in the browser (CopilotKit round-trip), so the
+        # result isn't available here — but record a TOOL span for the forwarded
+        # call so it's visible in the trace alongside server-executed tools.
+        with make_span(f"tool.{tc['name']}", span_type="TOOL") as span:
+            if span is not None:
+                span.set_inputs({"name": tc["name"], "args": tc.get("args", {})})
+                span.set_outputs({"forwarded_to_client": True})
         yield ToolCallStartEvent(
             type=EventType.TOOL_CALL_START,
             tool_call_id=tc["id"],

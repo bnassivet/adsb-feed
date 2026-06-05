@@ -39,18 +39,18 @@ def setup_tracing() -> None:
     mlflow.set_experiment(settings.mlflow_experiment)
     logger.info("MLflow experiment: %s", settings.mlflow_experiment)
 
-    # LangChain/LangGraph autolog traces the whole ReAct loop: the graph run,
-    # every LLM call, and every tool invocation as nested spans under the
-    # `chat_turn` root. Best-effort — the lightweight `mlflow-tracing` package
-    # may not ship the langchain flavor, in which case we rely on openai autolog.
-    try:
-        mlflow.langchain.autolog()
-        logger.info("MLflow LangChain autolog enabled (graph + tools + LLM traced)")
-    except Exception as e:  # noqa: BLE001
-        logger.warning("MLflow LangChain autolog unavailable (%s); using openai autolog only", e)
-
-    # Keep OpenAI autolog too: langchain-openai calls the OpenAI SDK underneath,
-    # and this guarantees LLM-call traces even if the langchain flavor is absent.
+    # We deliberately do NOT enable `mlflow.langchain.autolog()`. LangChain's
+    # tracer parents its spans through an internal run_id map and disables
+    # contextvar attachment during graph execution (it warns that "ContextVar is
+    # not correctly propagated" across LangChain's thread/async boundaries). That
+    # callback tree does not interleave with MLflow's fluent contextvar tree, so
+    # mixing it with our manual `make_span()` spans (the `chat_turn` root, the
+    # graph nodes, and `tool.*`) produced detached/duplicate spans.
+    #
+    # Instead we instrument the graph manually (see graph.py) and rely on OpenAI
+    # autolog for the LLM call. openai-autolog spans parent via the fluent
+    # context, so each `AsyncCompletions` nests cleanly under its `agent` node
+    # span — one tracing model, correct nesting.
     mlflow.openai.autolog()
     logger.info("MLflow OpenAI autolog enabled (chat completions will be traced)")
 

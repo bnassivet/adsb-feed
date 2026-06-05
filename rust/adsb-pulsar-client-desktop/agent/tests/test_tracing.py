@@ -139,6 +139,22 @@ class TestSetupTracingEnabled:
 
         mock.openai.autolog.assert_called_once()
 
+    def test_does_not_enable_langchain_autolog(self, monkeypatch):
+        # The graph is instrumented manually; langchain autolog is intentionally
+        # left off so its callback-based span tree doesn't fight our fluent spans.
+        from adsb_agent.config import settings
+        monkeypatch.setattr(settings, "mlflow_enabled", True)
+        monkeypatch.setattr(settings, "mlflow_tracking_uri", "")
+        monkeypatch.setattr(settings, "mlflow_experiment", "adsb-agent")
+
+        mock = _make_mlflow_mock()
+        _inject(mock)
+
+        from adsb_agent.tracing import setup_tracing
+        setup_tracing()
+
+        mock.langchain.autolog.assert_not_called()
+
     def test_sets_experiment_name(self, monkeypatch):
         from adsb_agent.config import settings
         monkeypatch.setattr(settings, "mlflow_enabled", True)
