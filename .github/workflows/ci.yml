@@ -11,8 +11,51 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  rust:
-    name: Rust (test, clippy, fmt)
+  rust-core:
+    name: Rust core (adsb-pulsar-client + adsb-data-engine)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            protobuf-compiler \
+            pkg-config \
+            build-essential \
+            libssl-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo registry and git
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-core-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-core-
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy -p adsb-pulsar-client -p adsb-data-engine -- -D warnings
+
+      - name: Run tests
+        run: cargo test -p adsb-pulsar-client -p adsb-data-engine
+
+  rust-desktop:
+    name: Rust desktop (adsb-pulsar-client-desktop / Tauri)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -49,18 +92,15 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}-no-target
+          key: ${{ runner.os }}-cargo-desktop-${{ hashFiles('rust/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Check formatting
-        run: cargo fmt --all --check
+            ${{ runner.os }}-cargo-desktop-
 
       - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy -p adsb-pulsar-client-desktop -- -D warnings
 
       - name: Run tests
-        run: cargo test --workspace
+        run: cargo test -p adsb-pulsar-client-desktop
 
   typescript:
     name: TypeScript (test, lint)
