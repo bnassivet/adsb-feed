@@ -7,14 +7,12 @@ import type { StorageStats, AircraftSummary, FlightSummary } from "@/lib/types";
 import { tableToIPC, makeTable, vectorFromArray, Float64, Int32, Utf8, Bool, Int64 } from "apache-arrow";
 
 /** Build Arrow IPC bytes matching get_trajectories_batch_arrow output schema. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildMockArrowIPC(rows: {
   hex_ident: string; callsign: string | null; latitude: number; longitude: number;
   altitude: number | null; ground_speed: number | null; track: number | null;
   vertical_rate: number | null; squawk: string | null; is_on_ground: boolean | null;
   timestamp_ms: bigint; flight_id: string;
 }[]): ArrayBuffer {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const table = makeTable({
     hex_ident: vectorFromArray(rows.map(r => r.hex_ident), new Utf8()),
     callsign: vectorFromArray(rows.map(r => r.callsign), new Utf8()),
@@ -28,6 +26,7 @@ function buildMockArrowIPC(rows: {
     is_on_ground: vectorFromArray(rows.map(r => r.is_on_ground), new Bool()),
     timestamp_ms: vectorFromArray(rows.map(r => r.timestamp_ms), new Int64()),
     flight_id: vectorFromArray(rows.map(r => r.flight_id), new Utf8()),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any);
   const u8 = tableToIPC(table, "stream");
   return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer;
@@ -35,7 +34,6 @@ function buildMockArrowIPC(rows: {
 
 /** Build Arrow IPC bytes matching get_flight_summary_arrow output schema. */
 function buildFlightSummaryIPC(flights: FlightSummary[]): ArrayBuffer {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const table = makeTable({
     hex_ident: vectorFromArray(flights.map(f => f.hex_ident), new Utf8()),
     flight_num: vectorFromArray(flights.map(f => f.flight_num), new Int32()),
@@ -46,6 +44,7 @@ function buildFlightSummaryIPC(flights: FlightSummary[]): ArrayBuffer {
     last_seen_ms: vectorFromArray(flights.map(f => BigInt(f.last_seen_ms)), new Int64()),
     min_altitude: vectorFromArray(flights.map(f => f.min_altitude), new Float64()),
     max_altitude: vectorFromArray(flights.map(f => f.max_altitude), new Float64()),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any);
   const u8 = tableToIPC(table, "stream");
   return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer;
