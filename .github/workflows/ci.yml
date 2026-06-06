@@ -50,6 +50,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-core-
 
+      - name: Cache Cargo target (core)
+        uses: actions/cache@v4
+        with:
+          path: rust/target
+          key: ${{ runner.os }}-cargo-core-target-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-core-target-
+
       - name: Check formatting
         run: cargo fmt --all --check
 
@@ -66,7 +74,7 @@ jobs:
       run:
         working-directory: rust
     env:
-      CARGO_TARGET_DIR: $RUNNER_TEMP/cargo-target
+      CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
 
     steps:
       - uses: actions/checkout@v4
@@ -103,6 +111,14 @@ jobs:
           key: ${{ runner.os }}-cargo-desktop-${{ hashFiles('rust/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-desktop-
+
+      - name: Cache Cargo target (desktop)
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/cargo-target
+          key: ${{ runner.os }}-cargo-desktop-target-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-desktop-target-
 
       - name: Clippy
         run: cargo clippy -p adsb-pulsar-client-desktop -- -D warnings
