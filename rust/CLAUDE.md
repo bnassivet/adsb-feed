@@ -22,7 +22,7 @@ All changes follow Test-Driven Development (Red → Green → Refactor). No code
 # From this directory (adsb-feed/rust/)
 cargo test --workspace                    # ~227 tests (unit + integration + doc-tests)
 cargo clippy --workspace -- -D warnings   # Lint
-cargo fmt --workspace --check             # Format check
+cargo fmt --all --check             # Format check
 ```
 
 ### Run by Crate
@@ -44,7 +44,7 @@ cargo test --workspace -- --nocapture        # Show stdout
 ### CI Gate
 
 ```bash
-cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --workspace --check
+cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --all --check
 ```
 
 ### Documentation
