@@ -17,6 +17,8 @@ jobs:
     defaults:
       run:
         working-directory: rust
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
 
     steps:
       - uses: actions/checkout@v4
@@ -41,14 +43,13 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - name: Cache Cargo dependencies
+      - name: Cache Cargo registry and git
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            rust/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}-no-target
           restore-keys: |
             ${{ runner.os }}-cargo-
 
