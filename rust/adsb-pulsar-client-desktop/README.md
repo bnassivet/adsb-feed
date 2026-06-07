@@ -44,7 +44,7 @@ Connects to a [dump1090](https://github.com/flightaware/dump1090) receiver (dire
   user-in-the-loop on the frontend
 - **Voice input** via two local backends — Voxtral (streaming STT) and LFM2.5-Audio
   (end-to-end speech understanding) — with optional auto-send
-- Fully optional and fully local; see [`agent/README.md`](agent/README.md)
+- Fully optional and fully local; see [`agent/README.md`](../adsb-agent/README.md)
 
 ### Events of Interest
 - Mark and annotate notable occurrences (unusual altitudes, rare callsigns)
@@ -94,7 +94,7 @@ An optional local AI agent adds a natural-language chat panel. Read-only data to
 in-loop against DuckDB via a loopback tool server (`:8787`); UI-action tools are
 forwarded back to the frontend. The agent runs as a **separate process** — if it isn't
 started, the rest of the app is unaffected. See [docs/DESIGN.md §18](docs/DESIGN.md#ai-agent--ag-ui-integration)
-and [`agent/README.md`](agent/README.md).
+and [`agent/README.md`](../adsb-agent/README.md).
 
 ## Quick Start
 
@@ -115,7 +115,7 @@ See [QUICKSTART.md](QUICKSTART.md) for full setup instructions including `protoc
 | [QUICKSTART.md](QUICKSTART.md) | Prerequisites, installation, and first run |
 | [docs/DESIGN.md](docs/DESIGN.md) | Architecture deep-dive: IPC flow, track lifecycle, state management, feature design decisions |
 | [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md) | Developer guide: patterns, conventions, performance guidelines |
-| [agent/README.md](agent/README.md) | AI agent backend: setup, configuration, voice-model install |
+| [agent/README.md](../adsb-agent/README.md) | AI agent backend: setup, configuration, voice-model install |
 
 ## Tech Stack
 

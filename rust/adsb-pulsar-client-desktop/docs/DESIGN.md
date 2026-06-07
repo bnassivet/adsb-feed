@@ -3536,7 +3536,7 @@ over the app's DuckDB store server-side and forwards UI actions back to the fron
 > The agent is a **separate, optional process**. If it is not running, the rest of the
 > app is unaffected — the chat panel simply reports the agent as unreachable. Backend
 > setup, environment variables, and voice-model installation live in
-> [`agent/README.md`](../agent/README.md); this section documents the **design** and how
+> [`agent/README.md`](../../adsb-agent/README.md); this section documents the **design** and how
 > the pieces connect to the desktop app.
 
 ### Architecture Overview
@@ -3573,7 +3573,7 @@ decision below.
 ### Tool-Plane Split
 
 The agent partitions every tool into one of two planes (`SERVER_TOOL_NAMES` in
-`agent/src/adsb_agent/graph.py`):
+`adsb-agent/src/adsb_agent/graph.py`):
 
 | Plane | Executed by | Examples | Why |
 |-------|-------------|----------|-----|
@@ -3656,7 +3656,7 @@ discovery), plus the `/voice/*` routes above. See `agent/src/adsb_agent/main.py`
 
 | File | Purpose |
 |------|---------|
-| `agent/src/adsb_agent/graph.py` | LangGraph ReAct loop, `SERVER_TOOL_NAMES`, `route()`, arg transform |
+| `adsb-agent/src/adsb_agent/graph.py` | LangGraph ReAct loop, `SERVER_TOOL_NAMES`, `route()`, arg transform |
 | `agent/src/adsb_agent/main.py` | FastAPI service: AG-UI + voice endpoints |
 | `agent/src/adsb_agent/config.py` | `ADSB_AGENT_*` settings (LLM, tool server, ports) |
 | `agent/src/adsb_agent/voice/` | `base.py`, `voxtral.py`, `lfm2_audio.py`, `audio_capture.py` |
@@ -3668,7 +3668,7 @@ discovery), plus the `/voice/*` routes above. See `agent/src/adsb_agent/main.py`
 | `src/hooks/useVoiceInput.ts` | Voice capture, SSE transcript, auto-send |
 | `src/components/AIChatPanel.tsx` / `AIChatContent.tsx` / `MicButton.tsx` | Chat UI shell, content, mic control |
 
-See [`agent/README.md`](../agent/README.md) for backend setup, environment variables, the
+See [`agent/README.md`](../../adsb-agent/README.md) for backend setup, environment variables, the
 model-capability requirement (a reliable tool-calling model such as Qwen2.5-7B-Instruct),
 and voice-model installation.
 

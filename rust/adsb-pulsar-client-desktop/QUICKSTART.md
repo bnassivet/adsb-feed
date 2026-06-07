@@ -124,7 +124,7 @@ You also need an OpenAI-compatible LLM endpoint running (LM Studio by default on
 **Qwen2.5-7B-Instruct**.
 
 ```bash
-cd adsb-feed/rust/adsb-pulsar-client-desktop/agent
+cd adsb-feed/rust/adsb-agent
 
 # Install the agent's Python dependencies (--all-extras includes voice input)
 uv sync --all-extras
@@ -138,7 +138,7 @@ also starts a loopback tool server on `127.0.0.1:8787` that the agent uses for r
 historical queries (no setup needed — it starts with the app).
 
 For configuration, environment variables, and voice-input (Voxtral / LFM2.5-Audio) setup,
-see [`agent/README.md`](agent/README.md). For the architecture, see
+see [`agent/README.md`](../adsb-agent/README.md). For the architecture, see
 [docs/DESIGN.md §18](docs/DESIGN.md#ai-agent--ag-ui-integration).
 
 ## 6. Build for Production

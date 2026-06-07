@@ -527,7 +527,7 @@ tool plane it belongs to** (full design in [DESIGN.md §18](DESIGN.md#ai-agent--
 
 | The tool... | Plane | Where to add it |
 |-------------|-------|-----------------|
-| reads data only (a DuckDB query) | **Server** | Add a handler in `src-tauri/src/tool_service.rs`, route it in `tool_server.rs`, and add the tool name to `SERVER_TOOL_NAMES` in `agent/src/adsb_agent/graph.py`. Executes in-loop — the agent can chain it without a frontend round-trip. |
+| reads data only (a DuckDB query) | **Server** | Add a handler in `src-tauri/src/tool_service.rs`, route it in `tool_server.rs`, and add the tool name to `SERVER_TOOL_NAMES` in `adsb-agent/src/adsb_agent/graph.py`. Executes in-loop — the agent can chain it without a frontend round-trip. |
 | mutates UI or app state, or triggers an action | **Client** | Register it in `src/hooks/useCopilotTools.ts` with `useSafeFrontendTool`. Forwarded to the frontend and run with the user in the loop. |
 
 **Client tool checklist:**

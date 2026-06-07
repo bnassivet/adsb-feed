@@ -20,6 +20,3 @@ tsconfig.tsbuildinfo
 
 # Next.js
 **/.next/
-
-# Models
-agent/models
