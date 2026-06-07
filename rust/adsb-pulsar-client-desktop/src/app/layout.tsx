@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AircraftTrackingProvider } from "@/contexts/AircraftTrackingContext";
+import { CopilotKitProvider } from "@/components/CopilotKitProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,9 +16,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="bg-slate-950 text-slate-100 antialiased">
-        <AircraftTrackingProvider>
-          {children}
-        </AircraftTrackingProvider>
+        <CopilotKitProvider>
+          <AircraftTrackingProvider>
+            {children}
+          </AircraftTrackingProvider>
+        </CopilotKitProvider>
       </body>
     </html>
   );

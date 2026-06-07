@@ -4,7 +4,9 @@
 //! to the frontend via Tauri events, with throttling to prevent
 //! overwhelming the webview.
 
-use crate::state::{ConnectionStatus, FeedHandle, SharedStorage, StatusResponse};
+use crate::state::{
+    ConnectionStatus, FeedHandle, SharedConnectionStatus, SharedStorage, StatusResponse,
+};
 use adsb_data_engine::{
     extract_sbs_timestamp, parse_sbs_message, parse_sbs_raw_fields, AircraftPosition, RawSbsRecord,
     StatusEvent, StatusEventStatus, StatusEventType,
@@ -55,6 +57,7 @@ pub fn start_feed(
     record_positions: Arc<AtomicBool>,
     record_raw: Arc<AtomicBool>,
     recorder: StatusEventRecorder,
+    connection_status: SharedConnectionStatus,
 ) -> Result<FeedHandle, String> {
     let test_mode = config.test_mode;
     let socket_read_timeout_secs = config.socket_read_timeout_secs;
@@ -73,6 +76,7 @@ pub fn start_feed(
     let messages_parsed = Arc::new(AtomicU64::new(0));
     let messages_parsed_for_relay = messages_parsed.clone();
     let messages_parsed_for_metrics = messages_parsed.clone();
+    let messages_parsed_for_handle = messages_parsed.clone();
 
     // Shared state for last message time (for socket watchdog)
     let last_message_time = Arc::new(RwLock::new(Instant::now()));
@@ -96,6 +100,9 @@ pub fn start_feed(
     let recorder_client = recorder.clone();
     let recorder_watchdog = recorder;
 
+    let connection_status_client = connection_status.clone();
+    let connection_status_watchdog = connection_status;
+
     // Task 1: Run the feed client
     let client_task = tokio::spawn(async move {
         // alive_tx is moved here: dropping this task drops alive_tx,
@@ -103,18 +110,19 @@ pub fn start_feed(
         let _alive_tx = alive_tx;
 
         // Emit connecting status
-        let _ = app_for_client.emit(
-            "adsb:status",
-            StatusResponse {
-                is_running: true,
-                socket_status: ConnectionStatus::Connecting,
-                pulsar_status: if test_mode {
-                    ConnectionStatus::Disconnected
-                } else {
-                    ConnectionStatus::Connecting
-                },
+        let connecting_status = StatusResponse {
+            is_running: true,
+            socket_status: ConnectionStatus::Connecting,
+            pulsar_status: if test_mode {
+                ConnectionStatus::Disconnected
+            } else {
+                ConnectionStatus::Connecting
             },
-        );
+        };
+        if let Ok(mut guard) = connection_status_client.lock() {
+            *guard = connecting_status.clone();
+        }
+        let _ = app_for_client.emit("adsb:status", connecting_status);
         recorder_client
             .record(StatusEvent::now(
                 StatusEventType::Feed,
@@ -161,14 +169,15 @@ pub fn start_feed(
         }
 
         let _ = app_for_client.emit("adsb:stopped", serde_json::json!({}));
-        let _ = app_for_client.emit(
-            "adsb:status",
-            StatusResponse {
-                is_running: false,
-                socket_status: ConnectionStatus::Disconnected,
-                pulsar_status: ConnectionStatus::Disconnected,
-            },
-        );
+        let stopped_status = StatusResponse {
+            is_running: false,
+            socket_status: ConnectionStatus::Disconnected,
+            pulsar_status: ConnectionStatus::Disconnected,
+        };
+        if let Ok(mut guard) = connection_status_client.lock() {
+            *guard = stopped_status.clone();
+        }
+        let _ = app_for_client.emit("adsb:status", stopped_status);
         recorder_client
             .record(StatusEvent::now(
                 StatusEventType::Socket,
@@ -210,6 +219,7 @@ pub fn start_feed(
             app_for_watchdog,
             last_message_time_watchdog,
             test_mode,
+            connection_status_watchdog,
             socket_read_timeout_secs,
             alive_rx_watchdog,
             recorder_watchdog,
@@ -228,6 +238,7 @@ pub fn start_feed(
 
     Ok(FeedHandle {
         metrics,
+        messages_parsed: messages_parsed_for_handle,
         shutdown_fn,
         task_handles: vec![client_task, message_task, metrics_task, watchdog_task],
     })
@@ -384,12 +395,12 @@ async fn persist_raw_batch(storage: &SharedStorage, batch: &[RawSbsRecord], tz: 
 
 /// Extended metrics snapshot with bridge-level counters.
 #[derive(Debug, Clone, serde::Serialize)]
-struct DesktopMetrics {
+pub struct DesktopMetrics {
     #[serde(flatten)]
-    base: adsb_pulsar_client::MetricsSnapshot,
+    pub base: adsb_pulsar_client::MetricsSnapshot,
     /// Total raw SBS-1 messages successfully parsed into AircraftPosition (pre-throttle).
     /// Distinct from `messages_received` (in base) which counts ALL TCP lines including heartbeats.
-    messages_parsed: u64,
+    pub messages_parsed: u64,
 }
 
 /// Emits metrics snapshots to the frontend every second.
@@ -580,6 +591,7 @@ async fn socket_watchdog(
     app: AppHandle,
     last_message_time: Arc<RwLock<Instant>>,
     test_mode: bool,
+    connection_status: SharedConnectionStatus,
     socket_read_timeout_secs: u64,
     mut alive_rx: tokio::sync::watch::Receiver<bool>,
     recorder: StatusEventRecorder,
@@ -650,6 +662,9 @@ async fn socket_watchdog(
                         socket_status: new_status,
                         pulsar_status: pulsar_status.clone(),
                     };
+                    if let Ok(mut guard) = connection_status.lock() {
+                        *guard = status.clone();
+                    }
                     if app.emit("adsb:status", &status).is_err() {
                         break;
                     }
@@ -667,6 +682,9 @@ async fn socket_watchdog(
                     socket_status: current_status.clone(),
                     pulsar_status: pulsar_status.clone(),
                 };
+                if let Ok(mut guard) = connection_status.lock() {
+                    *guard = status.clone();
+                }
                 if app.emit("adsb:status", &status).is_err() {
                     break;
                 }

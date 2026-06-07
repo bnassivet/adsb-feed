@@ -520,6 +520,45 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
 ---
 
+### Pattern 7: Agent Tool Registration (AG-UI)
+
+When adding a new capability the AI assistant can use, the **first decision is which
+tool plane it belongs to** (full design in [DESIGN.md §18](DESIGN.md#ai-agent--ag-ui-integration)):
+
+| The tool... | Plane | Where to add it |
+|-------------|-------|-----------------|
+| reads data only (a DuckDB query) | **Server** | Add a handler in `src-tauri/src/tool_service.rs`, route it in `tool_server.rs`, and add the tool name to `SERVER_TOOL_NAMES` in `adsb-agent/src/adsb_agent/graph.py`. Executes in-loop — the agent can chain it without a frontend round-trip. |
+| mutates UI or app state, or triggers an action | **Client** | Register it in `src/hooks/useCopilotTools.ts` with `useSafeFrontendTool`. Forwarded to the frontend and run with the user in the loop. |
+
+**Client tool checklist:**
+
+```typescript
+// src/hooks/useCopilotTools.ts
+useSafeFrontendTool({
+  name: "panMapTo",                       // camelCase; matches the LLM-facing schema
+  description: "Pan and zoom the map to a location",
+  parameters: [/* zod/JSON schema */],
+  handler: async ({ lat, lng, zoom }) => {
+    mapRef.current?.flyTo([lat, lng], zoom);
+    return `Panned to ${lat}, ${lng}`;     // return a string (AG-UI contract)
+  },
+  render: ({ status, args }) => <PanCard status={status} {...args} />, // optional card
+});
+```
+
+- `useSafeFrontendTool` already wraps the handler: exceptions become error JSON,
+  non-string returns are coerced, and a debug breadcrumb is emitted. **Don't** add your
+  own try/catch or short-circuit on error.
+- If the agent should *know about* some UI state without a tool call, expose it as a
+  readable in `src/hooks/useCopilotContext.ts` instead — it is injected into the system
+  prompt every turn.
+
+**Why**: The server/client split keeps read-only reasoning fast (in-loop, no round-trip)
+while guaranteeing UI-affecting actions stay user-in-the-loop and never run silently
+inside the agent's reasoning. See DESIGN.md §18 for the `route()` semantics.
+
+---
+
 ## Performance Guidelines
 
 ### Do's ✅

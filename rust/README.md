@@ -5,25 +5,31 @@ A Cargo workspace for real-time ADS-B aircraft data acquisition, storage, and vi
 ## Overview
 
 <!-- Replace with actual screenshots -->
-| Live Tracking | Geo Statistics | DB History & Analysis |
-|:---:|:---:|:---:|
-| ![Live tracking map](adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-flight-details-short-history.png) | ![Density](adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-h3-density-details.png) | ![DB History & Analysis](adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-dbhistory-analytics.png) |
+| Live Tracking | Geo Statistics | DB History & Analysis | AI Chat with AG-UI & Voice commands |
+|:---:|:---:|:---:|:---:|
+| ![Live tracking map](adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-flight-details-short-history.png) | ![Density](adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-h3-density-details.png) | ![DB History & Analysis](adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-dbhistory-analytics.png) | ![AI Chat with AG-UI & Voice commands](adsb-pulsar-client-desktop/docs/screenshots/adsb-feed_chat-ai_2026-06-07.png) |
 
-## Workspace Crates
+## Workspace Components
 
 ```
 adsb-feed/rust/
-├── adsb-pulsar-client/          # Library + CLI: dump1090 → Pulsar forwarding
-├── adsb-data-engine/            # Shared library: SBS-1 parser + DuckDB storage
-└── adsb-pulsar-client-desktop/  # Tauri v2 desktop app (Rust backend + Next.js frontend)
-    └── src-tauri/               #   (workspace member)
+├── adsb-pulsar-client/          # Cargo: Library + CLI: dump1090 → Pulsar forwarding
+├── adsb-data-engine/            # Cargo: Shared library: SBS-1 parser + DuckDB storage
+├── adsb-pulsar-client-desktop/  # Cargo: Tauri v2 desktop app (Rust backend + Next.js frontend)
+│   └── src-tauri/               #   (workspace member)
+└── adsb-agent/                  # Python: optional AI agent (AG-UI chat + voice) — not a Cargo member
 ```
 
-| Crate | Purpose | README |
-|-------|---------|--------|
-| [**adsb-pulsar-client**](adsb-pulsar-client/) | High-performance async client that reads SBS-1 messages from dump1090 and fans them out to pluggable backends (Pulsar, file, custom). Runs on Raspberry Pi with ~50k msg/s throughput, ~15 MB memory. | [README](adsb-pulsar-client/README.md) |
-| [**adsb-data-engine**](adsb-data-engine/) | Shared library for SBS-1 parsing and DuckDB persistent storage. Provides spatial queries, flight tracking, analytics (detection range, heatmaps), and Arrow IPC serialization. | [README](adsb-data-engine/README.md) |
-| [**adsb-pulsar-client-desktop**](adsb-pulsar-client-desktop/) | Tauri v2 desktop application with interactive Leaflet map, historical analysis, storage management, and GeoJSON export/import. | [README](adsb-pulsar-client-desktop/README.md) |
+The first three are members of the Rust Cargo workspace. `adsb-agent` is a standalone,
+optional **Python** component (built/run with `uv`, not `cargo`) — see its
+[README](adsb-agent/README.md).
+
+| Component | Build | Purpose | README |
+|-----------|-------|---------|--------|
+| [**adsb-pulsar-client**](adsb-pulsar-client/) | Cargo | High-performance async client that reads SBS-1 messages from dump1090 and fans them out to pluggable backends (Pulsar, file, custom). Runs on Raspberry Pi with ~50k msg/s throughput, ~15 MB memory. | [README](adsb-pulsar-client/README.md) |
+| [**adsb-data-engine**](adsb-data-engine/) | Cargo | Shared library for SBS-1 parsing and DuckDB persistent storage. Provides spatial queries, flight tracking, analytics (detection range, heatmaps), and Arrow IPC serialization. | [README](adsb-data-engine/README.md) |
+| [**adsb-pulsar-client-desktop**](adsb-pulsar-client-desktop/) | Cargo | Tauri v2 desktop application with interactive Leaflet map, historical analysis, storage management, and GeoJSON export/import. | [README](adsb-pulsar-client-desktop/README.md) |
+| [**adsb-agent**](adsb-agent/) | uv (Python) | Optional local AI agent (LangGraph + FastAPI): AG-UI chat and voice over the desktop app's live and historical data. Separate process; the app works without it. | [README](adsb-agent/README.md) |
 
 ## Architecture
 
@@ -116,6 +122,8 @@ The bridge throttles ~50k msg/s down to ~2 UI updates/sec while persisting every
 **Storage management** including release/reclaim for external tools, live export, import with deduplication, and zero-loss database swap.
 
 **GeoJSON export/import**, events of interest, status timeline audit trail, simulated demo flights, and resizable panels with persistent layout.
+
+**AI assistant (AG-UI)** — an optional, fully local natural-language chat panel for querying live and historical traffic and driving the UI by text or voice. A LangGraph ReAct agent runs read-only DuckDB queries in-loop via a loopback tool server and forwards UI actions back to the frontend; voice input is handled by Voxtral or LFM2.5-Audio. See [docs/DESIGN.md §18](adsb-pulsar-client-desktop/docs/DESIGN.md#ai-agent--ag-ui-integration) and the [agent README](adsb-agent/README.md).
 
 See the full [Desktop App README](adsb-pulsar-client-desktop/README.md) for features, architecture details, and tech stack.
 

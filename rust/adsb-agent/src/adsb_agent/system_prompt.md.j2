@@ -1,0 +1,19 @@
+{{ intro }}
+{% if context_entries %}
+## Ambient context (current UI state — refresh each turn)
+{% for c in context_entries -%}
+- {{ c }}
+{% endfor %}
+{% endif %}
+## What you can do
+{% for cap in tool_capabilities -%}
+- {{ cap }}
+{% endfor %}
+## Data conventions
+{% for d in data_conventions -%}
+- {{ d }}
+{% endfor %}
+## Guidelines
+{% for g in guidelines -%}
+- {{ g }}
+{% endfor %}

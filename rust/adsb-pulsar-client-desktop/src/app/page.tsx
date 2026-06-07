@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { Map as AircraftMap } from "@/components/Map";
 import { AircraftTable } from "@/components/AircraftTable";
 import { MetricsBar } from "@/components/MetricsBar";
@@ -9,6 +9,9 @@ import { LeftPanel } from "@/components/LeftPanel";
 import { AircraftDetailsPanel } from "@/components/AircraftDetailsPanel";
 import { DBHistoryPanel } from "@/components/DBHistoryPanel";
 import { DBHistoryContent } from "@/components/DBHistoryContent";
+import { AIChatPanel } from "@/components/AIChatPanel";
+import { AIChatContent } from "@/components/AIChatContent";
+import { useChatThreadId } from "@/hooks/useChatThreadId";
 import { EventsOfInterestPanel } from "@/components/EventsOfInterestPanel";
 import { EventsOfInterestContent } from "@/components/EventsOfInterestContent";
 import { EventFormDialog } from "@/components/EventFormDialog";
@@ -19,6 +22,8 @@ import { useMetrics } from "@/hooks/useMetrics";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { useRecordingState } from "@/hooks/useRecordingState";
 import { useEventsOfInterest } from "@/hooks/useEventsOfInterest";
+import { useCopilotTools } from "@/hooks/useCopilotTools";
+import { useCopilotContext } from "@/hooks/useCopilotContext";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { startFeed, stopFeed, getConfig, getStorageStatus, releaseStorage, reclaimStorage, exportDatabase, previewImportDatabase, importDatabase, swapDatabase, getStorageStats } from "@/lib/commands";
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
@@ -88,13 +93,39 @@ export default function Dashboard() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; lat: number; lng: number } | null>(null);
   const [mapPickingMode, setMapPickingMode] = useState<"point" | "area" | null>(null);
   const [mapPickResult, setMapPickResult] = useState<MapPickResult | null>(null);
+  // AI Chat Panel state
+  const [aiChatOpen, setAiChatOpen] = useLocalStorage<boolean>("adsb-aichat-open", false);
+  const { threadId: chatThreadId, resetThread: resetChatThread } = useChatThreadId(aiChatOpen);
+  const [aiChatDockedExpanded, setAiChatDockedExpanded] = useLocalStorage<boolean>("adsb-aichat-docked-expanded", true);
+  const [aiChatWidth, setAiChatWidth] = useLocalStorage<number>("adsb-aichat-width", 360);
+  const [aiChatFloating, setAiChatFloating] = useLocalStorage<boolean>("adsb-aichat-floating", true);
+  const [aiChatFloatX, setAiChatFloatX] = useLocalStorage<number>("adsb-aichat-float-x", 120);
+  const [aiChatFloatY, setAiChatFloatY] = useLocalStorage<number>("adsb-aichat-float-y", 60);
+  const [aiChatFloatW, setAiChatFloatW] = useLocalStorage<number>("adsb-aichat-float-w", 400);
+  const [aiChatFloatH, setAiChatFloatH] = useLocalStorage<number>("adsb-aichat-float-h", 520);
+
   const [showEvents, setShowEvents] = useLocalStorage<boolean>("adsb-show-events", true);
   const [eventFilterMode, setEventFilterMode] = useLocalStorage<EventFilterMode>("adsb-event-filter-mode", "all");
   const [eventUpcomingDays, setEventUpcomingDays] = useLocalStorage<number>("adsb-event-upcoming-days", 7);
   const [eventTimeRangeStart, setEventTimeRangeStart] = useLocalStorage<number>("adsb-event-time-start", Date.now());
   const [eventTimeRangeEnd, setEventTimeRangeEnd] = useLocalStorage<number>("adsb-event-time-end", Date.now() + 86400000);
 
+  const [showImported, setShowImported] = useLocalStorage<boolean>("adsb-show-imported", true);
+
   const { events: eventsOfInterest, loading: eventsLoading, createEvent, updateEvent, removeEvent, removeEvents } = useEventsOfInterest();
+
+  const status = useConnectionStatus();
+  const isRunning = status.is_running;
+
+  // Derive a descriptive connection status string for CopilotKit from the actual socket state
+  const copilotConnectionStatus = !isRunning
+    ? "disconnected"
+    : status.socket_status.status === "Error"
+      ? `error: ${(status.socket_status as { status: "Error"; message: string }).message}`
+      : status.socket_status.status.toLowerCase();
+
+  // CopilotKit tools registered below (after allTracks, selectedHexIdents, flyTo are available)
+
   const [hiddenEventIds, setHiddenEventIds] = useState<Set<string>>(new Set());
 
   const handleToggleEventVisibility = useCallback((id: string) => {
@@ -143,15 +174,69 @@ export default function Dashboard() {
     addAnalysisTracks, removeAnalysisTrack, clearAnalysis,
     trackHistoryHours,
   } = useAircraftTracks(activeFilters);
-  const [showImported, setShowImported] = useLocalStorage<boolean>("adsb-show-imported", true);
   // History time range slider — session-only state (resets each session)
   const [historySliderMin, setHistorySliderMin] = useState(0);
   const [historySliderMax, setHistorySliderMax] = useState<number | null>(null);
   const effectiveSliderMax = historySliderMax ?? trackHistoryHours;
   const simulatedTracks = useSimulatedTracks(showSimulation);
   const allTracks = useMemo(() => [...tracks, ...simulatedTracks], [tracks, simulatedTracks]);
+
+  // Map flyTo callback — set by MapInner via prop, called by copilot panMapTo tool
+  const flyToRef = useRef<((lat: number, lng: number, zoom: number) => void) | null>(null);
+  const flyTo = useCallback((lat: number, lng: number, zoom: number) => {
+    flyToRef.current?.(lat, lng, zoom);
+  }, []);
+
+  // CopilotKit — register frontend tools (after all state deps available)
+  useCopilotTools({
+    connectionStatus: copilotConnectionStatus,
+    mapTheme,
+    sidebarOpen,
+    activeMode,
+    showHistory,
+    showDensity,
+    showSimulation,
+    showImported,
+    showReceiver,
+    showEvents,
+    liveColorMode,
+    historyColorMode,
+    densityMetric,
+    densityTooltipMode,
+    densityAltitudeMin,
+    densityAltitudeMax,
+    eventFilterMode,
+    eventUpcomingDays,
+    eventTimeRangeStart,
+    eventTimeRangeEnd,
+    setMapTheme,
+    setSidebarOpen,
+    setActiveMode,
+    setShowHistory,
+    setShowDensity,
+    setShowSimulation,
+    setShowImported,
+    setShowReceiver,
+    setShowEvents,
+    setLiveColorMode,
+    setHistoryColorMode,
+    setDensityMetric,
+    setDensityTooltipMode,
+    setDensityAltitudeMin,
+    setDensityAltitudeMax,
+    setEventFilterMode,
+    setEventUpcomingDays,
+    setEventTimeRangeStart,
+    setEventTimeRangeEnd,
+    tracks: allTracks,
+    setSelectedHexIdents,
+    setLastSelectedHexIdent,
+    activeFilters,
+    setActiveFilters,
+    flyTo,
+  });
+
   const metrics = useMetrics();
-  const status = useConnectionStatus();
   const { recordPositions, recordRaw, toggleRecordPositions, toggleRecordRaw } = useRecordingState();
   const [storageStatus, setStorageStatus] = useState<StorageAvailability>("unavailable");
   const [isExporting, setIsExporting] = useState(false);
@@ -290,7 +375,24 @@ export default function Dashboard() {
     }
   }, []);
 
-  const isRunning = status.is_running;
+  // CopilotKit — provide live app state to the agent
+  useCopilotContext({
+    connectionStatus: copilotConnectionStatus,
+    mapTheme,
+    sidebarOpen,
+    activeMode,
+    showHistory,
+    showDensity,
+    showSimulation,
+    showImported,
+    showReceiver,
+    showEvents,
+    selectedHexIdents,
+    lastSelectedHexIdent,
+    activeFilters,
+    tracks: allTracks,
+    storageStatus,
+  });
 
   // Reset slider when trackHistoryHours changes (e.g. user changes setting)
   useEffect(() => {
@@ -701,6 +803,13 @@ export default function Dashboard() {
           >
             Events{filteredEvents.length > 0 ? ` (${filteredEvents.length})` : ""}
           </button>
+          <button
+            onClick={() => setAiChatOpen((prev: boolean) => !prev)}
+            className={`px-2 py-1 text-xs rounded transition ${aiChatOpen ? "bg-violet-800/40 text-violet-200 border border-violet-700/30" : "text-slate-400 hover:text-slate-200 hover:bg-slate-700"}`}
+            title={aiChatOpen ? "Hide AI Chat" : "Show AI Chat"}
+          >
+            AI Chat
+          </button>
         </div>
         <div className="flex items-center gap-3">
           {error && (
@@ -815,7 +924,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} />
+              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel
@@ -856,6 +965,28 @@ export default function Dashboard() {
                   onSwitchToAnalysis={() => setActiveMode("analysis")}
                 />
               </DBHistoryPanel>
+            )}
+            {/* AI Chat panel — docked mode (in flex row) */}
+            {aiChatOpen && !aiChatFloating && (
+              <AIChatPanel
+                isOpen={aiChatOpen}
+                onToggle={() => setAiChatOpen(false)}
+                width={aiChatWidth}
+                onWidthChange={setAiChatWidth}
+                dockedExpanded={aiChatDockedExpanded}
+                onDockedExpandedChange={setAiChatDockedExpanded}
+                floating={false}
+                onFloatingChange={setAiChatFloating}
+                floatX={aiChatFloatX}
+                floatY={aiChatFloatY}
+                floatW={aiChatFloatW}
+                floatH={aiChatFloatH}
+                onFloatPosChange={(x, y) => { setAiChatFloatX(x); setAiChatFloatY(y); }}
+                onFloatSizeChange={(w, h) => { setAiChatFloatW(w); setAiChatFloatH(h); }}
+                onNewConversation={resetChatThread}
+              >
+                <AIChatContent threadId={chatThreadId} />
+              </AIChatPanel>
             )}
             {/* Events panel — docked mode (in flex row) */}
             {eventsOpen && !eventsFloating && (
@@ -1009,6 +1140,29 @@ export default function Dashboard() {
             onToggleEventVisibility={handleToggleEventVisibility}
           />
         </EventsOfInterestPanel>
+      )}
+
+      {/* AI Chat panel — floating mode */}
+      {aiChatOpen && aiChatFloating && (
+        <AIChatPanel
+          isOpen={aiChatOpen}
+          onToggle={() => setAiChatOpen(false)}
+          width={aiChatWidth}
+          onWidthChange={setAiChatWidth}
+          dockedExpanded={aiChatDockedExpanded}
+          onDockedExpandedChange={setAiChatDockedExpanded}
+          floating={true}
+          onFloatingChange={setAiChatFloating}
+          floatX={aiChatFloatX}
+          floatY={aiChatFloatY}
+          floatW={aiChatFloatW}
+          floatH={aiChatFloatH}
+          onFloatPosChange={(x, y) => { setAiChatFloatX(x); setAiChatFloatY(y); }}
+          onFloatSizeChange={(w, h) => { setAiChatFloatW(w); setAiChatFloatH(h); }}
+          onNewConversation={resetChatThread}
+        >
+          <AIChatContent threadId={chatThreadId} />
+        </AIChatPanel>
       )}
 
       {/* Event form dialog (create/edit) */}

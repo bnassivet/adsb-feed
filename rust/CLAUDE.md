@@ -10,6 +10,12 @@ Cargo workspace containing the ADS-B feed client library, adsd-data-engine and T
 | `adsb-pulsar-client-desktop-lib` | `adsb-pulsar-client-desktop/src-tauri/` | Tauri v2 desktop app backend |
 | `adsb-data-engine` | `adsb-data-engine/` | Shared SBS-1 parser + DuckDB persistent storage for historical queries |
 
+## Non-Cargo Component
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `adsb-agent` | `adsb-agent/` | Optional **Python** AI agent (LangGraph + FastAPI) providing AG-UI chat + voice for the desktop app. Built/run with `uv` (`uv sync --all-extras`, `uv run python -m adsb_agent`), **not** part of the Cargo workspace — `cargo` commands ignore it. Lives here as a sibling component (moved out of `adsb-pulsar-client-desktop/agent/`). |
+
 ## Testing
 
 ### TDD Workflow

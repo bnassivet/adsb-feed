@@ -1,0 +1,8 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "adsb_agent": "./src/adsb_agent/graph.py:make_graph"
+  },
+  "env": ".env",
+  "python_version": "3.12"
+}

@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' https://*.tile.openstreetmap.org https://*.openstreetmap.org data:; style-src 'self' 'unsafe-inline' https://unpkg.com; script-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https://*.tile.openstreetmap.org"
+      "csp": "default-src 'self'; img-src 'self' https://*.tile.openstreetmap.org https://*.openstreetmap.org data:; style-src 'self' 'unsafe-inline' https://unpkg.com; script-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https://*.tile.openstreetmap.org http://localhost:8000 http://127.0.0.1:8000"
     }
   },
   "bundle": {

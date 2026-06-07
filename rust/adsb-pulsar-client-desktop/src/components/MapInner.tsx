@@ -88,6 +88,17 @@ function ContextMenuHandler({ onContextMenu }: { onContextMenu: (lat: number, ln
   return null;
 }
 
+/** Registers a flyTo callback so external code (e.g. copilot tools) can navigate the map. */
+function FlyToHandler({ onReady }: { onReady?: (fn: (lat: number, lng: number, zoom: number) => void) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    if (onReady) {
+      onReady((lat, lng, zoom) => map.flyTo([lat, lng], zoom));
+    }
+  }, [map, onReady]);
+  return null;
+}
+
 /** Renders event-of-interest markers imperatively via Leaflet API. */
 function EventMarkersLayer({ events, theme }: { events: EventOfInterest[]; theme: "light" | "dark" }) {
   const map = useMap();
@@ -260,6 +271,7 @@ interface Props {
   mapPickingMode?: "point" | "area" | null;
   onMapPickComplete?: (result: MapPickResult) => void;
   onMapPickCancel?: () => void;
+  onFlyToReady?: (fn: (lat: number, lng: number, zoom: number) => void) => void;
 }
 
 /** Build compact (single-line) tooltip for density cell. */
@@ -569,7 +581,7 @@ function DotsLayer({
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel }: Props) {
+export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
@@ -598,6 +610,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
       >
         <MapResizeHandler />
         <MapClickHandler onDeselect={handleDeselect} />
+        <FlyToHandler onReady={onFlyToReady} />
         <TileLayer
           key={mapTheme}
           attribution={tile.attribution}
