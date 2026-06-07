@@ -36,6 +36,16 @@ Connects to a [dump1090](https://github.com/flightaware/dump1090) receiver (dire
 - Export active and historical tracks as standard GeoJSON
 - Re-import for visualization with distinct styling (dashed trails, indigo accent)
 
+### AI Assistant (AG-UI)
+- **Natural-language chat** to query live and historical traffic and drive the UI
+  ("show AFR123's trajectory", "pan to LFPG", "filter above 30,000 ft")
+- Backed by a local **LangGraph ReAct agent** (CopilotKit / AG-UI) with a server/client
+  tool-plane split: read-only DuckDB queries run server-side in-loop, UI actions stay
+  user-in-the-loop on the frontend
+- **Voice input** via two local backends — Voxtral (streaming STT) and LFM2.5-Audio
+  (end-to-end speech understanding) — with optional auto-send
+- Fully optional and fully local; see [`agent/README.md`](agent/README.md)
+
 ### Events of Interest
 - Mark and annotate notable occurrences (unusual altitudes, rare callsigns)
 - Status timeline with color-coded audit trail of feed and storage events
@@ -70,6 +80,22 @@ Connects to a [dump1090](https://github.com/flightaware/dump1090) receiver (dire
 - **Arrow IPC** wire format for large query results (~4x smaller, ~5x faster than JSON)
 - **Graceful degradation**: app runs in real-time-only mode if DuckDB is unavailable
 
+### Optional AI Assistant
+
+```
+  CopilotChat (frontend) ──AG-UI SSE──► Agent (FastAPI, :8000)
+                                          └ LangGraph ReAct loop ──► LLM (:1234)
+                                                  │ server tools (read-only)
+                                                  ▼
+                              Tauri tool server (127.0.0.1:8787) ──► DuckDB
+```
+
+An optional local AI agent adds a natural-language chat panel. Read-only data tools run
+in-loop against DuckDB via a loopback tool server (`:8787`); UI-action tools are
+forwarded back to the frontend. The agent runs as a **separate process** — if it isn't
+started, the rest of the app is unaffected. See [docs/DESIGN.md §18](docs/DESIGN.md#ai-agent--ag-ui-integration)
+and [`agent/README.md`](agent/README.md).
+
 ## Quick Start
 
 **Prerequisites:** Rust 1.75+, Node.js 18+, `protoc`
@@ -89,6 +115,7 @@ See [QUICKSTART.md](QUICKSTART.md) for full setup instructions including `protoc
 | [QUICKSTART.md](QUICKSTART.md) | Prerequisites, installation, and first run |
 | [docs/DESIGN.md](docs/DESIGN.md) | Architecture deep-dive: IPC flow, track lifecycle, state management, feature design decisions |
 | [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md) | Developer guide: patterns, conventions, performance guidelines |
+| [agent/README.md](agent/README.md) | AI agent backend: setup, configuration, voice-model install |
 
 ## Tech Stack
 
@@ -103,6 +130,9 @@ See [QUICKSTART.md](QUICKSTART.md) for full setup instructions including `protoc
 | Charts | [Recharts](https://recharts.org/) |
 | Geospatial | [H3](https://h3geo.org/) hexagonal density overlay |
 | Virtualization | [@tanstack/react-virtual](https://tanstack.com/virtual) |
+| AI chat (AG-UI) | [CopilotKit](https://copilotkit.ai/) + [ag-ui-protocol](https://github.com/ag-ui-protocol) |
+| Agent runtime | [LangGraph](https://langchain-ai.github.io/langgraph/) + [LangChain](https://www.langchain.com/) (Python / [FastAPI](https://fastapi.tiangolo.com/)) |
+| Voice input | Voxtral (STT) / [LFM2.5-Audio](https://www.liquid.ai/) (local speech understanding) |
 
 ## Testing
 

@@ -5,9 +5,9 @@ A Cargo workspace for real-time ADS-B aircraft data acquisition, storage, and vi
 ## Overview
 
 <!-- Replace with actual screenshots -->
-| Live Tracking | Geo Statistics | DB History & Analysis |
-|:---:|:---:|:---:|
-| ![Live tracking map](adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-flight-details-short-history.png) | ![Density](adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-h3-density-details.png) | ![DB History & Analysis](adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-dbhistory-analytics.png) |
+| Live Tracking | Geo Statistics | DB History & Analysis | AI Chat with AG-UI & Voice commands |
+|:---:|:---:|:---:|:---:|
+| ![Live tracking map](adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-flight-details-short-history.png) | ![Density](adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-h3-density-details.png) | ![DB History & Analysis](adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-dbhistory-analytics.png) | ![AI Chat with AG-UI & Voice commands](adsb-pulsar-client-desktop/docs/screenshots/adsb-feed_chat-ai_2026-06-07.png) |
 
 ## Workspace Crates
 
@@ -116,6 +116,8 @@ The bridge throttles ~50k msg/s down to ~2 UI updates/sec while persisting every
 **Storage management** including release/reclaim for external tools, live export, import with deduplication, and zero-loss database swap.
 
 **GeoJSON export/import**, events of interest, status timeline audit trail, simulated demo flights, and resizable panels with persistent layout.
+
+**AI assistant (AG-UI)** — an optional, fully local natural-language chat panel for querying live and historical traffic and driving the UI by text or voice. A LangGraph ReAct agent runs read-only DuckDB queries in-loop via a loopback tool server and forwards UI actions back to the frontend; voice input is handled by Voxtral or LFM2.5-Audio. See [docs/DESIGN.md §18](adsb-pulsar-client-desktop/docs/DESIGN.md#ai-agent--ag-ui-integration) and the [agent README](adsb-pulsar-client-desktop/agent/README.md).
 
 See the full [Desktop App README](adsb-pulsar-client-desktop/README.md) for features, architecture details, and tech stack.
 

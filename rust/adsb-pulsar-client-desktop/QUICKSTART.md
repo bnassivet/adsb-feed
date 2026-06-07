@@ -26,12 +26,18 @@ brew install node
 nvm install --lts
 ```
 
+**Python 3.12+ and [uv](https://github.com/astral-sh/uv)** (only for the optional AI assistant — see section 5):
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
 **Verify:**
 ```bash
 rustc --version    # 1.75+
 protoc --version
 node --version     # 18+
 npm --version
+uv --version       # optional, for the AI assistant
 ```
 
 ## 1. Install Dependencies
@@ -107,7 +113,35 @@ Aircraft should appear on the map and in the table within seconds.
 
 - **Cmd+Option+I** (macOS) / **Ctrl+Shift+I** (Linux/Windows): Open Web Inspector for debugging
 
-## 5. Build for Production
+## 5. (Optional) Start the AI Assistant
+
+The app includes an optional natural-language chat panel (AG-UI) backed by a local
+Python agent. It runs as a **separate process** — the tracker works fine without it; the
+chat panel simply reports the agent as unreachable until it is started.
+
+You also need an OpenAI-compatible LLM endpoint running (LM Studio by default on
+`http://localhost:1234/v1`) with a capable tool-calling model such as
+**Qwen2.5-7B-Instruct**.
+
+```bash
+cd adsb-feed/rust/adsb-pulsar-client-desktop/agent
+
+# Install the agent's Python dependencies (--all-extras includes voice input)
+uv sync --all-extras
+
+# Start the agent (defaults to port 8000)
+uv run python -m adsb_agent
+```
+
+The desktop app connects to the agent at `http://localhost:8000/ag-ui`. The Tauri backend
+also starts a loopback tool server on `127.0.0.1:8787` that the agent uses for read-only
+historical queries (no setup needed — it starts with the app).
+
+For configuration, environment variables, and voice-input (Voxtral / LFM2.5-Audio) setup,
+see [`agent/README.md`](agent/README.md). For the architecture, see
+[docs/DESIGN.md §18](docs/DESIGN.md#ai-agent--ag-ui-integration).
+
+## 6. Build for Production
 
 ```bash
 npm run tauri build

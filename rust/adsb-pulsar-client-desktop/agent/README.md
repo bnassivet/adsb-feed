@@ -11,16 +11,23 @@ FastAPI service that streams LLM responses as AG-UI Server-Sent Events to the de
 ## Quick start
 
 ```bash
-# Install dependencies
-uv sync
+# Install dependencies (use --all-extras to include voice + dev tooling)
+uv sync --all-extras
 
 # Start the agent (defaults to port 8000)
 uv run python -m adsb_agent
 ```
 
+> Bare `uv sync` installs only the base dependencies (chat, no voice). Use
+> `uv sync --extra voice` for voice input, or `--all-extras` for everything.
+
 ## Configuration
 
-All settings are environment variables with the `ADSB_AGENT_` prefix:
+All agent settings are environment variables with the `ADSB_AGENT_` prefix (loaded from
+`.env` if present — copy [`.env.example`](.env.example) to `.env` and adjust). Defaults
+live in `src/adsb_agent/config.py`.
+
+**LLM:**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -28,9 +35,45 @@ All settings are environment variables with the `ADSB_AGENT_` prefix:
 | `ADSB_AGENT_LLM_API_KEY` | `lm-studio` | API key (any string for local servers) |
 | `ADSB_AGENT_MODEL` | `qwen2.5-7b-instruct` | Model name — **must be a capable tool-caller** (see below) |
 | `ADSB_AGENT_MAX_TOKENS` | `8192` | Max tokens per response |
-| `ADSB_AGENT_TOOL_SERVER_URL` | `http://127.0.0.1:8787` | Tauri tool server (read-only data plane) |
+| `ADSB_AGENT_TEMPERATURE` | `0.1` | Sampling temperature |
+
+**Tool server & agent loop:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ADSB_AGENT_TOOL_SERVER_URL` | `http://127.0.0.1:8787` | Tauri tool server (read-only data plane); must match the desktop app's `ADSB_AGENT_TOOL_SERVER_PORT` |
+| `ADSB_AGENT_TOOL_SERVER_TIMEOUT` | `30.0` | Per-call timeout (seconds) for tool-server requests |
+| `ADSB_AGENT_AGENT_RECURSION_LIMIT` | `25` | Max LangGraph loop steps (caps tool-call hops) |
+
+**Service:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `ADSB_AGENT_PORT` | `8000` | Service port |
 | `ADSB_AGENT_HOST` | `0.0.0.0` | Bind address |
+| `ADSB_AGENT_SSE_HEARTBEAT_SECONDS` | `15.0` | Keep-alive interval for SSE streams during silent LLM steps |
+
+**MLflow tracing (optional):**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ADSB_AGENT_MLFLOW_ENABLED` | `true` | Enable MLflow tracing of agent runs |
+| `ADSB_AGENT_MLFLOW_TRACKING_URI` | `http://localhost:5010` | MLflow tracking server URI |
+| `ADSB_AGENT_MLFLOW_EXPERIMENT` | `adsb-agent` | MLflow experiment name |
+
+When MLflow uses an S3-compatible artifact store (MinIO), also set the standard AWS/MLflow
+vars (no `ADSB_AGENT_` prefix) so `boto3` targets MinIO instead of real AWS S3:
+
+| Variable | Example | Description |
+|----------|---------|-------------|
+| `MLFLOW_S3_ENDPOINT_URL` | `http://localhost:9000` | MinIO endpoint |
+| `AWS_ACCESS_KEY_ID` | `minioadmin` | MinIO access key |
+| `AWS_SECRET_ACCESS_KEY` | `minioadmin` | MinIO secret key |
+| `AWS_DEFAULT_REGION` | `us-east-1` | Region (any value; required by boto3) |
+| `MLFLOW_DISABLE_TELEMETRY` | `true` | Opt out of MLflow telemetry |
+| `DO_NOT_TRACK` | `true` | Generic telemetry opt-out |
+
+Start the tracking server with `mlflow server --port 5010`.
 
 ### Model requirement
 
@@ -53,6 +96,7 @@ mutations remain client-executed via the AG-UI/CopilotKit round-trip.
 | `/ag-ui/agent/{id}/run` | POST | CopilotKit REST transport — SSE stream |
 | `/ag-ui/chat` | POST | Direct AG-UI SSE endpoint |
 | `/ag-ui/info` | GET | CopilotKit runtime discovery |
+| `/info` | GET | Runtime discovery (alias of `/ag-ui/info`) |
 | `/ag-ui` | POST | CopilotKit single-endpoint transport |
 | `/health` | GET | Health check |
 | `/voice/backends` | GET | List voice backends and their status |
@@ -63,6 +107,9 @@ mutations remain client-executed via the AG-UI/CopilotKit round-trip.
 | `/docs` | GET | OpenAPI / Swagger UI |
 
 ## Voice input
+
+Voice input requires the `voice` extra (`uv sync --extra voice` or `--all-extras`), which
+pulls in `sounddevice`, `numpy`, and `llama-cpp-python`.
 
 The agent supports two voice backends. Select one via the mic button in the desktop app (or `ADSB_AGENT_LFM2_MODEL_DIR` / backend choice in POST `/voice/start`).
 
