@@ -5,7 +5,7 @@ import { useCopilotTools, type DisplayToolsConfig } from "../useCopilotTools";
 // Capture all tool registrations from useFrontendTool calls
 const registeredTools = new Map<
   string,
-  { handler: Function; parameters?: unknown; description?: string }
+  { handler: (...args: unknown[]) => unknown; parameters?: unknown; description?: string }
 >();
 
 // Mirror production v2 semantics: useFrontendTool registers via useEffect with
@@ -16,7 +16,7 @@ const registeredTools = new Map<
 vi.mock("@copilotkit/react-core/v2", () => ({
   useFrontendTool: (opts: {
     name: string;
-    handler: Function;
+    handler: (...args: unknown[]) => unknown;
     parameters?: unknown;
     description?: string;
   }) => {
@@ -102,7 +102,7 @@ function makeConfig(overrides: Partial<DisplayToolsConfig> = {}): DisplayToolsCo
   };
 }
 
-function getHandler(name: string): Function {
+function getHandler(name: string): (...args: unknown[]) => unknown {
   const tool = registeredTools.get(name);
   if (!tool) throw new Error(`Tool "${name}" not registered`);
   return tool.handler;
