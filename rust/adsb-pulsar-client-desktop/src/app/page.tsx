@@ -70,7 +70,7 @@ export default function Dashboard() {
   const [dbHistoryFloatY, setDbHistoryFloatY] = useLocalStorage<number>("adsb-dbhistory-float-y", 80);
   const [dbHistoryFloatW, setDbHistoryFloatW] = useLocalStorage<number>("adsb-dbhistory-float-w", 400);
   const [dbHistoryFloatH, setDbHistoryFloatH] = useLocalStorage<number>("adsb-dbhistory-float-h", 600);
-  const [showDbHistory, setShowDbHistory] = useLocalStorage<boolean>("adsb-show-dbhistory", true);
+  const [showDbHistory] = useLocalStorage<boolean>("adsb-show-dbhistory", true);
 
   // Events of Interest state
   const [eventsOpen, setEventsOpen] = useLocalStorage<boolean>("adsb-events-open", false);
@@ -302,8 +302,15 @@ export default function Dashboard() {
     if (!showHistory) return [];
     return filterHistoryByTimeRange(history, trackHistoryHours, historySliderMin, effectiveSliderMax, Date.now());
   }, [showHistory, history, trackHistoryHours, historySliderMin, effectiveSliderMax]);
-  const visibleImported = showImported ? imported : [];
-  const visibleDbHistory = showDbHistory ? dbHistory : [];
+  const EMPTY_TRACKS: AircraftTrack[] = useMemo(() => [], []);
+  const visibleImported = useMemo(
+    () => (showImported ? imported : EMPTY_TRACKS),
+    [showImported, imported, EMPTY_TRACKS],
+  );
+  const visibleDbHistory = useMemo(
+    () => (showDbHistory ? dbHistory : EMPTY_TRACKS),
+    [showDbHistory, dbHistory, EMPTY_TRACKS],
+  );
 
   // Mode-conditional arrays for Map and Table
   const isLive = activeMode === "live";
@@ -315,7 +322,6 @@ export default function Dashboard() {
     },
     [hiddenSections],
   );
-  const EMPTY_TRACKS: AircraftTrack[] = useMemo(() => [], []);
   const mapTracks = useMemo(
     () => isLive ? filterBySection("live", allTracks) : EMPTY_TRACKS,
     [isLive, filterBySection, allTracks, EMPTY_TRACKS],
@@ -582,8 +588,10 @@ export default function Dashboard() {
     setHiddenSections(prev => {
       const next = new Map(prev);
       const s = new Set(next.get(section) ?? []);
-      s.has(hexIdent) ? s.delete(hexIdent) : s.add(hexIdent);
-      s.size === 0 ? next.delete(section) : next.set(section, s);
+      if (s.has(hexIdent)) s.delete(hexIdent);
+      else s.add(hexIdent);
+      if (s.size === 0) next.delete(section);
+      else next.set(section, s);
       return next;
     });
   }, []);

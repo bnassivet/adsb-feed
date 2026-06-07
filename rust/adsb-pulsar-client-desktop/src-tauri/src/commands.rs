@@ -564,10 +564,12 @@ pub async fn reclaim_storage(
     info!("Storage reclaimed — DuckDB connection reopened");
 
     // Record reclaim event on the fresh connection
-    let _ = handle.insert_status_event(StatusEvent::now(
-        StatusEventType::Storage,
-        StatusEventStatus::Reclaimed,
-    )).await;
+    let _ = handle
+        .insert_status_event(StatusEvent::now(
+            StatusEventType::Storage,
+            StatusEventStatus::Reclaimed,
+        ))
+        .await;
 
     let mut guard = state.storage.write().await;
     *guard = Some(handle);

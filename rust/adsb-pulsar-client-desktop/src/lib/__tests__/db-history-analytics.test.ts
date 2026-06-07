@@ -332,7 +332,6 @@ describe("buildHeatmapGrid", () => {
 // --- buildHeatmapCellLookup ---
 
 describe("buildHeatmapCellLookup", () => {
-  const DAY_MS = 24 * 60 * 60 * 1000;
   const JAN15 = Date.UTC(2024, 0, 15);
 
   function makeCell(day_ms: number, hour: number, aircraft: number, messages: number, raw: number = 0, flights: number = 0): HourlyHeatmapCell {

@@ -148,7 +148,7 @@ cargo test --workspace
 
 # Lint and format check
 cargo clippy --workspace -- -D warnings
-cargo fmt --workspace --check
+cargo fmt --all --check
 ```
 
 ### Run the CLI Client standalone
@@ -194,7 +194,7 @@ All crates follow **Test-Driven Development** (Red-Green-Refactor). **985 tests*
 
 ```bash
 # Rust (291 tests)
-cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --workspace --check
+cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --all --check
 
 # TypeScript (694 tests, from adsb-pulsar-client-desktop/)
 npm test && npx next lint

@@ -116,7 +116,7 @@ cargo test --workspace
 npm test
 
 # Full CI gate
-cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --workspace --check
+cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --all --check
 npm test && npx next lint
 ```
 
