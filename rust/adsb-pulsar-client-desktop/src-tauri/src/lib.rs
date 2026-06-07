@@ -8,7 +8,9 @@ mod bridge;
 mod commands;
 mod state;
 
-use adsb_data_engine::{StatusEvent, StatusEventStatus, StatusEventType, StorageConfig, StorageHandle};
+use adsb_data_engine::{
+    StatusEvent, StatusEventStatus, StatusEventType, StorageConfig, StorageHandle,
+};
 use adsb_pulsar_client::Config;
 use state::AppState;
 use tauri::Manager;

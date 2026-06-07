@@ -37,15 +37,10 @@ export class ColumnarPositions {
     return [this.lat[i], this.lng[i], Number.isNaN(a) ? null : a];
   }
 
-  [Symbol.iterator](): Iterator<[number, number, number | null]> {
-    let i = 0;
-    const self = this;
-    return {
-      next(): IteratorResult<[number, number, number | null]> {
-        if (i >= self.length) return { done: true, value: undefined };
-        return { done: false, value: self.get(i++) };
-      },
-    };
+  *[Symbol.iterator](): Generator<[number, number, number | null]> {
+    for (let i = 0; i < this.length; i++) {
+      yield this.get(i);
+    }
   }
 }
 
