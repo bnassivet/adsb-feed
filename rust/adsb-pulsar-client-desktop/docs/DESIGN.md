@@ -18,6 +18,7 @@
 15. [Config Persistence & Receiver Location](#config-persistence--receiver-location)
 16. [Analysis Mode](#analysis-mode)
 17. [Arrow IPC Query Pipeline](#arrow-ipc-query-pipeline)
+18. [AI Agent & AG-UI Integration](#ai-agent--ag-ui-integration)
 
 ---
 
@@ -3523,6 +3524,156 @@ This eliminates the previous code path that used `getTrajectory` (JSON) + manual
 
 ---
 
+## AI Agent & AG-UI Integration
+
+The desktop app embeds an **optional local AI assistant**: a natural-language chat
+panel (CopilotKit / AG-UI) backed by a Python **LangGraph ReAct agent**. The user can
+ask questions about live and historical traffic ("how many aircraft did we see in the
+last hour?", "show the trajectory of AFR123") and issue UI commands ("pan to LFPG",
+"start the feed", "filter above 30,000 ft") — by text or by voice. The agent reasons
+over the app's DuckDB store server-side and forwards UI actions back to the frontend.
+
+> The agent is a **separate, optional process**. If it is not running, the rest of the
+> app is unaffected — the chat panel simply reports the agent as unreachable. Backend
+> setup, environment variables, and voice-model installation live in
+> [`agent/README.md`](../../adsb-agent/README.md); this section documents the **design** and how
+> the pieces connect to the desktop app.
+
+### Architecture Overview
+
+```
+┌───────────────────────────── Tauri Desktop App ──────────────────────────────┐
+│                                                                              │
+│  Next.js Frontend                                  Rust Backend (Tauri)      │
+│  ┌────────────────────────┐                        ┌───────────────────────┐ │
+│  │ AIChatPanel            │                        │ tool_server.rs        │ │
+│  │  └ CopilotChat (AG-UI) │                        │  POST /tools/{name}   │ │
+│  │ useCopilotContext (7)  │                        │  → tool_service.rs    │ │
+│  │ useCopilotTools (~27)  │                        │  → SharedStorage      │ │
+│  │ useVoiceInput / MicBtn │                        │   (DuckDB, read-only) │ │
+│  └───────────┬────────────┘                        └──────────▲────────────┘ │
+└──────────────┼────────────────────────────────────────────────┼─────────────┘
+               │ AG-UI SSE (client tools, context, messages)     │ HTTP loopback
+               │ http://localhost:8000/ag-ui                     │ 127.0.0.1:8787
+               ▼                                                  │ (server tools)
+        ┌──────────────────────────── Agent (FastAPI, :8000) ─────┴───────────┐
+        │  LangGraph ReAct loop  (graph.py)                                   │
+        │    START → agent (LLM) → route()                                    │
+        │              ├─ all server tools? → execute in-loop → back to agent │
+        │              └─ any client tool?  → END, forward to frontend        │
+        │  LLM: OpenAI-compatible endpoint (LM Studio / Ollama, :1234)        │
+        └─────────────────────────────────────────────────────────────────────┘
+```
+
+Two transports meet in the agent: the **AG-UI SSE channel** to the frontend (chat
+messages, ambient context, client-tool calls/results) and a **loopback HTTP tool
+server** to the Rust backend (read-only data queries). This split is the core design
+decision below.
+
+### Tool-Plane Split
+
+The agent partitions every tool into one of two planes (`SERVER_TOOL_NAMES` in
+`adsb-agent/src/adsb_agent/graph.py`):
+
+| Plane | Executed by | Examples | Why |
+|-------|-------------|----------|-----|
+| **Server tools** | Agent loop, via Tauri tool server (`:8787`) — except `getCurrentDateTime`, resolved locally | `getStorageStats`, `getAircraftSummary`, `getFlightSummary`, `getTrajectory`, `getTimeDistribution`, `getHourlyHeatmap`, `getEventsOfInterest` | Read-only DuckDB queries. Chaining them in-loop lets the agent gather data and reason over multiple hops **without** a frontend round-trip per call. |
+| **Client tools** | Frontend, via AG-UI round-trip | `selectAircraft`, `panMapTo`, `setFilters`, `setMapTheme`, `setActiveMode`, `toggleSidebar`, `setLayerVisibility`, `setColorMode`, `setDensityConfig`, `setEventFilter`, `toggleDemoFlights`, `searchLiveFlights`, `startFeed`, `stopFeed`, `createEventOfInterest` | UI mutations and state changes. Keeping these client-side preserves **user-in-the-loop** control and direct access to live React state. |
+
+The `route()` function loops back into the agent **only when every pending tool call is
+server-side**. As soon as one client tool is requested, the graph hits `END` and
+forwards the call to the frontend over AG-UI. This guarantees UI-affecting actions are
+never executed silently inside the reasoning loop. Loop depth is capped by
+`agent_recursion_limit` (default 25).
+
+### Tauri Tool Server (read-only data plane)
+
+The Rust backend exposes the read-only data plane over a **loopback-only** HTTP server:
+
+- `src-tauri/src/tool_server.rs` — `axum` router `POST /tools/{name}`, spawned from
+  `lib.rs` on `127.0.0.1:8787` (override via `ADSB_AGENT_TOOL_SERVER_PORT`). Binds
+  loopback only — never exposed off-host. Bind failure is non-fatal: tools report as
+  unavailable and the agent degrades gracefully.
+- `src-tauri/src/tool_service.rs` — dispatches each tool name to a query against
+  `SharedStorage` (`Arc<RwLock<Option<StorageHandle>>>`). If storage is `None`, returns a
+  readable "storage not available" error instead of failing.
+- **Wire contract**: JSON args body, snake_case fields; response envelope
+  `{ "ok": true, "data": … }` or `{ "ok": false, "error": "…" }`. The agent transforms
+  the LLM's camelCase args (`startMs`) to snake_case (`start_ms`) before dispatch.
+- DuckDB calls run on `tokio::task::spawn_blocking` (the `duckdb-rs` FFI is synchronous),
+  reusing the same storage layer as the Tauri IPC commands.
+
+### Frontend Integration (CopilotKit / AG-UI)
+
+| Concern | File | Notes |
+|---------|------|-------|
+| Provider | `src/components/CopilotKitProvider.tsx` | Wraps the app in `<CopilotKit runtimeUrl="http://localhost:8000/ag-ui" agent="adsb_agent">`. `AGENT_ID` must match the agent runtime info. |
+| Ambient context | `src/hooks/useCopilotContext.ts` | Registers 7 readables (active mode, connection status, storage status, selected aircraft, active filters, UI/theme/layers, live track count). Bundled into `RunAgentInput.context` each turn and rendered into the system prompt — the LLM always "sees" current UI state. |
+| Tool registration | `src/hooks/useCopilotTools.ts` | ~27 frontend tools via `useFrontendTool`. `useSafeFrontendTool` wraps each handler: catches exceptions → error JSON (prevents tool-call short-circuit), coerces results to string (AG-UI contract), emits a debug breadcrumb. |
+| Result rendering | `src/components/chat/` | Each data tool has a `render()` callback that displays a rich card (e.g. `StorageStatsCard`, `AircraftSummaryTable`) keyed off CopilotKit status (`in_progress` / `executing` / `complete`). |
+| Chat panel shell | `src/components/AIChatPanel.tsx` | Three docking modes — collapsed (32px strip), docked (resizable 280–560px), floating (draggable window). State persisted via `useLocalStorage` keys `adsb-aichat-open` / `-docked-expanded` / `-width` / `-floating` / `-float-x/y/w/h`. |
+
+### Voice Input
+
+Voice is layered on top of the same chat thread (`src/hooks/useVoiceInput.ts`,
+`src/components/MicButton.tsx`, transcript banner in `src/components/AIChatContent.tsx`):
+
+```
+mic click → POST /voice/start ─┐
+                               ├─ SSE GET /voice/transcript  (interim + final chunks)
+stop click → POST /voice/stop ─┘   → { transcript }
+                                       │
+                          manual mode: green banner with Edit / Send
+                          auto mode:   agent.addMessage() + runAgent()  (auto-submit)
+```
+
+- **Two backends** (selected via the mic button, persisted in `adsb-voice-backend`):
+  **Voxtral** (streaming STT, transcript arrives incrementally) and **LFM2.5-Audio**
+  (batch — buffers audio while recording, runs end-to-end inference once on stop via a
+  local `llama-liquid-audio-server` on `:2026`).
+- **Auto-send mode** (`adsb-voice-autosend`): on final transcript, programmatically
+  inject + submit via `agent.addMessage()` + `runAgent()` (the supported CopilotKit v2
+  path — *not* DOM event faking). A `sentTranscriptRef` dedups against double-send on
+  re-render.
+- **Thread isolation**: a `useEffect` on `threadId` stops and clears any in-flight
+  capture when the chat thread changes, so a transcript never bleeds into a new thread.
+
+### Ports
+
+| Service | Address | Purpose |
+|---------|---------|---------|
+| Agent (FastAPI) | `:8000` | AG-UI SSE chat + voice endpoints |
+| Tauri tool server | `127.0.0.1:8787` | Read-only DuckDB data tools (loopback only) |
+| LLM endpoint | `:1234` | OpenAI-compatible model (LM Studio / Ollama), external |
+| llama-liquid-audio | `127.0.0.1:2026` | LFM2.5-Audio inference (auto-spawned on first voice request) |
+| MLflow (optional) | `:5010` | Agent tracing backend |
+
+Agent-side endpoints used by the app: `POST /ag-ui` (single-endpoint transport),
+`POST /ag-ui/agent/{agent_id}/run` (REST transport, SSE), `GET /ag-ui/info` (runtime
+discovery), plus the `/voice/*` routes above. See `agent/src/adsb_agent/main.py`.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `adsb-agent/src/adsb_agent/graph.py` | LangGraph ReAct loop, `SERVER_TOOL_NAMES`, `route()`, arg transform |
+| `agent/src/adsb_agent/main.py` | FastAPI service: AG-UI + voice endpoints |
+| `agent/src/adsb_agent/config.py` | `ADSB_AGENT_*` settings (LLM, tool server, ports) |
+| `agent/src/adsb_agent/voice/` | `base.py`, `voxtral.py`, `lfm2_audio.py`, `audio_capture.py` |
+| `src-tauri/src/tool_server.rs` | Loopback HTTP tool server (`POST /tools/{name}`) |
+| `src-tauri/src/tool_service.rs` | Tool name → DuckDB query dispatch over `SharedStorage` |
+| `src/components/CopilotKitProvider.tsx` | AG-UI provider (agent URL + id) |
+| `src/hooks/useCopilotContext.ts` | Ambient UI-state readables |
+| `src/hooks/useCopilotTools.ts` | ~27 frontend tools + safe wrapper + render cards |
+| `src/hooks/useVoiceInput.ts` | Voice capture, SSE transcript, auto-send |
+| `src/components/AIChatPanel.tsx` / `AIChatContent.tsx` / `MicButton.tsx` | Chat UI shell, content, mic control |
+
+See [`agent/README.md`](../../adsb-agent/README.md) for backend setup, environment variables, the
+model-capability requirement (a reliable tool-calling model such as Qwen2.5-7B-Instruct),
+and voice-model installation.
+
+---
+
 ## Conclusion
 
 The ADS-B Aircraft Tracker desktop application demonstrates a modern, performant architecture:
@@ -3535,9 +3686,10 @@ The ADS-B Aircraft Tracker desktop application demonstrates a modern, performant
 - **Cross-Platform**: Single codebase builds for macOS, Windows, Linux
 - **Dual History System**: In-memory 6-hour session history (instant, filtered) + DuckDB persistent storage (survives restarts, queryable by bounds/trajectory/summary)
 - **Graceful Degradation**: DuckDB is optional — the app runs in real-time-only mode if storage initialization fails
+- **Optional AI Assistant**: An AG-UI / CopilotKit chat panel backed by a local LangGraph ReAct agent, with a server/client tool-plane split (read-only DuckDB queries in-loop via a loopback tool server, UI actions forwarded to the frontend) and dual-backend voice input — all fully local and optional
 
 This design prioritizes developer experience (hot reload, TypeScript, TDD), user experience (responsive UI, offline-capable, persistent history), and performance (async I/O, efficient rendering, Arrow IPC query pipeline, OLAP-optimized storage).
 
 ---
 
-*Last updated: March 2026 — Added status event audit trail (`status_events` DuckDB table, `StatusEventRecorder` in bridge.rs, `get_status_timeline` command, `StatusTimeline` component with color-coded timeline and filter pills). Previous: Arrow IPC query pipeline, `write_arrow_ipc` shared helper, `arrow-utils.ts` converters, `useReducer` state batching in DB History, `@tanstack/react-virtual` flight list virtualization, storage management (release/reclaim/export/swap/import), section-aware track visibility, analysis mode, config persistence, `adsb-data-engine` workspace crate, DB History panel (docked/floating).*
+*Last updated: June 2026 — Added AI Agent & AG-UI integration (CopilotKit chat panel, LangGraph ReAct agent on `:8000`, loopback Tauri tool server `tool_server.rs`/`tool_service.rs` on `:8787`, server/client tool-plane split, ambient `useCopilotContext` readables, `useCopilotTools`, voice input via Voxtral / LFM2.5-Audio with auto-send). Previous: status event audit trail (`status_events` DuckDB table, `StatusEventRecorder` in bridge.rs, `get_status_timeline` command, `StatusTimeline` component with color-coded timeline and filter pills). Previous: Arrow IPC query pipeline, `write_arrow_ipc` shared helper, `arrow-utils.ts` converters, `useReducer` state batching in DB History, `@tanstack/react-virtual` flight list virtualization, storage management (release/reclaim/export/swap/import), section-aware track visibility, analysis mode, config persistence, `adsb-data-engine` workspace crate, DB History panel (docked/floating).*
