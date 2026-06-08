@@ -372,6 +372,14 @@ tsconfig.tsbuildinfo
 # Next.js
 **/.next/
 
-src/notebooks/figures/
-src/notebooks/figures_copy/
-src/notebooks/data_cache/
+experimentation/src/notebooks/figures/
+experimentation/src/notebooks/figures_copy/
+experimentation/src/notebooks/data_cache/
+experimentation/src/notebooks/.ipynb_checkpoints/
+experimentation/**/.ipynb_checkpoints/
+experimentation/src/scala/target/
+experimentation/src/scala/project/target/
+# legacy typo (kept for safety)
+experimetation/src/notebooks/figures/
+experimetation/src/notebooks/figures_copy/
+experimetation/src/notebooks/data_cache/
