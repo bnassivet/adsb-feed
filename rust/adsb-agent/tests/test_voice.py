@@ -269,7 +269,6 @@ class TestAudioCapture:
         stop() must not survive into the next start() — otherwise the next
         recording's _collect_audio reads stale audio and exits early on None,
         leaking the prior recording's audio into the new transcription."""
-        import asyncio
         import numpy as np
 
         capture = AudioCapture()
