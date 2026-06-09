@@ -1,0 +1,14 @@
+# langgraph dev / langgraph-cli local runtime state
+.langgraph_api/
+
+# Local environment + virtualenv
+.env
+.venv/
+
+# Downloaded voice models (LFM2.5-Audio GGUFs, ~10 GB) — see install_lfm-25-audio-server.sh
+models/
+
+# Defense-in-depth: never version large model weights / binaries, wherever they land
+*.gguf
+*.bin
+*.safetensors

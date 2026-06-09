@@ -12,6 +12,8 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@copilotkit/react-core": "^1.55.3",
+    "@copilotkit/react-ui": "^1.55.3",
     "@tanstack/react-virtual": "^3.13.23",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.6.0",
@@ -24,7 +26,8 @@
     "react": "^19",
     "react-dom": "^19",
     "react-leaflet": "^5",
-    "recharts": "^3.7.0"
+    "recharts": "^3.7.0",
+    "uuid": "^14.0.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -37,6 +40,7 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/uuid": "^10.0.0",
     "eslint": "^9",
     "eslint-config-next": "^15",
     "jsdom": "^28.1.0",

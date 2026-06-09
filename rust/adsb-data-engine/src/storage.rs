@@ -805,8 +805,7 @@ impl StorageHandle {
         }
         sql.push_str(" ORDER BY f.flight_id, p.timestamp_ms");
 
-        let params_refs: Vec<&dyn duckdb::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn duckdb::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut stmt = storage.conn.prepare(&sql)?;
         let arrow_result = stmt.query_arrow(params_refs.as_slice())?;
@@ -1057,15 +1056,17 @@ impl StorageHandle {
                 .conn
                 .query_row("SELECT COUNT(*) FROM flights", [], |row| row.get(0))?;
 
-        let status_event_count: i64 = storage
-            .conn
-            .query_row("SELECT COUNT(*) FROM status_events", [], |row| row.get(0))?;
+        let status_event_count: i64 =
+            storage
+                .conn
+                .query_row("SELECT COUNT(*) FROM status_events", [], |row| row.get(0))?;
 
-        let eoi_count: i64 = storage.conn.query_row(
-            "SELECT COUNT(*) FROM events_of_interest",
-            [],
-            |row| row.get(0),
-        )?;
+        let eoi_count: i64 =
+            storage
+                .conn
+                .query_row("SELECT COUNT(*) FROM events_of_interest", [], |row| {
+                    row.get(0)
+                })?;
 
         // DuckDB database_size() returns a human-readable string for file-backed DBs.
         // For in-memory DBs it returns '0 bytes'. We approximate with row count * avg row size.
@@ -1384,7 +1385,14 @@ impl StorageHandle {
         let mut stmt = storage.conn.prepare(sql)?;
         let rows = stmt
             .query_map(
-                params![query.start_ms, query.end_ms, query.start_ms, query.end_ms, query.start_ms, query.end_ms],
+                params![
+                    query.start_ms,
+                    query.end_ms,
+                    query.start_ms,
+                    query.end_ms,
+                    query.start_ms,
+                    query.end_ms
+                ],
                 |row| {
                     Ok(HourlyHeatmapCell {
                         day_ms: row.get(0)?,
@@ -1555,10 +1563,7 @@ impl StorageHandle {
             .lock()
             .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
 
-        let source_id = event
-            .source_id
-            .as_deref()
-            .unwrap_or(&storage.source_id);
+        let source_id = event.source_id.as_deref().unwrap_or(&storage.source_id);
 
         storage.conn.execute(
             "INSERT INTO status_events (timestamp_ms, event_type, status, detail, source_id)
@@ -1800,10 +1805,7 @@ impl StorageHandle {
     }
 
     /// Get a single event of interest by ID (synchronous).
-    pub fn get_event_of_interest_sync(
-        &self,
-        id: &str,
-    ) -> Result<EventOfInterest, StorageError> {
+    pub fn get_event_of_interest_sync(&self, id: &str) -> Result<EventOfInterest, StorageError> {
         let storage = self
             .inner
             .lock()
@@ -1910,10 +1912,9 @@ impl StorageHandle {
             .lock()
             .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
 
-        let rows_affected = storage.conn.execute(
-            "DELETE FROM events_of_interest WHERE id = ?",
-            params![id],
-        )?;
+        let rows_affected = storage
+            .conn
+            .execute("DELETE FROM events_of_interest WHERE id = ?", params![id])?;
 
         if rows_affected == 0 {
             return Err(StorageError::Query(format!("Event not found: {id}")));
@@ -2337,10 +2338,7 @@ impl StorageHandle {
     }
 
     /// Get a single event of interest by ID (async via spawn_blocking).
-    pub async fn get_event_of_interest(
-        &self,
-        id: String,
-    ) -> Result<EventOfInterest, StorageError> {
+    pub async fn get_event_of_interest(&self, id: String) -> Result<EventOfInterest, StorageError> {
         let handle = self.clone();
         tokio::task::spawn_blocking(move || handle.get_event_of_interest_sync(&id))
             .await
@@ -5389,14 +5387,8 @@ mod tests {
         create.linked_hex_idents = Some("A1B2C3,D4E5F6".to_string());
 
         let event = handle.insert_event_of_interest_sync(&create).unwrap();
-        assert_eq!(
-            event.metadata.as_deref(),
-            Some(r#"{"confidence":0.95}"#)
-        );
-        assert_eq!(
-            event.linked_hex_idents.as_deref(),
-            Some("A1B2C3,D4E5F6")
-        );
+        assert_eq!(event.metadata.as_deref(), Some(r#"{"confidence":0.95}"#));
+        assert_eq!(event.linked_hex_idents.as_deref(), Some("A1B2C3,D4E5F6"));
 
         let found = handle.get_event_of_interest_sync(&event.id).unwrap();
         assert_eq!(found.metadata, event.metadata);
@@ -5434,8 +5426,7 @@ mod tests {
         let bytes = handle.get_all_trajectories_arrow_sync(None, None).unwrap();
         assert!(!bytes.is_empty());
 
-        let reader =
-            StreamReader::try_new(std::io::Cursor::new(&bytes), None).unwrap();
+        let reader = StreamReader::try_new(std::io::Cursor::new(&bytes), None).unwrap();
         let schema = reader.schema();
         assert_eq!(schema.fields().len(), 12); // 11 + flight_id
         assert!(schema.field_with_name("flight_id").is_ok());
@@ -5491,15 +5482,11 @@ mod tests {
         let batch_bytes = handle.get_trajectories_batch_arrow_sync(&queries).unwrap();
 
         // Both should have same total rows
-        let all_reader =
-            StreamReader::try_new(std::io::Cursor::new(&all_bytes), None).unwrap();
-        let batch_reader =
-            StreamReader::try_new(std::io::Cursor::new(&batch_bytes), None).unwrap();
+        let all_reader = StreamReader::try_new(std::io::Cursor::new(&all_bytes), None).unwrap();
+        let batch_reader = StreamReader::try_new(std::io::Cursor::new(&batch_bytes), None).unwrap();
 
-        let all_batches: Vec<RecordBatch> =
-            all_reader.collect::<Result<Vec<_>, _>>().unwrap();
-        let batch_batches: Vec<RecordBatch> =
-            batch_reader.collect::<Result<Vec<_>, _>>().unwrap();
+        let all_batches: Vec<RecordBatch> = all_reader.collect::<Result<Vec<_>, _>>().unwrap();
+        let batch_batches: Vec<RecordBatch> = batch_reader.collect::<Result<Vec<_>, _>>().unwrap();
 
         let all_rows: usize = all_batches.iter().map(|b| b.num_rows()).sum();
         let batch_rows: usize = batch_batches.iter().map(|b| b.num_rows()).sum();

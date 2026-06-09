@@ -7,8 +7,17 @@
 mod bridge;
 mod commands;
 mod state;
+mod tool_server;
+mod tool_service;
 
-use adsb_data_engine::{StatusEvent, StatusEventStatus, StatusEventType, StorageConfig, StorageHandle};
+/// Default loopback port for the agent tool server. Override with
+/// `ADSB_AGENT_TOOL_SERVER_PORT`. The Python agent must point
+/// `ADSB_AGENT_TOOL_SERVER_URL` at the same port.
+const DEFAULT_TOOL_SERVER_PORT: u16 = 8787;
+
+use adsb_data_engine::{
+    StatusEvent, StatusEventStatus, StatusEventType, StorageConfig, StorageHandle,
+};
 use adsb_pulsar_client::Config;
 use state::AppState;
 use tauri::Manager;
@@ -42,6 +51,17 @@ pub fn run() {
             // Load persisted config from Tauri store (falls back to defaults).
             let config = load_config(app);
             let state = AppState::with_config(config, storage, storage_config);
+
+            // Start the loopback tool server for the Python agent BEFORE the
+            // state is moved into Tauri's managed store — it shares the same
+            // `SharedStorage` Arc, so agent queries see live data and respect
+            // release/reclaim.
+            let tool_server_port = std::env::var("ADSB_AGENT_TOOL_SERVER_PORT")
+                .ok()
+                .and_then(|v| v.parse::<u16>().ok())
+                .unwrap_or(DEFAULT_TOOL_SERVER_PORT);
+            tool_server::spawn(std::sync::Arc::clone(&state.storage), tool_server_port);
+
             app.manage(state);
             Ok(())
         })

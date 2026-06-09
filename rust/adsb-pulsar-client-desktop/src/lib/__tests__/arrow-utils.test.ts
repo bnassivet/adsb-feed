@@ -37,7 +37,6 @@ function buildIPC(
     flight_id: string;
   }[],
 ): ArrayBuffer {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- makeTable generics don't match Vector types
   const table = makeTable({
     hex_ident: vectorFromArray(rows.map((r) => r.hex_ident), new Utf8()),
     callsign: vectorFromArray(rows.map((r) => r.callsign), new Utf8()),
@@ -51,6 +50,7 @@ function buildIPC(
     is_on_ground: vectorFromArray(rows.map((r) => r.is_on_ground), new Bool()),
     timestamp_ms: vectorFromArray(rows.map((r) => r.timestamp_ms), new Int64()),
     flight_id: vectorFromArray(rows.map((r) => r.flight_id), new Utf8()),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- makeTable generics don't match Vector types
   } as any);
 
   const ipcBytes = tableToIPC(table, "stream");
@@ -222,7 +222,6 @@ function buildFlightIPC(
     min_altitude: number | null; max_altitude: number | null;
   }[],
 ): ArrayBuffer {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const table = makeTable({
     hex_ident: vectorFromArray(rows.map(r => r.hex_ident), new Utf8()),
     flight_num: vectorFromArray(rows.map(r => r.flight_num), new Int32()),
@@ -233,6 +232,7 @@ function buildFlightIPC(
     last_seen_ms: vectorFromArray(rows.map(r => r.last_seen_ms), new Int64()),
     min_altitude: vectorFromArray(rows.map(r => r.min_altitude), new Float64()),
     max_altitude: vectorFromArray(rows.map(r => r.max_altitude), new Float64()),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any);
   return toArrayBuffer(tableToIPC(table, "stream"));
 }
@@ -303,7 +303,6 @@ function buildRawMsgIPC(
     timestamp_ms: bigint; raw_message: string; source_id: string;
   }[],
 ): ArrayBuffer {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const table = makeTable({
     hex_ident: vectorFromArray(rows.map(r => r.hex_ident), new Utf8()),
     msg_type: vectorFromArray(rows.map(r => r.msg_type), new Utf8()),
@@ -311,6 +310,7 @@ function buildRawMsgIPC(
     timestamp_ms: vectorFromArray(rows.map(r => r.timestamp_ms), new Int64()),
     raw_message: vectorFromArray(rows.map(r => r.raw_message), new Utf8()),
     source_id: vectorFromArray(rows.map(r => r.source_id), new Utf8()),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any);
   return toArrayBuffer(tableToIPC(table, "stream"));
 }
