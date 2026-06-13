@@ -27,3 +27,22 @@ Higher-performance and desktop components (Cargo workspace):
 
 See [`rust/README.md`](rust/README.md) for detailed setup, build commands, and crate documentation.
 
+### `graphify-out/`
+
+A navigable knowledge graph of this codebase produced by [graphify](https://github.com/safishamsi/graphify)
+(`GRAPH_REPORT.md`, `graph.json`, `graph.html`). The committed outputs and the semantic extraction
+cache (`cache/semantic/`) are tracked. The **AST cache (`cache/ast/`) is git-ignored** — it is large,
+churns on every code edit, and regenerates deterministically for free.
+
+**Regenerating the AST cache** (after cloning, or any time it is missing):
+
+```bash
+cd adsb-feed
+# AST-only refresh — re-parses changed code, repopulates cache/ast/, no LLM/API cost
+graphify update .
+```
+
+This rebuilds `cache/ast/`, `graph.json`, and `GRAPH_REPORT.md` from the current source.
+To rebuild the semantic layer as well (requires an LLM backend — cloud key or a local
+endpoint such as Ollama/LM Studio via `OLLAMA_BASE_URL`), run the full pipeline with `/graphify .`.
+
