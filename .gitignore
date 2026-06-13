@@ -394,3 +394,10 @@ graphify-out/.graphify_root
 graphify-out/.graphify_local_env.sh
 graphify-out/.graphify_uncached.txt
 graphify-out/memory/
+
+# graphify derived views — free to regenerate from graph.json:
+#   graph.html / GRAPH_TREE.html → `graphify export html`
+#   GRAPH_REPORT.md              → `graphify update .`
+graphify-out/graph.html
+graphify-out/GRAPH_TREE.html
+graphify-out/GRAPH_REPORT.md

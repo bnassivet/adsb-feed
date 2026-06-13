@@ -29,20 +29,25 @@ See [`rust/README.md`](rust/README.md) for detailed setup, build commands, and c
 
 ### `graphify-out/`
 
-A navigable knowledge graph of this codebase produced by [graphify](https://github.com/safishamsi/graphify)
-(`GRAPH_REPORT.md`, `graph.json`, `graph.html`). The committed outputs and the semantic extraction
-cache (`cache/semantic/`) are tracked. The **AST cache (`cache/ast/`) and per-session query
-`memory/` are git-ignored** — they are large, churn on every code edit, and regenerate for free.
+A navigable knowledge graph of this codebase produced by [graphify](https://github.com/safishamsi/graphify).
 
-**Regenerating the AST cache** (after cloning, or any time it is missing):
+**Only the non-regeneratable sources are tracked** — `graph.json`, the semantic extraction
+cache (`cache/semantic/`), `manifest.json` (the incremental-update baseline),
+`.graphify_labels.json`, and `cost.json`. Everything that regenerates for free is **git-ignored**:
+the AST cache (`cache/ast/`), the derived views (`graph.html`, `GRAPH_TREE.html`, `GRAPH_REPORT.md`),
+per-session query `memory/`, and machine-local dotfiles.
+
+**Regenerating the ignored files** (after cloning, or any time they are missing):
 
 ```bash
 cd adsb-feed
-# AST-only refresh — re-parses changed code, repopulates cache/ast/, no LLM/API cost
+# AST cache + graph.json + GRAPH_REPORT.md — re-parses changed code, no LLM/API cost
 graphify update .
+# Derived HTML views from the existing graph.json
+graphify export html
 ```
 
-This rebuilds `cache/ast/`, `graph.json`, and `GRAPH_REPORT.md` from the current source.
-To rebuild the semantic layer as well (requires an LLM backend — cloud key or a local
-endpoint such as Ollama/LM Studio via `OLLAMA_BASE_URL`), run the full pipeline with `/graphify .`.
+`graphify update .` diffs against the tracked `manifest.json`, so it only re-extracts changed
+files. To rebuild the semantic layer from scratch (requires an LLM backend — a cloud key or a
+local endpoint such as Ollama/LM Studio via `OLLAMA_BASE_URL`), run the full pipeline with `/graphify .`.
 
