@@ -80,9 +80,9 @@
     "semantic_hash": "ba64ff7d54714a8f64db89b1003207d8"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/package.json": {
-    "mtime": 1779018324.4434543,
-    "ast_hash": "d3d68df116afdfd51c0d2f74d12ebc32",
-    "semantic_hash": "d3d68df116afdfd51c0d2f74d12ebc32"
+    "mtime": 1780965860.788693,
+    "ast_hash": "502f4970ad15c91b9866c2b796e63843",
+    "semantic_hash": "502f4970ad15c91b9866c2b796e63843"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/tsconfig.json": {
     "mtime": 1779018324.461581,
@@ -95,39 +95,19 @@
     "semantic_hash": "5b5f7602c979a2c23ffe073bdc680464"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/.eslintrc.json": {
-    "mtime": 1779018324.4137163,
-    "ast_hash": "9b8be5ef96ddd69ecd1ddc1554c61a88",
-    "semantic_hash": "9b8be5ef96ddd69ecd1ddc1554c61a88"
+    "mtime": 1780965860.7811837,
+    "ast_hash": "5cc89077d438e3d0d0a8308ab7e06a5a",
+    "semantic_hash": "5cc89077d438e3d0d0a8308ab7e06a5a"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/next.config.ts": {
     "mtime": 1779018324.4430196,
     "ast_hash": "f433074585c62a85d0d01a5fe9153fa4",
     "semantic_hash": "f433074585c62a85d0d01a5fe9153fa4"
   },
-  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/agent/models/LFM2.5-Audio/bin/llama-liquid-audio-macos-arm64/ggml-common.h": {
-    "mtime": 1770238166.0,
-    "ast_hash": "e2f5c9a55fd2582120bcd1522ea5cf83",
-    "semantic_hash": "e2f5c9a55fd2582120bcd1522ea5cf83"
-  },
-  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/agent/models/LFM2.5-Audio/bin/llama-liquid-audio-macos-arm64/ggml-metal-impl.h": {
-    "mtime": 1770238166.0,
-    "ast_hash": "a29cb667ae9df12d1a33f47869f7270b",
-    "semantic_hash": "a29cb667ae9df12d1a33f47869f7270b"
-  },
-  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/agent/models/voxtral/params.json": {
-    "mtime": 1775947000.9858813,
-    "ast_hash": "f2de9fcba90259ada934d0703f0d3797",
-    "semantic_hash": "f2de9fcba90259ada934d0703f0d3797"
-  },
-  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/agent/models/voxtral/tekken.json": {
-    "mtime": 1775947002.6158915,
-    "ast_hash": "4ead99fb365ef5389214940c65bca679",
-    "semantic_hash": "4ead99fb365ef5389214940c65bca679"
-  },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/tauri.conf.json": {
-    "mtime": 1779018324.4509742,
-    "ast_hash": "3106b2358380def4e43d0c4d8f4ca0e1",
-    "semantic_hash": "3106b2358380def4e43d0c4d8f4ca0e1"
+    "mtime": 1780965860.790107,
+    "ast_hash": "cb8044a6f39924199f20fc3ce1b2743d",
+    "semantic_hash": "cb8044a6f39924199f20fc3ce1b2743d"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/build.rs": {
     "mtime": 1779018324.4436195,
@@ -160,24 +140,24 @@
     "semantic_hash": "da0a2e649e05e21d5a061a3b035c6076"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/bridge.rs": {
-    "mtime": 1779018324.4504383,
-    "ast_hash": "eb3a3c663ac0181111bc802c70409f46",
-    "semantic_hash": "eb3a3c663ac0181111bc802c70409f46"
+    "mtime": 1780965860.7891264,
+    "ast_hash": "22ae06a3b8c4737dc8c05d8004e090eb",
+    "semantic_hash": "22ae06a3b8c4737dc8c05d8004e090eb"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/lib.rs": {
-    "mtime": 1779018324.4506848,
-    "ast_hash": "fc0a4579d5092f03ef5d7a112bf7bf74",
-    "semantic_hash": "fc0a4579d5092f03ef5d7a112bf7bf74"
+    "mtime": 1780965860.7894988,
+    "ast_hash": "aa2677b1a80a2c0ab8641c89dd771053",
+    "semantic_hash": "aa2677b1a80a2c0ab8641c89dd771053"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/commands.rs": {
-    "mtime": 1779018324.450538,
-    "ast_hash": "af777c4c85e5351556faac57a92b5fe1",
-    "semantic_hash": "af777c4c85e5351556faac57a92b5fe1"
+    "mtime": 1780965860.7893302,
+    "ast_hash": "a90215f9fc2a626054416203f1fb8939",
+    "semantic_hash": "a90215f9fc2a626054416203f1fb8939"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/state.rs": {
-    "mtime": 1779018324.4508874,
-    "ast_hash": "7005025dc75b905468463def52462fbd",
-    "semantic_hash": "7005025dc75b905468463def52462fbd"
+    "mtime": 1780965860.7897007,
+    "ast_hash": "34f9965932c63d0a1c12305ea71a7b93",
+    "semantic_hash": "34f9965932c63d0a1c12305ea71a7b93"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/main.rs": {
     "mtime": 1779018324.4507356,
@@ -210,14 +190,14 @@
     "semantic_hash": "f7ed58294f7e8e7f9e3cd2e1ba2f577d"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/app/layout.tsx": {
-    "mtime": 1779018324.4511635,
-    "ast_hash": "91783d10bc89f3863880811a958c60fa",
-    "semantic_hash": "91783d10bc89f3863880811a958c60fa"
+    "mtime": 1780965860.79027,
+    "ast_hash": "7be5aa3cf0104bf1d223624473c2fff8",
+    "semantic_hash": "7be5aa3cf0104bf1d223624473c2fff8"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/app/page.tsx": {
-    "mtime": 1779018324.45126,
-    "ast_hash": "4bfcf3d0d3d1ccb5cfe396d8c1462560",
-    "semantic_hash": "4bfcf3d0d3d1ccb5cfe396d8c1462560"
+    "mtime": 1780965860.790504,
+    "ast_hash": "490f19cc24db944246beb2a13314d54f",
+    "semantic_hash": "490f19cc24db944246beb2a13314d54f"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/app/settings/page.tsx": {
     "mtime": 1779018324.4513793,
@@ -280,14 +260,14 @@
     "semantic_hash": "5d3b36f300776f456c12a565685c67ed"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/MapInner.tsx": {
-    "mtime": 1779018324.4529066,
-    "ast_hash": "5ba3f1281b5e78a44cf55c3bcdbaceda",
-    "semantic_hash": "5ba3f1281b5e78a44cf55c3bcdbaceda"
+    "mtime": 1780965860.791257,
+    "ast_hash": "b2f132eaa11f51f7b98f7d9b1e0b906b",
+    "semantic_hash": "b2f132eaa11f51f7b98f7d9b1e0b906b"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/Map.tsx": {
-    "mtime": 1779018324.4527688,
-    "ast_hash": "77903ef0893d983bb21f7802274b72be",
-    "semantic_hash": "77903ef0893d983bb21f7802274b72be"
+    "mtime": 1780965860.7910843,
+    "ast_hash": "221c0bf7e03a47a4de365d5140c08d7c",
+    "semantic_hash": "221c0bf7e03a47a4de365d5140c08d7c"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/EventsOfInterestContent.tsx": {
     "mtime": 1779018324.4523883,
@@ -350,9 +330,9 @@
     "semantic_hash": "8a0cdd11f31202020307cd1c034a7cc5"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/__tests__/DBHistoryContent.test.tsx": {
-    "mtime": 1779018324.454015,
-    "ast_hash": "3a6a60cd40f3f6d7b8df5351994e5b4c",
-    "semantic_hash": "3a6a60cd40f3f6d7b8df5351994e5b4c"
+    "mtime": 1780965860.791819,
+    "ast_hash": "98e4aac77c45fcc04e079c2ff4a3b723",
+    "semantic_hash": "98e4aac77c45fcc04e079c2ff4a3b723"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/__tests__/MapContextMenu.test.tsx": {
     "mtime": 1779018324.454872,
@@ -570,9 +550,9 @@
     "semantic_hash": "41eb4545f590fe234493f60c580c8689"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/types.ts": {
-    "mtime": 1779018324.461309,
-    "ast_hash": "32561b7cc5d46aa0a704afa1d7d77ada",
-    "semantic_hash": "32561b7cc5d46aa0a704afa1d7d77ada"
+    "mtime": 1780965860.7948632,
+    "ast_hash": "3c65d3313cb8a89b839b97fb89cac12f",
+    "semantic_hash": "3c65d3313cb8a89b839b97fb89cac12f"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/format.ts": {
     "mtime": 1779018324.4604588,
@@ -635,9 +615,9 @@
     "semantic_hash": "99c22940d97817b2e49ab30102285477"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/db-history-analytics.test.ts": {
-    "mtime": 1779018324.4582853,
-    "ast_hash": "59c1e6d8a8d1b16b9863982d1ded5a12",
-    "semantic_hash": "59c1e6d8a8d1b16b9863982d1ded5a12"
+    "mtime": 1780965860.7946904,
+    "ast_hash": "21496fb264379d31c16749778c3efd0b",
+    "semantic_hash": "21496fb264379d31c16749778c3efd0b"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/commands.test.ts": {
     "mtime": 1779018324.4581969,
@@ -690,9 +670,9 @@
     "semantic_hash": "640436eed2882434a0486dbc99580e53"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/arrow-utils.test.ts": {
-    "mtime": 1779018324.4577265,
-    "ast_hash": "fbd8f6f3b6d4abfaeb71b0aff358637c",
-    "semantic_hash": "fbd8f6f3b6d4abfaeb71b0aff358637c"
+    "mtime": 1780965860.7945259,
+    "ast_hash": "0764f659e46268fe1b237615acc8f124",
+    "semantic_hash": "0764f659e46268fe1b237615acc8f124"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/browse-reducer.test.ts": {
     "mtime": 1779018324.4578753,
@@ -745,9 +725,9 @@
     "semantic_hash": "a5630a8e20e5af72a08066f12538f337"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-engine/src/storage.rs": {
-    "mtime": 1779018324.4134567,
-    "ast_hash": "1a338c7ae9054b6b5e74f36acc33d7ba",
-    "semantic_hash": "1a338c7ae9054b6b5e74f36acc33d7ba"
+    "mtime": 1780965860.7810218,
+    "ast_hash": "04e5997bf823b5e0906ce2d72a539497",
+    "semantic_hash": "04e5997bf823b5e0906ce2d72a539497"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-engine/src/sbs_parser.rs": {
     "mtime": 1779018324.4131324,
@@ -765,19 +745,14 @@
     "semantic_hash": "b46f39906549868f60ff2d43348715fb"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/README.md": {
-    "mtime": 1779018324.4121861,
-    "ast_hash": "cbe81c2662c2db20666e98b16397399b",
-    "semantic_hash": "cbe81c2662c2db20666e98b16397399b"
-  },
-  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/CLAUDE copy.md": {
-    "mtime": 1779101348.9089599,
-    "ast_hash": "23bc94920295928c7d33c637c1cb2fcb",
-    "semantic_hash": "23bc94920295928c7d33c637c1cb2fcb"
+    "mtime": 1780965860.7752974,
+    "ast_hash": "37168176cdc79d8d1d77e77912d5fe0a",
+    "semantic_hash": "37168176cdc79d8d1d77e77912d5fe0a"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/CLAUDE.md": {
-    "mtime": 1779018324.4116964,
-    "ast_hash": "23bc94920295928c7d33c637c1cb2fcb",
-    "semantic_hash": "23bc94920295928c7d33c637c1cb2fcb"
+    "mtime": 1780965860.7745795,
+    "ast_hash": "71148e327cac3c5101873929199257fd",
+    "semantic_hash": "71148e327cac3c5101873929199257fd"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/QUICKSTART.md": {
     "mtime": 1779018324.462632,
@@ -810,14 +785,14 @@
     "semantic_hash": "0958f5b53a2cbaa1fa0db424eeb67c17"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/QUICKSTART.md": {
-    "mtime": 1779018324.4140286,
-    "ast_hash": "8b56d69040c4c11041c343985a572b24",
-    "semantic_hash": "8b56d69040c4c11041c343985a572b24"
+    "mtime": 1780965860.7814605,
+    "ast_hash": "78b7b7c9d7048ecbffb00f34890eeca4",
+    "semantic_hash": "78b7b7c9d7048ecbffb00f34890eeca4"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/README.md": {
-    "mtime": 1779018324.414204,
-    "ast_hash": "76dd9eff5f1a1741bda3ea2f2440d4ab",
-    "semantic_hash": "76dd9eff5f1a1741bda3ea2f2440d4ab"
+    "mtime": 1780965860.7816548,
+    "ast_hash": "1b108fcc528ad6fd552d1ef4ac9ec3b1",
+    "semantic_hash": "1b108fcc528ad6fd552d1ef4ac9ec3b1"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/CLAUDE.md": {
     "mtime": 1779018324.4138746,
@@ -830,14 +805,14 @@
     "semantic_hash": "97fc988eb0355c384bf254449c514899"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/DOCUMENTATION.md": {
-    "mtime": 1779018324.4146652,
-    "ast_hash": "c4df5a73436011159602665aa117eeee",
-    "semantic_hash": "c4df5a73436011159602665aa117eeee"
+    "mtime": 1780965860.7823822,
+    "ast_hash": "78b94dbf9d3abec1930b65bd4ea6f189",
+    "semantic_hash": "78b94dbf9d3abec1930b65bd4ea6f189"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/DESIGN.md": {
-    "mtime": 1779018324.4145393,
-    "ast_hash": "ee44b46cc73e6e497dc6fc216131df3e",
-    "semantic_hash": "ee44b46cc73e6e497dc6fc216131df3e"
+    "mtime": 1780965860.7821493,
+    "ast_hash": "5236a9d6c813fca19352b0a708b6c05b",
+    "semantic_hash": "5236a9d6c813fca19352b0a708b6c05b"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/2026-02-22-imported-tracks-selection-design.md": {
     "mtime": 1779018324.415895,
@@ -1223,5 +1198,695 @@
     "mtime": 1779018324.4458835,
     "ast_hash": "58b259381c9790593a4af118640d4f75",
     "semantic_hash": "58b259381c9790593a4af118640d4f75"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/test_dump1090_mock.py": {
+    "mtime": 1780965860.7732036,
+    "ast_hash": "64a225c15f55759d1d5b3e90a627bdc8",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/tools/pwd": {
+    "mtime": 1780965860.7741196,
+    "ast_hash": "7fe1587f08cb575e8ce993a44a846b88",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/tools/diagnose_connection.py": {
+    "mtime": 1780965860.7733696,
+    "ast_hash": "7d94a63b4a81cddce32a7a1fd4c67d67",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/tools/app-server.py": {
+    "mtime": 1780965860.773279,
+    "ast_hash": "7fe1587f08cb575e8ce993a44a846b88",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/tools/materials-python-sockets-tutorial-3/libclient.py": {
+    "mtime": 1780965860.7738495,
+    "ast_hash": "b941fdcd3db75e08103a36ee43e20c07",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/tools/materials-python-sockets-tutorial-3/multiconn-server.py": {
+    "mtime": 1780965860.7740636,
+    "ast_hash": "66c8c6e4999ac4479fa329902fb6d488",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/tools/materials-python-sockets-tutorial-3/libserver.py": {
+    "mtime": 1780965860.7739286,
+    "ast_hash": "ecd441a59276a1040d90ca7129098b0d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/tools/materials-python-sockets-tutorial-3/multiconn-client.py": {
+    "mtime": 1780965860.773995,
+    "ast_hash": "7017807fc88707af8d5a3b02b0d9a9ee",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/tools/materials-python-sockets-tutorial-3/app-client.py": {
+    "mtime": 1780965860.7735555,
+    "ast_hash": "b7d53901e59dfd51468b5f1038da5554",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/tools/materials-python-sockets-tutorial-3/echo-server.py": {
+    "mtime": 1780965860.7737758,
+    "ast_hash": "1c5b5b06faad91ff5064c442d828525e",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/tools/materials-python-sockets-tutorial-3/app-server.py": {
+    "mtime": 1780965860.7736294,
+    "ast_hash": "7fe1587f08cb575e8ce993a44a846b88",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/tools/materials-python-sockets-tutorial-3/echo-client.py": {
+    "mtime": 1780965860.7736974,
+    "ast_hash": "0a8c54f0b7e13144b165b870a7666275",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/python/pymodes_msg_analyzer.py": {
+    "mtime": 1780965860.7674909,
+    "ast_hash": "0279ad77aeb107c64da4aa32c70bc056",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/python/pulsar_client_py.py": {
+    "mtime": 1780965860.767357,
+    "ast_hash": "ee1cded2d577177440c2956d3e3f476f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/python/DF_17_python.py": {
+    "mtime": 1780965860.7667973,
+    "ast_hash": "ac2f57948d598b3c8b37ff28e089cb15",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/python/python_socket_forwarder_py.py": {
+    "mtime": 1780965860.7675579,
+    "ast_hash": "3e1f04cf2e3107cfa6d140a814f861df",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/python/pulsar-client-async.py": {
+    "mtime": 1780965860.767186,
+    "ast_hash": "ed4adfa97f6a02557a79feba15c7cf20",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/python/pulsar_consumer.py": {
+    "mtime": 1780965860.7674294,
+    "ast_hash": "4aa390a334dc93a720f24ff852e7429d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/python/adsb_feed/client.py": {
+    "mtime": 1780965860.7670696,
+    "ast_hash": "c98be934994f9873462d345596614f1b",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/python/adsb_feed/__init__.py": {
+    "mtime": 1780965860.766978,
+    "ast_hash": "7c98dad5f7ff3b735107b5af347bc0ed",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/scala/pulsar_client.scala": {
+    "mtime": 1780965860.7731316,
+    "ast_hash": "7344b6b5b7ed541b4053f0269a9458fc",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/scala/.bsp/sbt.json": {
+    "mtime": 1780965860.7676616,
+    "ast_hash": "92f6105d425265b0ba6dc9ca0dd2d572",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/cpp/pulsar-client.cpp": {
+    "mtime": 1780965860.7665377,
+    "ast_hash": "805a366f62ede1bf06180f7cd8748eef",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/cpp/pulsar-client-producer-cpp-boost-fiber.cpp": {
+    "mtime": 1780965860.7664123,
+    "ast_hash": "ff717a949354a725474747dfe9b37b63",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/tool_service.rs": {
+    "mtime": 1780965860.7899497,
+    "ast_hash": "7254eff9cda43d69911efc27785ef2ae",
+    "semantic_hash": "7254eff9cda43d69911efc27785ef2ae"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/tool_server.rs": {
+    "mtime": 1780965860.7898424,
+    "ast_hash": "363553ba5a6469f1fbd8428561d07e1b",
+    "semantic_hash": "363553ba5a6469f1fbd8428561d07e1b"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/AIChatContent.tsx": {
+    "mtime": 1780965860.7906587,
+    "ast_hash": "e3d27adf74917b49d58e316b54f28300",
+    "semantic_hash": "e3d27adf74917b49d58e316b54f28300"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/CopilotKitProvider.tsx": {
+    "mtime": 1780965860.7909253,
+    "ast_hash": "2d60196f90ca2e1a03479a70e0ae609e",
+    "semantic_hash": "2d60196f90ca2e1a03479a70e0ae609e"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/MicButton.tsx": {
+    "mtime": 1780965860.7913587,
+    "ast_hash": "534b8e3077e9412c90a701cb40b76b28",
+    "semantic_hash": "534b8e3077e9412c90a701cb40b76b28"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/AIChatPanel.tsx": {
+    "mtime": 1780965860.7908103,
+    "ast_hash": "56e3364551cedb2cfe9795c75c371e38",
+    "semantic_hash": "56e3364551cedb2cfe9795c75c371e38"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/chat/ChatCard.tsx": {
+    "mtime": 1780965860.7921736,
+    "ast_hash": "846f57f75046097a7490daf1e83b4563",
+    "semantic_hash": "846f57f75046097a7490daf1e83b4563"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/chat/AircraftSummaryTable.tsx": {
+    "mtime": 1780965860.7920716,
+    "ast_hash": "75ce7e4a259e51b8b24f10030bff85cf",
+    "semantic_hash": "75ce7e4a259e51b8b24f10030bff85cf"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/chat/ActionConfirmCard.tsx": {
+    "mtime": 1780965860.7919636,
+    "ast_hash": "fc53a83bab383eb6671288ee67d673f4",
+    "semantic_hash": "fc53a83bab383eb6671288ee67d673f4"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/chat/StorageStatsCard.tsx": {
+    "mtime": 1780965860.7929025,
+    "ast_hash": "99008c386cbdbe76e1050472ac6099d3",
+    "semantic_hash": "99008c386cbdbe76e1050472ac6099d3"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/chat/FeedMetricsCard.tsx": {
+    "mtime": 1780965860.7924852,
+    "ast_hash": "5ea9386afd7bcf95a7f2922db8375415",
+    "semantic_hash": "5ea9386afd7bcf95a7f2922db8375415"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/chat/LiveFlightsCard.tsx": {
+    "mtime": 1780965860.7927985,
+    "ast_hash": "370ae381fe06ab610bfe79d929896d61",
+    "semantic_hash": "370ae381fe06ab610bfe79d929896d61"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/chat/FeedStatusCard.tsx": {
+    "mtime": 1780965860.7925873,
+    "ast_hash": "bb4d9fdbf1a1da5b4b1d79e4c26f03c0",
+    "semantic_hash": "bb4d9fdbf1a1da5b4b1d79e4c26f03c0"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/chat/EventsCard.tsx": {
+    "mtime": 1780965860.7923858,
+    "ast_hash": "c780e9681b8ff7dacf4b26e098feb7d0",
+    "semantic_hash": "c780e9681b8ff7dacf4b26e098feb7d0"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/chat/TrajectoryCard.tsx": {
+    "mtime": 1780965860.7930093,
+    "ast_hash": "2e667d366afb227e47d57141a770031e",
+    "semantic_hash": "2e667d366afb227e47d57141a770031e"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/chat/index.ts": {
+    "mtime": 1780965860.793477,
+    "ast_hash": "64831d54d5bb86b3454e4f5a81a91261",
+    "semantic_hash": "64831d54d5bb86b3454e4f5a81a91261"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/chat/FlightSummaryTable.tsx": {
+    "mtime": 1780965860.7926888,
+    "ast_hash": "506e63c8ccc3bae8af377e831c095039",
+    "semantic_hash": "506e63c8ccc3bae8af377e831c095039"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/chat/DisplaySettingCard.tsx": {
+    "mtime": 1780965860.7922823,
+    "ast_hash": "8e741c74efdf6a993792bf648ca5a1a5",
+    "semantic_hash": "8e741c74efdf6a993792bf648ca5a1a5"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/chat/__tests__/DisplaySettingCard.test.tsx": {
+    "mtime": 1780965860.7932796,
+    "ast_hash": "ce107324c95c3a56d837ae17b47a0235",
+    "semantic_hash": "ce107324c95c3a56d837ae17b47a0235"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/chat/__tests__/ChatCards.test.tsx": {
+    "mtime": 1780965860.7931874,
+    "ast_hash": "ce76528d5ec413daf98b79adb8c0d112",
+    "semantic_hash": "ce76528d5ec413daf98b79adb8c0d112"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/chat/__tests__/EventsCard.test.tsx": {
+    "mtime": 1780965860.7933846,
+    "ast_hash": "367b24fcfc846546344c7c8a8f964910",
+    "semantic_hash": "367b24fcfc846546344c7c8a8f964910"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/__tests__/AIChatContent.threadId.test.tsx": {
+    "mtime": 1780965860.791553,
+    "ast_hash": "8d075a6f532fb6b3a2162288b94f2804",
+    "semantic_hash": "8d075a6f532fb6b3a2162288b94f2804"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/__tests__/AIChatPanel.test.tsx": {
+    "mtime": 1780965860.7916574,
+    "ast_hash": "35d6c98940c922967bf3558ac12255ee",
+    "semantic_hash": "35d6c98940c922967bf3558ac12255ee"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/__tests__/AIChatContent.test.tsx": {
+    "mtime": 1780965860.7914588,
+    "ast_hash": "644aa1b491c393da23dd7be6884f459b",
+    "semantic_hash": "644aa1b491c393da23dd7be6884f459b"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/useCopilotTools.ts": {
+    "mtime": 1780965860.794191,
+    "ast_hash": "8e9808467d1e8a027def6229a7483c61",
+    "semantic_hash": "8e9808467d1e8a027def6229a7483c61"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/useCopilotContext.ts": {
+    "mtime": 1780965860.7940729,
+    "ast_hash": "2fc6a1553c673d607af2876a1bf4ca8a",
+    "semantic_hash": "2fc6a1553c673d607af2876a1bf4ca8a"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/useChatThreadId.ts": {
+    "mtime": 1780965860.793999,
+    "ast_hash": "505e8ef8385705f558a7a83b27d84123",
+    "semantic_hash": "505e8ef8385705f558a7a83b27d84123"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/useVoiceInput.ts": {
+    "mtime": 1780965860.794338,
+    "ast_hash": "4790476d8f899c5b5ba6fc4784515c37",
+    "semantic_hash": "4790476d8f899c5b5ba6fc4784515c37"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/__tests__/useCopilotTools.test.ts": {
+    "mtime": 1780965860.793794,
+    "ast_hash": "e7ac67666719e87e06ca91ab30df14f6",
+    "semantic_hash": "e7ac67666719e87e06ca91ab30df14f6"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/__tests__/useCopilotContext.test.ts": {
+    "mtime": 1780965860.7936802,
+    "ast_hash": "ebfdf81d2dd0d0b5292a1434b94f30b7",
+    "semantic_hash": "ebfdf81d2dd0d0b5292a1434b94f30b7"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/__tests__/useChatThreadId.test.ts": {
+    "mtime": 1780965860.7935858,
+    "ast_hash": "392d1890774cd69af0e4f5726bf8af99",
+    "semantic_hash": "392d1890774cd69af0e4f5726bf8af99"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/__tests__/useVoiceInput.test.ts": {
+    "mtime": 1780965860.7939117,
+    "ast_hash": "401a4c3455a83e36108a2329e43da7c6",
+    "semantic_hash": "401a4c3455a83e36108a2329e43da7c6"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/install_lfm-25-audio-server.sh": {
+    "mtime": 1780965860.7757185,
+    "ast_hash": "e83b5db7cd50a21887b3740b9dd94322",
+    "semantic_hash": "e83b5db7cd50a21887b3740b9dd94322"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/langgraph.json": {
+    "mtime": 1780965860.775803,
+    "ast_hash": "bd79b8cef046be438b867c123962514a",
+    "semantic_hash": "bd79b8cef046be438b867c123962514a"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/test_voice.py": {
+    "mtime": 1780965860.7796328,
+    "ast_hash": "efc9b16778d2e335a0743768f9e10b7e",
+    "semantic_hash": "efc9b16778d2e335a0743768f9e10b7e"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/conftest.py": {
+    "mtime": 1780965860.7778378,
+    "ast_hash": "0998c277f7984a4966525dee830fa877",
+    "semantic_hash": "0998c277f7984a4966525dee830fa877"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/test_agent.py": {
+    "mtime": 1780965860.7779386,
+    "ast_hash": "69a60d0c398ea92a6823af49b6f8ec7a",
+    "semantic_hash": "69a60d0c398ea92a6823af49b6f8ec7a"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/test_tracing.py": {
+    "mtime": 1780965860.7794778,
+    "ast_hash": "7b3be1c6acac8603ac38358335327f7c",
+    "semantic_hash": "7b3be1c6acac8603ac38358335327f7c"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/test_system_prompt_render.py": {
+    "mtime": 1780965860.7789574,
+    "ast_hash": "cbcc21b1d9875b4bfbfe53bbf8dd9419",
+    "semantic_hash": "cbcc21b1d9875b4bfbfe53bbf8dd9419"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/test_dynamic_context.py": {
+    "mtime": 1780965860.7780292,
+    "ast_hash": "7af4b5af6a26b302023153498504326d",
+    "semantic_hash": "7af4b5af6a26b302023153498504326d"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/test_tool_result_loop.py": {
+    "mtime": 1780965860.7790682,
+    "ast_hash": "fa7653bc96f6b4f1ef1b3513c41feb6e",
+    "semantic_hash": "fa7653bc96f6b4f1ef1b3513c41feb6e"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/test_openapi.py": {
+    "mtime": 1780965860.778595,
+    "ast_hash": "1c0eaf12f3b2d1c7d034868236064df6",
+    "semantic_hash": "1c0eaf12f3b2d1c7d034868236064df6"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/__init__.py": {
+    "mtime": 1780965860.7776995,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/test_sse_heartbeat.py": {
+    "mtime": 1780965860.7788587,
+    "ast_hash": "54c7c6e92ff2c14483c224995bc61f5c",
+    "semantic_hash": "54c7c6e92ff2c14483c224995bc61f5c"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/test_tool_spans.py": {
+    "mtime": 1780965860.7792215,
+    "ast_hash": "9e7a8a5b51b4734655a18750efffb508",
+    "semantic_hash": "9e7a8a5b51b4734655a18750efffb508"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/test_lfm2_sse.py": {
+    "mtime": 1780965860.7784588,
+    "ast_hash": "2e35fc8f40a12728f42de7fb83a5c2f9",
+    "semantic_hash": "2e35fc8f40a12728f42de7fb83a5c2f9"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/test_tools.py": {
+    "mtime": 1780965860.7793314,
+    "ast_hash": "971d7bcf5800ec571a2678402be6560d",
+    "semantic_hash": "971d7bcf5800ec571a2678402be6560d"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/test_graph.py": {
+    "mtime": 1780965860.7782936,
+    "ast_hash": "44339ec8432bab3d24c4142fb73e7e23",
+    "semantic_hash": "44339ec8432bab3d24c4142fb73e7e23"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/test_session_tagging.py": {
+    "mtime": 1780965860.7787557,
+    "ast_hash": "b4215b6ab1764f0abf5978a83199d649",
+    "semantic_hash": "b4215b6ab1764f0abf5978a83199d649"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/test_dynamic_tools.py": {
+    "mtime": 1780965860.7781217,
+    "ast_hash": "7e7d5fb0f3df00cfe3e276d774904bcd",
+    "semantic_hash": "7e7d5fb0f3df00cfe3e276d774904bcd"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/models/LFM2.5-Audio/bin/llama-liquid-audio-macos-arm64/ggml-common.h": {
+    "mtime": 1770238166.0,
+    "ast_hash": "e2f5c9a55fd2582120bcd1522ea5cf83",
+    "semantic_hash": "e2f5c9a55fd2582120bcd1522ea5cf83"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/models/LFM2.5-Audio/bin/llama-liquid-audio-macos-arm64/ggml-metal-impl.h": {
+    "mtime": 1770238166.0,
+    "ast_hash": "a29cb667ae9df12d1a33f47869f7270b",
+    "semantic_hash": "a29cb667ae9df12d1a33f47869f7270b"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/models/voxtral/params.json": {
+    "mtime": 1775947000.9858813,
+    "ast_hash": "f2de9fcba90259ada934d0703f0d3797",
+    "semantic_hash": "f2de9fcba90259ada934d0703f0d3797"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/models/voxtral/tekken.json": {
+    "mtime": 1775947002.6158915,
+    "ast_hash": "4ead99fb365ef5389214940c65bca679",
+    "semantic_hash": "4ead99fb365ef5389214940c65bca679"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/tracing.py": {
+    "mtime": 1780965860.7770815,
+    "ast_hash": "6cde3b70103b5bcb2059848e7f29cbf3",
+    "semantic_hash": "6cde3b70103b5bcb2059848e7f29cbf3"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/config.py": {
+    "mtime": 1780965860.7761497,
+    "ast_hash": "1de42cf8eda1412835b31ab1c75820df",
+    "semantic_hash": "1de42cf8eda1412835b31ab1c75820df"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/models.py": {
+    "mtime": 1780965860.776621,
+    "ast_hash": "bb196fa397d9ba42ee0182db0573e425",
+    "semantic_hash": "bb196fa397d9ba42ee0182db0573e425"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/tools.py": {
+    "mtime": 1780965860.7769735,
+    "ast_hash": "9f2316643361e2706b9139dcdf519099",
+    "semantic_hash": "9f2316643361e2706b9139dcdf519099"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/graph.py": {
+    "mtime": 1780965860.776283,
+    "ast_hash": "2f42dd69acfd86b07d8d3a27441785f1",
+    "semantic_hash": "2f42dd69acfd86b07d8d3a27441785f1"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/system_prompt.py": {
+    "mtime": 1780965860.776869,
+    "ast_hash": "a40bd03b57327de7908cb134e9785dab",
+    "semantic_hash": "a40bd03b57327de7908cb134e9785dab"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/__init__.py": {
+    "mtime": 1780965860.7759798,
+    "ast_hash": "df98f8ab19205aea4045db4dc0576ed7",
+    "semantic_hash": "df98f8ab19205aea4045db4dc0576ed7"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/llm.py": {
+    "mtime": 1780965860.776385,
+    "ast_hash": "00e1bccbd9c433b1f70f4f43e3a8dbe6",
+    "semantic_hash": "00e1bccbd9c433b1f70f4f43e3a8dbe6"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/main.py": {
+    "mtime": 1780965860.7764988,
+    "ast_hash": "f428fa38f73844e5bac18115a584e05a",
+    "semantic_hash": "f428fa38f73844e5bac18115a584e05a"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/__main__.py": {
+    "mtime": 1780965860.776059,
+    "ast_hash": "55cecb92ba25bae7e89847bee1e258af",
+    "semantic_hash": "55cecb92ba25bae7e89847bee1e258af"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/voice/audio_capture.py": {
+    "mtime": 1780965860.777286,
+    "ast_hash": "97332d17a6fe96790aaef2cc9508e18f",
+    "semantic_hash": "97332d17a6fe96790aaef2cc9508e18f"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/voice/lfm2_audio.py": {
+    "mtime": 1780965860.7774916,
+    "ast_hash": "394760953e93e2425e49f12f51cd1787",
+    "semantic_hash": "394760953e93e2425e49f12f51cd1787"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/voice/__init__.py": {
+    "mtime": 1780965860.777189,
+    "ast_hash": "95a2140aa67bf2fc19acdfe2136c6841",
+    "semantic_hash": "95a2140aa67bf2fc19acdfe2136c6841"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/voice/voxtral.py": {
+    "mtime": 1780965860.777656,
+    "ast_hash": "d48df40fe8ecdb113144649d76da8a5b",
+    "semantic_hash": "d48df40fe8ecdb113144649d76da8a5b"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/voice/base.py": {
+    "mtime": 1780965860.7773786,
+    "ast_hash": "39da4c8cd78989c48511e4c53f725735",
+    "semantic_hash": "39da4c8cd78989c48511e4c53f725735"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/.claude/settings.json": {
+    "mtime": 1779101393.1476233,
+    "ast_hash": "87f0d903477984d0587a02f8fe185263",
+    "semantic_hash": "87f0d903477984d0587a02f8fe185263"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/.claude/settings.local.json": {
+    "mtime": 1780153242.7763638,
+    "ast_hash": "634682732f552dc2fc715e70d26d6478",
+    "semantic_hash": "634682732f552dc2fc715e70d26d6478"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/DockerCompose/pulsar/pulsar-consumer-test.sh": {
+    "mtime": 1779018324.4104676,
+    "ast_hash": "8599704ef0a4a11a0299d007ef69771e",
+    "semantic_hash": "8599704ef0a4a11a0299d007ef69771e"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/pulsar/setup_prometheus.sh": {
+    "mtime": 1779018324.4115682,
+    "ast_hash": "dc9235a523e1a422b51fdd018d40a806",
+    "semantic_hash": "dc9235a523e1a422b51fdd018d40a806"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/pulsar/pulsar-create-conf.sh": {
+    "mtime": 1779018324.4115145,
+    "ast_hash": "981607f3f438b88d353955e03564db0a",
+    "semantic_hash": "981607f3f438b88d353955e03564db0a"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/pulsar/pulsar-consumer-test.sh": {
+    "mtime": 1779018324.4114633,
+    "ast_hash": "8599704ef0a4a11a0299d007ef69771e",
+    "semantic_hash": "8599704ef0a4a11a0299d007ef69771e"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/pulsar/launch_pulsar_broker_standalone_docker.sh": {
+    "mtime": 1779018324.411211,
+    "ast_hash": "8a9ec4ec30a7df15e340c23d0de69cce",
+    "semantic_hash": "8a9ec4ec30a7df15e340c23d0de69cce"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/README.md": {
+    "mtime": 1780965860.7654028,
+    "ast_hash": "c589497e37235917d9097d48115fec4f",
+    "semantic_hash": "c589497e37235917d9097d48115fec4f"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/CLAUDE.md": {
+    "mtime": 1780965853.5597937,
+    "ast_hash": "82efb97a359f5c7290bf2513d14686be",
+    "semantic_hash": "82efb97a359f5c7290bf2513d14686be"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/TEST_MODE.md": {
+    "mtime": 1780965860.7660105,
+    "ast_hash": "0054ebf0f96c972d83732aa6215c03ce",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/ENHANCEMENT_ANALYSIS.md": {
+    "mtime": 1780965860.765854,
+    "ast_hash": "9556ef835c127ec9a61a0efe7f03e43a",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/README.md": {
+    "mtime": 1780965860.7659357,
+    "ast_hash": "36b52dfd750226eefe5bb595dc8e79ee",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/DESIGN_DESCRIPTION.md": {
+    "mtime": 1780965860.7656,
+    "ast_hash": "201b6abb252faa5c4de9b21febdd4942",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/ENHANCEMENTS_APPLIED.md": {
+    "mtime": 1780965860.7657468,
+    "ast_hash": "05bbe47259fa7c536a74dbf6959b5c2c",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/tools/materials-python-sockets-tutorial-3/README.md": {
+    "mtime": 1780965860.7734447,
+    "ast_hash": "c270920dd5ee6bb891ba63a4ee97ab12",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/python/Docker_python.yaml": {
+    "mtime": 1780965860.7668686,
+    "ast_hash": "c0df9f187092d2753948a76863cce3ba",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/cpp/Docker_Cpp.yaml": {
+    "mtime": 1780965860.7662609,
+    "ast_hash": "4ea6d3aa909e86ac5a59dec78e0f2849",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/notebooks/NOTEBOOK_OPTIMIZATION.md": {
+    "mtime": 1780965860.7666514,
+    "ast_hash": "88fef88d016c30bfe219e842e38e43a1",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/notebooks/figures/h3_plot_count.html": {
+    "mtime": 1767134055.5254579,
+    "ast_hash": "ce030d0a7fae0761689a58f2b3d969dd",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/notebooks/figures/ac_C05EFC_timeserie_scatter_plot.html": {
+    "mtime": 1767134055.4262915,
+    "ast_hash": "4573914a932cdf930af4840c3bb7eb86",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/notebooks/figures/ghost_plots.html": {
+    "mtime": 1767134055.5230088,
+    "ast_hash": "574fac0a0436fa58f793eb8224257bb7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/notebooks/figures/top1_ac_C05EFC_2023-06-01_scatter_plot.html": {
+    "mtime": 1767134055.526665,
+    "ast_hash": "86d360ca37cc9fd49ee5138f4bbce567",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/notebooks/figures/topn_ac_scatter_plot.html": {
+    "mtime": 1767134055.5323157,
+    "ast_hash": "d75f15472e7667164950ec1551762255",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/notebooks/figures/top1_ac_C05EFC_2023-06-18_scatter_plot.html": {
+    "mtime": 1767134055.5278113,
+    "ast_hash": "691fce827e0691df55d0cff7168112e9",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/notebooks/figures/ac_C05EFC_20230206_scatter_plot.html": {
+    "mtime": 1767134055.422723,
+    "ast_hash": "c0dd6d4c2d317cdb2b99db742dcc6a40",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/notebooks/figures/ac_C05EFC_2023-06-01_scatter_plot.html": {
+    "mtime": 1767134055.4192169,
+    "ast_hash": "a16b941538a48fd83c801e26e82042d9",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/notebooks/figures/top1_ac_C05EFC_20230617_scatter_plot.html": {
+    "mtime": 1767134055.528978,
+    "ast_hash": "2a17d42248ae530c35cfe9c5802cc3ca",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/notebooks/figures/h3_plot_altitude.html": {
+    "mtime": 1767134055.524206,
+    "ast_hash": "c837e7a381310b5e83a7ac2216df5ea7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/notebooks/figures/df_positions.html": {
+    "mtime": 1767134055.4756844,
+    "ast_hash": "7d99e7d5691b20adf65fec4217128a06",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/notebooks/figures/ac_C05EFC_2023-06-18_scatter_plot.html": {
+    "mtime": 1767134055.4209898,
+    "ast_hash": "542f6246ae5f123711732075c7b1561f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/notebooks/figures/ac_C05EFC_scatter_plot.html": {
+    "mtime": 1767134055.4246144,
+    "ast_hash": "653a875bdf69cb673cc3762ea4278c49",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/src/notebooks/figures/topn_ac_scatter_3D_plot.html": {
+    "mtime": 1767134055.5307848,
+    "ast_hash": "800b01583cb337496605d6c62a56ca6f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/copilotkit-ag-ui-local-agent.md": {
+    "mtime": 1780965860.782516,
+    "ast_hash": "c95868ac43d4ceae7b0625b3fe11b21a",
+    "semantic_hash": "c95868ac43d4ceae7b0625b3fe11b21a"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/README.md": {
+    "mtime": 1780965860.7756329,
+    "ast_hash": "111e6d691e88e6ce59152a4e9e9c7780",
+    "semantic_hash": "111e6d691e88e6ce59152a4e9e9c7780"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/prompt_sections.yaml": {
+    "mtime": 1780965860.7767048,
+    "ast_hash": "b335dc35048481b13c92d6ac9d47349a",
+    "semantic_hash": "b335dc35048481b13c92d6ac9d47349a"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/.github/workflows/ci.yml": {
+    "mtime": 1780965860.7648928,
+    "ast_hash": "e950f095a4736874e4218b4179f33a91",
+    "semantic_hash": "e950f095a4736874e4218b4179f33a91"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/README.md": {
+    "mtime": 1779018324.410588,
+    "ast_hash": "d53dd59b49c5022a578d399b8aac108b",
+    "semantic_hash": "d53dd59b49c5022a578d399b8aac108b"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/docker-compose.yml": {
+    "mtime": 1779018324.4108543,
+    "ast_hash": "3ddb51a5dcb35add86d1f0df5d157c8c",
+    "semantic_hash": "3ddb51a5dcb35add86d1f0df5d157c8c"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/prometheus/prometheus.yml": {
+    "mtime": 1779018324.4111454,
+    "ast_hash": "58d77262ee80fcbe27632bd58d01b9c7",
+    "semantic_hash": "58d77262ee80fcbe27632bd58d01b9c7"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/pulsar/monitoring/prometheus_pulsar_config/prometheus.yml": {
+    "mtime": 1779018324.411345,
+    "ast_hash": "1aa9d6d4b0baa1dfa69c4c12cbfd6e24",
+    "semantic_hash": "1aa9d6d4b0baa1dfa69c4c12cbfd6e24"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/kubernetes/k8_manifest.yaml": {
+    "mtime": 1779018324.410972,
+    "ast_hash": "4ac2ace67cad6d558b64bc74681af5b3",
+    "semantic_hash": "4ac2ace67cad6d558b64bc74681af5b3"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/graphify-out/memory/query_20260518_113418_what_are_the_types_used_for_flights.md": {
+    "mtime": 1780965853.632804,
+    "ast_hash": "fd00c1765c24ae835055ca83010cbb9c",
+    "semantic_hash": "fd00c1765c24ae835055ca83010cbb9c"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/screenshots/adsb-feed_chat-ai_2026-06-07.png": {
+    "mtime": 1780965860.7872732,
+    "ast_hash": "478151258ea1497eb9784b2d9150d8c0",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/graphify-out/memory/query_20260609_013536_how_does_a_tool_call_flow_from_the_llm_decision_in.md": {
+    "mtime": 1780968936.8495312,
+    "ast_hash": "7e12c73327a2e35037d8097db0991019",
+    "semantic_hash": "7e12c73327a2e35037d8097db0991019"
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/deferred/duckdb-quack-client-server-redesign.md": {
+    "mtime": 1780977456.1072674,
+    "ast_hash": "e77469d8c1b849cd0f6cf0628fc43878",
+    "semantic_hash": "e77469d8c1b849cd0f6cf0628fc43878"
   }
 }
