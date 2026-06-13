@@ -31,8 +31,8 @@ See [`rust/README.md`](rust/README.md) for detailed setup, build commands, and c
 
 A navigable knowledge graph of this codebase produced by [graphify](https://github.com/safishamsi/graphify)
 (`GRAPH_REPORT.md`, `graph.json`, `graph.html`). The committed outputs and the semantic extraction
-cache (`cache/semantic/`) are tracked. The **AST cache (`cache/ast/`) is git-ignored** — it is large,
-churns on every code edit, and regenerates deterministically for free.
+cache (`cache/semantic/`) are tracked. The **AST cache (`cache/ast/`) and per-session query
+`memory/` are git-ignored** — they are large, churn on every code edit, and regenerate for free.
 
 **Regenerating the AST cache** (after cloning, or any time it is missing):
 
