@@ -27,3 +27,27 @@ Higher-performance and desktop components (Cargo workspace):
 
 See [`rust/README.md`](rust/README.md) for detailed setup, build commands, and crate documentation.
 
+### `graphify-out/`
+
+A navigable knowledge graph of this codebase produced by [graphify](https://github.com/safishamsi/graphify).
+
+**Only the non-regeneratable sources are tracked** — `graph.json`, the semantic extraction
+cache (`cache/semantic/`), `manifest.json` (the incremental-update baseline),
+`.graphify_labels.json`, and `cost.json`. Everything that regenerates for free is **git-ignored**:
+the AST cache (`cache/ast/`), the derived views (`graph.html`, `GRAPH_TREE.html`, `GRAPH_REPORT.md`),
+per-session query `memory/`, and machine-local dotfiles.
+
+**Regenerating the ignored files** (after cloning, or any time they are missing):
+
+```bash
+cd adsb-feed
+# AST cache + graph.json + GRAPH_REPORT.md — re-parses changed code, no LLM/API cost
+graphify update .
+# Derived HTML views from the existing graph.json
+graphify export html
+```
+
+`graphify update .` diffs against the tracked `manifest.json`, so it only re-extracts changed
+files. To rebuild the semantic layer from scratch (requires an LLM backend — a cloud key or a
+local endpoint such as Ollama/LM Studio via `OLLAMA_BASE_URL`), run the full pipeline with `/graphify .`.
+
