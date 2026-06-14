@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useRef, type ReactNode } from "react";
+import { useCallback, type ReactNode } from "react";
 
 const MIN_DOCKED_WIDTH = 240;
 const MAX_DOCKED_WIDTH = 560;
@@ -106,40 +106,32 @@ function DockedPanel({
   onUnpin: () => void;
   children?: ReactNode;
 }) {
-  const lastX = useRef(0);
-  const isDragging = useRef(false);
-  const widthRef = useRef(width);
-  widthRef.current = width;
-
-  const handleMouseMove = useCallback(
-    (e: MouseEvent) => {
-      if (!isDragging.current) return;
-      const delta = lastX.current - e.clientX;
-      lastX.current = e.clientX;
-      onWidthChange(Math.max(MIN_DOCKED_WIDTH, Math.min(MAX_DOCKED_WIDTH, widthRef.current + delta)));
-    },
-    [onWidthChange],
-  );
-
-  const handleMouseUp = useCallback(() => {
-    isDragging.current = false;
-    document.body.style.userSelect = "";
-    document.body.style.cursor = "";
-    document.removeEventListener("mousemove", handleMouseMove);
-    document.removeEventListener("mouseup", handleMouseUp);
-  }, [handleMouseMove]);
-
+  // Self-contained drag: listeners created on mousedown capture the start width/x and are removed
+  // on mouseup. Avoids render-time ref writes and handler self-reference. Right-docked, so moving
+  // left expands (delta = startX - clientX).
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
-      isDragging.current = true;
-      lastX.current = e.clientX;
+      const startX = e.clientX;
+      const startWidth = width;
+
+      function onMove(ev: MouseEvent) {
+        const delta = startX - ev.clientX;
+        onWidthChange(Math.max(MIN_DOCKED_WIDTH, Math.min(MAX_DOCKED_WIDTH, startWidth + delta)));
+      }
+      function onUp() {
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      }
+
       document.body.style.userSelect = "none";
       document.body.style.cursor = "col-resize";
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mouseup", handleMouseUp);
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
     },
-    [handleMouseMove, handleMouseUp],
+    [width, onWidthChange],
   );
 
   return (
@@ -209,75 +201,59 @@ function FloatingPanel({
   onPin: () => void;
   children?: ReactNode;
 }) {
-  const isDragging = useRef(false);
-  const isResizing = useRef(false);
-  const startPos = useRef({ mx: 0, my: 0, x: 0, y: 0, w: 0, h: 0 });
-
-  // --- Drag (title bar) ---
-  const handleDragMove = useCallback(
-    (e: MouseEvent) => {
-      if (!isDragging.current) return;
-      const dx = e.clientX - startPos.current.mx;
-      const dy = e.clientY - startPos.current.my;
-      onPosChange(startPos.current.x + dx, startPos.current.y + dy);
-    },
-    [onPosChange],
-  );
-
-  const handleDragUp = useCallback(() => {
-    isDragging.current = false;
-    document.body.style.userSelect = "";
-    document.body.style.cursor = "";
-    document.removeEventListener("mousemove", handleDragMove);
-    document.removeEventListener("mouseup", handleDragUp);
-  }, [handleDragMove]);
-
+  // Self-contained drag/resize: each mousedown captures the start mouse/position/size in the
+  // closure and attaches move/up listeners removed on mouseup. Avoids ref-backed drag state and
+  // handler self-reference (Rules of React / React Compiler safe).
   const handleDragDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
-      isDragging.current = true;
-      startPos.current = { mx: e.clientX, my: e.clientY, x, y, w, h };
+      const mx = e.clientX;
+      const my = e.clientY;
+      const startX = x;
+      const startY = y;
+
+      function onMove(ev: MouseEvent) {
+        onPosChange(startX + (ev.clientX - mx), startY + (ev.clientY - my));
+      }
+      function onUp() {
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      }
+
       document.body.style.userSelect = "none";
       document.body.style.cursor = "move";
-      document.addEventListener("mousemove", handleDragMove);
-      document.addEventListener("mouseup", handleDragUp);
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
     },
-    [x, y, w, h, handleDragMove, handleDragUp],
+    [x, y, onPosChange],
   );
-
-  // --- Resize (bottom-right corner) ---
-  const handleResizeMove = useCallback(
-    (e: MouseEvent) => {
-      if (!isResizing.current) return;
-      const dx = e.clientX - startPos.current.mx;
-      const dy = e.clientY - startPos.current.my;
-      onSizeChange(
-        Math.max(280, startPos.current.w + dx),
-        Math.max(200, startPos.current.h + dy),
-      );
-    },
-    [onSizeChange],
-  );
-
-  const handleResizeUp = useCallback(() => {
-    isResizing.current = false;
-    document.body.style.userSelect = "";
-    document.body.style.cursor = "";
-    document.removeEventListener("mousemove", handleResizeMove);
-    document.removeEventListener("mouseup", handleResizeUp);
-  }, [handleResizeMove]);
 
   const handleResizeDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
-      isResizing.current = true;
-      startPos.current = { mx: e.clientX, my: e.clientY, x, y, w, h };
+      const mx = e.clientX;
+      const my = e.clientY;
+      const startW = w;
+      const startH = h;
+
+      function onMove(ev: MouseEvent) {
+        onSizeChange(Math.max(280, startW + (ev.clientX - mx)), Math.max(200, startH + (ev.clientY - my)));
+      }
+      function onUp() {
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      }
+
       document.body.style.userSelect = "none";
       document.body.style.cursor = "nwse-resize";
-      document.addEventListener("mousemove", handleResizeMove);
-      document.addEventListener("mouseup", handleResizeUp);
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
     },
-    [x, y, w, h, handleResizeMove, handleResizeUp],
+    [w, h, onSizeChange],
   );
 
   return (

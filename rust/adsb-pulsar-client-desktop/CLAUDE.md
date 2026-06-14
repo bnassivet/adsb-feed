@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with the Tauri desktop a
 
 ## Project Overview
 
-Desktop aircraft tracker built with Tauri v2 (Rust backend) + Next.js 15 + React 19. Connects to dump1090 via the `adsb-pulsar-client` library and displays real-time aircraft positions on an interactive Leaflet map.
+Desktop aircraft tracker built with Tauri v2 (Rust backend) + Next.js 16 + React 19. Connects to dump1090 via the `adsb-pulsar-client` library and displays real-time aircraft positions on an interactive Leaflet map.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ Desktop aircraft tracker built with Tauri v2 (Rust backend) + Next.js 15 + React
 
 - **Backend**: Tauri v2 Rust (`src-tauri/src/`)
 - **Shared library**: `adsb-data-engine` (workspace crate) — SBS-1 parser + DuckDB persistent storage
-- **Frontend**: Next.js 15 App Router + React 19 (`src/`)
+- **Frontend**: Next.js 16 App Router + React 19 (`src/`)
 - **Styling**: Tailwind CSS v4
 - **Map**: Leaflet via react-leaflet (dynamic import, SSR disabled)
 - **Build**: Next.js `output: 'export'` for Tauri static file serving
@@ -137,8 +137,23 @@ npx vitest run --reporter=verbose # Verbose with test names
 cargo test -p adsb-data-engine && cargo test -p adsb-pulsar-client-desktop-lib && cargo clippy --workspace -- -D warnings
 
 # TypeScript
-npm test && npx next lint
+npm test && npm run lint
 ```
+
+> **Build note**: `next build` is pinned to `--webpack` in `package.json`. Next.js 16's default
+> Turbopack bundler currently fails the static export while prerendering the internal
+> `/_global-error` route (upstream bug vercel/next.js#87719); `dev` still uses Turbopack.
+> ESLint runs via flat config (`eslint.config.mjs`); the legacy `.eslintrc.json` was removed and
+> `next lint` no longer exists in Next 16.
+>
+> **React Compiler**: enabled via `reactCompiler: true` in `next.config.ts` (needs the
+> `babel-plugin-react-compiler` devDep). It auto-memoizes components; builds are slower (Babel).
+> `react-hooks/refs` and `react-hooks/immutability` are enforced at **error** (all violations
+> fixed). `react-hooks/set-state-in-effect`, `purity`, and `incompatible-library` stay at **warn**
+> — their remaining occurrences are legitimate (data-fetch/async/UUID/animation effects, intentional
+> render reads, CopilotKit integration). The compiler bails out per-component on those, so they
+> don't affect correctness. Vitest runs against source (not compiled output), so verify compiler
+> behavior at runtime via `npm run tauri dev`.
 
 ## Code Conventions
 

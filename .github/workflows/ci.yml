@@ -16,12 +16,25 @@ jobs:
   rust-core:
     name: Rust core (adsb-pulsar-client + adsb-data-engine)
     runs-on: ubuntu-latest
+    env:
+      # DuckDB's `bundled` feature compiles the full C++ amalgamation; debug
+      # info inflates the object files and libduckdb.a enough to exhaust the
+      # runner's disk. CI does not need debuggable binaries.
+      CARGO_PROFILE_DEV_DEBUG: "0"
     defaults:
       run:
         working-directory: rust
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          large-packages: true
+          docker-images: true
+          swap-storage: true
 
       - name: Install system dependencies
         run: |
@@ -169,7 +182,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: rust/adsb-pulsar-client-desktop/package-lock.json
 
@@ -177,7 +190,10 @@ jobs:
         run: npm ci
 
       - name: Lint
-        run: npx next lint
+        run: npm run lint
 
       - name: Run tests
         run: npm test
+
+      - name: Build (static export)
+        run: npm run build

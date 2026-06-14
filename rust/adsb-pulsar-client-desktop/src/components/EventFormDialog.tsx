@@ -107,38 +107,35 @@ export function EventFormDialog({
   const [error, setError] = useState<string | null>(null);
   const locationDetailsRef = useRef<HTMLDetailsElement>(null);
 
-  // Drag state for movable dialog
+  // Drag state for movable dialog. Self-contained drag: each mousedown captures the start mouse
+  // position and current offset in the closure and attaches move/up listeners removed on mouseup.
+  // Avoids ref-backed drag state and handler self-reference.
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  const isDragging = useRef(false);
-  const dragStart = useRef({ mx: 0, my: 0, ox: 0, oy: 0 });
-
-  const handleDragMove = useCallback((e: MouseEvent) => {
-    if (!isDragging.current) return;
-    setDragOffset({
-      x: dragStart.current.ox + (e.clientX - dragStart.current.mx),
-      y: dragStart.current.oy + (e.clientY - dragStart.current.my),
-    });
-  }, []);
-
-  const handleDragUp = useCallback(() => {
-    isDragging.current = false;
-    document.body.style.userSelect = "";
-    document.body.style.cursor = "";
-    document.removeEventListener("mousemove", handleDragMove);
-    document.removeEventListener("mouseup", handleDragUp);
-  }, [handleDragMove]);
 
   const handleDragDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
-      isDragging.current = true;
-      dragStart.current = { mx: e.clientX, my: e.clientY, ox: dragOffset.x, oy: dragOffset.y };
+      const mx = e.clientX;
+      const my = e.clientY;
+      const ox = dragOffset.x;
+      const oy = dragOffset.y;
+
+      function onMove(ev: MouseEvent) {
+        setDragOffset({ x: ox + (ev.clientX - mx), y: oy + (ev.clientY - my) });
+      }
+      function onUp() {
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      }
+
       document.body.style.userSelect = "none";
       document.body.style.cursor = "move";
-      document.addEventListener("mousemove", handleDragMove);
-      document.addEventListener("mouseup", handleDragUp);
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
     },
-    [dragOffset, handleDragMove, handleDragUp],
+    [dragOffset],
   );
 
   // Apply map pick result to internal state

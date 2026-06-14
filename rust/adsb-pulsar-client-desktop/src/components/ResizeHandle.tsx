@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useRef } from "react";
+import { useCallback } from "react";
 
 interface Props {
   onResize: (deltaY: number) => void;
@@ -7,39 +7,32 @@ interface Props {
 }
 
 export function ResizeHandle({ onResize, onResizeEnd }: Props) {
-  const lastY = useRef(0);
-  const isDragging = useRef(false);
-
-  const handleMouseMove = useCallback(
-    (e: MouseEvent) => {
-      if (!isDragging.current) return;
-      const delta = e.clientY - lastY.current;
-      lastY.current = e.clientY;
-      onResize(delta);
-    },
-    [onResize],
-  );
-
-  const handleMouseUp = useCallback(() => {
-    isDragging.current = false;
-    document.body.style.userSelect = "";
-    document.body.style.cursor = "";
-    document.removeEventListener("mousemove", handleMouseMove);
-    document.removeEventListener("mouseup", handleMouseUp);
-    onResizeEnd();
-  }, [handleMouseMove, onResizeEnd]);
-
+  // Self-contained drag: move/up listeners are created on mousedown and removed on mouseup, with
+  // the last Y tracked in the closure. Emits incremental deltaY. Avoids handler self-reference.
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
-      isDragging.current = true;
-      lastY.current = e.clientY;
+      let lastY = e.clientY;
+
+      function onMove(ev: MouseEvent) {
+        const delta = ev.clientY - lastY;
+        lastY = ev.clientY;
+        onResize(delta);
+      }
+      function onUp() {
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        onResizeEnd();
+      }
+
       document.body.style.userSelect = "none";
       document.body.style.cursor = "row-resize";
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mouseup", handleMouseUp);
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
     },
-    [handleMouseMove, handleMouseUp],
+    [onResize, onResizeEnd],
   );
 
   return (

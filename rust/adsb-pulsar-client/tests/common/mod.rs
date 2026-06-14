@@ -6,8 +6,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
 /// Sample SBS-1 MSG,3 position message.
-pub const SBS_MSG3_POSITION: &str =
-    "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,35000,,120.5,45.5017,-73.5673,,1234,,,,0";
+pub const SBS_MSG3_POSITION: &str = "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,35000,,120.5,45.5017,-73.5673,,1234,,,,0";
 
 /// Sample SBS-1 MSG,1 callsign message.
 pub const SBS_MSG1_CALLSIGN: &str =

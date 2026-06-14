@@ -23,12 +23,12 @@ use adsb_data_engine::{
     TrajectoryQuery,
 };
 use axum::{
+    Json, Router,
     extract::{Path, State},
     routing::post,
-    Json, Router,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{info, warn};
 
 /// Args for `getAircraftSummary` / `getFlightSummary` — both take an optional
@@ -213,10 +213,12 @@ mod tests {
         // hex_ident is required by TrajectoryQuery.
         let resp = dispatch(&storage, "getTrajectory", json!({"start_ms": 1})).await;
         assert_eq!(resp["ok"], false);
-        assert!(resp["error"]
-            .as_str()
-            .unwrap()
-            .contains("Invalid arguments"));
+        assert!(
+            resp["error"]
+                .as_str()
+                .unwrap()
+                .contains("Invalid arguments")
+        );
     }
 
     #[tokio::test]

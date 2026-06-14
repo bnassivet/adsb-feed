@@ -1,49 +1,43 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 
 type SetValue<T> = (value: T | ((prev: T) => T)) => void;
 
+function readStored<T>(key: string, defaultValue: T): T {
+  if (typeof window === "undefined") return defaultValue;
+  try {
+    const stored = localStorage.getItem(key);
+    return stored !== null ? (JSON.parse(stored) as T) : defaultValue;
+  } catch {
+    return defaultValue;
+  }
+}
+
 export function useLocalStorage<T>(key: string, defaultValue: T): [T, SetValue<T>] {
   // Lazy initialization: read from localStorage synchronously before first render (SSR-safe)
-  const [value, setValue] = useState<T>(() => {
-    if (typeof window === "undefined") return defaultValue;
-    try {
-      const stored = localStorage.getItem(key);
-      return stored !== null ? (JSON.parse(stored) as T) : defaultValue;
-    } catch {
-      return defaultValue;
-    }
-  });
-  const valueRef = useRef(value);
-  valueRef.current = value;
+  const [value, setValue] = useState<T>(() => readStored(key, defaultValue));
 
-  // Keep in sync if key changes (rare, but defensive)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const stored = localStorage.getItem(key);
-      if (stored !== null) {
-        const parsed = JSON.parse(stored) as T;
-        setValue(parsed);
-        valueRef.current = parsed;
-      }
-    } catch {
-      // Ignore parse errors, keep current value
-    }
-  }, [key]);
+  // Re-read if the key changes (rare, but defensive). Uses the React "adjust state during render"
+  // pattern instead of an effect — keyed on the tracked key so it re-reads exactly once per change.
+  const [trackedKey, setTrackedKey] = useState(key);
+  if (key !== trackedKey) {
+    setTrackedKey(key);
+    setValue(readStored(key, defaultValue));
+  }
 
   const setAndPersist: SetValue<T> = useCallback(
     (newValue) => {
-      const resolved = typeof newValue === "function"
-        ? (newValue as (prev: T) => T)(valueRef.current)
-        : newValue;
-      setValue(resolved);
-      valueRef.current = resolved;
-      try {
-        localStorage.setItem(key, JSON.stringify(resolved));
-      } catch {
-        // Ignore storage errors (quota, etc.)
-      }
+      // Functional updater gives the latest value without a render-time ref. The persist is
+      // idempotent (same key/value), so running under StrictMode's double-invoke is harmless.
+      setValue((prev) => {
+        const resolved = typeof newValue === "function" ? (newValue as (prev: T) => T)(prev) : newValue;
+        try {
+          localStorage.setItem(key, JSON.stringify(resolved));
+        } catch {
+          // Ignore storage errors (quota, etc.)
+        }
+        return resolved;
+      });
     },
     [key],
   );

@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useRef } from "react";
+import { useCallback } from "react";
 import { FiltersPanel } from "@/components/Filters";
 import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventFilterMode } from "@/lib/types";
 
@@ -96,40 +96,32 @@ function ExpandedPanel({
   onWidthChange: (w: number) => void;
   filterProps: Omit<LeftPanelProps, "isOpen" | "width" | "onToggle" | "onWidthChange">;
 }) {
-  const lastX = useRef(0);
-  const isDragging = useRef(false);
-  const widthRef = useRef(width);
-  widthRef.current = width; // keep ref in sync with latest prop during each render
-
-  const handleMouseMove = useCallback(
-    (e: MouseEvent) => {
-      if (!isDragging.current) return;
-      const delta = e.clientX - lastX.current; // Moving right = expanding panel
-      lastX.current = e.clientX;
-      onWidthChange(Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, widthRef.current + delta)));
-    },
-    [onWidthChange],
-  );
-
-  const handleMouseUp = useCallback(() => {
-    isDragging.current = false;
-    document.body.style.userSelect = "";
-    document.body.style.cursor = "";
-    document.removeEventListener("mousemove", handleMouseMove);
-    document.removeEventListener("mouseup", handleMouseUp);
-  }, [handleMouseMove]);
-
+  // Each drag is self-contained: the move/up listeners are created on mousedown and capture the
+  // starting width/x in the closure, then removed on mouseup. This avoids ref writes during render
+  // and the mutual handler self-reference (both flagged by react-hooks/refs). Moving right expands.
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
-      isDragging.current = true;
-      lastX.current = e.clientX;
+      const startX = e.clientX;
+      const startWidth = width;
+
+      function onMove(ev: MouseEvent) {
+        const delta = ev.clientX - startX;
+        onWidthChange(Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, startWidth + delta)));
+      }
+      function onUp() {
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      }
+
       document.body.style.userSelect = "none";
       document.body.style.cursor = "col-resize";
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mouseup", handleMouseUp);
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
     },
-    [handleMouseMove, handleMouseUp],
+    [width, onWidthChange],
   );
 
   return (

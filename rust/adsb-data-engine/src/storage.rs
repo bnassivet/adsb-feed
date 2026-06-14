@@ -16,7 +16,7 @@ use crate::types::{
 };
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
-use duckdb::{params, Connection};
+use duckdb::{Connection, params};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::info;
@@ -3534,7 +3534,7 @@ mod tests {
         // ~50 NM east (longitude offset adjusted for latitude)
         let east_lat = 48.8;
         let east_lon = 3.565; // 0.833° / cos(48.8°) ≈ 1.265°
-                              // ~50 NM southwest
+        // ~50 NM southwest
         let sw_lat = 48.2;
         let sw_lon = 1.5;
 
