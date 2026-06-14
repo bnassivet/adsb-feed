@@ -248,6 +248,12 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
   // Composite version for backward compat — bumps on either live or static change
   const version = liveVersion + staticVersion;
 
+  // Deliberate mutable-store design: the five Maps live in refs and are mutated in place at high
+  // frequency (throttled feed), with `liveVersion`/`staticVersion` driving re-renders. Reading
+  // `*.current` here to build the context value is intentional and correct given the version-bump
+  // re-render trigger, so react-hooks/refs is suppressed for this block. The React Compiler
+  // independently bails out on this provider (leaving it as-is); it is already hand-optimized.
+  /* eslint-disable react-hooks/refs -- intentional ref-backed store read; see note above */
   // Fix 4: memoize context value — only creates new object when a version changes
   const value = useMemo<AircraftTrackingContextValue>(
     () => ({
@@ -277,6 +283,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
       {children}
     </AircraftTrackingContext.Provider>
   );
+  /* eslint-enable react-hooks/refs */
 }
 
 /**

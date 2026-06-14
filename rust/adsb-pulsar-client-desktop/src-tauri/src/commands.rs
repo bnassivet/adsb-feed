@@ -16,9 +16,9 @@ use adsb_data_engine::{
 use adsb_pulsar_client::Config;
 
 use crate::bridge::DesktopMetrics;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tauri::{ipc::Response, Emitter, State};
+use std::sync::atomic::Ordering;
+use tauri::{Emitter, State, ipc::Response};
 use tracing::info;
 
 /// Starts the ADS-B feed client with the current configuration.

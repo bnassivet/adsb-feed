@@ -6,7 +6,7 @@
 use crate::config::Config;
 use crate::error::{ClientError, Result};
 use crate::forwarder::MessageForwarder;
-use pulsar::{producer, Producer, Pulsar, TokioExecutor};
+use pulsar::{Producer, Pulsar, TokioExecutor, producer};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
