@@ -383,3 +383,21 @@ experimentation/src/scala/project/target/
 experimetation/src/notebooks/figures/
 experimetation/src/notebooks/figures_copy/
 experimetation/src/notebooks/data_cache/
+
+# graphify knowledge graph — ignore regeneratable cache + machine-local state.
+# Keep tracked: GRAPH_REPORT.md, graph.json, graph.html, GRAPH_TREE.html,
+# manifest.json, .graphify_labels.json, cost.json, memory/, cache/semantic/.
+graphify-out/cache/ast/
+graphify-out/cache/.DS_Store
+graphify-out/.graphify_python
+graphify-out/.graphify_root
+graphify-out/.graphify_local_env.sh
+graphify-out/.graphify_uncached.txt
+graphify-out/memory/
+
+# graphify derived views — free to regenerate from graph.json:
+#   graph.html / GRAPH_TREE.html → `graphify export html`
+#   GRAPH_REPORT.md              → `graphify update .`
+graphify-out/graph.html
+graphify-out/GRAPH_TREE.html
+graphify-out/GRAPH_REPORT.md
