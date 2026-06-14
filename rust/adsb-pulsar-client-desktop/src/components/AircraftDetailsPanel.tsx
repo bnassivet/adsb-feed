@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useRef } from "react";
+import { useCallback } from "react";
 import type { AircraftTrack } from "@/lib/types";
 import {
   verticalTendency,
@@ -91,38 +91,31 @@ function ExpandedPanel({
   isDbHistory?: boolean;
 }) {
   const { resolvedTzName } = useDisplayTz();
-  const lastX = useRef(0);
-  const isDragging = useRef(false);
-
-  const handleMouseMove = useCallback(
-    (e: MouseEvent) => {
-      if (!isDragging.current) return;
-      const delta = lastX.current - e.clientX; // Moving left = expanding panel
-      lastX.current = e.clientX;
-      onWidthChange(Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, width + delta)));
-    },
-    [width, onWidthChange],
-  );
-
-  const handleMouseUp = useCallback(() => {
-    isDragging.current = false;
-    document.body.style.userSelect = "";
-    document.body.style.cursor = "";
-    document.removeEventListener("mousemove", handleMouseMove);
-    document.removeEventListener("mouseup", handleMouseUp);
-  }, [handleMouseMove]);
-
+  // Self-contained drag: listeners created on mousedown capture the start width/x and are removed
+  // on mouseup. Avoids handler self-reference. Left-docked panel, so moving left expands.
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
-      isDragging.current = true;
-      lastX.current = e.clientX;
+      const startX = e.clientX;
+      const startWidth = width;
+
+      function onMove(ev: MouseEvent) {
+        const delta = startX - ev.clientX;
+        onWidthChange(Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, startWidth + delta)));
+      }
+      function onUp() {
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      }
+
       document.body.style.userSelect = "none";
       document.body.style.cursor = "col-resize";
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mouseup", handleMouseUp);
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
     },
-    [handleMouseMove, handleMouseUp],
+    [width, onWidthChange],
   );
 
   const tendency = verticalTendency(track.vertical_rate);

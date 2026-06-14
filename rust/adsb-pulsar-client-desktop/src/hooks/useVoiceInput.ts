@@ -164,13 +164,14 @@ export function useVoiceInput(threadId?: string): UseVoiceInputReturn {
 
   // Auto-stop voice + clear stale transcript when the chat thread changes.
   // The previous thread's voice session must not bleed into the new one.
+  // `isListening` is read directly (in the effect deps) instead of via a render-synced ref; the
+  // prevThreadIdRef guard ensures the body still only acts when threadId actually changes, so the
+  // extra runs when isListening toggles within the same thread are no-ops.
   const prevThreadIdRef = useRef<string | undefined>(threadId);
-  const isListeningRef = useRef(isListening);
-  isListeningRef.current = isListening;
   useEffect(() => {
     if (prevThreadIdRef.current !== threadId) {
       prevThreadIdRef.current = threadId;
-      if (isListeningRef.current) {
+      if (isListening) {
         // Stop first; stopListening reads /voice/stop which may set finalTranscript
         // — clear AFTER it resolves so the stale transcript doesn't leak into the new thread.
         void stopListening().then(() => setFinalTranscript(null));
@@ -178,7 +179,7 @@ export function useVoiceInput(threadId?: string): UseVoiceInputReturn {
         setFinalTranscript(null);
       }
     }
-  }, [threadId, stopListening]);
+  }, [threadId, isListening, stopListening]);
 
   const clearFinalTranscript = useCallback(() => {
     setFinalTranscript(null);

@@ -8,7 +8,7 @@
  * Phase 3: Each tool includes a `render` callback that displays
  * a rich card component in the chat instead of raw JSON.
  */
-import { createElement, useRef } from "react";
+import { createElement, useEffect, useRef } from "react";
 import { useFrontendTool, type ReactFrontendTool } from "@copilotkit/react-core/v2";
 import { z } from "zod";
 import {
@@ -152,7 +152,12 @@ export function useCopilotTools(config: DisplayToolsConfig) {
   // render lives forever. Reading state through this ref (updated on every
   // render) lets handlers always see current values without re-registering.
   const configRef = useRef(config);
-  configRef.current = config;
+  // Sync in an effect (not during render) so it is Rules-of-React safe. Handlers read
+  // configRef.current only when invoked (user/agent-triggered, well after commit), so the
+  // one-render sync delay is irrelevant.
+  useEffect(() => {
+    configRef.current = config;
+  });
 
   useSafeFrontendTool({
     name: "getStorageStats",

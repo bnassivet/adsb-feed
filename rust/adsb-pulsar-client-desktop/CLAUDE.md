@@ -144,8 +144,16 @@ npm test && npm run lint
 > Turbopack bundler currently fails the static export while prerendering the internal
 > `/_global-error` route (upstream bug vercel/next.js#87719); `dev` still uses Turbopack.
 > ESLint runs via flat config (`eslint.config.mjs`); the legacy `.eslintrc.json` was removed and
-> `next lint` no longer exists in Next 16. The bundled `react-hooks` v6 React-Compiler rules are
-> set to `warn` (pre-existing violations tracked as follow-up debt).
+> `next lint` no longer exists in Next 16.
+>
+> **React Compiler**: enabled via `reactCompiler: true` in `next.config.ts` (needs the
+> `babel-plugin-react-compiler` devDep). It auto-memoizes components; builds are slower (Babel).
+> `react-hooks/refs` and `react-hooks/immutability` are enforced at **error** (all violations
+> fixed). `react-hooks/set-state-in-effect`, `purity`, and `incompatible-library` stay at **warn**
+> — their remaining occurrences are legitimate (data-fetch/async/UUID/animation effects, intentional
+> render reads, CopilotKit integration). The compiler bails out per-component on those, so they
+> don't affect correctness. Vitest runs against source (not compiled output), so verify compiler
+> behavior at runtime via `npm run tauri dev`.
 
 ## Code Conventions
 
