@@ -14,9 +14,9 @@ pub mod types;
 // Re-export primary public API at crate root.
 pub use error::StorageError;
 pub use sbs_parser::{
-    extract_sbs_timestamp, parse_sbs_message, parse_sbs_raw_fields, AircraftPosition,
+    AircraftPosition, extract_sbs_timestamp, parse_sbs_message, parse_sbs_raw_fields,
 };
-pub use storage::{move_database_to_snapshot, StorageHandle};
+pub use storage::{StorageHandle, move_database_to_snapshot};
 pub use types::{
     AircraftSummary, BboxQuery, CreateEventOfInterest, DetectionRangeQuery, DetectionRangeSector,
     EventOfInterest, EventOfInterestQuery, FlightSummary, FlightSummaryQuery, HourlyHeatmapCell,
