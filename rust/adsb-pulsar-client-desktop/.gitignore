@@ -17,6 +17,7 @@ src-tauri/gen/
 
 # TypeScript
 tsconfig.tsbuildinfo
+next-env.d.ts
 
 # Next.js
 **/.next/
