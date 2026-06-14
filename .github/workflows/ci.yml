@@ -169,7 +169,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: rust/adsb-pulsar-client-desktop/package-lock.json
 
@@ -177,7 +177,10 @@ jobs:
         run: npm ci
 
       - name: Lint
-        run: npx next lint
+        run: npm run lint
 
       - name: Run tests
         run: npm test
+
+      - name: Build (static export)
+        run: npm run build
