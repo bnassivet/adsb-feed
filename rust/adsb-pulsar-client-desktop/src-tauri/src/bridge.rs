@@ -8,17 +8,17 @@ use crate::state::{
     ConnectionStatus, FeedHandle, SharedConnectionStatus, SharedStorage, StatusResponse,
 };
 use adsb_data_engine::{
-    extract_sbs_timestamp, parse_sbs_message, parse_sbs_raw_fields, AircraftPosition, RawSbsRecord,
-    StatusEvent, StatusEventStatus, StatusEventType,
+    AircraftPosition, RawSbsRecord, StatusEvent, StatusEventStatus, StatusEventType,
+    extract_sbs_timestamp, parse_sbs_message, parse_sbs_raw_fields,
 };
 use adsb_pulsar_client::forwarder::NoopForwarder;
 use adsb_pulsar_client::{ADSBFeedClient, Config, Metrics};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter};
-use tokio::sync::{broadcast, RwLock};
-use tokio::time::{interval, Duration, Instant};
+use tokio::sync::{RwLock, broadcast};
+use tokio::time::{Duration, Instant, interval};
 use tracing::{error, info, warn};
 
 /// Records status lifecycle events to DuckDB.
@@ -38,10 +38,10 @@ impl StatusEventRecorder {
     /// Record a status event. Non-blocking, non-fatal.
     pub async fn record(&self, event: StatusEvent) {
         let guard = self.storage.read().await;
-        if let Some(ref s) = *guard {
-            if let Err(e) = s.insert_status_event(event).await {
-                warn!("Status event record failed: {e}");
-            }
+        if let Some(ref s) = *guard
+            && let Err(e) = s.insert_status_event(event).await
+        {
+            warn!("Status event record failed: {e}");
         }
     }
 }
@@ -275,8 +275,8 @@ async fn relay_messages(
 
                         if let Ok(line) = String::from_utf8(data) {
                             // Collect raw message for audit/replay
-                            if let Some((hex, msg_type, trans_type)) = parse_sbs_raw_fields(&line) {
-                                if let Some(ts) = extract_sbs_timestamp(&line) {
+                            if let Some((hex, msg_type, trans_type)) = parse_sbs_raw_fields(&line)
+                                && let Some(ts) = extract_sbs_timestamp(&line) {
                                     raw_buffer.push(RawSbsRecord {
                                         hex_ident: hex,
                                         msg_type,
@@ -287,7 +287,6 @@ async fn relay_messages(
                                         source_id: String::new(),
                                     });
                                 }
-                            }
 
                             if let Some(pos) = parse_sbs_message(&line) {
                                 messages_parsed.fetch_add(1, Ordering::Relaxed);
@@ -373,10 +372,10 @@ fn merge_into_buffer(buffer: &mut HashMap<String, AircraftPosition>, new: Aircra
 /// (set to `None`), the batch is silently dropped.
 async fn persist_batch(storage: &SharedStorage, batch: &[AircraftPosition], tz: &str) {
     let guard = storage.read().await;
-    if let Some(ref s) = *guard {
-        if let Err(e) = s.insert_batch(batch.to_vec(), tz.to_string()).await {
-            warn!("Storage insert failed: {e}");
-        }
+    if let Some(ref s) = *guard
+        && let Err(e) = s.insert_batch(batch.to_vec(), tz.to_string()).await
+    {
+        warn!("Storage insert failed: {e}");
     }
 }
 
@@ -386,10 +385,10 @@ async fn persist_raw_batch(storage: &SharedStorage, batch: &[RawSbsRecord], tz: 
         return;
     }
     let guard = storage.read().await;
-    if let Some(ref s) = *guard {
-        if let Err(e) = s.insert_raw_batch(batch.to_vec(), tz.to_string()).await {
-            warn!("Raw storage insert failed: {e}");
-        }
+    if let Some(ref s) = *guard
+        && let Err(e) = s.insert_raw_batch(batch.to_vec(), tz.to_string()).await
+    {
+        warn!("Raw storage insert failed: {e}");
     }
 }
 

@@ -169,9 +169,11 @@ mod tests {
     #[test]
     fn test_recording_flags_default_to_true() {
         let state = AppState::new(None);
-        assert!(state
-            .record_positions
-            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(
+            state
+                .record_positions
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
         assert!(state.record_raw.load(std::sync::atomic::Ordering::Relaxed));
     }
 

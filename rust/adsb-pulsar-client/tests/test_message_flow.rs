@@ -5,11 +5,11 @@
 
 mod common;
 
-use adsb_pulsar_client::forwarder::NoopForwarder;
 use adsb_pulsar_client::ADSBFeedClient;
+use adsb_pulsar_client::forwarder::NoopForwarder;
 use common::{
-    test_config_for_port, MockDump1090, SBS_HEARTBEAT, SBS_MSG1_CALLSIGN, SBS_MSG3_POSITION,
-    SBS_MSG4_SPEED,
+    MockDump1090, SBS_HEARTBEAT, SBS_MSG1_CALLSIGN, SBS_MSG3_POSITION, SBS_MSG4_SPEED,
+    test_config_for_port,
 };
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;

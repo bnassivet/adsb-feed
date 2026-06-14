@@ -41,6 +41,13 @@ const MIN_TABLE_HEIGHT = 150;
 const MAX_TABLE_HEIGHT_VH = 0.5; // 50vh
 
 export default function Dashboard() {
+  // Mount gate: the layout below is driven by ~30 useLocalStorage values read synchronously on the
+  // client, which don't exist at static-export build time. Rendering a neutral placeholder until
+  // after hydration keeps the first client render identical to the prerendered HTML (no hydration
+  // mismatch) and avoids a flash of default layout — the UI appears once with the restored state.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const [activeMode, setActiveMode] = useLocalStorage<ActiveMode>("adsb-active-mode", "live");
   const [liveFilters, setLiveFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [analysisFilters, setAnalysisFilters] = useState<Filters>(DEFAULT_FILTERS);
@@ -178,6 +185,15 @@ export default function Dashboard() {
   const [historySliderMin, setHistorySliderMin] = useState(0);
   const [historySliderMax, setHistorySliderMax] = useState<number | null>(null);
   const effectiveSliderMax = historySliderMax ?? trackHistoryHours;
+
+  // Reset slider when trackHistoryHours changes (e.g. user changes setting). Uses the React
+  // "adjust state during render" pattern instead of an effect — no need for a post-commit pass.
+  const [prevTrackHistoryHours, setPrevTrackHistoryHours] = useState(trackHistoryHours);
+  if (trackHistoryHours !== prevTrackHistoryHours) {
+    setPrevTrackHistoryHours(trackHistoryHours);
+    setHistorySliderMin(0);
+    setHistorySliderMax(null);
+  }
   const simulatedTracks = useSimulatedTracks(showSimulation);
   const allTracks = useMemo(() => [...tracks, ...simulatedTracks], [tracks, simulatedTracks]);
 
@@ -394,12 +410,6 @@ export default function Dashboard() {
     storageStatus,
   });
 
-  // Reset slider when trackHistoryHours changes (e.g. user changes setting)
-  useEffect(() => {
-    setHistorySliderMin(0);
-    setHistorySliderMax(null);
-  }, [trackHistoryHours]);
-
   const visibleHistory = useMemo(() => {
     if (!showHistory) return [];
     return filterHistoryByTimeRange(history, trackHistoryHours, historySliderMin, effectiveSliderMax, Date.now());
@@ -525,9 +535,10 @@ export default function Dashboard() {
     }
   }, [lastSelectedHexIdent, flatVisibleOrder]);
 
-  // Auto-deselect when selected tracks disappear from current mode
-  useEffect(() => {
-    if (selectedHexIdents.size === 0) return;
+  // Auto-deselect when selected tracks disappear from current mode. Uses the React "adjust state
+  // during render" pattern (guarded so it only fires when something actually disappeared) instead
+  // of an effect.
+  if (selectedHexIdents.size > 0) {
     const remaining = new Set([...selectedHexIdents].filter(h => allMapTracksMap.has(h)));
     if (remaining.size < selectedHexIdents.size) {
       setSelectedHexIdents(remaining);
@@ -535,7 +546,7 @@ export default function Dashboard() {
     if (lastSelectedHexIdent && !allMapTracksMap.has(lastSelectedHexIdent)) {
       setLastSelectedHexIdent(null);
     }
-  }, [selectedHexIdents, lastSelectedHexIdent, allMapTracksMap]);
+  }
 
   // O(1) lookups using Sets built from existing arrays
   const importedKeysSet = useMemo(() => new Set(mapImported.map(t => trackKey(t))), [mapImported]);
@@ -761,6 +772,11 @@ export default function Dashboard() {
     } catch (e) {
       setError(String(e));
     }
+  }
+
+  // Matches the prerendered HTML on first client render; real UI renders after hydration.
+  if (!mounted) {
+    return <div className="h-screen flex flex-col bg-slate-950" />;
   }
 
   return (
