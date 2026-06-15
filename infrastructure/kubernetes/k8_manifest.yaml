@@ -1,93 +1,96 @@
-# Here is an example of a manifest file for deploying a kubernetes cluster with a single Spark master node and two Spark worker nodes, along with a mini-cube for S3 storage support:
-
+# Kubernetes manifest: Spark 4.1 cluster (master + workers) with MinIO S3 storage.
+#
+# Spark 4.x is Scala 2.13 only and requires Java 17+; the apache/spark:4.1.1
+# image provides both. Delta Lake for Spark 4.1 is delta-spark 4.2.0.
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-name: spark-cluster
-labels:
-app: spark-cluster
+  name: spark-cluster
+  labels:
+    app: spark-cluster
 spec:
-replicas: 3
-selector:
-matchLabels:
-app: spark-cluster
-template:
-metadata:
-labels:
-app: spark-cluster
-spec:
-containers:
-- name: spark-node
-image: "spark:3.0.0"
-env:
-- name: SPARK_MASTER_URL
-value: "spark://spark-master:7077"
-- name: SPARK_WORKER_CORES
-value: "2"
-- name: SPARK_WORKER_MEMORY
-value: "2G"
-- name: SPARK_WORKER_INSTANCES
-value: "2"
-- name: SPARK_EXECUTOR_MEMORY
-value: "1G"
-- name: SPARK_DRIVER_MEMORY
-value: "1G"
-ports:
-- containerPort: 8080
-- containerPort: 7077
-- containerPort: 6066
-volumeMounts:
-- name: data
-mountPath: /home/data
-- name: minio
-image: "minio/minio"
-env:
-- name: MINIO_ACCESS_KEY
-value: "minio"
-- name: MINIO_SECRET_KEY
-value: "minio123"
-ports:
-- containerPort: 9000
-volumeMounts:
-- name: data
-mountPath: /home/data
-volumes:
-- name: data
-configMap:
-name: data-config
-
+  replicas: 3
+  selector:
+    matchLabels:
+      app: spark-cluster
+  template:
+    metadata:
+      labels:
+        app: spark-cluster
+    spec:
+      containers:
+        - name: spark-node
+          image: "apache/spark:4.1.1"
+          env:
+            - name: SPARK_MASTER_URL
+              value: "spark://spark-master:7077"
+            - name: SPARK_WORKER_CORES
+              value: "2"
+            - name: SPARK_WORKER_MEMORY
+              value: "2G"
+            - name: SPARK_WORKER_INSTANCES
+              value: "2"
+            - name: SPARK_EXECUTOR_MEMORY
+              value: "1G"
+            - name: SPARK_DRIVER_MEMORY
+              value: "1G"
+          ports:
+            - containerPort: 8080
+            - containerPort: 7077
+            - containerPort: 6066
+          volumeMounts:
+            - name: data
+              mountPath: /home/data
+        - name: minio
+          image: "minio/minio"
+          args:
+            - server
+            - /data
+          env:
+            - name: MINIO_ROOT_USER
+              value: "minio"
+            - name: MINIO_ROOT_PASSWORD
+              value: "minio123"
+          ports:
+            - containerPort: 9000
+          volumeMounts:
+            - name: data
+              mountPath: /home/data
+      volumes:
+        - name: data
+          configMap:
+            name: data-config
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-name: data-config
+  name: data-config
 data:
-data: "/home/data"
-
+  data: "/home/data"
+---
 apiVersion: v1
 kind: Service
 metadata:
-name: spark-master
+  name: spark-master
 spec:
-selector:
-app: spark-cluster
-ports:
-
-name: spark-master
-port: 7077
-targetPort: 7077
-type: ClusterIP
+  selector:
+    app: spark-cluster
+  ports:
+    - name: spark-master
+      port: 7077
+      targetPort: 7077
+  type: ClusterIP
+---
 apiVersion: v1
 kind: Service
 metadata:
-name: minio
+  name: minio
 spec:
-selector:
-app: spark-cluster
-ports:
-
-name: minio
-port: 9000
-targetPort: 9000
-type: ClusterIP
-
-#In this example, the Deployment creates three replicas of the Spark node, each running a Spark container and a Minio container. The Spark node sets several environment variables to configure the Spark master and worker, and sets up two ports for the Spark UI and worker communication. The Minio container sets environment variables for the access and secret keys, and sets up a port for the Minio server. The ConfigMap maps the host directory /home/data to a volume for use by both the Spark node and Minio containers. The two Services expose the Spark master and Minio server to the cluster network.
+  selector:
+    app: spark-cluster
+  ports:
+    - name: minio
+      port: 9000
+      targetPort: 9000
+  type: ClusterIP
