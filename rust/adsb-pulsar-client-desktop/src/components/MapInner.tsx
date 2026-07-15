@@ -13,6 +13,7 @@ import { haversineDistanceNm } from "@/lib/geo";
 import { orderTracksWithSelectedLast } from "@/lib/track-ordering";
 import { subsamplePositions } from "@/lib/subsample";
 import { MapTileToggle } from "./MapTileToggle";
+import { CenterOnAntennaButton } from "./CenterOnAntennaButton";
 import { AltitudeLegend } from "./AltitudeLegend";
 
 // Default center: Montreal
@@ -599,6 +600,22 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
 
   const handleDeselect = useCallback(() => onSelectTrack(null), [onSelectTrack]);
 
+  // Capture the map's flyTo callback locally (also forwarded to copilot via onFlyToReady)
+  // so the "center on antenna" button can navigate the map from outside MapContainer.
+  const flyToRef = useRef<((lat: number, lng: number, zoom: number) => void) | null>(null);
+  const handleFlyToReady = useCallback(
+    (fn: (lat: number, lng: number, zoom: number) => void) => {
+      flyToRef.current = fn;
+      onFlyToReady?.(fn);
+    },
+    [onFlyToReady],
+  );
+  const handleCenterOnAntenna = useCallback(() => {
+    if (receiverLocation) {
+      flyToRef.current?.(receiverLocation.lat, receiverLocation.lng, DEFAULT_ZOOM);
+    }
+  }, [receiverLocation]);
+
   return (
     <div className="h-full w-full relative">
       <MapContainer
@@ -610,7 +627,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
       >
         <MapResizeHandler />
         <MapClickHandler onDeselect={handleDeselect} />
-        <FlyToHandler onReady={onFlyToReady} />
+        <FlyToHandler onReady={handleFlyToReady} />
         <TileLayer
           key={mapTheme}
           attribution={tile.attribution}
@@ -802,6 +819,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
       </MapContainer>
 
       <MapTileToggle theme={mapTheme} onToggle={onToggleTheme} />
+      <CenterOnAntennaButton onClick={handleCenterOnAntenna} disabled={!receiverLocation} />
       <AltitudeLegend theme={mapTheme} />
     </div>
   );
