@@ -1,73 +1,83 @@
-# Kubernetes manifest: Spark 4.1 cluster (master + workers) with MinIO S3 storage.
+# Kubernetes manifest: Spark 4.1 standalone cluster (1 master + 2 workers) with
+# RustFS S3 storage (PVC-backed).
 #
 # Spark 4.x is Scala 2.13 only and requires Java 17+; the apache/spark:4.1.1
 # image provides both. Delta Lake for Spark 4.1 is delta-spark 4.2.0.
+#
+# The master and worker daemons run in the FOREGROUND via `spark-class` (the
+# sbin/start-*.sh scripts daemonize and would let the container exit). Workers
+# discover the master over the `spark-master` Service DNS on port 7077.
+#
+# RustFS is a Rust-based, S3-compatible object store (MinIO alternative). It runs
+# as its own single-replica Deployment backed by a PersistentVolumeClaim so that
+# object data actually persists, and is reached by the Spark pods over the
+# `rustfs` Service on the S3 API port 9000.
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: spark-cluster
+  name: spark-master
   labels:
-    app: spark-cluster
+    app: spark-master
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
-      app: spark-cluster
+      app: spark-master
   template:
     metadata:
       labels:
-        app: spark-cluster
+        app: spark-master
     spec:
       containers:
-        - name: spark-node
+        - name: spark-master
           image: "apache/spark:4.1.1"
+          command: ["/opt/spark/bin/spark-class"]
+          args:
+            - "org.apache.spark.deploy.master.Master"
+            - "--host"
+            - "spark-master"
+            - "--port"
+            - "7077"
+            - "--webui-port"
+            - "8080"
+          ports:
+            - containerPort: 7077   # RPC
+            - containerPort: 8080   # master web UI
+            - containerPort: 6066   # REST submission
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-worker
+  labels:
+    app: spark-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: spark-worker
+  template:
+    metadata:
+      labels:
+        app: spark-worker
+    spec:
+      containers:
+        - name: spark-worker
+          image: "apache/spark:4.1.1"
+          command: ["/opt/spark/bin/spark-class"]
+          args:
+            - "org.apache.spark.deploy.worker.Worker"
+            - "spark://spark-master:7077"
+            - "--webui-port"
+            - "8081"
           env:
-            - name: SPARK_MASTER_URL
-              value: "spark://spark-master:7077"
             - name: SPARK_WORKER_CORES
               value: "2"
             - name: SPARK_WORKER_MEMORY
               value: "2G"
-            - name: SPARK_WORKER_INSTANCES
-              value: "2"
-            - name: SPARK_EXECUTOR_MEMORY
-              value: "1G"
-            - name: SPARK_DRIVER_MEMORY
-              value: "1G"
           ports:
-            - containerPort: 8080
-            - containerPort: 7077
-            - containerPort: 6066
-          volumeMounts:
-            - name: data
-              mountPath: /home/data
-        - name: minio
-          image: "minio/minio"
-          args:
-            - server
-            - /data
-          env:
-            - name: MINIO_ROOT_USER
-              value: "minio"
-            - name: MINIO_ROOT_PASSWORD
-              value: "minio123"
-          ports:
-            - containerPort: 9000
-          volumeMounts:
-            - name: data
-              mountPath: /home/data
-      volumes:
-        - name: data
-          configMap:
-            name: data-config
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: data-config
-data:
-  data: "/home/data"
+            - containerPort: 8081   # worker web UI
 ---
 apiVersion: v1
 kind: Service
@@ -75,22 +85,82 @@ metadata:
   name: spark-master
 spec:
   selector:
-    app: spark-cluster
+    app: spark-master
   ports:
-    - name: spark-master
+    - name: spark-rpc
       port: 7077
       targetPort: 7077
+    - name: spark-ui
+      port: 8080
+      targetPort: 8080
   type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rustfs-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustfs
+  labels:
+    app: rustfs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rustfs
+  template:
+    metadata:
+      labels:
+        app: rustfs
+    spec:
+      securityContext:
+        fsGroup: 10001          # RustFS runs as UID 10001; make the PV writable
+      containers:
+        - name: rustfs
+          image: "rustfs/rustfs:latest"
+          env:
+            - name: RUSTFS_ACCESS_KEY
+              value: "rustfs"
+            - name: RUSTFS_SECRET_KEY
+              value: "rustfs123"
+            - name: RUSTFS_ADDRESS
+              value: ":9000"
+            - name: RUSTFS_VOLUMES
+              value: "/data"
+            - name: RUSTFS_CONSOLE_ENABLE
+              value: "true"
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: rustfs-data
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: minio
+  name: rustfs
 spec:
   selector:
-    app: spark-cluster
+    app: rustfs
   ports:
-    - name: minio
+    - name: rustfs-s3
       port: 9000
       targetPort: 9000
+    - name: rustfs-console
+      port: 9001
+      targetPort: 9001
   type: ClusterIP
