@@ -1227,11 +1227,14 @@ impl StorageHandle {
                    COUNT(DISTINCT flight_id) AS flight_count
             FROM (
               SELECT
-                CAST(FLOOR(DEGREES(ATAN2(
+                -- Integer sector 0..35. NOTE: DuckDB `/` is floating-point division,
+                -- so the outer FLOOR(... / 10.0) + CAST are required to avoid ~360
+                -- fractional sub-sectors that would collapse/overwrite in Rust.
+                CAST(FLOOR((CAST(FLOOR(DEGREES(ATAN2(
                   SIN(RADIANS(p.longitude - ?)) * COS(RADIANS(p.latitude)),
                   COS(RADIANS(?)) * SIN(RADIANS(p.latitude))
                     - SIN(RADIANS(?)) * COS(RADIANS(p.latitude)) * COS(RADIANS(p.longitude - ?))
-                )) + 365) AS INTEGER) % 360 / 10 AS sector,
+                )) + 365) AS INTEGER) % 360) / 10.0) AS INTEGER) AS sector,
                 2 * 3440.065 * ASIN(SQRT(
                   POWER(SIN(RADIANS((p.latitude - ?) / 2)), 2) +
                   COS(RADIANS(?)) * COS(RADIANS(p.latitude)) * POWER(SIN(RADIANS((p.longitude - ?) / 2)), 2)
@@ -1294,14 +1297,23 @@ impl StorageHandle {
             })
             .collect();
 
+        // Merge rows into the 36-sector array. The SQL yields exactly one row per
+        // integer sector, but merge defensively (max/accumulate, never overwrite) so a
+        // stray duplicate sector can never drop the true per-sector maximum.
         for (sector_idx, max_dist, count, min_alt, max_alt, fl_count) in rows {
             if (0..36).contains(&sector_idx) {
                 let s = &mut sectors[sector_idx as usize];
-                s.max_distance_nm = max_dist;
-                s.position_count = count as u64;
-                s.min_altitude = min_alt;
-                s.max_altitude = max_alt;
-                s.flight_count = fl_count as u64;
+                s.max_distance_nm = s.max_distance_nm.max(max_dist);
+                s.position_count += count as u64;
+                s.min_altitude = match (s.min_altitude, min_alt) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
+                s.max_altitude = match (s.max_altitude, max_alt) {
+                    (Some(a), Some(b)) => Some(a.max(b)),
+                    (a, b) => a.or(b),
+                };
+                s.flight_count = s.flight_count.max(fl_count as u64);
             }
         }
 
@@ -3347,6 +3359,63 @@ mod tests {
         assert!(
             (north_sectors[0].max_distance_nm - far_dist).abs() < 0.1,
             "Max distance should be the farther position"
+        );
+    }
+
+    #[test]
+    fn test_detection_range_max_survives_subsector_collision() {
+        // Regression: two positions fall in the SAME 10° sector but at different
+        // integer-degree bearings (206° and 209°), with the FARTHER one at the LOWER
+        // bearing. A float-division sector expression (`% 360 / 10`) buckets them into
+        // distinct fractional sub-sectors; if the 36-sector collapse overwrites instead
+        // of taking the max, the farther position (lower sub-sector, processed first)
+        // gets clobbered by the nearer one and the reported range is too small.
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let rx_lat = 48.8;
+        let rx_lon = 2.3;
+
+        // Computed via destination-point formula from (48.8, 2.3):
+        //   FAR : bearing 206°, 67 NM  -> sub-sector 21.1 (processed first)
+        //   NEAR: bearing 209°, 50 NM  -> sub-sector 21.4 (would overwrite)
+        // Both resolve to fixed sector 21 (bearing_deg 210).
+        let far = (47.79470, 1.57184);
+        let near = (48.07005, 1.69582);
+
+        let positions = vec![
+            sample_position("FAR", Some(far.0), Some(far.1), "2024/01/15 10:00:00.000"),
+            sample_position(
+                "NEAR",
+                Some(near.0),
+                Some(near.1),
+                "2024/01/15 10:00:01.000",
+            ),
+        ];
+        handle.insert_batch_sync(&positions, "UTC").unwrap();
+
+        let sectors = handle
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                receiver_lat: rx_lat,
+                receiver_lon: rx_lon,
+                start_ms: None,
+                end_ms: None,
+            })
+            .unwrap();
+
+        let active: Vec<_> = sectors.iter().filter(|s| s.position_count > 0).collect();
+        assert_eq!(
+            active.len(),
+            1,
+            "Both positions belong to the same 10° sector, got {active:?}"
+        );
+        assert_eq!(active[0].bearing_deg, 210);
+        assert_eq!(active[0].position_count, 2);
+
+        // The reported max must be the FARTHER position (~67 NM), not the nearer (~50 NM).
+        let far_dist = crate::geo::haversine_nm(rx_lat, rx_lon, far.0, far.1);
+        assert!(
+            (active[0].max_distance_nm - far_dist).abs() < 0.2,
+            "Sector max should be the farther position ({far_dist:.1} NM), got {:.1} NM",
+            active[0].max_distance_nm
         );
     }
 
