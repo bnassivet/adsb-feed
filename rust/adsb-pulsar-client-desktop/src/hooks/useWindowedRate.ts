@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface RateEntry {
   counter: number;
@@ -45,9 +45,12 @@ function rateOf(buffer: RateEntry[], fallbackRate: number): number {
  * Falls back to `fallbackRate` (default 0) when fewer than 2 entries exist.
  * Returns 0 when counterValue is null.
  *
- * The window is held in state and updated with the React "adjust state during render" pattern
- * (a guarded set-state call during render), which keeps the computation pure — no refs are read
- * or written during render — so it is Rules-of-React / React-Compiler safe.
+ * The next window is computed *purely* during render (no state mutation there) and drives the
+ * returned rate, so there is no one-tick display lag. The window is persisted to state only from
+ * an effect — never with a render-phase set-state — because the React Compiler does not reliably
+ * apply render-phase state updates at runtime (it would leave the buffer stuck at < 2 entries, so
+ * the rate would read a constant fallback of 0). Persisting from an effect keeps this correct
+ * under the compiler.
  */
 export function useWindowedRate(
   counterValue: number | null,
@@ -57,17 +60,20 @@ export function useWindowedRate(
 ): number {
   const [buffer, setBuffer] = useState<RateEntry[]>([]);
 
-  // Reuse the existing array reference when nothing changes so the guarded set-state below is a
-  // no-op on steady renders (avoids an infinite render-phase update loop).
-  let computed = buffer;
+  // Pure: compute the next window in render. Reuse the existing array reference when nothing
+  // changes so the effect dependency below is stable on steady renders (no refire, no loop).
+  let nextBuf = buffer;
   if (counterValue === null) {
-    if (buffer.length > 0) computed = [];
+    if (buffer.length > 0) nextBuf = [];
   } else {
-    computed = nextWindow(buffer, counterValue, elapsedSecs, windowSecs);
-  }
-  if (computed !== buffer) {
-    setBuffer(computed);
+    nextBuf = nextWindow(buffer, counterValue, elapsedSecs, windowSecs);
   }
 
-  return counterValue === null ? 0 : rateOf(computed, fallbackRate);
+  // Persist only from an effect. When nextBuf === buffer the dep is unchanged and this does not
+  // refire; otherwise it commits the new window (and setBuffer to the same ref later is a no-op).
+  useEffect(() => {
+    setBuffer(nextBuf);
+  }, [nextBuf]);
+
+  return counterValue === null ? 0 : rateOf(nextBuf, fallbackRate);
 }
