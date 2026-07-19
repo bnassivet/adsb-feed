@@ -29,22 +29,41 @@ spec:
       labels:
         app: spark-master
     spec:
+      # Disable K8s Docker-link env injection: the `spark-master` Service
+      # otherwise injects SPARK_MASTER_PORT=tcp://<clusterIP>:7077, which Spark's
+      # MasterArguments reads as its default port and fails to parse as an int.
+      enableServiceLinks: false
       containers:
         - name: spark-master
           image: "apache/spark:4.1.1"
           command: ["/opt/spark/bin/spark-class"]
           args:
             - "org.apache.spark.deploy.master.Master"
+            # Bind/advertise the pod's own IP: the `spark-master` Service name
+            # resolves to a ClusterIP VIP that isn't assignable on the pod NIC,
+            # so binding to it fails. Workers still reach us via Service DNS.
             - "--host"
-            - "spark-master"
+            - "$(POD_IP)"
             - "--port"
             - "7077"
             - "--webui-port"
             - "8080"
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
           ports:
             - containerPort: 7077   # RPC
             - containerPort: 8080   # master web UI
             - containerPort: 6066   # REST submission
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "8Gi"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -54,6 +73,12 @@ metadata:
     app: spark-worker
 spec:
   replicas: 2
+  # maxSurge: 0 — the single-node cluster (~8Gi) can't fit a 3rd worker's RAM
+  # transiently during a rolling update, so replace in place instead of surging.
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: spark-worker
@@ -62,6 +87,9 @@ spec:
       labels:
         app: spark-worker
     spec:
+      # Same as the master: prevent SPARK_MASTER_PORT=tcp://... injection from
+      # the spark-master Service, which the worker also resolves.
+      enableServiceLinks: false
       containers:
         - name: spark-worker
           image: "apache/spark:4.1.1"
@@ -78,6 +106,15 @@ spec:
               value: "2G"
           ports:
             - containerPort: 8081   # worker web UI
+          resources:
+            # Requests match what the worker advertises (2 cores / 2G executors,
+            # plus headroom for the JVM/daemon); limits cap the noisy-neighbor blast.
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "8Gi"
 ---
 apiVersion: v1
 kind: Service
@@ -141,6 +178,13 @@ spec:
           ports:
             - containerPort: 9000
             - containerPort: 9001
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "8Gi"
           volumeMounts:
             - name: data
               mountPath: /data
@@ -164,3 +208,69 @@ spec:
       port: 9001
       targetPort: 9001
   type: ClusterIP
+---
+# Headless Service for the Spark driver. clusterIP: None means DNS resolves
+# directly to the driver pod IP (no VIP), giving the driver a STABLE name:
+#   spark-driver.spark-driver.<namespace>.svc.cluster.local
+# Executors use this to connect back to the driver, so it survives pod restarts
+# (unlike pinning an ephemeral pod IP with --conf spark.driver.host=<IP>).
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-driver
+spec:
+  clusterIP: None            # headless: A record points straight at the pod
+  selector:
+    app: spark-driver
+  ports:
+    # Fixed driver ports (see the Deployment's spark-defaults) so executors have
+    # deterministic endpoints to reach; on the pod network all ports route, but
+    # pinning them keeps behaviour predictable and firewall-friendly.
+    - name: driver-rpc
+      port: 35000
+      targetPort: 35000
+    - name: block-manager
+      port: 35001
+      targetPort: 35001
+    - name: driver-ui
+      port: 4040
+      targetPort: 4040
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-driver
+  labels:
+    app: spark-driver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark-driver
+  template:
+    metadata:
+      labels:
+        app: spark-driver
+    spec:
+      enableServiceLinks: false     # same SPARK_MASTER_PORT collision guard
+      # hostname + subdomain make the pod resolvable at
+      # spark-driver.spark-driver.<ns>.svc.cluster.local via the headless Service.
+      hostname: spark-driver
+      subdomain: spark-driver
+      containers:
+        - name: spark-driver
+          image: "apache/spark:4.1.1"
+          # Idle so you can `kubectl exec` in and run spark-submit in client mode;
+          # the long-lived pod keeps a stable DNS name across submissions.
+          command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
+          ports:
+            - containerPort: 35000  # spark.driver.port
+            - containerPort: 35001  # spark.blockManager.port
+            - containerPort: 4040   # driver web UI
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "8Gi"
