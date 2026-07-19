@@ -1,4 +1,4 @@
-# Spark 4.1 Standalone Cluster on Kubernetes
+# Spark 4.2 Standalone Cluster on Kubernetes
 
 `k8_manifest.yaml` deploys a self-contained Spark standalone cluster plus an
 S3-compatible object store, suitable for local development and testing of the
@@ -76,7 +76,7 @@ kubectl exec -it "$POD" -- /opt/spark/bin/spark-submit \
   --master spark://spark-master:7077 \
   --conf spark.driver.host=$(kubectl get pod "$POD" -o jsonpath='{.status.podIP}') \
   --class org.apache.spark.examples.SparkPi \
-  /opt/spark/examples/jars/spark-examples_2.13-4.1.1.jar 100
+  /opt/spark/examples/jars/spark-examples_2.13-4.2.0.jar 100
 # Expect: "Pi is roughly 3.14..."
 #
 # spark.driver.host is REQUIRED: without it the driver advertises its pod
@@ -102,7 +102,7 @@ kubectl exec -it "$DRV" -- /opt/spark/bin/spark-submit \
   --conf spark.driver.port=35000 \
   --conf spark.blockManager.port=35001 \
   --class org.apache.spark.examples.SparkPi \
-  /opt/spark/examples/jars/spark-examples_2.13-4.1.1.jar 100
+  /opt/spark/examples/jars/spark-examples_2.13-4.2.0.jar 100
 # Expect: "Pi is roughly 3.14..."
 #
 # - spark.driver.host   → the headless Service DNS name (stable across restarts)
@@ -115,7 +115,7 @@ kubectl exec -it "$DRV" -- /opt/spark/bin/spark-submit \
 ### Submit a PySpark (Python) job
 
 The same driver pod runs Python jobs — `spark-submit` takes a `.py` script
-instead of a `--class` + JAR. The `apache/spark:4.1.1` image bundles PySpark and
+instead of a `--class` + JAR. The `apache/spark:4.2.0` image bundles PySpark and
 Python 3.10, and ships example scripts under
 `/opt/spark/examples/src/main/python/`.
 

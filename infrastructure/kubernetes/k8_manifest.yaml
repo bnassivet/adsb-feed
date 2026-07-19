@@ -1,8 +1,8 @@
-# Kubernetes manifest: Spark 4.1 standalone cluster (1 master + 2 workers) with
+# Kubernetes manifest: Spark 4.2 standalone cluster (1 master + 2 workers) with
 # RustFS S3 storage (PVC-backed).
 #
-# Spark 4.x is Scala 2.13 only and requires Java 17+; the apache/spark:4.1.1
-# image provides both. Delta Lake for Spark 4.1 is delta-spark 4.2.0.
+# Spark 4.x is Scala 2.13 only and requires Java 17+; the apache/spark:4.2.0
+# image provides both (the tag's default JRE is Java 17).
 #
 # The master and worker daemons run in the FOREGROUND via `spark-class` (the
 # sbin/start-*.sh scripts daemonize and would let the container exit). Workers
@@ -35,7 +35,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: spark-master
-          image: "apache/spark:4.1.1"
+          image: "apache/spark:4.2.0"
           command: ["/opt/spark/bin/spark-class"]
           args:
             - "org.apache.spark.deploy.master.Master"
@@ -92,7 +92,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: spark-worker
-          image: "apache/spark:4.1.1"
+          image: "apache/spark:4.2.0"
           command: ["/opt/spark/bin/spark-class"]
           args:
             - "org.apache.spark.deploy.worker.Worker"
@@ -259,7 +259,7 @@ spec:
       subdomain: spark-driver
       containers:
         - name: spark-driver
-          image: "apache/spark:4.1.1"
+          image: "apache/spark:4.2.0"
           # Idle so you can `kubectl exec` in and run spark-submit in client mode;
           # the long-lived pod keeps a stable DNS name across submissions.
           command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
