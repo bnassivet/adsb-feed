@@ -1,8 +1,32 @@
-# Spark 4.2 Standalone Cluster on Kubernetes
+# Spark Standalone Cluster on Kubernetes
 
-`k8_manifest.yaml` deploys a self-contained Spark standalone cluster plus an
-S3-compatible object store, suitable for local development and testing of the
-`spark-adsb` analytics layer.
+Deploys a self-contained Spark standalone cluster plus an S3-compatible object
+store, suitable for local development and testing of the `spark-adsb` analytics
+layer. Configured with [Kustomize](https://kustomize.io/) — one shared spec in
+`base/`, with per-version overlays that pin only the Spark image tag.
+
+## Which overlay?
+
+The cluster spec lives once in `base/`; pick an overlay by workload:
+
+| Overlay | Spark | Use for |
+|---------|-------|---------|
+| `overlays/4.1.1` | 4.1.1 | **The real spark-adsb pipeline** (Delta + Pulsar jobs). Delta Lake caps at `pyspark<=4.1.1` and the Pulsar-Spark connector's newest build is `4.1.1.0`, so 4.2 is not yet an option for these jobs. |
+| `overlays/4.2.0` | 4.2.0 | Pure-Spark / PySpark experimentation only — no Delta or Pulsar dependency. |
+
+```
+base/                     # the full spec (Deployments, Services, PVC), version-agnostic
+  k8_manifest.yaml
+  kustomization.yaml
+overlays/
+  4.1.1/kustomization.yaml   # images: newTag 4.1.1
+  4.2.0/kustomization.yaml   # images: newTag 4.2.0
+```
+
+Every `kubectl` command below takes `-k overlays/<version>`; substitute the
+overlay you want. Kustomize is built into `kubectl` (≥1.14) — no extra install.
+Never `kubectl apply -f base/k8_manifest.yaml` directly; the image tag is a
+placeholder that only the overlays resolve.
 
 ## Overview
 
@@ -44,11 +68,14 @@ minikube start --cpus=4 --memory=8192
 ```bash
 cd adsb-feed/infrastructure/kubernetes
 
-# Validate against the live API first
-kubectl apply --dry-run=server -f k8_manifest.yaml
+# Preview the rendered manifests (optional)
+kubectl kustomize overlays/4.1.1
 
-# Apply for real
-kubectl apply -f k8_manifest.yaml
+# Validate against the live API first
+kubectl apply -k overlays/4.1.1 --dry-run=server
+
+# Apply for real (use overlays/4.2.0 for the experimentation variant)
+kubectl apply -k overlays/4.1.1
 ```
 
 ## Verify the Spark cluster formed
@@ -198,7 +225,7 @@ kubectl logs deploy/spark-master | grep "Registering worker"
 ## Tear down
 
 ```bash
-kubectl delete -f k8_manifest.yaml
+kubectl delete -k overlays/4.1.1   # or overlays/4.2.0, whichever you applied
 
 # Then remove the local cluster
 kind delete cluster --name adsb   # or: minikube delete
