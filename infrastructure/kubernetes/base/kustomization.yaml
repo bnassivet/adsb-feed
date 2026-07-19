@@ -1,0 +1,7 @@
+# Base resource set for the Spark standalone cluster + RustFS. Deploy an overlay
+# (overlays/4.1.1 or overlays/4.2.0), not this base directly — the overlays pin
+# the Spark image tag via the `images:` transformer.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - k8_manifest.yaml

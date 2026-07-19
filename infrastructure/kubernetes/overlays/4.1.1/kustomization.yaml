@@ -1,0 +1,11 @@
+# Spark 4.1.1 overlay — PIPELINE-COMPATIBLE.
+# Use this for the real spark-adsb Delta/Pulsar jobs: delta-spark caps at
+# pyspark<=4.1.1 and the Pulsar-Spark connector's newest build is 4.1.1.0.
+#   kubectl apply -k overlays/4.1.1
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: apache/spark
+    newTag: "4.1.1"

@@ -1,8 +1,16 @@
-# Kubernetes manifest: Spark 4.2 standalone cluster (1 master + 2 workers) with
-# RustFS S3 storage (PVC-backed).
+# Kustomize BASE: Spark standalone cluster (1 master + 2 workers) with RustFS S3
+# storage (PVC-backed). The Spark image TAG is set by the overlays, not here:
+#   overlays/4.1.1  → apache/spark:4.1.1  (spark-adsb Delta/Pulsar pipeline)
+#   overlays/4.2.0  → apache/spark:4.2.0  (pure-Spark / PySpark experiments)
+# Never `kubectl apply -f` this file directly — deploy an overlay with `-k`.
 #
-# Spark 4.x is Scala 2.13 only and requires Java 17+; the apache/spark:4.2.0
-# image provides both (the tag's default JRE is Java 17).
+# Delta Lake caps at pyspark<=4.1.1 and the Pulsar-Spark connector's newest build
+# is 4.1.1.0, so the real spark-adsb jobs must use the 4.1.1 overlay; 4.2.0 is
+# experimentation-only.
+#
+# Spark 4.x is Scala 2.13 only and requires Java 17+; the apache/spark images
+# provide both (the default JRE is Java 17). The image tag below is a placeholder
+# default that every overlay overrides via the kustomize `images:` transformer.
 #
 # The master and worker daemons run in the FOREGROUND via `spark-class` (the
 # sbin/start-*.sh scripts daemonize and would let the container exit). Workers
