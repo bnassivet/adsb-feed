@@ -1,0 +1,11 @@
+# Spark 4.2.0 overlay — EXPERIMENTATION ONLY (no Delta / no Pulsar).
+# Delta Lake and the Pulsar-Spark connector do not yet support Spark 4.2, so do
+# not run the spark-adsb pipeline against this overlay.
+#   kubectl apply -k overlays/4.2.0
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: apache/spark
+    newTag: "4.2.0"
