@@ -74,9 +74,99 @@ kubectl port-forward svc/spark-master 8080:8080
 POD=$(kubectl get pod -l app=spark-master -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -it "$POD" -- /opt/spark/bin/spark-submit \
   --master spark://spark-master:7077 \
+  --conf spark.driver.host=$(kubectl get pod "$POD" -o jsonpath='{.status.podIP}') \
   --class org.apache.spark.examples.SparkPi \
   /opt/spark/examples/jars/spark-examples_2.13-4.1.1.jar 100
 # Expect: "Pi is roughly 3.14..."
+#
+# spark.driver.host is REQUIRED: without it the driver advertises its pod
+# HOSTNAME (e.g. spark-master-xxxx), which cluster DNS can't resolve, so every
+# executor fails with UnknownHostException, exits code 1, and the scheduler
+# loops forever adding/removing executors. Pinning it to the pod IP (routable
+# on the pod network) lets executors connect back to the driver.
+```
+
+### Preferred: submit from the dedicated driver pod (stable DNS)
+
+The `spark-driver` Deployment + headless Service give the driver a stable name
+(`spark-driver.spark-driver.<ns>.svc.cluster.local`) that survives pod restarts,
+so you never pin an ephemeral pod IP. Submit in **client mode** from that pod:
+
+```bash
+DRV=$(kubectl get pod -l app=spark-driver -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -it "$DRV" -- /opt/spark/bin/spark-submit \
+  --master spark://spark-master:7077 \
+  --deploy-mode client \
+  --conf spark.driver.host=spark-driver.spark-driver.default.svc.cluster.local \
+  --conf spark.driver.bindAddress=0.0.0.0 \
+  --conf spark.driver.port=35000 \
+  --conf spark.blockManager.port=35001 \
+  --class org.apache.spark.examples.SparkPi \
+  /opt/spark/examples/jars/spark-examples_2.13-4.1.1.jar 100
+# Expect: "Pi is roughly 3.14..."
+#
+# - spark.driver.host   → the headless Service DNS name (stable across restarts)
+# - spark.driver.bindAddress=0.0.0.0 → bind all interfaces; the ADVERTISED
+#   address (driver.host) differs from the BIND address inside the pod
+# - driver.port / blockManager.port → match the headless Service's named ports
+# Replace `default` with your namespace if not deploying to the default namespace.
+```
+
+### Submit a PySpark (Python) job
+
+The same driver pod runs Python jobs — `spark-submit` takes a `.py` script
+instead of a `--class` + JAR. The `apache/spark:4.1.1` image bundles PySpark and
+Python 3.10, and ships example scripts under
+`/opt/spark/examples/src/main/python/`.
+
+```bash
+DRV=$(kubectl get pod -l app=spark-driver -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -it "$DRV" -- /opt/spark/bin/spark-submit \
+  --master spark://spark-master:7077 \
+  --deploy-mode client \
+  --conf spark.driver.host=spark-driver.spark-driver.default.svc.cluster.local \
+  --conf spark.driver.bindAddress=0.0.0.0 \
+  --conf spark.driver.port=35000 \
+  --conf spark.blockManager.port=35001 \
+  /opt/spark/examples/src/main/python/pi.py 100
+# Expect: "Pi is roughly 3.14..."
+```
+
+**Run your own script:** copy it into the driver pod, then submit it.
+
+```bash
+DRV=$(kubectl get pod -l app=spark-driver -o jsonpath='{.items[0].metadata.name}')
+
+# 1. Write a tiny PySpark job locally
+cat > /tmp/wordcount.py <<'EOF'
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.appName("wordcount").getOrCreate()
+df = spark.createDataFrame(
+    [("aircraft",), ("adsb",), ("aircraft",), ("spark",), ("adsb",), ("aircraft",)],
+    ["word"],
+)
+df.groupBy("word").count().orderBy("count", ascending=False).show()
+spark.stop()
+EOF
+
+# 2. Copy it into the driver pod
+kubectl cp /tmp/wordcount.py "$DRV":/tmp/wordcount.py
+
+# 3. Submit it (same driver-networking conf as above)
+kubectl exec -it "$DRV" -- /opt/spark/bin/spark-submit \
+  --master spark://spark-master:7077 \
+  --deploy-mode client \
+  --conf spark.driver.host=spark-driver.spark-driver.default.svc.cluster.local \
+  --conf spark.driver.bindAddress=0.0.0.0 \
+  --conf spark.driver.port=35000 \
+  --conf spark.blockManager.port=35001 \
+  /tmp/wordcount.py
+# Expect a small word-count table.
+#
+# Extra Python deps? Bake them into a custom image (recommended), or pass
+# --py-files for pure-Python modules. To read/write RustFS from PySpark, add the
+# hadoop-aws S3A configs (spark.hadoop.fs.s3a.*) pointing at the rustfs Service.
 ```
 
 ## Test RustFS (S3 storage)
