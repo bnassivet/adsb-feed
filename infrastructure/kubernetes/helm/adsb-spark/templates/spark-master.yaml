@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "adsb-spark.masterName" . }}
+  labels:
+    app: {{ include "adsb-spark.masterName" . }}
+    {{- include "adsb-spark.commonLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.spark.master.replicas }}
+  selector:
+    matchLabels:
+      app: {{ include "adsb-spark.masterName" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "adsb-spark.masterName" . }}
+    spec:
+      # Disable K8s Docker-link env injection: the master Service otherwise
+      # injects SPARK_MASTER_PORT=tcp://<clusterIP>:7077, which Spark's
+      # MasterArguments reads as its default port and fails to parse as an int.
+      enableServiceLinks: false
+      containers:
+        - name: {{ include "adsb-spark.masterName" . }}
+          image: {{ include "adsb-spark.sparkImage" . | quote }}
+          imagePullPolicy: {{ .Values.spark.image.pullPolicy }}
+          command: ["/opt/spark/bin/spark-class"]
+          args:
+            - "org.apache.spark.deploy.master.Master"
+            # Bind/advertise the pod's own IP: the master Service name resolves
+            # to a ClusterIP VIP that isn't assignable on the pod NIC, so binding
+            # to it fails. Workers still reach us via Service DNS.
+            - "--host"
+            - "$(POD_IP)"
+            - "--port"
+            - {{ .Values.spark.master.ports.rpc | quote }}
+            - "--webui-port"
+            - {{ .Values.spark.master.ports.ui | quote }}
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          ports:
+            - containerPort: {{ .Values.spark.master.ports.rpc }}   # RPC
+            - containerPort: {{ .Values.spark.master.ports.ui }}    # master web UI
+            - containerPort: {{ .Values.spark.master.ports.rest }}  # REST submission
+          resources:
+            {{- toYaml .Values.spark.master.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "adsb-spark.masterName" . }}
+  labels:
+    app: {{ include "adsb-spark.masterName" . }}
+    {{- include "adsb-spark.commonLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ include "adsb-spark.masterName" . }}
+  ports:
+    - name: spark-rpc
+      port: {{ .Values.spark.master.ports.rpc }}
+      targetPort: {{ .Values.spark.master.ports.rpc }}
+    - name: spark-ui
+      port: {{ .Values.spark.master.ports.ui }}
+      targetPort: {{ .Values.spark.master.ports.ui }}

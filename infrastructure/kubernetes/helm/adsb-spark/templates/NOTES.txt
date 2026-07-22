@@ -1,0 +1,32 @@
+adsb-spark deployed — Spark {{ .Values.spark.image.tag }} ({{ if eq .Values.spark.image.tag "4.1.1" }}pipeline-compatible{{ else }}experimentation-only: no Delta/Pulsar{{ end }}).
+
+1. Watch the cluster form (all pods Running: 1 master, {{ .Values.spark.worker.replicas }} workers, 1 driver, 1 rustfs):
+
+   kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }} -n {{ .Release.Namespace }} -w
+
+2. Master web UI (should list {{ .Values.spark.worker.replicas }} ALIVE workers):
+
+   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "adsb-spark.masterName" . }} {{ .Values.spark.master.ports.ui }}:{{ .Values.spark.master.ports.ui }}
+   # open http://localhost:{{ .Values.spark.master.ports.ui }}
+
+3. Submit a PySpark job from the driver pod (stable DNS, client mode):
+
+   DRV=$(kubectl get pod -n {{ .Release.Namespace }} -l app={{ include "adsb-spark.driverName" . }} -o jsonpath='{.items[0].metadata.name}')
+   kubectl exec -n {{ .Release.Namespace }} "$DRV" -- /opt/spark/bin/spark-submit \
+     --master spark://{{ include "adsb-spark.masterName" . }}:{{ .Values.spark.master.ports.rpc }} \
+     --deploy-mode client \
+     --conf spark.driver.host={{ include "adsb-spark.driverName" . }}.{{ include "adsb-spark.driverName" . }}.{{ .Release.Namespace }}.svc.cluster.local \
+     --conf spark.driver.bindAddress=0.0.0.0 \
+     --conf spark.driver.port={{ .Values.spark.driver.ports.rpc }} \
+     --conf spark.blockManager.port={{ .Values.spark.driver.ports.blockManager }} \
+     /opt/spark/examples/src/main/python/pi.py 100
+
+{{- if .Values.tests.enabled }}
+
+4. Or run the built-in smoke test (SparkPi via the driver DNS):
+
+   helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+{{- end }}
+
+RustFS S3 endpoint (in-cluster): http://{{ include "adsb-spark.rustfsName" . }}:{{ .Values.rustfs.ports.s3 }}
+  access key: {{ .Values.rustfs.accessKey }} / secret key: (see values.yaml — demo-grade)

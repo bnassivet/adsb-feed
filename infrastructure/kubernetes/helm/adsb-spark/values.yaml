@@ -1,0 +1,97 @@
+# Default values for the adsb-spark chart. The defaults match the Kustomize
+# base/ manifest and pin Spark 4.1.1 (pipeline-compatible: Delta caps at
+# pyspark<=4.1.1, Pulsar-Spark connector newest is 4.1.1.0).
+#
+# For pure-Spark / PySpark experimentation on Spark 4.2.0, deploy with the
+# values-4.2.0.yaml preset (-f). Both presets override only spark.image.tag.
+
+# Static component names. These are DNS-critical and NOT release-name-prefixed:
+#   - workers connect to spark://<master>:7077
+#   - the driver's stable DNS is <driver>.<driver>.<ns>.svc.cluster.local, which
+#     requires the headless Service name == pod subdomain == this value
+#   - Spark jobs reach RustFS at http://<rustfs>:9000
+# Overriding them is supported but you must keep all three cross-references
+# consistent. One release per namespace (names are fixed, so two releases collide).
+names:
+  master: spark-master
+  worker: spark-worker
+  driver: spark-driver
+  rustfs: rustfs
+
+spark:
+  image:
+    repository: apache/spark
+    tag: "4.1.1"
+    pullPolicy: IfNotPresent
+
+  master:
+    replicas: 1
+    ports:
+      rpc: 7077
+      ui: 8080
+      rest: 6066
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "2"
+        memory: "8Gi"
+
+  worker:
+    replicas: 2
+    cores: 2
+    memory: "2G"
+    uiPort: 8081
+    # Single-node clusters (~8Gi) can't fit a surging extra worker during a
+    # rolling update, so replace in place.
+    maxSurge: 0
+    maxUnavailable: 1
+    resources:
+      requests:
+        cpu: "1"
+        memory: "2Gi"
+      limits:
+        cpu: "2"
+        memory: "8Gi"
+
+  driver:
+    replicas: 1
+    ports:
+      rpc: 35000
+      blockManager: 35001
+      ui: 4040
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "1Gi"
+      limits:
+        cpu: "2"
+        memory: "8Gi"
+
+rustfs:
+  image: rustfs/rustfs:latest
+  pullPolicy: IfNotPresent
+  # Demo-grade credentials — set real secrets before any non-local use.
+  accessKey: rustfs
+  secretKey: rustfs123
+  ports:
+    s3: 9000
+    console: 9001
+  # RustFS runs as UID 10001; fsGroup makes the mounted PV writable.
+  fsGroup: 10001
+  pvc:
+    size: 4Gi
+    # Empty string → use the cluster's default StorageClass.
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "8Gi"
+
+# Optional SparkPi `helm test` smoke-test Job (helm test <release>).
+tests:
+  enabled: true
