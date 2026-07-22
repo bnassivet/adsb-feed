@@ -1,0 +1,7 @@
+# Preset: Spark 4.1.1 — PIPELINE-COMPATIBLE.
+# Use for the real spark-adsb Delta/Pulsar jobs: delta-spark caps at
+# pyspark<=4.1.1 and the Pulsar-Spark connector's newest build is 4.1.1.0.
+#   helm install adsb-spark ./helm/adsb-spark -f helm/adsb-spark/values-4.1.1.yaml
+spark:
+  image:
+    tag: "4.1.1"

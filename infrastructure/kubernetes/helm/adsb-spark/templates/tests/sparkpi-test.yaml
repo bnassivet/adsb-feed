@@ -1,0 +1,39 @@
+{{- if .Values.tests.enabled }}
+# `helm test <release>` smoke test: submits SparkPi (PySpark) to the cluster and
+# passes only if the job completes. This Pod is its own driver, so it advertises
+# its POD_IP as spark.driver.host (not the headless driver Service, which points
+# at the long-lived driver pod). Executors connect back over the pod network.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Release.Name }}-sparkpi-test
+  labels:
+    app: {{ .Release.Name }}-sparkpi-test
+    {{- include "adsb-spark.commonLabels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  enableServiceLinks: false
+  restartPolicy: Never
+  containers:
+    - name: sparkpi
+      image: {{ include "adsb-spark.sparkImage" . | quote }}
+      imagePullPolicy: {{ .Values.spark.image.pullPolicy }}
+      env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+      command: ["/bin/bash", "-c"]
+      args:
+        - >-
+          /opt/spark/bin/spark-submit
+          --master spark://{{ include "adsb-spark.masterName" . }}:{{ .Values.spark.master.ports.rpc }}
+          --deploy-mode client
+          --conf spark.driver.host=$(POD_IP)
+          --conf spark.driver.bindAddress=0.0.0.0
+          --conf spark.cores.max=1
+          --conf spark.executor.cores=1
+          /opt/spark/examples/src/main/python/pi.py 20
+{{- end }}

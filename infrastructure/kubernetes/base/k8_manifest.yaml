@@ -1,0 +1,284 @@
+# Kustomize BASE: Spark standalone cluster (1 master + 2 workers) with RustFS S3
+# storage (PVC-backed). The Spark image TAG is set by the overlays, not here:
+#   overlays/4.1.1  → apache/spark:4.1.1  (spark-adsb Delta/Pulsar pipeline)
+#   overlays/4.2.0  → apache/spark:4.2.0  (pure-Spark / PySpark experiments)
+# Never `kubectl apply -f` this file directly — deploy an overlay with `-k`.
+#
+# Delta Lake caps at pyspark<=4.1.1 and the Pulsar-Spark connector's newest build
+# is 4.1.1.0, so the real spark-adsb jobs must use the 4.1.1 overlay; 4.2.0 is
+# experimentation-only.
+#
+# Spark 4.x is Scala 2.13 only and requires Java 17+; the apache/spark images
+# provide both (the default JRE is Java 17). The image tag below is a placeholder
+# default that every overlay overrides via the kustomize `images:` transformer.
+#
+# The master and worker daemons run in the FOREGROUND via `spark-class` (the
+# sbin/start-*.sh scripts daemonize and would let the container exit). Workers
+# discover the master over the `spark-master` Service DNS on port 7077.
+#
+# RustFS is a Rust-based, S3-compatible object store (MinIO alternative). It runs
+# as its own single-replica Deployment backed by a PersistentVolumeClaim so that
+# object data actually persists, and is reached by the Spark pods over the
+# `rustfs` Service on the S3 API port 9000.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-master
+  labels:
+    app: spark-master
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark-master
+  template:
+    metadata:
+      labels:
+        app: spark-master
+    spec:
+      # Disable K8s Docker-link env injection: the `spark-master` Service
+      # otherwise injects SPARK_MASTER_PORT=tcp://<clusterIP>:7077, which Spark's
+      # MasterArguments reads as its default port and fails to parse as an int.
+      enableServiceLinks: false
+      containers:
+        - name: spark-master
+          image: "apache/spark:4.2.0"
+          command: ["/opt/spark/bin/spark-class"]
+          args:
+            - "org.apache.spark.deploy.master.Master"
+            # Bind/advertise the pod's own IP: the `spark-master` Service name
+            # resolves to a ClusterIP VIP that isn't assignable on the pod NIC,
+            # so binding to it fails. Workers still reach us via Service DNS.
+            - "--host"
+            - "$(POD_IP)"
+            - "--port"
+            - "7077"
+            - "--webui-port"
+            - "8080"
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          ports:
+            - containerPort: 7077   # RPC
+            - containerPort: 8080   # master web UI
+            - containerPort: 6066   # REST submission
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "8Gi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-worker
+  labels:
+    app: spark-worker
+spec:
+  replicas: 2
+  # maxSurge: 0 — the single-node cluster (~8Gi) can't fit a 3rd worker's RAM
+  # transiently during a rolling update, so replace in place instead of surging.
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: spark-worker
+  template:
+    metadata:
+      labels:
+        app: spark-worker
+    spec:
+      # Same as the master: prevent SPARK_MASTER_PORT=tcp://... injection from
+      # the spark-master Service, which the worker also resolves.
+      enableServiceLinks: false
+      containers:
+        - name: spark-worker
+          image: "apache/spark:4.2.0"
+          command: ["/opt/spark/bin/spark-class"]
+          args:
+            - "org.apache.spark.deploy.worker.Worker"
+            - "spark://spark-master:7077"
+            - "--webui-port"
+            - "8081"
+          env:
+            - name: SPARK_WORKER_CORES
+              value: "2"
+            - name: SPARK_WORKER_MEMORY
+              value: "2G"
+          ports:
+            - containerPort: 8081   # worker web UI
+          resources:
+            # Requests match what the worker advertises (2 cores / 2G executors,
+            # plus headroom for the JVM/daemon); limits cap the noisy-neighbor blast.
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "8Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-master
+spec:
+  selector:
+    app: spark-master
+  ports:
+    - name: spark-rpc
+      port: 7077
+      targetPort: 7077
+    - name: spark-ui
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rustfs-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustfs
+  labels:
+    app: rustfs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rustfs
+  template:
+    metadata:
+      labels:
+        app: rustfs
+    spec:
+      securityContext:
+        fsGroup: 10001          # RustFS runs as UID 10001; make the PV writable
+      containers:
+        - name: rustfs
+          image: "rustfs/rustfs:latest"
+          env:
+            - name: RUSTFS_ACCESS_KEY
+              value: "rustfs"
+            - name: RUSTFS_SECRET_KEY
+              value: "rustfs123"
+            - name: RUSTFS_ADDRESS
+              value: ":9000"
+            - name: RUSTFS_VOLUMES
+              value: "/data"
+            - name: RUSTFS_CONSOLE_ENABLE
+              value: "true"
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "8Gi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: rustfs-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs
+spec:
+  selector:
+    app: rustfs
+  ports:
+    - name: rustfs-s3
+      port: 9000
+      targetPort: 9000
+    - name: rustfs-console
+      port: 9001
+      targetPort: 9001
+  type: ClusterIP
+---
+# Headless Service for the Spark driver. clusterIP: None means DNS resolves
+# directly to the driver pod IP (no VIP), giving the driver a STABLE name:
+#   spark-driver.spark-driver.<namespace>.svc.cluster.local
+# Executors use this to connect back to the driver, so it survives pod restarts
+# (unlike pinning an ephemeral pod IP with --conf spark.driver.host=<IP>).
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-driver
+spec:
+  clusterIP: None            # headless: A record points straight at the pod
+  selector:
+    app: spark-driver
+  ports:
+    # Fixed driver ports (see the Deployment's spark-defaults) so executors have
+    # deterministic endpoints to reach; on the pod network all ports route, but
+    # pinning them keeps behaviour predictable and firewall-friendly.
+    - name: driver-rpc
+      port: 35000
+      targetPort: 35000
+    - name: block-manager
+      port: 35001
+      targetPort: 35001
+    - name: driver-ui
+      port: 4040
+      targetPort: 4040
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-driver
+  labels:
+    app: spark-driver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark-driver
+  template:
+    metadata:
+      labels:
+        app: spark-driver
+    spec:
+      enableServiceLinks: false     # same SPARK_MASTER_PORT collision guard
+      # hostname + subdomain make the pod resolvable at
+      # spark-driver.spark-driver.<ns>.svc.cluster.local via the headless Service.
+      hostname: spark-driver
+      subdomain: spark-driver
+      containers:
+        - name: spark-driver
+          image: "apache/spark:4.2.0"
+          # Idle so you can `kubectl exec` in and run spark-submit in client mode;
+          # the long-lived pod keeps a stable DNS name across submissions.
+          command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
+          ports:
+            - containerPort: 35000  # spark.driver.port
+            - containerPort: 35001  # spark.blockManager.port
+            - containerPort: 4040   # driver web UI
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "8Gi"
