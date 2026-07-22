@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "adsb-spark.rustfsName" . }}-data
+  labels:
+    app: {{ include "adsb-spark.rustfsName" . }}
+    {{- include "adsb-spark.commonLabels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.rustfs.pvc.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.rustfs.pvc.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "adsb-spark.rustfsName" . }}
+  labels:
+    app: {{ include "adsb-spark.rustfsName" . }}
+    {{- include "adsb-spark.commonLabels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "adsb-spark.rustfsName" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "adsb-spark.rustfsName" . }}
+    spec:
+      securityContext:
+        fsGroup: {{ .Values.rustfs.fsGroup }}   # RustFS runs as this UID; make the PV writable
+      containers:
+        - name: {{ include "adsb-spark.rustfsName" . }}
+          image: {{ .Values.rustfs.image | quote }}
+          imagePullPolicy: {{ .Values.rustfs.pullPolicy }}
+          env:
+            - name: RUSTFS_ACCESS_KEY
+              value: {{ .Values.rustfs.accessKey | quote }}
+            - name: RUSTFS_SECRET_KEY
+              value: {{ .Values.rustfs.secretKey | quote }}
+            - name: RUSTFS_ADDRESS
+              value: ":{{ .Values.rustfs.ports.s3 }}"
+            - name: RUSTFS_VOLUMES
+              value: "/data"
+            - name: RUSTFS_CONSOLE_ENABLE
+              value: "true"
+          ports:
+            - containerPort: {{ .Values.rustfs.ports.s3 }}
+            - containerPort: {{ .Values.rustfs.ports.console }}
+          resources:
+            {{- toYaml .Values.rustfs.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "adsb-spark.rustfsName" . }}-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "adsb-spark.rustfsName" . }}
+  labels:
+    app: {{ include "adsb-spark.rustfsName" . }}
+    {{- include "adsb-spark.commonLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ include "adsb-spark.rustfsName" . }}
+  ports:
+    - name: rustfs-s3
+      port: {{ .Values.rustfs.ports.s3 }}
+      targetPort: {{ .Values.rustfs.ports.s3 }}
+    - name: rustfs-console
+      port: {{ .Values.rustfs.ports.console }}
+      targetPort: {{ .Values.rustfs.ports.console }}

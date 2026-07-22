@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "adsb-spark.workerName" . }}
+  labels:
+    app: {{ include "adsb-spark.workerName" . }}
+    {{- include "adsb-spark.commonLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.spark.worker.replicas }}
+  # maxSurge: 0 — the single-node cluster (~8Gi) can't fit a 3rd worker's RAM
+  # transiently during a rolling update, so replace in place instead of surging.
+  strategy:
+    rollingUpdate:
+      maxSurge: {{ .Values.spark.worker.maxSurge }}
+      maxUnavailable: {{ .Values.spark.worker.maxUnavailable }}
+  selector:
+    matchLabels:
+      app: {{ include "adsb-spark.workerName" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "adsb-spark.workerName" . }}
+    spec:
+      # Same as the master: prevent SPARK_MASTER_PORT=tcp://... injection from
+      # the spark-master Service, which the worker also resolves.
+      enableServiceLinks: false
+      containers:
+        - name: {{ include "adsb-spark.workerName" . }}
+          image: {{ include "adsb-spark.sparkImage" . | quote }}
+          imagePullPolicy: {{ .Values.spark.image.pullPolicy }}
+          command: ["/opt/spark/bin/spark-class"]
+          args:
+            - "org.apache.spark.deploy.worker.Worker"
+            - "spark://{{ include "adsb-spark.masterName" . }}:{{ .Values.spark.master.ports.rpc }}"
+            - "--webui-port"
+            - {{ .Values.spark.worker.uiPort | quote }}
+          env:
+            - name: SPARK_WORKER_CORES
+              value: {{ .Values.spark.worker.cores | quote }}
+            - name: SPARK_WORKER_MEMORY
+              value: {{ .Values.spark.worker.memory | quote }}
+          ports:
+            - containerPort: {{ .Values.spark.worker.uiPort }}   # worker web UI
+          resources:
+            {{- toYaml .Values.spark.worker.resources | nindent 12 }}
