@@ -1,0 +1,7 @@
+# Preset: Spark 4.2.0 — EXPERIMENTATION ONLY (no Delta / no Pulsar).
+# Delta Lake and the Pulsar-Spark connector do not yet support Spark 4.2, so do
+# not run the spark-adsb pipeline against this preset.
+#   helm install adsb-spark ./helm/adsb-spark -f helm/adsb-spark/values-4.2.0.yaml
+spark:
+  image:
+    tag: "4.2.0"

@@ -2,8 +2,17 @@
 
 Deploys a self-contained Spark standalone cluster plus an S3-compatible object
 store, suitable for local development and testing of the `spark-adsb` analytics
-layer. Configured with [Kustomize](https://kustomize.io/) — one shared spec in
-`base/`, with per-version overlays that pin only the Spark image tag.
+layer.
+
+Two deployment options are provided for the **same** cluster spec — use one, not
+both, on a given cluster (they share static resource names and would collide):
+
+- **[Kustomize](https://kustomize.io/)** (default docs below) — one shared spec in
+  `base/`, with per-version overlays that pin only the Spark image tag. Built into
+  `kubectl`, no extra install.
+- **[Helm](#deploy-with-helm-alternative)** — the `helm/adsb-spark` chart, with
+  `values-4.1.1.yaml` / `values-4.2.0.yaml` presets mirroring the overlays. See
+  the Helm section.
 
 ## Which overlay?
 
@@ -78,6 +87,46 @@ kubectl apply -k overlays/4.1.1 --dry-run=server
 kubectl apply -k overlays/4.1.1
 ```
 
+## Deploy with Helm (alternative)
+
+The `helm/adsb-spark` chart renders the identical cluster from a Helm chart. The
+Spark-version split is driven by two preset values files (mirroring the overlays);
+everything else is parameterized in `values.yaml`.
+
+```bash
+cd adsb-feed/infrastructure/kubernetes
+
+# Preview / validate (optional)
+helm template adsb-spark helm/adsb-spark -f helm/adsb-spark/values-4.1.1.yaml
+helm install adsb-spark helm/adsb-spark -f helm/adsb-spark/values-4.1.1.yaml --dry-run=server
+
+# Install — pipeline (Spark 4.1.1)
+helm install adsb-spark helm/adsb-spark -f helm/adsb-spark/values-4.1.1.yaml
+
+# ...or experimentation only (Spark 4.2.0)
+helm install adsb-spark helm/adsb-spark -f helm/adsb-spark/values-4.2.0.yaml
+
+# Smoke test (SparkPi via the driver DNS) — passes only if the job completes
+helm test adsb-spark
+
+# Change worker count (or any value) without editing files
+helm upgrade adsb-spark helm/adsb-spark -f helm/adsb-spark/values-4.1.1.yaml \
+  --set spark.worker.replicas=3
+
+# Remove everything
+helm uninstall adsb-spark
+```
+
+Notes:
+- Requires the Helm CLI (`brew install helm`); Kustomize needs nothing beyond `kubectl`.
+- Resource names are static (not release-prefixed) so the DNS references
+  (`spark://spark-master:7077`, the headless driver name, `http://rustfs:9000`)
+  stay valid — so only **one** release per namespace, and don't run it alongside
+  the Kustomize deploy.
+- The verify / submit / RustFS / scale sections below apply to either deployment
+  method (same resource names). `helm test` is the Helm-native equivalent of the
+  manual SparkPi submit.
+
 ## Verify the Spark cluster formed
 
 ```bash
@@ -103,7 +152,7 @@ kubectl exec -it "$POD" -- /opt/spark/bin/spark-submit \
   --master spark://spark-master:7077 \
   --conf spark.driver.host=$(kubectl get pod "$POD" -o jsonpath='{.status.podIP}') \
   --class org.apache.spark.examples.SparkPi \
-  /opt/spark/examples/jars/spark-examples_2.13-4.2.0.jar 100
+  /opt/spark/examples/jars/spark-examples_2.13-4.1.1.jar 100   # jar version = deployed Spark tag (4.2.0 on that overlay)
 # Expect: "Pi is roughly 3.14..."
 #
 # spark.driver.host is REQUIRED: without it the driver advertises its pod
@@ -129,7 +178,7 @@ kubectl exec -it "$DRV" -- /opt/spark/bin/spark-submit \
   --conf spark.driver.port=35000 \
   --conf spark.blockManager.port=35001 \
   --class org.apache.spark.examples.SparkPi \
-  /opt/spark/examples/jars/spark-examples_2.13-4.2.0.jar 100
+  /opt/spark/examples/jars/spark-examples_2.13-4.1.1.jar 100   # jar version = deployed Spark tag (4.2.0 on that overlay)
 # Expect: "Pi is roughly 3.14..."
 #
 # - spark.driver.host   → the headless Service DNS name (stable across restarts)

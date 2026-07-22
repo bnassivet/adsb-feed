@@ -1,0 +1,62 @@
+# Headless Service for the Spark driver. clusterIP: None means DNS resolves
+# directly to the driver pod IP (no VIP), giving the driver a STABLE name:
+#   <driver>.<driver>.<namespace>.svc.cluster.local
+# Executors use this to connect back to the driver, so it survives pod restarts
+# (unlike pinning an ephemeral pod IP with --conf spark.driver.host=<IP>).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "adsb-spark.driverName" . }}
+  labels:
+    app: {{ include "adsb-spark.driverName" . }}
+    {{- include "adsb-spark.commonLabels" . | nindent 4 }}
+spec:
+  clusterIP: None            # headless: A record points straight at the pod
+  selector:
+    app: {{ include "adsb-spark.driverName" . }}
+  ports:
+    - name: driver-rpc
+      port: {{ .Values.spark.driver.ports.rpc }}
+      targetPort: {{ .Values.spark.driver.ports.rpc }}
+    - name: block-manager
+      port: {{ .Values.spark.driver.ports.blockManager }}
+      targetPort: {{ .Values.spark.driver.ports.blockManager }}
+    - name: driver-ui
+      port: {{ .Values.spark.driver.ports.ui }}
+      targetPort: {{ .Values.spark.driver.ports.ui }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "adsb-spark.driverName" . }}
+  labels:
+    app: {{ include "adsb-spark.driverName" . }}
+    {{- include "adsb-spark.commonLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.spark.driver.replicas }}
+  selector:
+    matchLabels:
+      app: {{ include "adsb-spark.driverName" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "adsb-spark.driverName" . }}
+    spec:
+      enableServiceLinks: false     # same SPARK_MASTER_PORT collision guard
+      # hostname + subdomain make the pod resolvable at
+      # <driver>.<driver>.<ns>.svc.cluster.local via the headless Service.
+      hostname: {{ include "adsb-spark.driverName" . }}
+      subdomain: {{ include "adsb-spark.driverName" . }}
+      containers:
+        - name: {{ include "adsb-spark.driverName" . }}
+          image: {{ include "adsb-spark.sparkImage" . | quote }}
+          imagePullPolicy: {{ .Values.spark.image.pullPolicy }}
+          # Idle so you can `kubectl exec` in and run spark-submit in client mode;
+          # the long-lived pod keeps a stable DNS name across submissions.
+          command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
+          ports:
+            - containerPort: {{ .Values.spark.driver.ports.rpc }}           # spark.driver.port
+            - containerPort: {{ .Values.spark.driver.ports.blockManager }}  # spark.blockManager.port
+            - containerPort: {{ .Values.spark.driver.ports.ui }}            # driver web UI
+          resources:
+            {{- toYaml .Values.spark.driver.resources | nindent 12 }}
