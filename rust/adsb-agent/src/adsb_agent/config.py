@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     # Max agent loop steps (LangGraph recursion limit) — caps tool-call hops.
     agent_recursion_limit: int = 25
 
+    # Simulation agent: a separate Python service (adsb-simulation-agent) that
+    # generates simulated flight trajectories, reached over the A2A protocol.
+    # Optional — if it isn't running, the tool reports a readable error and the
+    # rest of the agent is unaffected.
+    simulation_agent_url: str = "http://127.0.0.1:8300"
+    # Generation runs an LLM classification hop plus geometry, so it is slower
+    # than the DuckDB data tools.
+    simulation_agent_timeout: float = 60.0
+
     # MLflow tracing
     mlflow_enabled: bool = True
     mlflow_tracking_uri: str = "http://localhost:5010"

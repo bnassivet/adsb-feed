@@ -85,3 +85,49 @@ VOICE_SSE_RESPONSES: dict[int | str, dict] = {
         "content": {"text/event-stream": {"schema": {"type": "string"}}},
     }
 }
+
+
+# ---------------------------------------------------------------------------
+# Simulation (adsb-simulation-agent, over A2A)
+# ---------------------------------------------------------------------------
+
+
+class SimulateTrajectoryRequest(BaseModel):
+    """Form submission from the desktop app's simulation panel.
+
+    Mirrors the `generateSimulatedTrajectory` chat tool's arguments so both
+    entry points reach the simulation agent through the same client.
+    """
+
+    category: Literal["airliner", "ga", "helicopter", "fighter"]
+    origin_lat: float = Field(ge=-90, le=90, alias="originLat")
+    origin_lng: float = Field(ge=-180, le=180, alias="originLng")
+    count: int = Field(default=1, ge=1, le=20)
+    route_hint: str | None = Field(default=None, alias="routeHint")
+    """Free text, interpreted by the simulation agent — never pre-structured here."""
+
+    cruise_altitude_ft: int | None = Field(default=None, ge=0, le=60000, alias="cruiseAltitudeFt")
+
+    model_config = {"populate_by_name": True}
+
+    def to_tool_args(self) -> dict[str, Any]:
+        """Shape expected by `a2a_client.build_trajectory_payload`."""
+        args: dict[str, Any] = {
+            "category": self.category,
+            "originLat": self.origin_lat,
+            "originLng": self.origin_lng,
+            "count": self.count,
+        }
+        if self.route_hint:
+            args["routeHint"] = self.route_hint
+        if self.cruise_altitude_ft is not None:
+            args["cruiseAltitudeFt"] = self.cruise_altitude_ft
+        return args
+
+
+class SimulateTrajectoryResponse(BaseModel):
+    """Generated trajectories, ready for the frontend to animate."""
+
+    aircraft: list[dict[str, Any]]
+    violations: list[dict[str, Any]] = Field(default_factory=list)
+    summary: str

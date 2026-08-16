@@ -513,6 +513,56 @@ TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "generateSimulatedTrajectory",
+            "description": (
+                "Generate simulated aircraft with realistic flight paths for demo "
+                "purposes, and show them on the map. Use when the user asks to "
+                "simulate, demo, or fake aircraft — e.g. 'simulate a helicopter "
+                "circling downtown', 'show me a fighter doing aerobatics', 'add "
+                "three GA aircraft'. The aircraft appear on the map automatically; "
+                "just confirm what you generated. These are simulated, not real "
+                "traffic — never mix them into answers about observed aircraft."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "enum": ["airliner", "ga", "helicopter", "fighter"],
+                        "description": "Aircraft performance class to simulate",
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "How many aircraft to generate (default 1, max 20)",
+                    },
+                    "routeHint": {
+                        "type": "string",
+                        "description": (
+                            "The user's own words describing the desired route, passed "
+                            "verbatim — do NOT convert it into coordinates, headings or "
+                            "distances. The simulation agent interprets it."
+                        ),
+                    },
+                    "originLat": {
+                        "type": "number",
+                        "description": "Receiver latitude; the routes are built around this point",
+                    },
+                    "originLng": {
+                        "type": "number",
+                        "description": "Receiver longitude; the routes are built around this point",
+                    },
+                    "cruiseAltitudeFt": {
+                        "type": "integer",
+                        "description": "Optional target altitude in feet",
+                    },
+                },
+                "required": ["category"],
+            },
+        },
+    },
 ]
 
 def get_tool_names() -> list[str]:

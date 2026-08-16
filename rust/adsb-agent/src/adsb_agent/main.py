@@ -20,18 +20,22 @@ from ag_ui.core import (
     RunStartedEvent,
 )
 from ag_ui.encoder import EventEncoder
-from fastapi import FastAPI, Request
+import httpx
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .config import settings
 from .llm import stream_llm_response
 from .tracing import make_span, set_session_tag
+from .a2a_client import call_simulation_agent
 from .models import (
     AgUiErrorResponse,
     AgUiRequest,
     HealthResponse,
     RuntimeInfoResponse,
+    SimulateTrajectoryRequest,
+    SimulateTrajectoryResponse,
     SSE_RESPONSES,
     VOICE_SSE_RESPONSES,
     VoiceBackendsResponse,
@@ -428,6 +432,38 @@ async def runtime_single_endpoint(body: AgUiRequest, request: Request):
 async def health() -> HealthResponse:
     """Health check endpoint."""
     return HealthResponse(status="healthy", service="adsb-agent")
+
+
+# ---------------------------------------------------------------------------
+# Simulation endpoint
+# ---------------------------------------------------------------------------
+
+
+@app.post(
+    "/simulate/trajectory",
+    tags=["simulation"],
+    response_model=SimulateTrajectoryResponse,
+    summary="Generate simulated flight trajectories",
+    responses={502: {"description": "Simulation agent unreachable or generation failed"}},
+)
+async def simulate_trajectory(body: SimulateTrajectoryRequest) -> SimulateTrajectoryResponse:
+    """Generate trajectories for the desktop app's simulation panel.
+
+    Bypasses the chat pipeline entirely — a form submission shouldn't have to
+    fake a chat turn — but shares `call_simulation_agent` with the
+    `generateSimulatedTrajectory` tool, so both paths behave identically.
+    """
+    async with httpx.AsyncClient() as client:
+        result = await call_simulation_agent(body.to_tool_args(), client)
+
+    if not result.ok or result.data is None:
+        raise HTTPException(status_code=502, detail=result.error or "trajectory generation failed")
+
+    return SimulateTrajectoryResponse(
+        aircraft=result.data.get("aircraft", []),
+        violations=result.data.get("violations", []),
+        summary=result.summary,
+    )
 
 
 # ---------------------------------------------------------------------------

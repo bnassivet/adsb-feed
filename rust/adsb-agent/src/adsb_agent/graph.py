@@ -44,6 +44,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 
+from .a2a_client import call_simulation_agent
 from .config import settings
 from .tracing import make_span
 
@@ -62,8 +63,22 @@ SERVER_TOOL_NAMES: frozenset[str] = frozenset(
         "getHourlyHeatmap",
         "getEventsOfInterest",
         "getCurrentDateTime",
+        # Proxied over A2A to `adsb-simulation-agent` rather than the Tauri
+        # tool server — see `_execute_server_tool_inner`.
+        "generateSimulatedTrajectory",
     }
 )
+
+SIMULATION_TOOL_NAME = "generateSimulatedTrajectory"
+"""Server-executed: calls the simulation agent over A2A."""
+
+APPLY_TRAJECTORY_TOOL_NAME = "applySimulatedTrajectory"
+"""Client-executed: hands the generated waypoints to the frontend for playback.
+
+Never called by the model. It is synthesized after a successful
+``generateSimulatedTrajectory`` so the payload can reach the browser without
+passing through the LLM's context — see ``run_server_tool_calls``.
+"""
 
 _CAMEL_RE = re.compile(r"(?<!^)(?=[A-Z])")
 
@@ -161,6 +176,63 @@ async def _execute_server_tool_inner(
     return f"Error: {envelope.get('error', 'unknown error')}"
 
 
+async def run_server_tool_calls(
+    tool_calls: Iterable[dict[str, Any]],
+    server_names: set[str],
+    client: httpx.AsyncClient,
+) -> dict[str, Any]:
+    """Execute the server-side tool calls on an assistant message.
+
+    Returns the ``ToolMessage`` list plus any ``pending_client_tool_calls`` —
+    tool calls synthesized here to be forwarded to the browser.
+
+    The simulation tool is special-cased because its result is too large to put
+    in the model's context: a 2-lap helicopter orbit is ~240 waypoints. The
+    model receives a one-line summary; the full payload travels out-of-band as
+    an ``applySimulatedTrajectory`` call that ``run_graph_to_agui`` forwards.
+    That split is what lets the user get a spoken reply *and* the aircraft.
+    """
+    from langchain_core.messages import ToolMessage
+
+    messages: list[Any] = []
+    pending: list[dict[str, Any]] = []
+
+    for tc in tool_calls:
+        name = tc["name"]
+        if name not in server_names:
+            continue
+
+        if name == SIMULATION_TOOL_NAME:
+            with make_span(f"tool.{name}", span_type="TOOL") as span:
+                if span is not None:
+                    span.set_inputs({"name": name, "args": tc.get("args", {})})
+                result = await call_simulation_agent(tc.get("args", {}), client)
+                if span is not None:
+                    # Deliberately the summary, not the payload — traces stay readable.
+                    span.set_outputs({"ok": result.ok, "summary": result.summary or result.error})
+
+            messages.append(
+                ToolMessage(
+                    content=result.summary if result.ok else result.error,
+                    tool_call_id=tc["id"],
+                )
+            )
+            if result.ok and result.data is not None:
+                pending.append(
+                    {
+                        "name": APPLY_TRAJECTORY_TOOL_NAME,
+                        "args": result.data,
+                        "id": str(uuid.uuid4()),
+                    }
+                )
+            continue
+
+        content = await execute_server_tool(name, tc.get("args", {}), client)
+        messages.append(ToolMessage(content=content, tool_call_id=tc["id"]))
+
+    return {"messages": messages, "pending_client_tool_calls": pending}
+
+
 def _to_openai_tools(tools: Iterable[Any] | None) -> list[dict] | None:
     """AG-UI Tool objects → OpenAI function-calling schemas for ``bind_tools``."""
     if not tools:
@@ -232,8 +304,19 @@ def build_agent_graph(tools: Iterable[Any] | None, *, model: Any | None = None):
     so the node-span instrumentation can be exercised without a live LLM. In
     production it is None and a ``ChatOpenAI`` is constructed from settings.
     """
-    from langchain_core.messages import ToolMessage
-    from langgraph.graph import END, START, StateGraph, MessagesState
+    from langgraph.graph import END, START, MessagesState, StateGraph
+
+    class AgentState(MessagesState):
+        """MessagesState plus an out-of-band channel to the browser.
+
+        ``pending_client_tool_calls`` carries tool calls synthesized by
+        ``server_tools`` that must reach the frontend but must not enter the
+        model's context (see ``run_server_tool_calls``). Keeping them off the
+        message list is what lets the ``server_tools -> agent`` edge stay
+        intact, so the model still writes a reply.
+        """
+
+        pending_client_tool_calls: list[dict]
 
     schemas = _to_openai_tools(tools)
     server_names, _client_names = partition_tool_names(tools)
@@ -259,16 +342,11 @@ def build_agent_graph(tools: Iterable[Any] | None, *, model: Any | None = None):
 
     async def server_tools_node(state: dict) -> dict:
         last = state["messages"][-1]
-        results: list[Any] = []
         with make_span("server_tools", span_type="CHAIN"):
             async with httpx.AsyncClient() as client:
-                for tc in getattr(last, "tool_calls", None) or []:
-                    if tc["name"] in server_names:
-                        content = await execute_server_tool(
-                            tc["name"], tc.get("args", {}), client
-                        )
-                        results.append(ToolMessage(content=content, tool_call_id=tc["id"]))
-        return {"messages": results}
+                return await run_server_tool_calls(
+                    getattr(last, "tool_calls", None) or [], server_names, client
+                )
 
     def route(state: dict) -> str:
         last = state["messages"][-1]
@@ -279,7 +357,7 @@ def build_agent_graph(tools: Iterable[Any] | None, *, model: Any | None = None):
             return "server_tools"
         return END
 
-    graph = StateGraph(MessagesState)
+    graph = StateGraph(AgentState)
     graph.add_node("agent", agent_node)
     graph.add_node("server_tools", server_tools_node)
     graph.add_edge(START, "agent")
@@ -328,6 +406,7 @@ async def run_graph_to_agui(graph, lc_messages: list[Any]) -> AsyncIterator:
     message_id = str(uuid.uuid4())
     text_started = False
     final_messages: list[Any] = lc_messages
+    pending_client_calls: list[dict] = []
 
     try:
         async for mode, chunk in graph.astream(
@@ -353,18 +432,47 @@ async def run_graph_to_agui(graph, lc_messages: list[Any]) -> AsyncIterator:
                     )
             elif mode == "values":
                 final_messages = chunk.get("messages", final_messages)
+                # Out-of-band payloads from server tools. Latched rather than
+                # overwritten: later state snapshots may omit the key.
+                pending_client_calls = (
+                    chunk.get("pending_client_tool_calls") or pending_client_calls
+                )
     except Exception as e:  # noqa: BLE001
         logger.error("Graph execution error: %s", e, exc_info=True)
+        if text_started:
+            yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
+        # Out-of-band results are already computed and paid for — a failure on
+        # the *narration* path (typically a slow model stalling the follow-up
+        # turn) must not discard them. Forward before reporting the error.
+        for event in _forward_tool_calls(pending_client_calls, message_id, text_started):
+            yield event
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
         return
 
     if text_started:
         yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
 
-    # Forward client tool calls (if any) from the final assistant message.
+    # Forward client tool calls: those the model asked for on the final
+    # assistant message, plus any synthesized out-of-band by server tools.
     last = final_messages[-1] if final_messages else None
-    tool_calls = getattr(last, "tool_calls", None) or []
-    if tool_calls and not text_started:
+    tool_calls = list(getattr(last, "tool_calls", None) or []) + list(pending_client_calls)
+    for event in _forward_tool_calls(tool_calls, message_id, text_started):
+        yield event
+
+
+def _forward_tool_calls(
+    tool_calls: list[dict], message_id: str, text_started: bool
+) -> Iterable[Any]:
+    """AG-UI events for client tool calls forwarded to the browser.
+
+    Shared by the success and error paths of ``run_graph_to_agui`` — an
+    out-of-band payload that has already been computed must reach the frontend
+    even when the run later fails.
+    """
+    if not tool_calls:
+        return
+
+    if not text_started:
         # AG-UI needs an assistant message envelope to attach tool calls to, so
         # the reconstructed history on the next runAgent can pair tool results
         # with their originating call (mirrors the previous llm.py behavior).
