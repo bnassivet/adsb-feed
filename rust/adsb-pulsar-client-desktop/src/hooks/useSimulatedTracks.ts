@@ -1,8 +1,21 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
-import { SIMULATED_FLIGHTS } from "@/lib/simulation-data";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { SIMULATED_FLIGHTS, SIMULATION_ORIGIN } from "@/lib/simulation-data";
 import type { SimulatedFlight } from "@/lib/simulation-data";
 import type { AircraftTrack } from "@/lib/types";
+
+interface LatLngOffset {
+  dLat: number;
+  dLng: number;
+}
+
+/** Translate a [lat, lng] point by a lat/lng offset. */
+function applyOffset(
+  point: [number, number],
+  offset: LatLngOffset,
+): [number, number] {
+  return [point[0] + offset.dLat, point[1] + offset.dLng];
+}
 
 const TICK_MS = 2000;
 const PROGRESS_PER_TICK = 0.04; // ~25 ticks per segment → ~50s per segment
@@ -41,11 +54,12 @@ export function interpolate(
 function buildTrack(
   flight: SimulatedFlight,
   state: FlightState,
+  offset: LatLngOffset,
 ): AircraftTrack {
   const wp = flight.waypoints;
   const a = wp[state.segmentIndex];
   const b = wp[state.segmentIndex + 1] ?? wp[0]; // safety fallback
-  const [lat, lng] = interpolate(a, b, state.segmentProgress);
+  const [lat, lng] = applyOffset(interpolate(a, b, state.segmentProgress), offset);
   const heading = computeHeading(a[0], a[1], b[0], b[1]);
 
   return {
@@ -72,12 +86,32 @@ function buildTrack(
  * for demo/trade-show use. Tracks interpolate along predefined waypoints
  * and loop continuously.
  *
+ * Routes are authored around SIMULATION_ORIGIN and translated to the
+ * configured receiver location (if any) so demo traffic appears local to
+ * wherever the antenna actually is.
+ *
  * @param enabled Whether the simulation is active
+ * @param receiverLocation Configured receiver lat/lng, or null/undefined to
+ *   render routes at their original authored location
  * @returns Array of simulated AircraftTrack objects (empty when disabled)
  */
-export function useSimulatedTracks(enabled: boolean): AircraftTrack[] {
+export function useSimulatedTracks(
+  enabled: boolean,
+  receiverLocation?: { lat: number; lng: number } | null,
+): AircraftTrack[] {
   const statesRef = useRef<FlightState[] | null>(null);
   const [tracks, setTracks] = useState<AircraftTrack[]>([]);
+
+  const offset: LatLngOffset = useMemo(
+    () =>
+      receiverLocation
+        ? {
+            dLat: receiverLocation.lat - SIMULATION_ORIGIN.lat,
+            dLng: receiverLocation.lng - SIMULATION_ORIGIN.lng,
+          }
+        : { dLat: 0, dLng: 0 },
+    [receiverLocation?.lat, receiverLocation?.lng],
+  );
 
   useEffect(() => {
     if (!enabled) {
@@ -125,7 +159,10 @@ export function useSimulatedTracks(enabled: boolean): AircraftTrack[] {
         const wp = flight.waypoints;
         const a = wp[state.segmentIndex];
         const b = wp[state.segmentIndex + 1] ?? wp[0];
-        const [lat, lng] = interpolate(a, b, state.segmentProgress);
+        const [lat, lng] = applyOffset(
+          interpolate(a, b, state.segmentProgress),
+          offset,
+        );
 
         // Accumulate position trail
         state.positions = [
@@ -133,14 +170,14 @@ export function useSimulatedTracks(enabled: boolean): AircraftTrack[] {
           [lat, lng, flight.altitude],
         ];
 
-        newTracks.push(buildTrack(flight, state));
+        newTracks.push(buildTrack(flight, state, offset));
       }
 
       setTracks(newTracks);
     }, TICK_MS);
 
     return () => clearInterval(interval);
-  }, [enabled]);
+  }, [enabled, offset]);
 
   return tracks;
 }

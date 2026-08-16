@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { computeHeading, interpolate } from "../useSimulatedTracks";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { renderHook, act } from "@testing-library/react";
+import {
+  computeHeading,
+  interpolate,
+  useSimulatedTracks,
+} from "../useSimulatedTracks";
+import { SIMULATION_ORIGIN } from "@/lib/simulation-data";
 
 describe("computeHeading", () => {
   it("north direction (lat increases)", () => {
@@ -40,5 +46,60 @@ describe("interpolate", () => {
     const result = interpolate([3, 7], [10, 20], 1);
     expect(result[0]).toBe(10);
     expect(result[1]).toBe(20);
+  });
+});
+
+describe("useSimulatedTracks receiver-relative offset", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reproduces today's exact output when receiverLocation is null", () => {
+    const { result: withNull } = renderHook(() =>
+      useSimulatedTracks(true, null),
+    );
+    const { result: withoutArg } = renderHook(() =>
+      useSimulatedTracks(true),
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    expect(withNull.current[0].latitude).toBe(withoutArg.current[0].latitude);
+    expect(withNull.current[0].longitude).toBe(
+      withoutArg.current[0].longitude,
+    );
+  });
+
+  it("offsets tracks by exactly the delta from SIMULATION_ORIGIN to receiverLocation", () => {
+    const receiverLocation = { lat: 51.5, lng: -0.12 };
+
+    const { result: baseline } = renderHook(() =>
+      useSimulatedTracks(true, null),
+    );
+    const { result: offset } = renderHook(() =>
+      useSimulatedTracks(true, receiverLocation),
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    const dLat = receiverLocation.lat - SIMULATION_ORIGIN.lat;
+    const dLng = receiverLocation.lng - SIMULATION_ORIGIN.lng;
+
+    expect(offset.current[0].latitude).toBeCloseTo(
+      (baseline.current[0].latitude ?? 0) + dLat,
+      10,
+    );
+    expect(offset.current[0].longitude).toBeCloseTo(
+      (baseline.current[0].longitude ?? 0) + dLng,
+      10,
+    );
   });
 });
