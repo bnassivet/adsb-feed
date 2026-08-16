@@ -194,7 +194,7 @@ export default function Dashboard() {
     setHistorySliderMin(0);
     setHistorySliderMax(null);
   }
-  const simulatedTracks = useSimulatedTracks(showSimulation);
+  const simulatedTracks = useSimulatedTracks(showSimulation, receiverLocation);
   const allTracks = useMemo(() => [...tracks, ...simulatedTracks], [tracks, simulatedTracks]);
 
   // Map flyTo callback — set by MapInner via prop, called by copilot panMapTo tool

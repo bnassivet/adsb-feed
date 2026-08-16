@@ -1,3 +1,10 @@
+/**
+ * Reference point the 20 flight routes below were authored around
+ * (matches MapInner's DEFAULT_CENTER). Routes are translated by the delta
+ * between this origin and the configured receiver location at runtime.
+ */
+export const SIMULATION_ORIGIN = { lat: 45.5, lng: -73.6 };
+
 /** Definition of a simulated flight route for demo mode. */
 export interface SimulatedFlight {
   hex_ident: string;
