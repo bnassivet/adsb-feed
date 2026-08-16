@@ -14,7 +14,8 @@ Cargo workspace containing the ADS-B feed client library, adsd-data-engine and T
 
 | Component | Path | Purpose |
 |-----------|------|---------|
-| `adsb-agent` | `adsb-agent/` | Optional **Python** AI agent (LangGraph + FastAPI) providing AG-UI chat + voice for the desktop app. Built/run with `uv` (`uv sync --all-extras`, `uv run python -m adsb_agent`), **not** part of the Cargo workspace — `cargo` commands ignore it. Lives here as a sibling component (moved out of `adsb-pulsar-client-desktop/agent/`). |
+| `adsb-agent` | `adsb-agent/` | Optional **Python** AI agent (LangGraph + FastAPI) providing AG-UI chat + voice for the desktop app. Built/run with `uv` (`uv sync --all-extras`, `uv run python -m adsb_agent`), **not** part of the Cargo workspace — `cargo` commands ignore it. Lives here as a sibling component (moved out of `adsb-pulsar-client-desktop/agent/`). Serves on **:8000**. |
+| `adsb-simulation-agent` | `adsb-simulation-agent/` | Optional **Python** agent (LangGraph + Starlette) generating kinematically plausible simulated flight trajectories, exposed over the **A2A protocol** and called by `adsb-agent` as an A2A client. Built/run with `uv` (`uv sync --all-extras`, `uv run python -m adsb_simulation_agent`), **not** part of the Cargo workspace. Serves on **:8300**. See its `CLAUDE.md` for a2a-sdk v1.x gotchas. |
 
 ## Testing
 
