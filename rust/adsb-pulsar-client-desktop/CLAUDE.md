@@ -112,8 +112,8 @@ Test stack: **Vitest** + jsdom + @testing-library/react + @testing-library/user-
 |-----------|-------|----------------|
 | `src/lib/__tests__/` | ~84+ | `altitudeToColor`, `zoomToH3Resolution`, `computeH3Density`, `formatBytes`/`timeAgo`, `track-ordering`, `aircraft-icon`, `verticalTendency`/`formatVerticalRate`/`altitudeHistory`/`altitudeSparklinePoints`/`altitudeRange`/`formatTrackTime`, **DuckDB command wrappers** (`commands.test.ts` — incl. import) |
 | `src/contexts/__tests__/` | ~5 | `appendPosition`, `mergePositionInto` message_count accumulation |
-| `src/hooks/__tests__/` | ~13 | `useLocalStorage`, `useAircraftTracks` filter logic, `useSimulatedTracks` heading/interpolation |
-| `src/components/__tests__/` | ~57 | `ConnectionStatus` states, `MetricsBar` formatting + import button, `Filters` interactions, `AircraftTable` selection/RxTS/Msg#, `AltitudeLegend`, `AircraftDetailsPanel` fold/unfold/identity/tendency/sparkline/axes |
+| `src/hooks/__tests__/` | ~41 | `useLocalStorage`, `useAircraftTracks` filter logic, `useSimulatedTracks` heading/interpolation, **`useAgentSimulatedTracks`** time-based sampling + hold-then-despawn |
+| `src/components/__tests__/` | ~72 | `ConnectionStatus` states, `MetricsBar` formatting + import button, `Filters` interactions, `AircraftTable` selection/RxTS/Msg#, `AltitudeLegend`, `AircraftDetailsPanel` fold/unfold/identity/tendency/sparkline/axes, **`SimulationPanel`** form/error/clear |
 
 ```bash
 npm test                          # All tests once (CI mode)
@@ -184,6 +184,39 @@ npm test && npm run lint
 - Left edge is a draggable `col-resize` strip (mirrors `ResizeHandle` but horizontal, width delta owned internally)
 - Sparkline: last ≤100 altitude positions rendered as SVG `<polyline>`; y-axis shows min/max ft labels; x-axis shows `HH:MM:SS` of `first_seen` and `last_seen`
 
+### Simulated tracks — two independent sources
+
+| Source | Data | Playback | Lifetime |
+|--------|------|----------|----------|
+| `useSimulatedTracks` | `SIMULATED_FLIGHTS` (20 hardcoded routes in `simulation-data.ts`) | Fixed progress-per-tick; `ground_speed` is a display field only | Loops forever |
+| `useAgentSimulatedTracks` | `AgentTrajectory[]` from the simulation agent | Sampled from each trajectory's own playback clock against its waypoints' `t_offset_s`, so speed is real | User-driven: start / pause / resume / stop, per aircraft |
+
+### Agent trajectory playback
+
+Three pieces, deliberately separated so the logic is testable without React:
+
+| Piece | Role |
+|-------|------|
+| `lib/trajectory-playback.ts` | Pure state machine: `stopped \| playing \| paused` + `elapsedS` per trajectory, plus `tickPlayback`/`startPlayback`/`seekPlayback`/… |
+| `hooks/useTrajectoryPlayback.ts` | Owns the `PlaybackMap` and drives the clocks (`PLAYBACK_TICK_MS = 500`) |
+| `hooks/useAgentSimulatedTracks.ts` | **Stateless** renderer — given trajectories + playback it returns tracks |
+
+Each aircraft has **its own clock**, so they start and stop independently. Generated trajectories arrive **stopped**; nothing moves until the user presses Start. Reaching the end **pauses at the final waypoint** rather than despawning, so the scrubber can be dragged back.
+
+`trailUpTo()` derives the trail from the route rather than accumulating it over time — that is what makes scrubbing backwards shorten the trail instead of leaving the earlier path drawn.
+
+The `SimulationPanel` lists each trajectory (waypoints, duration, altitude range, phases), supports multi-select, and exposes Start/Pause/Resume/Stop plus a per-trajectory `<input type="range">` timeline. `MapInner` draws the **planned route** of every visible trajectory as a dashed polyline (`simulatedRoutes` prop) so the generated geometry is visible in full.
+
+**The two sources are independent.** `showSimulation` (Filters → "Show simulated tracks") gates **only** the 20 hardcoded demo flights. Agent trajectories render purely from their own playback state — Stop or Clear removes them. Coupling the two meant pressing Start in the Simulation Agent panel also launched all 20 demo flights; don't reintroduce it (there are regression tests in `useCopilotTools.test.ts` and `useTrajectoryPlayback.test.ts`).
+
+Chat-generated trajectories auto-start via `requestAutoStart` — asking the agent to "simulate a helicopter" should show it flying. Panel-generated ones stay stopped until the user presses Start. `requestAutoStart` exists because playback entries only appear after the sync effect, so calling `start()` immediately after handing over trajectories would find nothing. Agent coordinates are **absolute** — the agent already generated around the receiver, so no `SIMULATION_ORIGIN` offset is applied (applying it would double-shift the route).
+
+**Agent trajectories reach the app two ways**, both ending at `setAgentTrajectories`:
+- **Chat**: the Python agent proxies `generateSimulatedTrajectory` over A2A, then synthesizes an `applySimulatedTrajectory` client-tool call carrying the payload. Both tools are registered in `useCopilotTools.ts` — `generateSimulatedTrajectory` executes *server*-side but must still be declared here, since `partition_tool_names` intersects against the frontend-supplied tool list (same as `getStorageStats`).
+- **Panel**: `SimulationPanel.tsx` → `simulate-api.ts` → `POST /simulate/trajectory` on adsb-agent, bypassing chat.
+
+Requires `adsb-agent` (:8000) and `adsb-simulation-agent` (:8300) running; without them the panel shows a readable error and the rest of the app is unaffected.
+
 ## Gotchas
 
 - Root `.gitignore` has `lib/` which silently ignores `src/lib/`. Negated with `!**/src/lib/`
@@ -192,3 +225,4 @@ npm test && npm run lint
 - Workspace dep names use hyphens (`adsb-pulsar-client`), Rust `use` statements use underscores (`adsb_pulsar_client`)
 - DuckDB historical query commands return `"Storage not available"` if init failed — callers must handle this gracefully
 - `sbs_parser.rs` is in `adsb-data-engine` crate, NOT in `src-tauri/src/` (was moved as part of shared library refactor)
+- A hook whose effect depends on an **array prop** must key that effect on a value-derived signature, not array identity. `useAgentSimulatedTracks` calls `setTracks` inside its effect, so an inline-array caller would otherwise loop forever (caught by its own tests)

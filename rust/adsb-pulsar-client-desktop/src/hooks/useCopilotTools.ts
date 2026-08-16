@@ -35,6 +35,7 @@ import {
   EventsCard,
   LiveFlightsCard,
 } from "@/components/chat";
+import type { AgentTrajectory } from "@/lib/simulation-data";
 import type {
   ActiveMode,
   AircraftTrack,
@@ -57,6 +58,10 @@ export interface DisplayToolsConfig {
   showDensity: boolean;
   showSimulation: boolean;
   showImported: boolean;
+  /** Receiver location, so the agent can anchor generated routes to the antenna. */
+  receiverLocation: { lat: number; lng: number } | null;
+  /** Agent-generated trajectories currently playing back. */
+  agentTrajectories: AgentTrajectory[];
   showReceiver: boolean;
   showEvents: boolean;
   liveColorMode: AltitudeColorMode;
@@ -77,6 +82,7 @@ export interface DisplayToolsConfig {
   setShowDensity: (fn: (prev: boolean) => boolean) => void;
   setShowSimulation: (fn: (prev: boolean) => boolean) => void;
   setShowImported: (fn: (prev: boolean) => boolean) => void;
+  setAgentTrajectories: (v: AgentTrajectory[]) => void;
   setShowReceiver: (fn: (prev: boolean) => boolean) => void;
   setShowEvents: (fn: (prev: boolean) => boolean) => void;
   setLiveColorMode: (v: AltitudeColorMode) => void;
@@ -771,6 +777,89 @@ export function useCopilotTools(config: DisplayToolsConfig) {
     render: (props) =>
       createElement(DisplaySettingCard, {
         setting: "Demo Flights",
+        status: toCardStatus(props.status),
+        result: props.result,
+      }),
+  });
+
+  /*
+   * Simulation-agent pair.
+   *
+   * `generateSimulatedTrajectory` executes SERVER-side (it is listed in the
+   * Python agent's SERVER_TOOL_NAMES, which proxies it over A2A to
+   * adsb-simulation-agent). It is still declared here because
+   * `partition_tool_names` intersects against the frontend-supplied tool list —
+   * a tool the frontend never declares is invisible to the model. Same pattern
+   * as getStorageStats. The handler below is a fallback that should not run.
+   *
+   * `applySimulatedTrajectory` is the real client tool. The model never calls
+   * it; the agent synthesizes the call after a successful generation so the
+   * waypoint payload reaches us without passing through the LLM's context.
+   */
+  useSafeFrontendTool({
+    name: "generateSimulatedTrajectory",
+    description:
+      "Generate simulated aircraft with realistic flight paths and show them on the map. " +
+      "Use when the user asks to simulate, demo or fake aircraft. Pass the user's own " +
+      "wording as routeHint — do not convert it into coordinates or headings.",
+    parameters: z.object({
+      category: z
+        .enum(["airliner", "ga", "helicopter", "fighter"])
+        .describe("Aircraft performance class to simulate"),
+      count: z.number().optional().describe("How many aircraft (default 1, max 20)"),
+      routeHint: z
+        .string()
+        .optional()
+        .describe("The user's own words describing the route, passed verbatim"),
+      originLat: z.number().optional().describe("Receiver latitude"),
+      originLng: z.number().optional().describe("Receiver longitude"),
+      cruiseAltitudeFt: z.number().optional().describe("Optional target altitude in feet"),
+    }),
+    handler: async () =>
+      // Reached only if the Python agent stopped treating this as a server
+      // tool; generation genuinely requires the A2A service.
+      JSON.stringify({
+        error: "Trajectory generation runs on the simulation agent, not in the app.",
+      }),
+    render: (props) =>
+      createElement(DisplaySettingCard, {
+        setting: "Simulated Aircraft",
+        status: toCardStatus(props.status),
+        result: props.result,
+      }),
+  });
+
+  useSafeFrontendTool({
+    name: "applySimulatedTrajectory",
+    description:
+      "Internal: display generated simulated aircraft on the map. Called automatically " +
+      "after generateSimulatedTrajectory succeeds; never call this directly.",
+    parameters: z.object({
+      aircraft: z.array(z.any()).describe("Generated aircraft with timed waypoints"),
+      violations: z.array(z.any()).optional(),
+      summary: z.string().optional(),
+    }),
+    handler: async (args: {
+      aircraft?: AgentTrajectory[];
+      violations?: unknown[];
+      summary?: string;
+    }) => {
+      const aircraft = (args.aircraft ?? []).filter(
+        (a) => Array.isArray(a?.waypoints) && a.waypoints.length > 0,
+      );
+      // Deliberately does NOT touch `showSimulation`: that toggle owns the 20
+      // hardcoded demo flights, and enabling it here launched all of them
+      // alongside the requested aircraft. Agent trajectories render from their
+      // own playback state, and the chat path auto-starts them (see page.tsx).
+      configRef.current.setAgentTrajectories(aircraft);
+      return JSON.stringify({
+        applied: aircraft.length,
+        summary: args.summary ?? `${aircraft.length} aircraft`,
+      });
+    },
+    render: (props) =>
+      createElement(DisplaySettingCard, {
+        setting: "Simulated Aircraft",
         status: toCardStatus(props.status),
         result: props.result,
       }),

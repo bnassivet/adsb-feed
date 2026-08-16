@@ -56,6 +56,8 @@ function makeConfig(overrides: Partial<DisplayToolsConfig> = {}): DisplayToolsCo
     showDensity: false,
     showSimulation: false,
     showImported: true,
+    receiverLocation: { lat: 45.5, lng: -73.6 },
+    agentTrajectories: [],
     showReceiver: true,
     showEvents: true,
     liveColorMode: "track",
@@ -75,6 +77,7 @@ function makeConfig(overrides: Partial<DisplayToolsConfig> = {}): DisplayToolsCo
     setShowDensity: vi.fn(),
     setShowSimulation: vi.fn(),
     setShowImported: vi.fn(),
+    setAgentTrajectories: vi.fn(),
     setShowReceiver: vi.fn(),
     setShowEvents: vi.fn(),
     setLiveColorMode: vi.fn(),
@@ -117,8 +120,61 @@ describe("useCopilotTools — display control tools", () => {
     renderHook(() => useCopilotTools(config));
   });
 
-  it("registers all 24 tools", () => {
-    expect(registeredTools.size).toBe(24);
+  it("registers all 26 tools", () => {
+    expect(registeredTools.size).toBe(26);
+  });
+
+  describe("simulation agent tools", () => {
+    it("declares generateSimulatedTrajectory so the model can see its schema", () => {
+      /* It executes server-side (SERVER_TOOL_NAMES in the Python agent), but
+         partition_tool_names intersects against the frontend-supplied tool
+         list — an undeclared tool is invisible to the model. */
+      expect(registeredTools.has("generateSimulatedTrajectory")).toBe(true);
+    });
+
+    it("tells the model not to pre-structure the route", () => {
+      /* The simulation agent owns hint interpretation. If this LLM converts
+         "circle the port" into coordinates, the agent's own classifier never
+         sees the user's intent. */
+      const desc = registeredTools.get("generateSimulatedTrajectory")?.description ?? "";
+      expect(desc.toLowerCase()).toContain("do not convert");
+      expect(desc.toLowerCase()).toContain("routehint");
+    });
+
+    it("registers applySimulatedTrajectory to receive the payload", () => {
+      expect(registeredTools.has("applySimulatedTrajectory")).toBe(true);
+    });
+
+    it("stores generated aircraft on the page", async () => {
+      const aircraft = [
+        { hex_ident: "SIM-A1", callsign: "HELI001", category: "helicopter", waypoints: [{ t_offset_s: 0 }] },
+      ];
+      await getHandler("applySimulatedTrajectory")({ aircraft, summary: "1 aircraft" });
+      expect(config.setAgentTrajectories).toHaveBeenCalledWith(aircraft);
+    });
+
+    it("drops aircraft that carry no waypoints", async () => {
+      await getHandler("applySimulatedTrajectory")({
+        aircraft: [{ hex_ident: "SIM-EMPTY", callsign: "X", category: "ga", waypoints: [] }],
+      });
+      expect(config.setAgentTrajectories).toHaveBeenCalledWith([]);
+    });
+
+    it("does not touch the demo-flights layer toggle", async () => {
+      /* Regression: enabling `showSimulation` here also launched all 20
+         hardcoded demo flights alongside the requested aircraft. */
+      await getHandler("applySimulatedTrajectory")({
+        aircraft: [
+          { hex_ident: "SIM-A1", callsign: "H", category: "helicopter", waypoints: [{ t_offset_s: 0 }] },
+        ],
+      });
+      expect(config.setShowSimulation).not.toHaveBeenCalled();
+    });
+
+    it("handles a missing aircraft list without throwing", async () => {
+      await getHandler("applySimulatedTrajectory")({});
+      expect(config.setAgentTrajectories).toHaveBeenCalledWith([]);
+    });
   });
 
   describe("count-question tool descriptions", () => {

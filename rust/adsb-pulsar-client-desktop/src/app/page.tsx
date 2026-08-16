@@ -18,6 +18,11 @@ import { EventFormDialog } from "@/components/EventFormDialog";
 import { MapContextMenu } from "@/components/MapContextMenu";
 import { useAircraftTracks } from "@/hooks/useAircraftTracks";
 import { useSimulatedTracks } from "@/hooks/useSimulatedTracks";
+import { useAgentSimulatedTracks } from "@/hooks/useAgentSimulatedTracks";
+import { useTrajectoryPlayback } from "@/hooks/useTrajectoryPlayback";
+import { isVisible } from "@/lib/trajectory-playback";
+import { SimulationPanel } from "@/components/SimulationPanel";
+import type { AgentTrajectory } from "@/lib/simulation-data";
 import { useMetrics } from "@/hooks/useMetrics";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { useRecordingState } from "@/hooks/useRecordingState";
@@ -195,7 +200,44 @@ export default function Dashboard() {
     setHistorySliderMax(null);
   }
   const simulatedTracks = useSimulatedTracks(showSimulation, receiverLocation);
-  const allTracks = useMemo(() => [...tracks, ...simulatedTracks], [tracks, simulatedTracks]);
+  // Agent-generated trajectories: additive to the hardcoded demo flights above.
+  // Session-only — nothing is persisted (see the simulation agent's design).
+  const [agentTrajectories, setAgentTrajectories] = useState<AgentTrajectory[]>([]);
+  const trajectoryPlayback = useTrajectoryPlayback(agentTrajectories);
+  const agentSimulatedTracks = useAgentSimulatedTracks(
+    agentTrajectories,
+    trajectoryPlayback.playback,
+  );
+  // Only routes for aircraft actually on the map get an overlay.
+  const visibleRoutes = useMemo(
+    () => agentTrajectories.filter((t) => isVisible(trajectoryPlayback.playback[t.hex_ident])),
+    [agentTrajectories, trajectoryPlayback.playback],
+  );
+
+  // Agent trajectories are deliberately NOT gated on `showSimulation`: that
+  // toggle owns the 20 hardcoded demo flights, and reusing it here meant
+  // pressing Start in the Simulation Agent panel also launched all 20. Agent
+  // aircraft are controlled solely by their own transport state — Stop or
+  // Clear removes them.
+  //
+  // Chat-generated trajectories start on arrival: asking the agent to
+  // "simulate a helicopter" should show it flying. Panel-generated ones stay
+  // stopped until the user presses Start.
+  const applyChatTrajectories = useCallback(
+    (aircraft: AgentTrajectory[]) => {
+      trajectoryPlayback.requestAutoStart(aircraft.map((a) => a.hex_ident));
+      setAgentTrajectories(aircraft);
+    },
+    [trajectoryPlayback],
+  );
+  const allTracks = useMemo(
+    () => [...tracks, ...simulatedTracks, ...agentSimulatedTracks],
+    [tracks, simulatedTracks, agentSimulatedTracks],
+  );
+  const simReceiverLocation = useMemo(
+    () => (receiverLocation ? { lat: receiverLocation.lat, lng: receiverLocation.lng } : null),
+    [receiverLocation],
+  );
 
   // Map flyTo callback — set by MapInner via prop, called by copilot panMapTo tool
   const flyToRef = useRef<((lat: number, lng: number, zoom: number) => void) | null>(null);
@@ -213,6 +255,9 @@ export default function Dashboard() {
     showDensity,
     showSimulation,
     showImported,
+    receiverLocation: simReceiverLocation,
+    agentTrajectories,
+    setAgentTrajectories: applyChatTrajectories,
     showReceiver,
     showEvents,
     liveColorMode,
@@ -407,6 +452,8 @@ export default function Dashboard() {
     lastSelectedHexIdent,
     activeFilters,
     tracks: allTracks,
+    receiverLocation: simReceiverLocation,
+    agentSimulatedCount: agentSimulatedTracks.length,
     storageStatus,
   });
 
@@ -919,6 +966,19 @@ export default function Dashboard() {
           showReceiver={showReceiver}
           onToggleReceiver={handleToggleReceiver}
           hasReceiverLocation={receiverLocation != null}
+          simulationPanel={
+            <SimulationPanel
+              receiverLocation={simReceiverLocation}
+              trajectories={agentTrajectories}
+              onTrajectories={setAgentTrajectories}
+              playback={trajectoryPlayback.playback}
+              onStart={trajectoryPlayback.start}
+              onPause={trajectoryPlayback.pause}
+              onResume={trajectoryPlayback.resume}
+              onStop={trajectoryPlayback.stop}
+              onSeek={trajectoryPlayback.seek}
+            />
+          }
           historySliderMin={historySliderMin}
           historySliderMax={effectiveSliderMax}
           historySliderRange={trackHistoryHours}
@@ -940,7 +1000,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} />
+              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel

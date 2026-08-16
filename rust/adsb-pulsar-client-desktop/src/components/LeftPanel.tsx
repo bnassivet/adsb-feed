@@ -1,5 +1,5 @@
 "use client";
-import { useCallback } from "react";
+import { useCallback, type ReactNode } from "react";
 import { FiltersPanel } from "@/components/Filters";
 import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventFilterMode } from "@/lib/types";
 
@@ -58,11 +58,14 @@ interface LeftPanelProps {
   eventTimeRangeStart: number;
   eventTimeRangeEnd: number;
   onEventTimeRangeChange: (startMs: number, endMs: number) => void;
+  /** Rendered below the filters. A slot rather than typed props so the
+   *  simulation state doesn't have to be drilled through this component. */
+  simulationPanel?: ReactNode;
 }
 
-export function LeftPanel({ isOpen, width, onToggle, onWidthChange, ...filterProps }: LeftPanelProps) {
+export function LeftPanel({ isOpen, width, onToggle, onWidthChange, simulationPanel, ...filterProps }: LeftPanelProps) {
   return isOpen ? (
-    <ExpandedPanel width={width} onToggle={onToggle} onWidthChange={onWidthChange} filterProps={filterProps} />
+    <ExpandedPanel width={width} onToggle={onToggle} onWidthChange={onWidthChange} filterProps={filterProps} simulationPanel={simulationPanel} />
   ) : (
     <CollapsedStrip onToggle={onToggle} />
   );
@@ -90,11 +93,13 @@ function ExpandedPanel({
   onToggle,
   onWidthChange,
   filterProps,
+  simulationPanel,
 }: {
   width: number;
   onToggle: () => void;
   onWidthChange: (w: number) => void;
   filterProps: Omit<LeftPanelProps, "isOpen" | "width" | "onToggle" | "onWidthChange">;
+  simulationPanel?: ReactNode;
 }) {
   // Each drag is self-contained: the move/up listeners are created on mousedown and capture the
   // starting width/x in the closure, then removed on mouseup. This avoids ref writes during render
@@ -142,6 +147,17 @@ function ExpandedPanel({
           </button>
         </div>
         <FiltersPanel {...filterProps} />
+        {simulationPanel ? (
+          <div className="border-t border-slate-700">
+            <details className="group">
+              <summary className="flex items-center gap-1.5 px-4 pt-2 cursor-pointer select-none text-xs font-semibold text-slate-400 list-none [&::-webkit-details-marker]:hidden">
+                <span className="text-[10px] transition-transform duration-150 group-open:rotate-90">▶</span>
+                Simulation Agent
+              </summary>
+              {simulationPanel}
+            </details>
+          </div>
+        ) : null}
       </div>
 
       {/* Right edge: draggable resize strip */}
