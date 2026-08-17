@@ -219,6 +219,23 @@ in **both** `useCopilotTools.ts` and the Python `tools.py` (plus a guideline in
 against; there are prose assertions in `useCopilotTools.test.ts` and
 `test_simulation_tool_disambiguation.py` because this regressed silently once.
 
+**Trajectories arrive selected.** Every transport button acts on the panel's
+`selected` set alone, so an unselected trajectory is inert. The form used to
+select its own results while chat results — which arrive as props — were selected
+by nobody, leaving Start/Pause/Stop dead for them. One render-phase rule in
+`SimulationPanel` now adopts *new* ids (new, so a deliberate deselection sticks),
+covering both paths.
+
+**Never read-and-clear a ref inside a `setState` updater.** React double-invokes
+updaters under StrictMode — which Next.js enables by default — and keeps the
+**second** result. `useTrajectoryPlayback`'s auto-start did exactly this: the
+first pass consumed the request and returned "playing", the second saw an empty
+request and returned "stopped", so chat-generated aircraft arrived frozen in the
+real app while every non-Strict test passed. Consume the ref in the effect body,
+before calling `setPlayback`. Tests that assert hand-off behaviour should render
+under `StrictMode` (`chatTrajectoryFlow.test.ts` reproduces the page wiring and
+was what finally caught it — the hook-only StrictMode test did not).
+
 Chat-generated trajectories auto-start via `requestAutoStart` — asking the agent to "simulate a helicopter" should show it flying. Panel-generated ones stay stopped until the user presses Start. `requestAutoStart` exists because playback entries only appear after the sync effect, so calling `start()` immediately after handing over trajectories would find nothing. Agent coordinates are **absolute** — the agent already generated around the receiver, so no `SIMULATION_ORIGIN` offset is applied (applying it would double-shift the route).
 
 **Agent trajectories reach the app two ways**, both ending at `setAgentTrajectories`:

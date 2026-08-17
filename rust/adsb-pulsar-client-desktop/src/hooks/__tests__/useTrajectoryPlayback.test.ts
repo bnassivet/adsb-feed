@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import {
@@ -226,6 +227,23 @@ describe("useTrajectoryPlayback — auto-start on adoption", () => {
     });
     rerender({ t: [A] });
     expect(result.current.playback["SIM-A"].state).toBe("stopped");
+  });
+
+  it("survives StrictMode's double-invoked updater", () => {
+    /* Regression: the auto-start set was read AND cleared inside the
+       setPlayback updater. React double-invokes updaters in StrictMode (which
+       Next.js enables by default) to surface impure ones: the first call
+       consumed the set and returned "playing", the second saw an empty set and
+       returned "stopped" — and React keeps the second result. Chat-generated
+       aircraft therefore arrived frozen in the real app while every non-Strict
+       test passed. */
+    const { result, rerender } = renderHook(({ t }) => useTrajectoryPlayback(t), {
+      initialProps: { t: [] as AgentTrajectory[] },
+      wrapper: StrictMode,
+    });
+    act(() => result.current.requestAutoStart(["SIM-A"]));
+    rerender({ t: [A] });
+    expect(result.current.playback["SIM-A"].state).toBe("playing");
   });
 
   it("ignores ids that never arrive", () => {

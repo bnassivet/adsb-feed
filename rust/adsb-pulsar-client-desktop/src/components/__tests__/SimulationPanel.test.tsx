@@ -1,5 +1,6 @@
+import { StrictMode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SimulationPanel } from "@/components/SimulationPanel";
 import type { AgentTrajectory } from "@/lib/simulation-data";
@@ -35,16 +36,19 @@ function setup(over: Partial<Parameters<typeof SimulationPanel>[0]> = {}) {
     onStop: vi.fn(),
     onSeek: vi.fn(),
   };
-  render(
-    <SimulationPanel
-      receiverLocation={RECEIVER}
-      trajectories={[]}
-      playback={{}}
-      {...handlers}
-      {...over}
-    />,
-  );
-  return handlers;
+  const props = {
+    receiverLocation: RECEIVER,
+    trajectories: [] as AgentTrajectory[],
+    playback: {} as PlaybackMap,
+    ...handlers,
+    ...over,
+  };
+  const view = render(<SimulationPanel {...props} />);
+  // Lets a test feed in trajectories the way the page does — the chat path
+  // hands them down as props rather than through the panel's own form.
+  const rerender = (next: Partial<typeof props>) =>
+    view.rerender(<SimulationPanel {...props} {...next} />);
+  return { ...handlers, rerender };
 }
 
 beforeEach(() => {
@@ -177,18 +181,84 @@ describe("SimulationPanel — trajectory list", () => {
 });
 
 describe("SimulationPanel — selection", () => {
-  it("selects newly generated aircraft automatically", async () => {
+  it("selects trajectories as they arrive", async () => {
+    /* Regression: arriving trajectories were never selected, and every
+       transport button acts on the selection alone — so chat-generated
+       aircraft landed in the list with all controls inert. */
+    const user = userEvent.setup();
+    const { onStart, rerender } = setup({ trajectories: [] });
+    rerender({ trajectories: [A, B] });
+
+    expect(screen.getByLabelText("Select HELI001")).toBeChecked();
+    await user.click(screen.getByRole("button", { name: /^start$/i }));
+    expect(onStart).toHaveBeenCalledWith(["SIM-A1", "SIM-B2"]);
+  });
+
+  it("selects arrivals under StrictMode", () => {
+    /* The rule is a render-phase state adjustment, and Next.js enables
+       StrictMode by default — double-rendering must not lose the selection. */
+    const props = {
+      receiverLocation: RECEIVER,
+      trajectories: [] as AgentTrajectory[],
+      playback: {} as PlaybackMap,
+      onTrajectories: vi.fn(),
+      onStart: vi.fn(),
+      onPause: vi.fn(),
+      onResume: vi.fn(),
+      onStop: vi.fn(),
+      onSeek: vi.fn(),
+    };
+    const view = render(
+      <StrictMode>
+        <SimulationPanel {...props} />
+      </StrictMode>,
+    );
+    view.rerender(
+      <StrictMode>
+        <SimulationPanel {...props} trajectories={[A, B]} />
+      </StrictMode>,
+    );
+    expect(screen.getByLabelText("Select HELI001")).toBeChecked();
+    expect(screen.getByLabelText("Select HELI002")).toBeChecked();
+  });
+
+  it("selects aircraft generated from the form", async () => {
     /* So Start works immediately after Generate, without an extra click. */
     const user = userEvent.setup();
-    setup({ trajectories: [] });
+    const { rerender } = setup({ trajectories: [] });
     await user.click(screen.getByRole("button", { name: /generate/i }));
     await waitFor(() => expect(mockSimulate).toHaveBeenCalled());
+
+    rerender({ trajectories: [A] });
+    expect(screen.getByLabelText("Select HELI001")).toBeChecked();
+  });
+
+  it("respects a deselection across re-renders", async () => {
+    /* Auto-select must apply to NEW ids only, or it would fight the user. */
+    const user = userEvent.setup();
+    const { rerender } = setup({ trajectories: [A, B] });
+    await user.click(screen.getByLabelText("Select HELI001"));
+    expect(screen.getByLabelText("Select HELI001")).not.toBeChecked();
+
+    rerender({ trajectories: [A, B], playback: { "SIM-A1": { state: "stopped", elapsedS: 0 } } });
+    expect(screen.getByLabelText("Select HELI001")).not.toBeChecked();
+  });
+
+  it("selects only the newly added trajectory", async () => {
+    const user = userEvent.setup();
+    const { rerender } = setup({ trajectories: [A] });
+    await user.click(screen.getByLabelText("Select HELI001"));
+
+    rerender({ trajectories: [A, B] });
+    expect(screen.getByLabelText("Select HELI001")).not.toBeChecked();
+    expect(screen.getByLabelText("Select HELI002")).toBeChecked();
   });
 
   it("toggles an individual trajectory", async () => {
+    /* Everything arrives selected, so one click deselects. */
     const user = userEvent.setup();
     const { onStart } = setup({ trajectories: [A, B] });
-    await user.click(screen.getByLabelText("Select HELI001"));
+    await user.click(screen.getByLabelText("Select HELI002"));
     await user.click(screen.getByRole("button", { name: /^start$/i }));
     expect(onStart).toHaveBeenCalledWith(["SIM-A1"]);
   });
@@ -196,7 +266,9 @@ describe("SimulationPanel — selection", () => {
   it("selects all", async () => {
     const user = userEvent.setup();
     const { onStart } = setup({ trajectories: [A, B] });
-    await user.click(screen.getByLabelText(/select all/i));
+    const all = screen.getByLabelText(/select all/i);
+    await user.click(all); // clear (they arrive selected)
+    await user.click(all); // and select everything again
     await user.click(screen.getByRole("button", { name: /^start$/i }));
     expect(onStart).toHaveBeenCalledWith(["SIM-A1", "SIM-B2"]);
   });
@@ -204,14 +276,14 @@ describe("SimulationPanel — selection", () => {
   it("deselects all when already all selected", async () => {
     const user = userEvent.setup();
     setup({ trajectories: [A, B] });
-    const all = screen.getByLabelText(/select all/i);
-    await user.click(all);
-    await user.click(all);
+    await user.click(screen.getByLabelText(/select all/i));
     expect(screen.getByText(/select a trajectory to control/i)).toBeInTheDocument();
   });
 
-  it("prompts when nothing is selected", () => {
+  it("prompts when the user has cleared the selection", async () => {
+    const user = userEvent.setup();
     setup({ trajectories: [A] });
+    await user.click(screen.getByLabelText("Select HELI001"));
     expect(screen.getByText(/select a trajectory to control/i)).toBeInTheDocument();
   });
 });
@@ -221,9 +293,8 @@ describe("SimulationPanel — transport controls", () => {
     "SIM-A1": { state, elapsedS: state === "stopped" ? 0 : 30 },
   });
 
-  async function selectFirst(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(screen.getByLabelText("Select HELI001"));
-  }
+  // Trajectories arrive selected, so the transport tests need no click.
+  async function selectFirst(_user: ReturnType<typeof userEvent.setup>) {}
 
   it("offers all four transport actions", () => {
     setup({ trajectories: [A] });
@@ -260,8 +331,10 @@ describe("SimulationPanel — transport controls", () => {
     expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
   });
 
-  it("disables every action with an empty selection", () => {
+  it("disables every action with an empty selection", async () => {
+    const user = userEvent.setup();
     setup({ trajectories: [A], playback: playbackOf("playing") });
+    await user.click(screen.getByLabelText("Select HELI001")); // clear the auto-selection
     for (const name of ["Start", "Pause", "Resume", "Stop"]) {
       expect(screen.getByRole("button", { name })).toBeDisabled();
     }
@@ -283,7 +356,7 @@ describe("SimulationPanel — transport controls", () => {
         "SIM-B2": { state: required, elapsedS: required === "stopped" ? 0 : 5 },
       },
     });
-    await user.click(screen.getByLabelText(/select all/i));
+    // They arrive selected, so the action applies to both straight away.
     await user.click(screen.getByRole("button", { name: label }));
     expect(handlers[handler]).toHaveBeenCalledWith(["SIM-A1", "SIM-B2"]);
   });

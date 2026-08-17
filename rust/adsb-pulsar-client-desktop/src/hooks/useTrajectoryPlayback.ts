@@ -66,14 +66,22 @@ export function useTrajectoryPlayback(
   // Closes over `trajectories` directly: this effect runs exactly when the id
   // set changes, so the captured value is the one that caused the change.
   useEffect(() => {
+    // Read and clear the request OUTSIDE the updater. React double-invokes
+    // state updaters under StrictMode (which Next.js enables by default) to
+    // surface impure ones, and it keeps the SECOND result: clearing the ref
+    // inside meant the first pass returned "playing" and was discarded, while
+    // the second saw an empty request and returned "stopped". Chat-generated
+    // aircraft therefore arrived frozen in the real app while every test that
+    // rendered without StrictMode passed.
+    const auto = autoStartRef.current;
+    autoStartRef.current = null;
+    const toStart = auto
+      ? trajectories.map((t) => t.hex_ident).filter((id) => auto.has(id))
+      : [];
+
     setPlayback((prev) => {
       const synced = syncPlayback(prev, trajectories);
-      const auto = autoStartRef.current;
-      if (!auto || auto.size === 0) return synced;
-
-      autoStartRef.current = null;
-      const present = trajectories.map((t) => t.hex_ident).filter((id) => auto.has(id));
-      return startPlayback(synced, present);
+      return toStart.length > 0 ? startPlayback(synced, toStart) : synced;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on content
   }, [signature]);

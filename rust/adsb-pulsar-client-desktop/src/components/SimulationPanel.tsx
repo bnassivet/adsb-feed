@@ -89,9 +89,9 @@ export function SimulationPanel({
         routeHint: routeHint.trim() || undefined,
         cruiseAltitudeFt: Number.isFinite(parsedAltitude) ? parsedAltitude : undefined,
       });
+      // Selection is handled by the arrival rule below, which covers the chat
+      // path too — this only has to hand the aircraft up.
       onTrajectories(result.aircraft);
-      // Select the new aircraft so Start acts on them without extra clicks.
-      setSelected(new Set(result.aircraft.map((a) => a.hex_ident)));
       setSummary(result.summary);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -107,6 +107,37 @@ export function SimulationPanel({
     setSummary(null);
     setError(null);
   }, [onTrajectories]);
+
+  /*
+   * Select trajectories as they arrive, whichever path produced them.
+   *
+   * Every transport button acts on `selected` alone, so an unselected
+   * trajectory is inert. The form used to select its own results, but chat
+   * results arrive as props and were selected by nobody — they landed in the
+   * list with Start, Pause and Stop all doing nothing. Keying on *new* ids
+   * rather than re-selecting everything means a deliberate deselection sticks.
+   *
+   * Render-phase adjust-state (the pattern used in page.tsx) rather than an
+   * effect: no second commit, and the first paint already shows them selected.
+   */
+  const signature = trajectories.map((t) => t.hex_ident).join("|");
+  // Starts empty, not at `signature`, so trajectories already present on the
+  // first render count as arrivals too — the panel can be mounted after the
+  // chat has already produced aircraft.
+  const [prevSignature, setPrevSignature] = useState("");
+  if (signature !== prevSignature) {
+    setPrevSignature(signature);
+    const known = new Set(prevSignature ? prevSignature.split("|") : []);
+    const present = new Set(trajectories.map((t) => t.hex_ident));
+    setSelected((prev) => {
+      const next = new Set<string>();
+      // Keep existing choices, dropping trajectories that are gone…
+      for (const id of prev) if (present.has(id)) next.add(id);
+      // …and adopt anything the panel has not seen before.
+      for (const id of present) if (!known.has(id)) next.add(id);
+      return next;
+    });
+  }
 
   const toggleOne = useCallback((id: string) => {
     setSelected((prev) => {
