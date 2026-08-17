@@ -15,12 +15,16 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from starlette.applications import Starlette
-from starlette.responses import JSONResponse
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from .agent_card import build_agent_card
 from .config import settings
 from .executor import SimulationAgentExecutor
+from .tracing import capture_trace_headers
 
 logger = logging.getLogger("adsb_simulation_agent.server")
 
@@ -73,4 +77,24 @@ def build_app(base_url: str | None = None, llm: Any | None = None) -> Starlette:
         *create_jsonrpc_routes(handler, RPC_URL),
         Route("/health", health, methods=["GET"]),
     ]
-    return Starlette(routes=routes)
+    return Starlette(routes=routes, middleware=[Middleware(TracingContextMiddleware)])
+
+
+class TracingContextMiddleware(BaseHTTPMiddleware):
+    """Hand inbound trace headers to the executor.
+
+    Middleware because the A2A layer gives the executor no access to the raw
+    request; a ContextVar because ``DefaultRequestHandler`` starts the executor
+    with ``asyncio.create_task`` *during* request handling, and a task copies the
+    current context at creation.
+
+    It only *captures* — joining the trace happens in the executor. That split
+    is deliberate: the producer task is not awaited before the HTTP response is
+    returned, so a trace scope opened here could exit while the executor's span
+    was still open, and MLflow would drop that span on export. Joining inside
+    the executor makes the scope's lifetime match the span's.
+    """
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        capture_trace_headers(request.headers)
+        return await call_next(request)

@@ -24,10 +24,33 @@ from a2a.types import TaskArtifactUpdateEvent, TaskState, TaskStatus, TaskStatus
 
 from .graph import generate
 from .models import AircraftCategory, RoutePlan, TrajectoryRequest
+from .tracing import (
+    SpanType,
+    captured_trace_headers,
+    make_span,
+    tag_root_trace,
+    tracing_scope,
+)
 
 logger = logging.getLogger("adsb_simulation_agent.executor")
 
 ARTIFACT_NAME = "trajectory"
+
+AGENT_TAG = "adsb-simulation-agent"
+"""Identifies traces this service rooted itself, as opposed to ones it joined."""
+
+
+def _set_attributes(span: Any, values: dict[str, Any]) -> None:
+    """Span attributes, guarded — the span is None when tracing is off."""
+    if span is not None:
+        span.set_attributes(values)
+
+
+def _record_exception(span: Any, exc: BaseException) -> None:
+    """Attach a failure to the span so MLflow raises it to ERROR level."""
+    if span is not None:
+        span.record_exception(exc)
+
 
 MAX_COUNT = 20
 """Mirrors ``TrajectoryRequest.count``'s schema bound."""
@@ -142,16 +165,52 @@ class SimulationAgentExecutor(AgentExecutor):
             new_task(task_id=task_id, context_id=context_id, state=TaskState.TASK_STATE_SUBMITTED)
         )
 
+        # The trace is joined here, not in the HTTP middleware: this task is not
+        # awaited before the response is sent, so a scope tied to the request
+        # could close while this span was still open — and MLflow would then
+        # drop it, orphaning every child span. Scope and span end together here.
+        #
+        # With a caller's context this span becomes a child of theirs; without
+        # one it roots a trace of its own.
+        with (
+            tracing_scope(captured_trace_headers()),
+            make_span("simulate_trajectory", SpanType.AGENT) as span,
+        ):
+            await self._execute_traced(context, event_queue, task_id, context_id, span)
+
+    async def _execute_traced(
+        self, context: Any, event_queue: Any, task_id: str, context_id: str, span: Any
+    ) -> None:
+        _set_attributes(span, {"a2a.task_id": task_id, "a2a.context_id": context_id})
+        # Only safe when we own the trace: update_current_trace is trace-scoped,
+        # so doing this while linked would overwrite the caller's session_id.
+        tag_root_trace(client_request_id=task_id, agent=AGENT_TAG)
+
         try:
             request = parse_trajectory_request(extract_payload(context))
         except ValueError as e:
+            # Recording the exception is what makes this findable: MLflow
+            # promotes any span carrying one to ERROR level.
+            _record_exception(span, e)
             await self._fail(event_queue, task_id, context_id, str(e))
             return
+
+        _set_attributes(
+            span,
+            {
+                "simulation.category": request.category.value,
+                "simulation.count": request.count,
+                "simulation.has_route_hint": request.route_hint is not None,
+            },
+        )
+        if span is not None:
+            span.set_inputs(request.model_dump(mode="json"))
 
         try:
             response = await generate(request, llm=self._llm)
         except Exception as e:
             logger.exception("Trajectory generation failed")
+            _record_exception(span, e)
             await self._fail(event_queue, task_id, context_id, f"generation failed: {e}")
             return
 
@@ -159,6 +218,17 @@ class SimulationAgentExecutor(AgentExecutor):
         # The summary travels with the data so the caller can put a compact
         # string in its LLM's context instead of hundreds of waypoints.
         payload["summary"] = response.summary()
+
+        if span is not None:
+            # Summary and counts only — the waypoint payload stays out of the
+            # trace for the same reason it stays out of the caller's LLM.
+            span.set_outputs(
+                {
+                    "summary": payload["summary"],
+                    "aircraft": len(response.aircraft),
+                    "violations": len(response.violations),
+                }
+            )
 
         await event_queue.enqueue_event(
             TaskArtifactUpdateEvent(

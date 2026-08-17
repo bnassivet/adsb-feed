@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 
 from .config import settings
+from .tracing import tracing_headers
 
 logger = logging.getLogger("adsb_agent.a2a_client")
 
@@ -144,8 +145,10 @@ async def call_simulation_agent(
         response = await client.post(
             url,
             json=request,
-            # Mandatory: without it the server assumes protocol 0.3 and refuses.
-            headers={A2A_VERSION_HEADER: A2A_VERSION},
+            # A2A-Version is mandatory: without it the server assumes protocol
+            # 0.3 and refuses. The trace headers are what let the simulation
+            # agent nest its spans inside this agent's trace.
+            headers={A2A_VERSION_HEADER: A2A_VERSION, **tracing_headers()},
             timeout=settings.simulation_agent_timeout,
         )
         response.raise_for_status()

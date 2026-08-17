@@ -32,6 +32,7 @@ from .models import (
     TrajectoryResponse,
     Violation,
 )
+from .tracing import SpanType, make_span
 from .trajectory import generate_trajectory
 from .validate import describe_violations, validate_response
 
@@ -113,12 +114,30 @@ def build_simulation_graph(
     retries = settings.max_retries if max_retries is None else max_retries
     build = generator or generate_trajectory
 
+    # Spans live inside the nodes rather than around `graph.ainvoke`, so a trip
+    # round the retry edge shows up as repeated sibling spans — which is exactly
+    # the behaviour worth being able to see in a trace.
+
     async def parse_intent(state: SimulationState) -> dict:
         request = state["request"]
-        if request.plan is not None:
-            return {"plan": request.plan, "attempts": 0}
-        plan = await parse_route_hint(request.route_hint, request.category, llm, seed=request.seed)
-        return {"plan": plan, "attempts": 0}
+        # PARSER, not LLM: openai autolog emits the real LLM span *inside* this
+        # one, and typing the wrapper LLM too would double-count them.
+        with make_span("parse_intent", SpanType.PARSER) as span:
+            if span is not None:
+                span.set_inputs(
+                    {"route_hint": request.route_hint, "category": request.category.value}
+                )
+            if request.plan is not None:
+                plan = request.plan
+                source = "caller"
+            else:
+                plan = await parse_route_hint(
+                    request.route_hint, request.category, llm, seed=request.seed
+                )
+                source = "llm" if llm is not None else "default"
+            if span is not None:
+                span.set_outputs({"plan": plan.model_dump(mode="json"), "source": source})
+            return {"plan": plan, "attempts": 0}
 
     def plan_route(state: SimulationState) -> dict:
         """Apply corrections from the previous failed attempt, if any."""
@@ -126,26 +145,53 @@ def build_simulation_graph(
         if plan is None:  # pragma: no cover — parse_intent always sets it
             raise ValueError("plan_route reached without a plan")
         violations = state.get("violations") or []
-        if violations:
-            plan = correct_plan(plan, violations)
-            logger.info(
-                "Regenerating after %d violation(s):\n%s",
-                len(violations),
-                describe_violations(violations),
-            )
-        return {"plan": plan}
+        with make_span("plan_route", SpanType.CHAIN) as span:
+            if span is not None:
+                span.set_inputs(
+                    {"plan": plan.model_dump(mode="json"), "correcting": len(violations)}
+                )
+            if violations:
+                plan = correct_plan(plan, violations)
+                logger.info(
+                    "Regenerating after %d violation(s):\n%s",
+                    len(violations),
+                    describe_violations(violations),
+                )
+            if span is not None:
+                span.set_outputs({"plan": plan.model_dump(mode="json")})
+            return {"plan": plan}
 
     def apply_kinematics(state: SimulationState) -> dict:
         request = state["request"].model_copy(update={"plan": state.get("plan")})
-        return {"response": build(request)}
+        with make_span("apply_kinematics", SpanType.CHAIN) as span:
+            if span is not None:
+                span.set_inputs({"count": request.count, "category": request.category.value})
+            response = build(request)
+            if span is not None:
+                # Counts only: a 2-lap helicopter orbit is ~240 waypoints, and
+                # span I/O is not the place for them.
+                span.set_outputs(
+                    {
+                        "aircraft": len(response.aircraft),
+                        "waypoints": sum(len(a.waypoints) for a in response.aircraft),
+                    }
+                )
+            return {"response": response}
 
     def validate(state: SimulationState) -> dict:
         response = state.get("response")
-        violations = validate_response(response) if response else []
-        return {
-            "violations": violations,
-            "attempts": state.get("attempts", 0) + 1,
-        }
+        with make_span("validate", SpanType.CHAIN) as span:
+            violations = validate_response(response) if response else []
+            attempts = state.get("attempts", 0) + 1
+            if span is not None:
+                span.set_outputs(
+                    {
+                        "attempts": attempts,
+                        "violations": len(violations),
+                        "kinds": sorted({v.kind for v in violations}),
+                    }
+                )
+            return {"violations": violations, "attempts": attempts}
 
     def route_after_validate(state: SimulationState) -> str:
         if state.get("violations") and state.get("attempts", 0) <= retries:

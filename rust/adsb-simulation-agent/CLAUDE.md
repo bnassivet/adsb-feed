@@ -36,6 +36,7 @@ adsb-agent (LangGraph)  --A2A JSON-RPC-->  adsb-simulation-agent  :8300
 | `intent.py` | Free-text route hint → `RoutePlan` via a local LLM |
 | `graph.py` | The LangGraph + `generate()` entry point |
 | `agent_card.py` / `executor.py` / `server.py` | A2A protocol surface |
+| `tracing.py` | MLflow spans + joining the caller's trace (see below) |
 
 ## The design rule that matters most
 
@@ -99,6 +100,74 @@ Configuration is via `ADSB_SIM_AGENT_`-prefixed env vars (see `config.py`):
 
 **LM Studio is optional.** Without it, route hints are ignored and seeded default
 plans are used. A dead LLM degrades the feature; it never breaks a request.
+
+## Tracing (MLflow)
+
+Instrumented into the **same MLflow experiment as `adsb-agent`** (`adsb-agent`,
+tracking server `:5010`), and linked so a chat turn that generates trajectories
+is **one trace**, not two:
+
+```
+chat_turn (adsb-agent)
+└─ tool.generateSimulatedTrajectory
+   └─ simulate_trajectory (AGENT)          <- this service
+      ├─ parse_intent (PARSER) └─ Completions (LLM, via autolog)
+      ├─ plan_route (CHAIN)
+      ├─ apply_kinematics (CHAIN)
+      └─ validate (CHAIN)                   <- repeats when the retry edge fires
+```
+
+How the link works — MLflow follows **W3C TraceContext**, so it is header
+propagation and nothing more:
+
+| Side | API | Where |
+|------|-----|-------|
+| caller | `get_tracing_context_headers_for_http_request()` | `adsb-agent/a2a_client.py`, merged with `A2A-Version` |
+| callee | `set_tracing_context_from_http_request_headers(headers)` | `TracingContextMiddleware` in `server.py` |
+
+Middleware works because `DefaultRequestHandler` starts the executor with
+`asyncio.create_task` *during* request handling — a task copies the context at
+creation, so the trace context reaches the executor without being threaded
+through a2a-sdk.
+
+### The MLflow trap that cost the outermost span
+
+`set_tracing_context_from_http_request_headers` registers a placeholder trace on
+entry and calls **`pop_trace` in its `finally`**. The OTel batch processor
+exports asynchronously, so any span still queued when the scope closes can no
+longer be resolved to a trace — and the exporter **drops it silently**.
+
+That always cost exactly `simulate_trajectory`: it ends last, so it was always
+the one still queued, leaving every child span orphaned under a parent id that
+was never persisted. MLflow's own documented client/server example has the same
+gap (reproduced cross-process: it lost *both* server spans).
+
+Hence `flush_spans()` inside `tracing_scope`, before the scope exits. It is
+correctness, not tuning — `test_tracing.py::TestSpanFlushing` pins the ordering.
+
+Two related requirements, both learned the same way:
+
+- **`boto3` is a runtime dependency**, and `MLFLOW_S3_ENDPOINT_URL` +
+  `AWS_*` must match `adsb-agent/.env`. Without them trace export fails on
+  artifact upload.
+- Debugging this needs `logging.getLogger("mlflow").setLevel(DEBUG)`; the drop
+  path itself logs nothing at all.
+
+Rules worth keeping:
+
+- **`update_current_trace` is trace-scoped, not span-scoped.** When linked there
+  is one trace, shared with the caller — tagging it here would overwrite the
+  chat turn's `session_id`. Hence `tag_root_trace()`, which is a no-op whenever
+  `is_linked()`. Per-request detail goes on **span attributes**.
+- **`parse_intent` is a `PARSER` span, not `LLM`.** OpenAI autolog emits the real
+  `LLM` span inside it; typing the wrapper `LLM` too would double-count.
+- **`mlflow.openai.autolog()`, never `mlflow.langchain.autolog()`** — same reason
+  as `adsb-agent`: LangChain's callback span tree doesn't interleave with
+  MLflow's fluent tree, producing detached and duplicated spans.
+- **Waypoints never become span I/O.** Summary and counts only, for the same
+  reason they never enter the caller's LLM context.
+- Every mlflow import is lazy and every failure degrades to a no-op. Disable with
+  `ADSB_SIM_AGENT_MLFLOW_ENABLED=false`; the service is unaffected.
 
 ## Testing
 

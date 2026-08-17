@@ -10,8 +10,13 @@ import uvicorn
 
 from adsb_simulation_agent.config import settings
 from adsb_simulation_agent.server import build_app, build_llm
+from adsb_simulation_agent.tracing import setup_tracing
 
 logging.basicConfig(level=logging.INFO)
+
+# Before build_llm(): openai autolog patches the OpenAI SDK, so it has to run
+# before ChatOpenAI constructs its client or LLM calls go untraced.
+setup_tracing()
 
 app = build_app(base_url=f"http://localhost:{settings.port}", llm=build_llm())
 

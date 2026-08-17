@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     """Attempts the validate -> plan_route edge may take before giving up and
     returning the best-effort trajectory with its violations attached."""
 
+    # MLflow tracing
+    mlflow_enabled: bool = True
+    mlflow_tracking_uri: str = "http://localhost:5010"
+
+    mlflow_experiment: str = "adsb-agent"
+    """Deliberately the *same* experiment as ``adsb-agent``. Spans from both
+    services stitch into one trace via W3C traceparent propagation, and a trace
+    lives in exactly one experiment — so these must agree or the link breaks."""
+
     # Service — 8300 avoids adsb-agent (8000) and the Tauri tool server (8787).
     port: int = 8300
     host: str = "0.0.0.0"

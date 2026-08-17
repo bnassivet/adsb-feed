@@ -453,17 +453,41 @@ async def simulate_trajectory(body: SimulateTrajectoryRequest) -> SimulateTrajec
     fake a chat turn — but shares `call_simulation_agent` with the
     `generateSimulatedTrajectory` tool, so both paths behave identically.
     """
-    async with httpx.AsyncClient() as client:
-        result = await call_simulation_agent(body.to_tool_args(), client)
+    # Root span for this path. The chat path already has `chat_turn`, but a form
+    # submission has nothing — and with no active trace there is no traceparent
+    # to send, so the simulation agent would strand its spans in a separate
+    # trace instead of nesting them here.
+    # Named distinctly from the simulation agent's own `simulate_trajectory`
+    # span, which nests directly inside this one.
+    with make_span("simulate_trajectory_request", span_type="CHAIN") as span:
+        if span is not None:
+            span.set_inputs(body.model_dump(mode="json"))
 
-    if not result.ok or result.data is None:
-        raise HTTPException(status_code=502, detail=result.error or "trajectory generation failed")
+        async with httpx.AsyncClient() as client:
+            result = await call_simulation_agent(body.to_tool_args(), client)
 
-    return SimulateTrajectoryResponse(
-        aircraft=result.data.get("aircraft", []),
-        violations=result.data.get("violations", []),
-        summary=result.summary,
-    )
+        if not result.ok or result.data is None:
+            raise HTTPException(
+                status_code=502, detail=result.error or "trajectory generation failed"
+            )
+
+        aircraft = result.data.get("aircraft", [])
+        violations = result.data.get("violations", [])
+        if span is not None:
+            # Summary and counts only — the waypoints stay out of the trace.
+            span.set_outputs(
+                {
+                    "summary": result.summary,
+                    "aircraft": len(aircraft),
+                    "violations": len(violations),
+                }
+            )
+
+        return SimulateTrajectoryResponse(
+            aircraft=aircraft,
+            violations=violations,
+            summary=result.summary,
+        )
 
 
 # ---------------------------------------------------------------------------

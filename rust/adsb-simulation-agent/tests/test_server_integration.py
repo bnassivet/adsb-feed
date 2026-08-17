@@ -7,6 +7,8 @@ artifacts. Uses an in-process ASGI transport, so no port is bound.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import httpx
 import pytest
 from starlette.applications import Starlette
@@ -157,6 +159,132 @@ class TestFailureReporting:
         response = await client.post("/", json=_send_message_payload({"category": "ga"}))
         task = response.json()["result"]["task"]
         assert "origin" in task["status"]["message"]["parts"][0]["text"].lower()
+
+
+TRACEPARENT = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+"""A well-formed W3C traceparent, as adsb-agent would send."""
+
+
+class TestDistributedTracing:
+    """The link to the caller's MLflow trace, exercised over real HTTP.
+
+    Patches the mlflow entry point rather than our wrapper, so these tests fail
+    if the request path stops reaching mlflow at all.
+
+    Note the split: middleware only *captures* the headers, and the executor
+    joins the trace — see `test_trace_is_joined_around_the_span`.
+    """
+
+    @pytest.fixture
+    def joined(self, monkeypatch):
+        """Record every attempt to join a caller's trace."""
+        import mlflow.tracing
+
+        calls: list[dict] = []
+
+        @contextmanager
+        def _spy(headers):
+            calls.append(headers)
+            yield
+
+        monkeypatch.setattr(mlflow.tracing, "set_tracing_context_from_http_request_headers", _spy)
+        return calls
+
+    async def test_traceparent_is_handed_to_mlflow(self, client, joined):
+        await client.post(
+            "/",
+            json=_send_message_payload({"origin_lat": 45.5, "origin_lng": -73.6}),
+            headers={"traceparent": TRACEPARENT},
+        )
+        assert len(joined) == 1
+        assert joined[0]["traceparent"] == TRACEPARENT
+
+    async def test_request_without_traceparent_starts_its_own_trace(self, client, joined):
+        await client.post(
+            "/", json=_send_message_payload({"origin_lat": 45.5, "origin_lng": -73.6})
+        )
+        assert joined == []
+
+    async def test_linked_request_still_returns_a_trajectory(self, client, joined):
+        """Tracing must be transparent to the protocol surface."""
+        response = await client.post(
+            "/",
+            json=_send_message_payload({"origin_lat": 45.5, "origin_lng": -73.6, "count": 2}),
+            headers={"traceparent": TRACEPARENT},
+        )
+        task = response.json()["result"]["task"]
+        assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+        assert len(task["artifacts"][0]["parts"][0]["data"]["aircraft"]) == 2
+
+    async def test_malformed_traceparent_does_not_break_the_request(self, client, monkeypatch):
+        """A bad header degrades to an unlinked trace, never to a failed task."""
+        import mlflow.tracing
+
+        def _boom(headers):
+            raise ValueError("malformed traceparent")
+
+        monkeypatch.setattr(mlflow.tracing, "set_tracing_context_from_http_request_headers", _boom)
+        response = await client.post(
+            "/",
+            json=_send_message_payload({"origin_lat": 45.5, "origin_lng": -73.6}),
+            headers={"traceparent": "garbage"},
+        )
+        assert response.json()["result"]["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
+
+    async def test_trace_is_joined_around_the_span_not_the_request(self, client, monkeypatch):
+        """Regression: the executor's span was being dropped on export.
+
+        a2a-sdk runs the executor in a detached task that is NOT awaited before
+        the HTTP response is sent. When the trace scope was opened in middleware
+        it closed with the response, leaving `simulate_trajectory` open outside
+        any attached context — MLflow then dropped it and every child span was
+        orphaned. So the scope must still be open when the span ends.
+        """
+        import mlflow.tracing
+
+        events: list[str] = []
+
+        @contextmanager
+        def _spy_scope(_headers):
+            events.append("scope-enter")
+            try:
+                yield
+            finally:
+                events.append("scope-exit")
+
+        monkeypatch.setattr(
+            mlflow.tracing, "set_tracing_context_from_http_request_headers", _spy_scope
+        )
+
+        class _Span:
+            def __getattr__(self, _name):
+                return lambda *a, **kw: None
+
+            def __enter__(self):
+                events.append("span-start")
+                return self
+
+            def __exit__(self, *_exc):
+                events.append("span-end")
+                return False
+
+        import mlflow
+
+        monkeypatch.setattr(mlflow, "start_span", lambda name, span_type: _Span())
+
+        await client.post(
+            "/",
+            json=_send_message_payload({"origin_lat": 45.5, "origin_lng": -73.6}),
+            headers={"traceparent": TRACEPARENT},
+        )
+
+        assert events[0] == "scope-enter"
+        assert events.index("span-end") < events.index("scope-exit")
+
+    async def test_health_endpoint_is_unaffected(self, client, joined):
+        """Middleware wraps every route; a non-A2A route must still work."""
+        response = await client.get("/health", headers={"traceparent": TRACEPARENT})
+        assert response.status_code == 200
 
 
 class TestProtocolVersioning:

@@ -40,11 +40,47 @@ Environment variables with the `ADSB_SIM_AGENT_` prefix (loaded from `.env` if p
 | `ADSB_SIM_AGENT_LLM_API_KEY` | `lm-studio` | API key (any string for local servers) |
 | `ADSB_SIM_AGENT_MODEL` | `qwen2.5-7b-instruct` | Model used only to classify route hints |
 | `ADSB_SIM_AGENT_TEMPERATURE` | `0.0` | Zero — this is classification, not generation |
-| `ADSB_SIM_AGENT_MAX_TOKENS` | `512` | A route plan is a handful of scalars |
+| `ADSB_SIM_AGENT_MAX_TOKENS` | `2048` | Small output, but reasoning models spend heavily before emitting it |
 | `ADSB_SIM_AGENT_LLM_TIMEOUT_S` | `30` | Per-call LLM timeout |
 | `ADSB_SIM_AGENT_MAX_RETRIES` | `2` | Regeneration attempts after a failed plausibility check |
+| `ADSB_SIM_AGENT_MLFLOW_ENABLED` | `true` | Set `false` to disable tracing entirely |
+| `ADSB_SIM_AGENT_MLFLOW_TRACKING_URI` | `http://localhost:5010` | MLflow tracking server |
+| `ADSB_SIM_AGENT_MLFLOW_EXPERIMENT` | `adsb-agent` | Shared with adsb-agent **on purpose** — see [Tracing](#tracing) |
 
 Ports in this project: `8000` = adsb-agent, `8300` = this service, `8787` = Tauri tool server.
+
+## Tracing
+
+Traces go to MLflow, and are **linked to the calling agent's trace** so one chat
+turn produces one trace covering both services:
+
+```
+chat_turn (adsb-agent)
+└─ tool.generateSimulatedTrajectory
+   └─ simulate_trajectory              <- this service
+      ├─ parse_intent  └─ Completions  (the LLM call, via autolog)
+      ├─ plan_route
+      ├─ apply_kinematics
+      └─ validate                      (repeats if the retry edge fires)
+```
+
+Linking uses W3C TraceContext: `adsb-agent` attaches a `traceparent` header to
+its A2A call, and this service's middleware joins that trace. Two requirements:
+
+1. Both services point at the **same tracking URI and experiment** — a trace
+   lives in exactly one experiment, so a mismatch silently splits it in two.
+2. `adsb-agent` has tracing enabled, otherwise there is no context to propagate
+   and this service simply roots its own trace.
+
+3. The MinIO/S3 variables in [`.env.example`](.env.example) are set to match
+   `adsb-agent`, otherwise trace export fails on artifact upload.
+
+To view: open the MLflow UI at `http://localhost:5010`, select the `adsb-agent`
+experiment, and open the Traces tab. Traces this service rooted on its own are
+tagged `agent=adsb-simulation-agent`.
+
+Tracing is entirely optional. With MLflow stopped, or
+`ADSB_SIM_AGENT_MLFLOW_ENABLED=false`, trajectory generation is unaffected.
 
 ## API
 
