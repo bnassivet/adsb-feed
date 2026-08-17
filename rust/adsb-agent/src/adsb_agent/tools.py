@@ -388,7 +388,12 @@ TOOLS: list[dict] = [
         "function": {
             "name": "toggleDemoFlights",
             "description": (
-                "Start or stop simulated demo flights on the map. "
+                "Show or hide the built-in demo flight layer — a fixed set of "
+                "pre-defined canned routes that loop forever. It creates no "
+                "aircraft and takes no description of what to fly. Use ONLY "
+                "when the user names this demo layer explicitly. If they ask to "
+                "start, run, create or simulate flights or aircraft of their "
+                "own, use generateSimulatedTrajectory instead. "
                 "Omit 'enabled' to toggle."
             ),
             "parameters": {
@@ -415,7 +420,13 @@ TOOLS: list[dict] = [
                 "properties": {
                     "history": {"type": "boolean", "description": "Show history trails"},
                     "density": {"type": "boolean", "description": "Show density heatmap"},
-                    "simulation": {"type": "boolean", "description": "Show simulated tracks"},
+                    "simulation": {
+                        "type": "boolean",
+                        "description": (
+                            "Show the built-in demo flight layer (same canned "
+                            "routes as toggleDemoFlights); does not generate aircraft"
+                        ),
+                    },
                     "imported": {"type": "boolean", "description": "Show imported tracks"},
                     "receiver": {"type": "boolean", "description": "Show receiver location"},
                     "events": {"type": "boolean", "description": "Show events of interest"},
@@ -518,11 +529,13 @@ TOOLS: list[dict] = [
         "function": {
             "name": "generateSimulatedTrajectory",
             "description": (
-                "Generate simulated aircraft with realistic flight paths for demo "
-                "purposes, and show them on the map. Use when the user asks to "
-                "simulate, demo, or fake aircraft — e.g. 'simulate a helicopter "
-                "circling downtown', 'show me a fighter doing aerobatics', 'add "
-                "three GA aircraft'. The aircraft appear on the map automatically; "
+                "Generate new simulated aircraft with realistic flight paths and "
+                "show them flying on the map. This is THE tool for any request to "
+                "start, run, create, add, simulate or fake flights or aircraft — "
+                "e.g. 'start simulated flights', 'run three simulated flights', "
+                "'simulate a helicopter circling downtown', 'show me a fighter "
+                "doing aerobatics'. Do not use toggleDemoFlights for these. "
+                "The aircraft appear on the map automatically; "
                 "just confirm what you generated. These are simulated, not real "
                 "traffic — never mix them into answers about observed aircraft."
             ),
@@ -532,7 +545,12 @@ TOOLS: list[dict] = [
                     "category": {
                         "type": "string",
                         "enum": ["airliner", "ga", "helicopter", "fighter"],
-                        "description": "Aircraft performance class to simulate",
+                        "description": (
+                            "Aircraft performance class to simulate. Optional — "
+                            "defaults to 'ga'. Infer it from the request when the "
+                            "user names an aircraft type; otherwise omit it rather "
+                            "than asking them which type they want."
+                        ),
                     },
                     "count": {
                         "type": "integer",
@@ -559,7 +577,10 @@ TOOLS: list[dict] = [
                         "description": "Optional target altitude in feet",
                     },
                 },
-                "required": ["category"],
+                # Nothing is required: every field has a sensible default, so a
+                # bare "start simulated flights" generates aircraft instead of
+                # stalling to ask which type the user wants.
+                "required": [],
             },
         },
     },

@@ -141,6 +141,25 @@ describe("useCopilotTools — display control tools", () => {
       expect(desc.toLowerCase()).toContain("routehint");
     });
 
+    it("claims the verbs users actually type", () => {
+      /* Regression: "start simulated flights" went to toggleDemoFlights, which
+         launched the 20 canned routes and generated nothing. */
+      const desc = (
+        registeredTools.get("generateSimulatedTrajectory")?.description ?? ""
+      ).toLowerCase();
+      for (const verb of ["start", "run", "create"]) {
+        expect(desc).toContain(verb);
+      }
+    });
+
+    it("keeps toggleDemoFlights from absorbing generation requests", () => {
+      const desc = registeredTools.get("toggleDemoFlights")?.description ?? "";
+      expect(desc.toLowerCase()).toContain("built-in");
+      expect(desc.toLowerCase()).toContain("creates no aircraft");
+      // The alternative must be named at the point of confusion.
+      expect(desc).toContain("generateSimulatedTrajectory");
+    });
+
     it("registers applySimulatedTrajectory to receive the payload", () => {
       expect(registeredTools.has("applySimulatedTrajectory")).toBe(true);
     });

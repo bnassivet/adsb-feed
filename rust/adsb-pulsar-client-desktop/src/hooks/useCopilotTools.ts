@@ -761,8 +761,17 @@ export function useCopilotTools(config: DisplayToolsConfig) {
 
   useSafeFrontendTool({
     name: "toggleDemoFlights",
+    /*
+     * Wording matters here, not just in the Python tool list: the model saw
+     * "start ... simulated demo flights" and answered "start simulated flights"
+     * with this tool, launching the 20 canned routes and generating nothing.
+     * Keep it describing a fixed layer, and keep the pointer to the generator.
+     */
     description:
-      "Start or stop simulated demo flights on the map. Omit 'enabled' to toggle.",
+      "Show or hide the built-in demo flight layer — a fixed set of pre-defined canned " +
+      "routes that loop forever. It creates no aircraft. Use ONLY when the user names " +
+      "this demo layer explicitly; for any request to start, run, create or simulate " +
+      "their own flights use generateSimulatedTrajectory. Omit 'enabled' to toggle.",
     parameters: z.object({
       enabled: z
         .boolean()
@@ -799,13 +808,19 @@ export function useCopilotTools(config: DisplayToolsConfig) {
   useSafeFrontendTool({
     name: "generateSimulatedTrajectory",
     description:
-      "Generate simulated aircraft with realistic flight paths and show them on the map. " +
-      "Use when the user asks to simulate, demo or fake aircraft. Pass the user's own " +
+      "Generate new simulated aircraft with realistic flight paths and show them flying " +
+      "on the map. THE tool for any request to start, run, create, add, simulate or fake " +
+      "flights or aircraft — do not use toggleDemoFlights for these. Pass the user's own " +
       "wording as routeHint — do not convert it into coordinates or headings.",
     parameters: z.object({
       category: z
         .enum(["airliner", "ga", "helicopter", "fighter"])
-        .describe("Aircraft performance class to simulate"),
+        .optional()
+        .describe(
+          "Aircraft performance class to simulate. Optional — defaults to 'ga'. " +
+            "Infer it from the request when the user names an aircraft type; otherwise " +
+            "omit it rather than asking them which type they want.",
+        ),
       count: z.number().optional().describe("How many aircraft (default 1, max 20)"),
       routeHint: z
         .string()
@@ -872,7 +887,13 @@ export function useCopilotTools(config: DisplayToolsConfig) {
     parameters: z.object({
       history: z.boolean().optional().describe("Show history trails"),
       density: z.boolean().optional().describe("Show density heatmap"),
-      simulation: z.boolean().optional().describe("Show simulated tracks"),
+      simulation: z
+        .boolean()
+        .optional()
+        .describe(
+          "Show the built-in demo flight layer (same canned routes as toggleDemoFlights); " +
+            "does not generate aircraft",
+        ),
       imported: z.boolean().optional().describe("Show imported tracks"),
       receiver: z.boolean().optional().describe("Show receiver location marker"),
       events: z.boolean().optional().describe("Show events of interest"),

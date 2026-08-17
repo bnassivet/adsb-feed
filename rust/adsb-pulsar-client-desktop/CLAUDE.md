@@ -209,6 +209,16 @@ The `SimulationPanel` lists each trajectory (waypoints, duration, altitude range
 
 **The two sources are independent.** `showSimulation` (Filters → "Show simulated tracks") gates **only** the 20 hardcoded demo flights. Agent trajectories render purely from their own playback state — Stop or Clear removes them. Coupling the two meant pressing Start in the Simulation Agent panel also launched all 20 demo flights; don't reintroduce it (there are regression tests in `useCopilotTools.test.ts` and `useTrajectoryPlayback.test.ts`).
 
+**The tool descriptions also have to keep them apart.** Both tools once described
+themselves in terms of "simulated flights", so "start simulated flights" made the
+model call `toggleDemoFlights` — 20 canned routes started and nothing was
+generated. `generateSimulatedTrajectory` now claims the start/run/create verbs and
+`toggleDemoFlights` reads as a fixed built-in layer that "creates no aircraft",
+in **both** `useCopilotTools.ts` and the Python `tools.py` (plus a guideline in
+`prompt_sections.yaml`). Descriptions are the interface the model programs
+against; there are prose assertions in `useCopilotTools.test.ts` and
+`test_simulation_tool_disambiguation.py` because this regressed silently once.
+
 Chat-generated trajectories auto-start via `requestAutoStart` — asking the agent to "simulate a helicopter" should show it flying. Panel-generated ones stay stopped until the user presses Start. `requestAutoStart` exists because playback entries only appear after the sync effect, so calling `start()` immediately after handing over trajectories would find nothing. Agent coordinates are **absolute** — the agent already generated around the receiver, so no `SIMULATION_ORIGIN` offset is applied (applying it would double-shift the route).
 
 **Agent trajectories reach the app two ways**, both ending at `setAgentTrajectories`:
