@@ -290,6 +290,13 @@ async def _run_agent(input_data: RunAgentInput, request: Request):
                         name = getattr(event, "tool_call_name", None)
                         if name:
                             tool_call_names.append(name)
+                    elif event.type == EventType.RUN_ERROR:
+                        # RUN_ERROR is terminal in AG-UI: the client rejects
+                        # anything after it ("the run has already errored").
+                        # `stream_llm_response` reports failures by *yielding*
+                        # this event rather than raising, so the except-clause
+                        # below never runs and would not set the flag for us.
+                        errored = True
                     logger.debug("Event: %s", event.type)
                     if event.type in (EventType.TEXT_MESSAGE_END):
                         logger.debug(f"{event}")

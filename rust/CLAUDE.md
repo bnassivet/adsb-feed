@@ -17,6 +17,26 @@ Cargo workspace containing the ADS-B feed client library, adsd-data-engine and T
 | `adsb-agent` | `adsb-agent/` | Optional **Python** AI agent (LangGraph + FastAPI) providing AG-UI chat + voice for the desktop app. Built/run with `uv` (`uv sync --all-extras`, `uv run python -m adsb_agent`), **not** part of the Cargo workspace — `cargo` commands ignore it. Lives here as a sibling component (moved out of `adsb-pulsar-client-desktop/agent/`). Serves on **:8000**. |
 | `adsb-simulation-agent` | `adsb-simulation-agent/` | Optional **Python** agent (LangGraph + Starlette) generating kinematically plausible simulated flight trajectories, exposed over the **A2A protocol** and called by `adsb-agent` as an A2A client. Built/run with `uv` (`uv sync --all-extras`, `uv run python -m adsb_simulation_agent`), **not** part of the Cargo workspace. Serves on **:8300**. See its `CLAUDE.md` for a2a-sdk v1.x gotchas. |
 
+## AG-UI run lifecycle (adsb-agent)
+
+`RUN_ERROR` is **terminal**: CopilotKit rejects anything after it with
+*"Cannot send event type 'RUN_FINISHED': the run has already errored"*, which
+masks the real failure behind a protocol error.
+
+The agent fails in two different ways, and only one of them raises:
+
+| Failure | Path | How `_produce` sees it |
+|---------|------|------------------------|
+| Exception escapes `stream_llm_response` | `except` clause in `main.py` | sets `errored` |
+| `llm.py` / `graph.py` **yield** a `RunErrorEvent` | ordinary event in the stream | must be detected while forwarding |
+
+The second is the common one — `run_graph_to_agui` deliberately reports failures
+as an event so it can forward already-computed tool calls first (a stalled
+narration turn must not discard a generated trajectory). `_produce` therefore
+sets `errored` when it *sees* a `RUN_ERROR` event, not only when it catches an
+exception. Covered by `tests/test_run_lifecycle.py`, including the
+tool-call-then-error ordering.
+
 ## Testing
 
 ### TDD Workflow
