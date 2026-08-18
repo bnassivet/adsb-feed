@@ -61,6 +61,7 @@ def validate_trajectory(
                 Violation(
                     kind="altitude",
                     waypoint_index=i,
+                    leg_index=wp.leg_index,
                     detail=f"altitude {wp.alt_ft:.0f} ft is below ground",
                 )
             )
@@ -69,6 +70,7 @@ def validate_trajectory(
                 Violation(
                     kind="speed_band",
                     waypoint_index=i,
+                    leg_index=wp.leg_index,
                     detail=(
                         f"speed {wp.speed_kts:.0f} kts outside "
                         f"{speed_floor:.0f}-{speed_ceiling:.0f} kts envelope"
@@ -85,6 +87,7 @@ def validate_trajectory(
                 Violation(
                     kind="time_order",
                     waypoint_index=i,
+                    leg_index=cur.leg_index,
                     detail=f"t_offset_s went from {prev.t_offset_s} to {cur.t_offset_s}",
                 )
             )
@@ -96,6 +99,7 @@ def validate_trajectory(
                 Violation(
                     kind="turn_rate",
                     waypoint_index=i,
+                    leg_index=cur.leg_index,
                     detail=(
                         f"turned {turn_dps:.1f} deg/s, limit {profile.max_turn_rate_dps:.1f} deg/s"
                     ),
@@ -108,6 +112,7 @@ def validate_trajectory(
                 Violation(
                     kind="climb_rate",
                     waypoint_index=i,
+                    leg_index=cur.leg_index,
                     detail=f"climbed {fpm:.0f} fpm, limit {profile.climb_rate_fpm[1]:.0f} fpm",
                 )
             )
@@ -116,6 +121,7 @@ def validate_trajectory(
                 Violation(
                     kind="descent_rate",
                     waypoint_index=i,
+                    leg_index=cur.leg_index,
                     detail=(
                         f"descended {-fpm:.0f} fpm, limit {profile.descent_rate_fpm[1]:.0f} fpm"
                     ),

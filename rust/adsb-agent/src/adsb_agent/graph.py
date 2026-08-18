@@ -176,6 +176,46 @@ async def _execute_server_tool_inner(
     return f"Error: {envelope.get('error', 'unknown error')}"
 
 
+def describe_run_error(exc: BaseException) -> str:
+    """A RUN_ERROR message a reader can act on.
+
+    ``str(exc)`` alone is often worthless: a ``KeyError('id')`` renders as
+    ``'id'`` and reaches the chat UI as a red box containing one quoted word.
+    That exact message came from MLflow's AI Gateway doing ``id=resp["id"]`` on
+    a streaming chunk that had no id — a failure three components upstream of
+    this agent, indistinguishable here from a bug in our own tool handling.
+
+    So: always name the exception type, and for transport/API failures name the
+    LLM endpoint too, since that is where the reader has to go looking.
+    """
+    text = str(exc).strip()
+    described = f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+    if type(exc).__module__.split(".")[0] in {"openai", "httpx"}:
+        return (
+            f"{described} — the LLM endpoint at {settings.llm_base_url} failed "
+            f"mid-request. This is an upstream failure (model server or gateway), "
+            f"not a problem with the request itself."
+        )
+    return described
+
+
+def tool_call_id(tc: dict[str, Any]) -> str:
+    """The tool call's id, minting one if the model didn't supply it.
+
+    Not every provider returns an id — and the id is the least consequential
+    part of a tool call, so it is a poor reason to abandon a turn whose real
+    work (a generated trajectory, say) is already done and paid for. A bare
+    ``tc["id"]`` raised ``KeyError('id')``, which reached the chat UI as a
+    RUN_ERROR whose entire message was ``'id'``: no indication of which tool,
+    which turn, or what to do about it.
+
+    Callers must resolve this **once per tool call** and reuse the result;
+    START/ARGS/END events carrying different ids cannot be correlated.
+    """
+    return tc.get("id") or f"call-{uuid.uuid4()}"
+
+
 async def run_server_tool_calls(
     tool_calls: Iterable[dict[str, Any]],
     server_names: set[str],
@@ -198,8 +238,8 @@ async def run_server_tool_calls(
     pending: list[dict[str, Any]] = []
 
     for tc in tool_calls:
-        name = tc["name"]
-        if name not in server_names:
+        name = tc.get("name")
+        if not name or name not in server_names:
             continue
 
         if name == SIMULATION_TOOL_NAME:
@@ -214,7 +254,7 @@ async def run_server_tool_calls(
             messages.append(
                 ToolMessage(
                     content=result.summary if result.ok else result.error,
-                    tool_call_id=tc["id"],
+                    tool_call_id=tool_call_id(tc),
                 )
             )
             if result.ok and result.data is not None:
@@ -228,7 +268,7 @@ async def run_server_tool_calls(
             continue
 
         content = await execute_server_tool(name, tc.get("args", {}), client)
-        messages.append(ToolMessage(content=content, tool_call_id=tc["id"]))
+        messages.append(ToolMessage(content=content, tool_call_id=tool_call_id(tc)))
 
     return {"messages": messages, "pending_client_tool_calls": pending}
 
@@ -353,7 +393,7 @@ def build_agent_graph(tools: Iterable[Any] | None, *, model: Any | None = None):
         tool_calls = getattr(last, "tool_calls", None) or []
         # Only loop into server execution when EVERY pending call is server-side.
         # Mixed/any client calls fall through to END to be forwarded.
-        if tool_calls and all(tc["name"] in server_names for tc in tool_calls):
+        if tool_calls and all(tc.get("name") in server_names for tc in tool_calls):
             return "server_tools"
         return END
 
@@ -446,7 +486,7 @@ async def run_graph_to_agui(graph, lc_messages: list[Any]) -> AsyncIterator:
         # turn) must not discard them. Forward before reporting the error.
         for event in _forward_tool_calls(pending_client_calls, message_id, text_started):
             yield event
-        yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
+        yield RunErrorEvent(type=EventType.RUN_ERROR, message=describe_run_error(e))
         return
 
     if text_started:
@@ -484,22 +524,34 @@ def _forward_tool_calls(
         yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
 
     for tc in tool_calls:
+        name = tc.get("name")
+        if not name:
+            # Nothing useful can be forwarded without one, and it is not worth
+            # failing the turn over — the payload it would have carried is
+            # already lost anyway.
+            logger.warning("Skipping a tool call with no name: %r", sorted(tc))
+            continue
+
+        # Resolved once and reused: START, ARGS and END must agree, or the
+        # frontend cannot correlate them into a single call.
+        call_id = tool_call_id(tc)
+
         # Client tools execute in the browser (CopilotKit round-trip), so the
         # result isn't available here — but record a TOOL span for the forwarded
         # call so it's visible in the trace alongside server-executed tools.
-        with make_span(f"tool.{tc['name']}", span_type="TOOL") as span:
+        with make_span(f"tool.{name}", span_type="TOOL") as span:
             if span is not None:
-                span.set_inputs({"name": tc["name"], "args": tc.get("args", {})})
+                span.set_inputs({"name": name, "args": tc.get("args", {})})
                 span.set_outputs({"forwarded_to_client": True})
         yield ToolCallStartEvent(
             type=EventType.TOOL_CALL_START,
-            tool_call_id=tc["id"],
-            tool_call_name=tc["name"],
+            tool_call_id=call_id,
+            tool_call_name=name,
             parent_message_id=message_id,
         )
         yield ToolCallArgsEvent(
             type=EventType.TOOL_CALL_ARGS,
-            tool_call_id=tc["id"],
+            tool_call_id=call_id,
             delta=json.dumps(tc.get("args", {})),
         )
-        yield ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tc["id"])
+        yield ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=call_id)

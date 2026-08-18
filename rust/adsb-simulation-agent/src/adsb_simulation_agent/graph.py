@@ -27,7 +27,9 @@ from langgraph.graph import END, START, StateGraph
 from .config import settings
 from .intent import parse_route_hint
 from .models import (
+    RouteLeg,
     RoutePlan,
+    SpeedBias,
     TrajectoryRequest,
     TrajectoryResponse,
     Violation,
@@ -49,6 +51,12 @@ ALTITUDE_BACKOFF_FACTOR = 0.6
 MAX_RADIUS_NM = 100.0
 """Mirrors the ``RoutePlan.radius_nm`` schema bound — corrections must stay valid."""
 
+_SLOWER_BIAS: dict[SpeedBias, SpeedBias] = {
+    SpeedBias.FAST: SpeedBias.NORMAL,
+    SpeedBias.NORMAL: SpeedBias.SLOW,
+}
+"""One step down the speed band, for a leg that cannot be widened."""
+
 
 class SimulationState(TypedDict):
     """State threaded through the graph.
@@ -64,23 +72,26 @@ class SimulationState(TypedDict):
     attempts: NotRequired[int]
 
 
-def correct_plan(plan: RoutePlan, violations: list[Violation]) -> RoutePlan:
-    """Adjust a plan in response to what made the last attempt unflyable.
+def _correct_leg(leg: RouteLeg, kinds: set[str]) -> RouteLeg:
+    """Apply the corrective levers to one leg.
 
-    The two levers are pattern size and altitude target, because those are the
-    two things that make a route infeasible: turns tighter than the category's
-    minimum radius, and altitude changes that need more time than the route
-    provides.
+    Pattern size and altitude target are the main two, because those are what
+    make a route infeasible: turns tighter than the category's minimum radius,
+    and altitude changes that need more time than the route provides. Speed is
+    the third, and applies only to anchored legs — see below.
     """
-    if not violations:
-        return plan
-
-    kinds = {v.kind for v in violations}
-    radius = plan.radius_nm
-    altitude = plan.altitude_ft
+    radius = leg.radius_nm
+    altitude = leg.altitude_ft
+    speed_bias = leg.speed_bias
 
     if "turn_rate" in kinds:
         radius = min(radius * RADIUS_WIDEN_FACTOR, MAX_RADIUS_NM)
+        # Widening does nothing to a leg pinned between two coordinates the user
+        # named — its geometry is not ours to change. The lever there is speed:
+        # turn radius is v/omega, so the way to fit a turn you cannot enlarge is
+        # to fly it slower. Which is what a real crew would do.
+        if leg.has_anchor:
+            speed_bias = _SLOWER_BIAS.get(speed_bias, speed_bias)
 
     if kinds & {"climb_rate", "descent_rate"}:
         if altitude is not None:
@@ -93,7 +104,35 @@ def correct_plan(plan: RoutePlan, violations: list[Violation]) -> RoutePlan:
     if "speed_band" in kinds:
         radius = min(radius * RADIUS_WIDEN_FACTOR, MAX_RADIUS_NM)
 
-    return plan.model_copy(update={"radius_nm": radius, "altitude_ft": altitude})
+    return leg.model_copy(
+        update={"radius_nm": radius, "altitude_ft": altitude, "speed_bias": speed_bias}
+    )
+
+
+def correct_plan(plan: RoutePlan, violations: list[Violation]) -> RoutePlan:
+    """Adjust a plan in response to what made the last attempt unflyable.
+
+    Corrections are applied *per leg*: on a three-leg route only the leg whose
+    waypoints breached anything gets widened, so a tight orbit in the middle
+    doesn't stretch the transits either side of it. A violation that carries no
+    leg attribution falls back to correcting every leg, which is also what
+    single-leg plans get.
+    """
+    if not violations:
+        return plan
+
+    by_leg: dict[int | None, set[str]] = {}
+    for violation in violations:
+        by_leg.setdefault(violation.leg_index, set()).add(violation.kind)
+
+    # An unattributed violation applies everywhere.
+    unattributed = by_leg.pop(None, set())
+
+    legs = [
+        _correct_leg(leg, kinds) if (kinds := unattributed | by_leg.get(index, set())) else leg
+        for index, leg in enumerate(plan.legs)
+    ]
+    return plan.model_copy(update={"legs": legs})
 
 
 def build_simulation_graph(

@@ -448,6 +448,13 @@ export interface DynamicWaypoint {
   phase: FlightPhase;
   /** Seconds from the start of this aircraft's trajectory. */
   t_offset_s: number;
+  /**
+   * Which leg of a multi-leg route this point belongs to.
+   *
+   * Optional because trajectories generated before multi-leg support have no
+   * such field; absent means the whole route is one leg.
+   */
+  leg_index?: number;
 }
 
 /** One aircraft's complete agent-generated track. */
@@ -473,13 +480,15 @@ export interface TrajectorySummary {
   maxAltFt: number;
   /** Distinct phases of flight, in the order first encountered. */
   phases: FlightPhase[];
+  /** How many legs the route has. 1 for a simple route, 0 when empty. */
+  legCount: number;
 }
 
 /** Summarize a trajectory for display. Pure — no playback state involved. */
 export function summarizeTrajectory(trajectory: AgentTrajectory): TrajectorySummary {
   const wps = trajectory.waypoints;
   if (wps.length === 0) {
-    return { waypointCount: 0, durationS: 0, minAltFt: 0, maxAltFt: 0, phases: [] };
+    return { waypointCount: 0, durationS: 0, minAltFt: 0, maxAltFt: 0, phases: [], legCount: 0 };
   }
 
   const alts = wps.map((w) => w.alt_ft);
@@ -494,6 +503,7 @@ export function summarizeTrajectory(trajectory: AgentTrajectory): TrajectorySumm
     minAltFt: Math.min(...alts),
     maxAltFt: Math.max(...alts),
     phases,
+    legCount: legCount(trajectory),
   };
 }
 
@@ -505,4 +515,43 @@ export function summarizeTrajectory(trajectory: AgentTrajectory): TrajectorySumm
  */
 export function routeLatLngs(trajectory: AgentTrajectory): [number, number][] {
   return trajectory.waypoints.map((w) => [w.lat, w.lng]);
+}
+
+/** One leg of a multi-leg route, ready to draw as its own polyline. */
+export interface RouteLeg {
+  legIndex: number;
+  positions: [number, number][];
+}
+
+/**
+ * A trajectory's route split into its legs.
+ *
+ * Drawing the legs separately is what makes a multi-leg route readable: "fly
+ * here, work this area, then leave" is three distinct intentions, and as one
+ * undifferentiated polyline they are impossible to tell apart.
+ *
+ * Each leg repeats the previous leg's final point as its own first point, so
+ * consecutive polylines meet instead of leaving a gap at every boundary.
+ */
+export function routeLegs(trajectory: AgentTrajectory): RouteLeg[] {
+  const legs: RouteLeg[] = [];
+
+  for (const w of trajectory.waypoints) {
+    const legIndex = w.leg_index ?? 0;
+    const current = legs[legs.length - 1];
+    if (!current || current.legIndex !== legIndex) {
+      // Start the new leg where the previous one ended, so the line is unbroken.
+      const seam = current ? [current.positions[current.positions.length - 1]] : [];
+      legs.push({ legIndex, positions: [...seam, [w.lat, w.lng]] });
+    } else {
+      current.positions.push([w.lat, w.lng]);
+    }
+  }
+
+  return legs;
+}
+
+/** How many legs a trajectory's route has. */
+export function legCount(trajectory: AgentTrajectory): number {
+  return new Set(trajectory.waypoints.map((w) => w.leg_index ?? 0)).size;
 }

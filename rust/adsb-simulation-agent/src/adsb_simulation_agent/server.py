@@ -32,6 +32,53 @@ RPC_URL = "/"
 """JSON-RPC endpoint path; the agent card advertises the base URL itself."""
 
 
+_REASONING_OFF = frozenset({"off", "false", "no", "disabled", "none", "0"})
+_REASONING_ON = frozenset({"on", "true", "yes", "enabled", "1"})
+"""Reasoning is a *toggle* on some models rather than a dial.
+
+`gemma-4-12b-qat` only honours ``reasoning_effort="none"`` — measured 4 s and
+162 completion tokens with it, against 23 s and 1083 without. ``minimal`` and
+``low`` are accepted and ignored, as are ``reasoning={"enabled": false}`` and
+``chat_template_kwargs={"enable_thinking": false}``. So the plain words for the
+toggle are mapped onto the one value that works, and ``on`` sends nothing at
+all — that is already the model's default.
+"""
+
+
+def reasoning_kwargs(effort: str | None, max_tokens: int | None) -> dict[str, Any]:
+    """Extra request fields asking the model to think less.
+
+    Reasoning tokens are charged against the *same* budget as the answer, so a
+    model that deliberates at length returns ``finish_reason='length'`` with
+    empty content — the budget is gone before it writes anything. These fields
+    ask for less of that.
+
+    Only emitted when configured. Sending ``reasoning_effort: null`` on every
+    request would add a field that some endpoints reject and none benefit from.
+    Support varies by provider; an endpoint that does not understand these
+    ignores them, so they are safe to set but are a *request*, not a guarantee.
+
+    Returned as ``ChatOpenAI`` constructor kwargs. ``reasoning_effort`` is a
+    native field — routing it through ``model_kwargs`` instead makes LangChain
+    warn and hoist it anyway — while the token cap has no native equivalent and
+    goes in ``extra_body``.
+    """
+    kwargs: dict[str, Any] = {}
+    if effort and effort.strip():
+        word = effort.strip().lower()
+        if word in _REASONING_OFF:
+            # The one value that actually works on a toggle-style model.
+            kwargs["reasoning_effort"] = "none"
+        elif word not in _REASONING_ON:
+            # A graded level, or something a provider we don't know understands.
+            kwargs["reasoning_effort"] = word
+        # "on" sends nothing: it is the model's own default, and naming it would
+        # only risk an endpoint rejecting a value it has no concept of.
+    if max_tokens is not None and max_tokens > 0:
+        kwargs["extra_body"] = {"reasoning": {"max_tokens": max_tokens}}
+    return kwargs
+
+
 def build_llm() -> Any | None:
     """Chat model for route-hint classification, or None if unavailable.
 
@@ -50,6 +97,15 @@ def build_llm() -> Any | None:
             temperature=settings.temperature,
             max_tokens=settings.max_tokens,
             timeout=settings.llm_timeout_s,
+            # The OpenAI client retries twice by default, so one classification
+            # is really three attempts and `llm_timeout_s` is effectively
+            # tripled — a 300s budget becomes a 900s worst case, long after the
+            # caller has given up. Nothing here is worth a transport-level
+            # retry: `intent.parse_route_hint` owns the one retry that helps (a
+            # truncated answer, retried with a *bigger* budget), and every other
+            # failure degrades to a default plan anyway.
+            max_retries=0,
+            **reasoning_kwargs(settings.reasoning_effort, settings.reasoning_max_tokens),
         )
     except Exception as e:  # noqa: BLE001 — degrade to no-LLM mode
         logger.warning("LLM unavailable (%s); route hints will use default plans", e)

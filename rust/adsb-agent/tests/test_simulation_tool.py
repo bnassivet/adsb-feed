@@ -329,3 +329,41 @@ class TestPayloadSurvivesErrors:
             e async for e in g.run_graph_to_agui(self._FailingGraph([]), [])
         ]
         assert [e.type for e in events] == [EventType.RUN_ERROR]
+
+
+class TestMultiLegHints:
+    """The hint must reach the simulation agent with its coordinates intact.
+
+    Coordinates are extracted downstream, from the raw hint, and any anchor the
+    simulation agent cannot corroborate against them is discarded. So a model
+    that "helpfully" strips or rewrites the numbers silently costs the user
+    their route — the aircraft still appear, just not where they asked.
+    """
+
+    def _hint_description(self) -> str:
+        from adsb_agent.tools import TOOLS
+
+        tool = next(t for t in TOOLS if t["function"]["name"] == SIM_TOOL)
+        return tool["function"]["parameters"]["properties"]["routeHint"]["description"].lower()
+
+    def test_the_description_demands_coordinates_be_kept(self):
+        assert "coordinate" in self._hint_description()
+
+    def test_the_description_covers_multi_leg_routes(self):
+        description = self._hint_description()
+        assert "leg" in description or "whole" in description
+
+    def test_a_multi_leg_hint_passes_through_unchanged(self):
+        from adsb_agent.a2a_client import build_trajectory_payload
+
+        hint = (
+            "3 fighters coming from (46.49365, -1.79214) at 10000ft, manoeuvering at "
+            "high speed above ILE D'YEU (46.69154, -2.35931) going up and down between "
+            "1000 and 3000 feet, then going towards (46.71161, -1.92810)"
+        )
+        payload = build_trajectory_payload(
+            {"category": "fighter", "count": 3, "routeHint": hint,
+             "originLat": 46.5, "originLng": -1.8}
+        )
+        assert payload["routeHint"] == hint
+        assert "46.69154" in payload["routeHint"]

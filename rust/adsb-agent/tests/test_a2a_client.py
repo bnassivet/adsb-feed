@@ -25,6 +25,7 @@ from adsb_agent.a2a_client import (
     call_simulation_agent,
     parse_task_response,
 )
+from adsb_agent.config import settings
 
 
 def _task_response(state: str, artifacts=None, message_text="ok") -> dict:
@@ -241,3 +242,66 @@ class TestCallSimulationAgent:
 )
 def test_non_terminal_states_are_not_treated_as_success(state):
     assert not parse_task_response(_task_response(state, [_artifact(TRAJECTORY_DATA)])).ok
+
+
+class TestTimeoutIsReportedAsTimeout:
+    """A timeout must not be reported as "is it running?".
+
+    Found the hard way: a slow classification hop made the UI say the agent
+    could not be reached, with an empty parenthetical — `httpx.ReadTimeout`
+    stringifies to "" — so the message read "...at http://127.0.0.1:8300 ().
+    Is it running?" while the agent was up and answering. That sends you to
+    check the wrong thing entirely.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_read_timeout_says_it_timed_out(self, monkeypatch):
+        async def raise_timeout(*_a, **_kw):
+            raise httpx.ReadTimeout("")
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", raise_timeout)
+        async with httpx.AsyncClient() as client:
+            result = await call_simulation_agent({"originLat": 45.0, "originLng": -73.0}, client)
+
+        assert result.ok is False
+        assert "timed out" in result.error.lower()
+        assert "is it running" not in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_the_timeout_message_names_the_budget(self, monkeypatch):
+        """So the reader can tell "raise the timeout" from "the agent is down"."""
+
+        async def raise_timeout(*_a, **_kw):
+            raise httpx.ConnectTimeout("")
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", raise_timeout)
+        async with httpx.AsyncClient() as client:
+            result = await call_simulation_agent({"originLat": 45.0, "originLng": -73.0}, client)
+
+        assert str(int(settings.simulation_agent_timeout)) in result.error
+
+    @pytest.mark.asyncio
+    async def test_a_real_connection_error_still_asks_if_it_is_running(self, monkeypatch):
+        async def raise_connect(*_a, **_kw):
+            raise httpx.ConnectError("[Errno 61] Connection refused")
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", raise_connect)
+        async with httpx.AsyncClient() as client:
+            result = await call_simulation_agent({"originLat": 45.0, "originLng": -73.0}, client)
+
+        assert result.ok is False
+        assert "is it running" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_an_empty_exception_message_still_names_the_failure(self, monkeypatch):
+        """`str(e)` is empty for several httpx errors; the type must survive."""
+
+        async def raise_blank(*_a, **_kw):
+            raise httpx.ConnectError("")
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", raise_blank)
+        async with httpx.AsyncClient() as client:
+            result = await call_simulation_agent({"originLat": 45.0, "originLng": -73.0}, client)
+
+        assert "ConnectError" in result.error
+        assert "()" not in result.error

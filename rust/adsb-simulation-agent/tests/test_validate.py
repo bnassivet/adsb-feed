@@ -7,12 +7,15 @@ also catch regressions if the generator changes.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from adsb_simulation_agent.kinematics import PROFILES
 from adsb_simulation_agent.models import (
     AircraftCategory,
     FlightPhase,
+    RouteLeg,
     RoutePattern,
     RoutePlan,
     SimulatedAircraftTrajectory,
@@ -20,7 +23,11 @@ from adsb_simulation_agent.models import (
     Waypoint,
 )
 from adsb_simulation_agent.trajectory import generate_trajectory
-from adsb_simulation_agent.validate import validate_response, validate_trajectory
+from adsb_simulation_agent.validate import (
+    describe_violations,
+    validate_response,
+    validate_trajectory,
+)
 
 ALL_COMBOS = [(p, c) for p in RoutePattern for c in AircraftCategory]
 
@@ -178,3 +185,135 @@ class TestReporting:
         profile = PROFILES[AircraftCategory.GA]
         assert validate_trajectory(_traj([]), profile) == []
         assert validate_trajectory(_traj([_wp()]), profile) == []
+
+
+class TestLegAttribution:
+    """Violations name the leg that caused them, so corrections can be targeted."""
+
+    def _trajectory(self, waypoints):
+        return SimulatedAircraftTrajectory(
+            hex_ident="SIM-000001",
+            callsign="CF001",
+            category=AircraftCategory.GA,
+            waypoints=waypoints,
+        )
+
+    def test_a_violation_carries_the_offending_leg(self):
+        profile = PROFILES[AircraftCategory.GA]
+        waypoints = [
+            Waypoint(
+                lat=45.0,
+                lng=-73.0,
+                alt_ft=3000.0,
+                speed_kts=120.0,
+                heading_deg=0.0,
+                phase=FlightPhase.CRUISE,
+                t_offset_s=0.0,
+                leg_index=0,
+            ),
+            # An impossible 90-degree snap, one leg later.
+            Waypoint(
+                lat=45.01,
+                lng=-73.0,
+                alt_ft=3000.0,
+                speed_kts=120.0,
+                heading_deg=90.0,
+                phase=FlightPhase.CRUISE,
+                t_offset_s=2.0,
+                leg_index=1,
+            ),
+        ]
+        violations = validate_trajectory(self._trajectory(waypoints), profile)
+        assert violations
+        assert all(v.leg_index == 1 for v in violations if v.kind == "turn_rate")
+
+    def test_per_waypoint_checks_are_attributed_too(self):
+        profile = PROFILES[AircraftCategory.GA]
+        waypoints = [
+            Waypoint(
+                lat=45.0,
+                lng=-73.0,
+                alt_ft=3000.0,
+                speed_kts=120.0,
+                heading_deg=0.0,
+                phase=FlightPhase.CRUISE,
+                t_offset_s=0.0,
+                leg_index=0,
+            ),
+            Waypoint(
+                lat=45.01,
+                lng=-73.0,
+                alt_ft=3000.0,
+                speed_kts=9999.0,
+                heading_deg=0.0,
+                phase=FlightPhase.CRUISE,
+                t_offset_s=8.0,
+                leg_index=2,
+            ),
+        ]
+        violations = validate_trajectory(self._trajectory(waypoints), profile)
+        speed = [v for v in violations if v.kind == "speed_band"]
+        assert speed and speed[0].leg_index == 2
+
+
+class TestMultiLegOutputIsClean:
+    """The generator's multi-leg output must validate clean, as single-leg does.
+
+    Scoped to routes a user would actually describe: legs anchored at points a
+    realistic distance apart. An airliner asked to fly a figure-eight between
+    coordinates 3 NM apart is not a generator bug — a 3 deg/s limit at 450 kts
+    forces a ~2.4 NM turn radius, so that route is unflyable however it is
+    drawn. Those degrade to a best-effort track with violations attached, which
+    is what the graph's retry edge and `TrajectoryResponse.violations` are for.
+    """
+
+    ORIGIN: ClassVar[tuple[float, float]] = (46.40000, -1.60000)
+    """The receiver. Deliberately *not* the first anchor: a leg anchored at the
+    point the aircraft already occupies has no length, which is a degenerate
+    plan rather than a route worth asserting about."""
+
+    ANCHORS: ClassVar[list[tuple[float, float]]] = [
+        (46.49365, -1.79214),
+        (46.69154, -2.35931),
+        (46.71161, -1.92810),
+    ]
+
+    def _plan(self, category, patterns):
+        return RoutePlan(
+            category=category,
+            legs=[
+                RouteLeg(
+                    pattern=pattern,
+                    radius_nm=6.0,
+                    turn_count=2,
+                    anchor_lat=anchor[0],
+                    anchor_lng=anchor[1],
+                )
+                for pattern, anchor in zip(patterns, self.ANCHORS)
+            ],
+        )
+
+    @pytest.mark.parametrize(
+        "category",
+        [AircraftCategory.GA, AircraftCategory.HELICOPTER, AircraftCategory.FIGHTER],
+    )
+    @pytest.mark.parametrize(
+        "patterns",
+        [
+            (RoutePattern.TRANSIT, RoutePattern.ORBIT, RoutePattern.TRANSIT),
+            (RoutePattern.TRANSIT, RoutePattern.MANEUVER, RoutePattern.TRANSIT),
+            (RoutePattern.TRANSIT, RoutePattern.RACETRACK, RoutePattern.APPROACH),
+            (RoutePattern.ORBIT, RoutePattern.TRANSIT, RoutePattern.ORBIT),
+        ],
+    )
+    def test_realistic_multi_leg_routes_validate_clean(self, category, patterns):
+        request = TrajectoryRequest(
+            origin_lat=self.ORIGIN[0],
+            origin_lng=self.ORIGIN[1],
+            category=category,
+            count=2,
+            plan=self._plan(category, patterns),
+            seed=17,
+        )
+        violations = validate_response(generate_trajectory(request))
+        assert violations == [], describe_violations(violations)

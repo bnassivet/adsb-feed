@@ -37,6 +37,37 @@ sets `errored` when it *sees* a `RUN_ERROR` event, not only when it catches an
 exception. Covered by `tests/test_run_lifecycle.py`, including the
 tool-call-then-error ordering.
 
+### The `'id'` RUN_ERROR (MLflow gateway, not us)
+
+A chat turn can die with a red box whose entire message is `'id'`. That is a
+`KeyError('id')` **three components upstream**:
+
+```
+LM Studio streams a chunk with no `id`
+  -> mlflow/gateway/providers/openai_compatible.py:114  `id=resp["id"]`  KeyError
+  -> gateway relays it as an SSE `error` event
+  -> openai SDK re-raises it as APIError('id')  (_streaming.py:205)
+  -> run_graph_to_agui reports str(e) -> "'id'"
+```
+
+Confirmed from the container: `docker logs mlflow-server | grep -A20 "Error
+during streaming response"`. Intermittent — 1 turn in 4 in the observed log, and
+it only affects the **streaming** path, so `adsb-simulation-agent` (which uses
+`ainvoke`) is immune.
+
+Nothing to fix here; `describe_run_error()` now names the exception type and the
+LLM endpoint and says the failure is upstream, so the next occurrence points at
+the gateway instead of looking like a bug in this agent. Workarounds, if it
+becomes annoying: point `ADSB_AGENT_LLM_BASE_URL` at LM Studio directly
+(`http://localhost:1234/v1` — note the model must then be the **full** name
+`google/gemma-4-12b-qat`; the bare name only resolves through the gateway), or
+patch `resp["id"]` to `resp.get("id")` in the container.
+
+**Debugging note:** the agent logs the full traceback via `logger.error(...,
+exc_info=True)`, so run it with output redirected (`... 2>&1 | tee
+/tmp/adsb-agent.log`). Two separate investigations stalled because it was only
+on a tty.
+
 ## Testing
 
 ### TDD Workflow

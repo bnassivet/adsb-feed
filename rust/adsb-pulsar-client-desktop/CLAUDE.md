@@ -205,7 +205,9 @@ Each aircraft has **its own clock**, so they start and stop independently. Gener
 
 `trailUpTo()` derives the trail from the route rather than accumulating it over time — that is what makes scrubbing backwards shorten the trail instead of leaving the earlier path drawn.
 
-The `SimulationPanel` lists each trajectory (waypoints, duration, altitude range, phases), supports multi-select, and exposes Start/Pause/Resume/Stop plus a per-trajectory `<input type="range">` timeline. `MapInner` draws the **planned route** of every visible trajectory as a dashed polyline (`simulatedRoutes` prop) so the generated geometry is visible in full.
+The `SimulationPanel` lists each trajectory (waypoints, duration, altitude range, leg count when >1, phases), supports multi-select, and exposes Start/Pause/Resume/Stop plus a per-trajectory `<input type="range">` timeline. `MapInner` draws the **planned route** of every visible trajectory as a dashed polyline (`simulatedRoutes` prop) so the generated geometry is visible in full.
+
+**Multi-leg routes are drawn per leg.** A generated route can now be a sequence of legs — "come from here, work this area, then head over there" — and each waypoint carries an optional `leg_index`. `routeLegs()` splits the route at those boundaries and `MapInner` draws one polyline per leg, cycling `SIM_LEG_COLORS`; a single-leg route keeps the original blue, so nothing changes for simple results. Each leg repeats the previous leg's last point as its own first, otherwise there is a visible gap at every boundary. Playback needs no changes at all: `t_offset_s` stays monotonic across legs, so `sampleTrajectory`/`trailUpTo` are unaffected.
 
 **The two sources are independent.** `showSimulation` (Filters → "Show simulated tracks") gates **only** the 20 hardcoded demo flights. Agent trajectories render purely from their own playback state — Stop or Clear removes them. Coupling the two meant pressing Start in the Simulation Agent panel also launched all 20 demo flights; don't reintroduce it (there are regression tests in `useCopilotTools.test.ts` and `useTrajectoryPlayback.test.ts`).
 

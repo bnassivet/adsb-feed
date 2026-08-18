@@ -14,11 +14,14 @@ from adsb_simulation_agent.kinematics import PROFILES, bearing_deg, great_circle
 from adsb_simulation_agent.models import (
     AircraftCategory,
     FlightPhase,
+    RouteLeg,
     RoutePattern,
     RoutePlan,
+    SpeedBias,
     TrajectoryRequest,
 )
 from adsb_simulation_agent.trajectory import generate_trajectory, round_corners
+from adsb_simulation_agent.validate import validate_response
 
 ORIGIN_LAT, ORIGIN_LNG = 45.5, -73.6
 
@@ -335,3 +338,287 @@ class TestSummary:
         from adsb_simulation_agent.models import TrajectoryResponse
 
         assert "No aircraft" in TrajectoryResponse(aircraft=[]).summary()
+
+
+# ---------------------------------------------------------------------------
+# Multi-leg routes
+# ---------------------------------------------------------------------------
+
+INBOUND = (46.49365, -1.79214)
+ILE_DYEU = (46.69154, -2.35931)
+OUTBOUND = (46.71161, -1.92810)
+
+
+def _leg(pattern: RoutePattern, anchor=None, **kw) -> RouteLeg:
+    params = {"pattern": pattern, "radius_nm": 6.0, "bearing_deg": 0.0, "turn_count": 1}
+    params.update(kw)
+    if anchor is not None:
+        params["anchor_lat"], params["anchor_lng"] = anchor
+    return RouteLeg(**params)
+
+
+def _fighter_scenario() -> RoutePlan:
+    """The worked example: in from a point, manoeuver over another, out to a third."""
+    return RoutePlan(
+        category=AircraftCategory.FIGHTER,
+        legs=[
+            _leg(RoutePattern.TRANSIT, anchor=ILE_DYEU, altitude_ft=10000.0),
+            _leg(
+                RoutePattern.MANEUVER,
+                anchor=ILE_DYEU,
+                radius_nm=5.0,
+                turn_count=2,
+                altitude_min_ft=1000.0,
+                altitude_max_ft=3000.0,
+                speed_bias=SpeedBias.FAST,
+            ),
+            _leg(RoutePattern.TRANSIT, anchor=OUTBOUND),
+        ],
+    )
+
+
+def _multi_leg_waypoints(plan: RoutePlan, origin=INBOUND):
+    request = TrajectoryRequest(
+        origin_lat=origin[0],
+        origin_lng=origin[1],
+        category=plan.category,
+        count=1,
+        plan=plan,
+        seed=99,
+    )
+    response = generate_trajectory(request)
+    assert response.aircraft, "no aircraft generated"
+    return response.aircraft[0].waypoints
+
+
+class TestMultiLegStructure:
+    def test_every_leg_is_represented(self):
+        wps = _multi_leg_waypoints(_fighter_scenario())
+        assert sorted({wp.leg_index for wp in wps}) == [0, 1, 2]
+
+    def test_leg_indices_never_go_backwards(self):
+        """Legs are flown in order, so the index is monotonically non-decreasing."""
+        wps = _multi_leg_waypoints(_fighter_scenario())
+        indices = [wp.leg_index for wp in wps]
+        assert indices == sorted(indices)
+
+    def test_time_stays_monotonic_across_leg_boundaries(self):
+        wps = _multi_leg_waypoints(_fighter_scenario())
+        assert all(b.t_offset_s > a.t_offset_s for a, b in pairwise(wps))
+
+    def test_the_track_is_continuous_across_leg_boundaries(self):
+        """No teleporting between legs — the gap stays within one sampling step."""
+        wps = _multi_leg_waypoints(_fighter_scenario())
+        gaps = [great_circle_nm(a.lat, a.lng, b.lat, b.lng) for a, b in pairwise(wps)]
+        assert max(gaps) < 5.0, f"largest gap {max(gaps):.1f} NM looks like a jump"
+
+    def test_the_route_starts_at_the_origin_and_ends_at_the_last_anchor(self):
+        wps = _multi_leg_waypoints(_fighter_scenario())
+        assert great_circle_nm(*INBOUND, wps[0].lat, wps[0].lng) < 1.0
+        assert great_circle_nm(*OUTBOUND, wps[-1].lat, wps[-1].lng) < 1.0
+
+    def test_the_middle_leg_happens_over_its_anchor(self):
+        wps = _multi_leg_waypoints(_fighter_scenario())
+        maneuver = [wp for wp in wps if wp.leg_index == 1]
+        assert maneuver
+        centre_gap = min(great_circle_nm(*ILE_DYEU, wp.lat, wp.lng) for wp in maneuver)
+        assert centre_gap < 2.0
+
+
+class TestMultiLegDynamics:
+    """A multi-leg route is still bound by the performance envelope."""
+
+    def test_turn_rate_never_exceeds_the_limit(self):
+        profile = PROFILES[AircraftCategory.FIGHTER]
+        wps = _multi_leg_waypoints(_fighter_scenario())
+        for a, b in pairwise(wps):
+            dt = b.t_offset_s - a.t_offset_s
+            rate = angular_diff(b.heading_deg, a.heading_deg) / dt
+            assert rate <= profile.max_turn_rate_dps * 1.25, f"turned {rate:.1f} deg/s"
+
+    def test_vertical_rate_never_exceeds_the_limit(self):
+        profile = PROFILES[AircraftCategory.FIGHTER]
+        wps = _multi_leg_waypoints(_fighter_scenario())
+        for a, b in pairwise(wps):
+            dt_min = (b.t_offset_s - a.t_offset_s) / 60.0
+            fpm = (b.alt_ft - a.alt_ft) / dt_min
+            assert fpm <= profile.climb_rate_fpm[1] * 1.25
+            assert -fpm <= profile.descent_rate_fpm[1] * 1.25
+
+    def test_generated_multi_leg_output_validates_clean(self):
+        request = TrajectoryRequest(
+            origin_lat=INBOUND[0],
+            origin_lng=INBOUND[1],
+            category=AircraftCategory.FIGHTER,
+            count=3,
+            plan=_fighter_scenario(),
+            seed=7,
+        )
+        assert validate_response(generate_trajectory(request)) == []
+
+
+class TestAltitudeOscillation:
+    def test_the_leg_cycles_between_its_bounds(self):
+        wps = _multi_leg_waypoints(_fighter_scenario())
+        alts = [wp.alt_ft for wp in wps if wp.leg_index == 1]
+        assert alts
+        # It genuinely goes up *and* down, rather than holding a mid value.
+        assert max(alts) - min(alts) > 800.0
+
+    def test_it_settles_within_the_requested_band(self):
+        """The aircraft arrives at 10 000 ft, so it must *descend* into the band.
+
+        That descent happens at the profile's rate on the first part of the leg
+        — which is correct, not a band violation — so the band assertion applies
+        once the aircraft has had time to get down.
+        """
+        wps = _multi_leg_waypoints(_fighter_scenario())
+        alts = [wp.alt_ft for wp in wps if wp.leg_index == 1]
+        assert alts
+        settled = alts[len(alts) // 2 :]
+        assert min(settled) >= 1000.0 - 200.0
+        assert max(settled) <= 3000.0 + 200.0
+
+    def test_it_descends_out_of_the_transit_altitude(self):
+        wps = _multi_leg_waypoints(_fighter_scenario())
+        alts = [wp.alt_ft for wp in wps if wp.leg_index == 1]
+        assert min(alts) < 3000.0 + 200.0, "never came down to the requested band"
+
+    def test_a_leg_without_a_band_holds_its_altitude(self):
+        plan = RoutePlan(
+            category=AircraftCategory.GA,
+            legs=[_leg(RoutePattern.ORBIT, radius_nm=4.0, turn_count=2, altitude_ft=3000.0)],
+        )
+        alts = [wp.alt_ft for wp in _multi_leg_waypoints(plan)]
+        assert max(alts) - min(alts) < 500.0
+
+
+class TestSpeedBias:
+    def test_fast_flies_quicker_than_normal(self):
+        def mean_speed(bias: SpeedBias) -> float:
+            plan = RoutePlan(
+                category=AircraftCategory.GA,
+                legs=[_leg(RoutePattern.TRANSIT, radius_nm=10.0, speed_bias=bias)],
+            )
+            wps = _multi_leg_waypoints(plan)
+            return sum(wp.speed_kts for wp in wps) / len(wps)
+
+        assert mean_speed(SpeedBias.FAST) > mean_speed(SpeedBias.NORMAL)
+        assert mean_speed(SpeedBias.SLOW) < mean_speed(SpeedBias.NORMAL)
+
+    def test_a_fast_leg_stays_inside_the_envelope(self):
+        plan = RoutePlan(
+            category=AircraftCategory.FIGHTER,
+            legs=[_leg(RoutePattern.TRANSIT, radius_nm=20.0, speed_bias=SpeedBias.FAST)],
+        )
+        request = TrajectoryRequest(
+            origin_lat=INBOUND[0],
+            origin_lng=INBOUND[1],
+            category=AircraftCategory.FIGHTER,
+            plan=plan,
+            seed=3,
+        )
+        assert validate_response(generate_trajectory(request)) == []
+
+
+class TestAnchorsSurviveJitter:
+    """Extra aircraft must not be scattered off the user's stated coordinates."""
+
+    def test_every_aircraft_reaches_the_final_anchor(self):
+        request = TrajectoryRequest(
+            origin_lat=INBOUND[0],
+            origin_lng=INBOUND[1],
+            category=AircraftCategory.FIGHTER,
+            count=3,
+            plan=_fighter_scenario(),
+            seed=11,
+        )
+        response = generate_trajectory(request)
+        assert len(response.aircraft) == 3
+        for aircraft in response.aircraft:
+            last = aircraft.waypoints[-1]
+            assert great_circle_nm(*OUTBOUND, last.lat, last.lng) < 3.0
+
+    def test_the_aircraft_fly_separated_tracks(self):
+        """They share the named points — they must not share the whole track.
+
+        The start is deliberately *not* the discriminator: all three were asked
+        to come from the same coordinate, so they legitimately begin together.
+        """
+        request = TrajectoryRequest(
+            origin_lat=INBOUND[0],
+            origin_lng=INBOUND[1],
+            category=AircraftCategory.FIGHTER,
+            count=3,
+            plan=_fighter_scenario(),
+            seed=11,
+        )
+        aircraft = generate_trajectory(request).aircraft
+        working = [
+            [(round(wp.lat, 4), round(wp.lng, 4)) for wp in a.waypoints if wp.leg_index == 1]
+            for a in aircraft
+        ]
+        assert all(working), "an aircraft never reached the working area"
+        assert len({tuple(track) for track in working}) == 3, "formation members are stacked"
+
+
+class TestScenarioEntryAltitude:
+    """An aircraft that arrives "at 10000 ft" is already there when we meet it."""
+
+    def test_a_first_leg_with_a_stated_altitude_starts_level(self):
+        wps = _multi_leg_waypoints(_fighter_scenario())
+        first = [wp for wp in wps if wp.leg_index == 0]
+        assert first[0].alt_ft == pytest.approx(10000.0, rel=0.05)
+        assert all(wp.phase == FlightPhase.CRUISE for wp in first)
+
+    def test_a_first_leg_without_a_stated_altitude_still_climbs_out(self):
+        plan = RoutePlan(
+            category=AircraftCategory.GA,
+            legs=[
+                _leg(RoutePattern.TRANSIT, radius_nm=10.0),
+                _leg(RoutePattern.ORBIT, radius_nm=4.0),
+            ],
+        )
+        first = [wp for wp in _multi_leg_waypoints(plan) if wp.leg_index == 0]
+        assert any(wp.phase == FlightPhase.CLIMB for wp in first)
+
+    def test_a_single_leg_plan_still_climbs_out(self):
+        """Regression guard: this behaviour is only for multi-leg entries."""
+        plan = RoutePlan(
+            category=AircraftCategory.GA,
+            legs=[_leg(RoutePattern.TRANSIT, radius_nm=10.0, altitude_ft=6000.0)],
+        )
+        wps = _multi_leg_waypoints(plan)
+        assert any(wp.phase == FlightPhase.CLIMB for wp in wps)
+
+
+class TestLegJoinRounding:
+    """Regression: the join between two legs must actually get rounded.
+
+    Each leg starts where the previous ended, so the join point appears in both
+    lists. Left duplicated, the corner's inbound leg has zero length, its
+    tangent clamps to zero, and the corner is skipped entirely — emitting a
+    sharp, unflyable turn exactly at every leg boundary.
+    """
+
+    def test_the_turn_between_two_opposed_legs_is_flyable(self):
+        limit = PROFILES[AircraftCategory.FIGHTER].max_turn_rate_dps
+        # Out to a point, then straight back the way it came: the sharpest
+        # possible join, a full reversal.
+        plan = RoutePlan(
+            category=AircraftCategory.FIGHTER,
+            legs=[
+                _leg(RoutePattern.TRANSIT, anchor=ILE_DYEU),
+                _leg(RoutePattern.TRANSIT, anchor=INBOUND),
+            ],
+        )
+        wps = _multi_leg_waypoints(plan)
+        for a, b in pairwise(wps):
+            dt = b.t_offset_s - a.t_offset_s
+            rate = angular_diff(b.heading_deg, a.heading_deg) / dt
+            assert rate <= limit * 1.25, f"reversal turned at {rate:.1f} deg/s"
+
+    def test_no_duplicate_positions_at_a_leg_boundary(self):
+        wps = _multi_leg_waypoints(_fighter_scenario())
+        for a, b in pairwise(wps):
+            assert great_circle_nm(a.lat, a.lng, b.lat, b.lng) > 0.0

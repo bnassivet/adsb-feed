@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { summarizeTrajectory } from "@/lib/simulation-data";
+import { summarizeTrajectory, routeLegs, legCount } from "@/lib/simulation-data";
 import type { AgentTrajectory, DynamicWaypoint } from "@/lib/simulation-data";
 
 function wp(over: Partial<DynamicWaypoint> = {}): DynamicWaypoint {
@@ -49,7 +49,7 @@ describe("summarizeTrajectory", () => {
 
   it("handles an empty trajectory", () => {
     expect(summarizeTrajectory(traj([]))).toEqual({
-      waypointCount: 0, durationS: 0, minAltFt: 0, maxAltFt: 0, phases: [],
+      waypointCount: 0, durationS: 0, minAltFt: 0, maxAltFt: 0, phases: [], legCount: 0,
     });
   });
 
@@ -83,3 +83,106 @@ describe("routeLatLngs", () => {
     expect(routeLatLngs(t).map(([lat]) => lat)).toEqual([1, 2, 3]);
   });
 });
+
+describe("routeLegs", () => {
+  const wp = (leg: number, lat: number, lng: number): DynamicWaypoint => ({
+    lat,
+    lng,
+    alt_ft: 3000,
+    speed_kts: 200,
+    heading_deg: 90,
+    phase: "cruise",
+    t_offset_s: 0,
+    leg_index: leg,
+  });
+
+  const trajectory = (waypoints: DynamicWaypoint[]): AgentTrajectory => ({
+    hex_ident: "SIM-000001",
+    callsign: "CF001",
+    category: "fighter",
+    waypoints,
+  });
+
+  it("splits the route at leg boundaries", () => {
+    const legs = routeLegs(
+      trajectory([wp(0, 46.5, -1.8), wp(0, 46.6, -2.0), wp(1, 46.7, -2.3), wp(1, 46.7, -2.4)]),
+    );
+    expect(legs).toHaveLength(2);
+    expect(legs[0].legIndex).toBe(0);
+    expect(legs[1].legIndex).toBe(1);
+  });
+
+  it("carries the boundary point into the next leg so the line stays unbroken", () => {
+    const legs = routeLegs(
+      trajectory([wp(0, 46.5, -1.8), wp(0, 46.6, -2.0), wp(1, 46.7, -2.3)]),
+    );
+    // Without the shared point the two polylines would show a visible gap.
+    expect(legs[0].positions[legs[0].positions.length - 1]).toEqual(legs[1].positions[0]);
+  });
+
+  it("returns a single leg for a single-leg trajectory", () => {
+    const legs = routeLegs(trajectory([wp(0, 46.5, -1.8), wp(0, 46.6, -2.0)]));
+    expect(legs).toHaveLength(1);
+    expect(legs[0].positions).toEqual([
+      [46.5, -1.8],
+      [46.6, -2.0],
+    ]);
+  });
+
+  it("treats a trajectory with no leg_index as one leg", () => {
+    const legacy = trajectory([wp(0, 46.5, -1.8), wp(0, 46.6, -2.0)]).waypoints.map((w) => {
+      const stripped: DynamicWaypoint = { ...w };
+      delete stripped.leg_index;
+      return stripped;
+    });
+    const legs = routeLegs(trajectory(legacy));
+    expect(legs).toHaveLength(1);
+  });
+
+  it("returns nothing for an empty trajectory", () => {
+    expect(routeLegs(trajectory([]))).toEqual([]);
+  });
+});
+
+describe("legCount", () => {
+  it("counts the distinct legs", () => {
+    const make = (leg: number): DynamicWaypoint => ({
+      lat: 46,
+      lng: -2,
+      alt_ft: 1,
+      speed_kts: 1,
+      heading_deg: 1,
+      phase: "cruise",
+      t_offset_s: 0,
+      leg_index: leg,
+    });
+    expect(legCount({
+      hex_ident: "x",
+      callsign: "y",
+      category: "ga",
+      waypoints: [make(0), make(0), make(1), make(2)],
+    })).toBe(3);
+  });
+});
+
+describe("summarizeTrajectory leg count", () => {
+  it("reports one leg for a legacy trajectory with no leg_index", () => {
+    expect(summarizeTrajectory(CLIMB_CRUISE_FOR_LEGS).legCount).toBe(1);
+  });
+
+  it("reports the number of distinct legs", () => {
+    const multi = traj([
+      wp({ t_offset_s: 0, leg_index: 0 }),
+      wp({ t_offset_s: 10, leg_index: 1 }),
+      wp({ t_offset_s: 20, leg_index: 2 }),
+    ]);
+    expect(summarizeTrajectory(multi).legCount).toBe(3);
+  });
+
+  it("reports zero legs for an empty trajectory", () => {
+    expect(summarizeTrajectory(traj([])).legCount).toBe(0);
+  });
+});
+
+const CLIMB_CRUISE_FOR_LEGS = traj([wp({ t_offset_s: 0 }), wp({ t_offset_s: 10 })]);
+

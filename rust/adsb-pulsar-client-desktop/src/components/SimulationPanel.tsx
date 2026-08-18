@@ -386,6 +386,9 @@ function TrajectoryRow({
       <div className="mt-1 text-xs text-slate-500">
         {summary.waypointCount} wp · {formatClock(summary.durationS)} ·{" "}
         {Math.round(summary.minAltFt)}–{Math.round(summary.maxAltFt)} ft ·{" "}
+        {/* Only worth saying when there is more than one — a plain route is
+            just a route, and "1 leg" is noise on every single-leg result. */}
+        {summary.legCount > 1 && <>{summary.legCount} legs · </>}
         {summary.phases.join(", ")}
       </div>
 

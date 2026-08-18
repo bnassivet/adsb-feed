@@ -10,9 +10,18 @@ from itertools import pairwise
 
 import pytest
 
-from adsb_simulation_agent.geometry import build_anchors, default_plan_for
+from adsb_simulation_agent.geometry import (
+    build_anchors,
+    build_multi_leg_anchors,
+    default_plan_for,
+)
 from adsb_simulation_agent.kinematics import bearing_deg, great_circle_nm
-from adsb_simulation_agent.models import AircraftCategory, RoutePattern, RoutePlan
+from adsb_simulation_agent.models import (
+    AircraftCategory,
+    RouteLeg,
+    RoutePattern,
+    RoutePlan,
+)
 
 ORIGIN = (45.5, -73.6)
 
@@ -191,3 +200,195 @@ class TestDefaultPlan:
         plan = default_plan_for(AircraftCategory.HELICOPTER, seed=1)
         assert plan.pattern in {RoutePattern.ORBIT, RoutePattern.RACETRACK}
         assert plan.radius_nm <= 10
+
+
+# ---------------------------------------------------------------------------
+# Multi-leg routes
+# ---------------------------------------------------------------------------
+
+ILE_DYEU = (46.69154, -2.35931)
+INBOUND = (46.49365, -1.79214)
+OUTBOUND = (46.71161, -1.92810)
+
+
+def _multi(*legs: RouteLeg, category: AircraftCategory = AircraftCategory.FIGHTER) -> RoutePlan:
+    return RoutePlan(category=category, legs=list(legs))
+
+
+class TestAnchorResolution:
+    def test_an_unanchored_first_leg_uses_the_request_origin(self):
+        plan = _multi(RouteLeg(pattern=RoutePattern.ORBIT, radius_nm=3.0))
+        legs = build_multi_leg_anchors(plan, *ORIGIN)
+        assert len(legs) == 1
+        centre_distances = [great_circle_nm(*ORIGIN, *p) for p in legs[0]]
+        assert max(centre_distances) == pytest.approx(3.0, rel=0.05)
+
+    def test_an_anchored_orbit_centres_on_its_anchor_not_the_origin(self):
+        plan = _multi(
+            RouteLeg(
+                pattern=RoutePattern.ORBIT,
+                radius_nm=2.0,
+                anchor_lat=ILE_DYEU[0],
+                anchor_lng=ILE_DYEU[1],
+            )
+        )
+        points = build_multi_leg_anchors(plan, *ORIGIN)[0]
+        # The leg opens with a connector back to the hand-over point and a
+        # line-up segment; the circle itself follows, every point a radius from
+        # the anchor...
+        orbit = points[2:]
+        assert all(great_circle_nm(*ILE_DYEU, *p) == pytest.approx(2.0, rel=0.1) for p in orbit)
+        # ...and nowhere near the request origin.
+        assert great_circle_nm(*ORIGIN, *points[-1]) > 10.0
+
+
+class TestAnchoredStraightLegs:
+    """An anchored transit is a route *to* a point, not a line centred on it."""
+
+    def test_anchored_transit_ends_at_its_anchor(self):
+        plan = _multi(
+            RouteLeg(pattern=RoutePattern.TRANSIT, anchor_lat=OUTBOUND[0], anchor_lng=OUTBOUND[1])
+        )
+        points = build_multi_leg_anchors(plan, *INBOUND)[0]
+        assert great_circle_nm(*OUTBOUND, *points[-1]) < 0.2
+
+    def test_anchored_transit_starts_where_it_was_handed_over(self):
+        plan = _multi(
+            RouteLeg(pattern=RoutePattern.TRANSIT, anchor_lat=OUTBOUND[0], anchor_lng=OUTBOUND[1])
+        )
+        points = build_multi_leg_anchors(plan, *INBOUND)[0]
+        assert great_circle_nm(*INBOUND, *points[0]) < 0.2
+
+    def test_anchored_transit_ignores_the_requested_radius(self):
+        """Its length is the real distance to the anchor, not radius_nm * 2."""
+        plan = _multi(
+            RouteLeg(
+                pattern=RoutePattern.TRANSIT,
+                radius_nm=1.0,
+                anchor_lat=OUTBOUND[0],
+                anchor_lng=OUTBOUND[1],
+            )
+        )
+        points = build_multi_leg_anchors(plan, *INBOUND)[0]
+        flown = sum(great_circle_nm(*a, *b) for a, b in pairwise(points))
+        assert flown == pytest.approx(great_circle_nm(*INBOUND, *OUTBOUND), rel=0.02)
+
+    def test_anchored_approach_ends_at_its_anchor(self):
+        plan = _multi(
+            RouteLeg(pattern=RoutePattern.APPROACH, anchor_lat=OUTBOUND[0], anchor_lng=OUTBOUND[1])
+        )
+        points = build_multi_leg_anchors(plan, *INBOUND)[0]
+        assert great_circle_nm(*OUTBOUND, *points[-1]) < 0.2
+
+    def test_an_unanchored_transit_keeps_the_centred_behaviour(self):
+        """Regression guard: single-leg plans must be unchanged."""
+        plan = _multi(RouteLeg(pattern=RoutePattern.TRANSIT, radius_nm=5.0, bearing_deg=90.0))
+        assert build_multi_leg_anchors(plan, *ORIGIN)[0] == build_anchors(plan, *ORIGIN)
+
+
+class TestLegContinuity:
+    def test_consecutive_legs_join_up(self):
+        """No teleporting: each leg starts where the previous one ended."""
+        plan = _multi(
+            RouteLeg(pattern=RoutePattern.TRANSIT, anchor_lat=ILE_DYEU[0], anchor_lng=ILE_DYEU[1]),
+            RouteLeg(
+                pattern=RoutePattern.MANEUVER,
+                radius_nm=3.0,
+                anchor_lat=ILE_DYEU[0],
+                anchor_lng=ILE_DYEU[1],
+            ),
+            RouteLeg(pattern=RoutePattern.TRANSIT, anchor_lat=OUTBOUND[0], anchor_lng=OUTBOUND[1]),
+        )
+        legs = build_multi_leg_anchors(plan, *INBOUND)
+        assert len(legs) == 3
+        for previous, following in pairwise(legs):
+            assert great_circle_nm(*previous[-1], *following[0]) < 0.2
+
+    def test_a_displaced_pattern_leg_gets_a_connector(self):
+        """A pattern anchored away from the hand-over point is flown *to* first."""
+        far = (46.9, -2.9)
+        plan = _multi(
+            RouteLeg(
+                pattern=RoutePattern.ORBIT, radius_nm=2.0, anchor_lat=far[0], anchor_lng=far[1]
+            )
+        )
+        points = build_multi_leg_anchors(plan, *ORIGIN)[0]
+        # The leg still begins at the hand-over point, then transits to the pattern.
+        assert great_circle_nm(*ORIGIN, *points[0]) < 0.2
+
+    def test_the_full_route_starts_at_the_first_anchor(self):
+        plan = _multi(
+            RouteLeg(pattern=RoutePattern.TRANSIT, anchor_lat=ILE_DYEU[0], anchor_lng=ILE_DYEU[1]),
+            RouteLeg(pattern=RoutePattern.TRANSIT, anchor_lat=OUTBOUND[0], anchor_lng=OUTBOUND[1]),
+        )
+        legs = build_multi_leg_anchors(plan, *INBOUND)
+        assert great_circle_nm(*INBOUND, *legs[0][0]) < 0.2
+        assert great_circle_nm(*OUTBOUND, *legs[-1][-1]) < 0.2
+
+
+class TestBuildAnchorsWrapper:
+    def test_flattens_every_leg(self):
+        plan = _multi(
+            RouteLeg(pattern=RoutePattern.TRANSIT, anchor_lat=ILE_DYEU[0], anchor_lng=ILE_DYEU[1]),
+            RouteLeg(pattern=RoutePattern.ORBIT, radius_nm=2.0),
+        )
+        flat = build_anchors(plan, *INBOUND)
+        legs = build_multi_leg_anchors(plan, *INBOUND)
+        assert len(flat) == sum(len(leg) for leg in legs)
+
+
+class TestTangentialOrbitEntry:
+    """An aircraft joins a circle tangentially; it cannot turn onto it side-on.
+
+    Entering at an arbitrary angle leaves a corner the pattern's own radius
+    cannot absorb, and for an airliner (2.4 NM minimum turn radius) that corner
+    is simply unflyable.
+    """
+
+    def test_the_run_in_meets_the_circle_tangentially(self):
+        plan = _multi(
+            RouteLeg(
+                pattern=RoutePattern.ORBIT,
+                radius_nm=3.0,
+                bearing_deg=0.0,
+                anchor_lat=ILE_DYEU[0],
+                anchor_lng=ILE_DYEU[1],
+            ),
+            category=AircraftCategory.AIRLINER,
+        )
+        points = build_multi_leg_anchors(plan, *INBOUND)[0]
+        run_in = bearing_deg(*points[0], *points[1])
+        onward = bearing_deg(*points[1], *points[2])
+        # Tangential means the run-in and the first arc of the orbit are already
+        # going the same way — no corner to absorb at the entry point.
+        assert angular_diff(run_in, onward) < 20.0
+
+    def test_a_side_on_entry_would_have_failed_that_check(self):
+        """Guards the guard: the nominal-bearing entry really is a hard corner."""
+        plan = _multi(
+            RouteLeg(pattern=RoutePattern.ORBIT, radius_nm=3.0, bearing_deg=0.0),
+            category=AircraftCategory.AIRLINER,
+        )
+        # Unanchored first leg: centred on the origin, entered at bearing_deg.
+        points = build_multi_leg_anchors(plan, *ILE_DYEU)[0]
+        assert great_circle_nm(*ILE_DYEU, *points[0]) == pytest.approx(3.0, rel=0.05)
+
+    def test_the_orbit_is_still_a_circle_of_the_requested_radius(self):
+        plan = _multi(
+            RouteLeg(
+                pattern=RoutePattern.ORBIT,
+                radius_nm=3.0,
+                anchor_lat=ILE_DYEU[0],
+                anchor_lng=ILE_DYEU[1],
+            ),
+        )
+        points = build_multi_leg_anchors(plan, *INBOUND)[0]
+        # Skipping the connector and the line-up segment that precede it.
+        assert all(
+            great_circle_nm(*ILE_DYEU, *p) == pytest.approx(3.0, rel=0.05) for p in points[2:]
+        )
+
+    def test_an_unanchored_first_orbit_is_unchanged(self):
+        """Regression guard: no connector, no tangential entry, no change."""
+        plan = _multi(RouteLeg(pattern=RoutePattern.ORBIT, radius_nm=3.0, bearing_deg=45.0))
+        assert build_multi_leg_anchors(plan, *ORIGIN)[0] == build_anchors(plan, *ORIGIN)

@@ -19,6 +19,7 @@ from adsb_simulation_agent.graph import (
 from adsb_simulation_agent.models import (
     AircraftCategory,
     FlightPhase,
+    RouteLeg,
     RoutePattern,
     RoutePlan,
     SimulatedAircraftTrajectory,
@@ -243,3 +244,47 @@ class TestDeterminism:
         response = await generate(_request(category=category), llm=None)
         assert response.aircraft
         assert response.violations == []
+
+
+class TestPerLegCorrection:
+    """On a multi-leg route, only the leg that broke gets corrected."""
+
+    def _plan(self) -> RoutePlan:
+        return RoutePlan(
+            category=AircraftCategory.GA,
+            legs=[
+                RouteLeg(pattern=RoutePattern.TRANSIT, radius_nm=5.0),
+                RouteLeg(pattern=RoutePattern.ORBIT, radius_nm=2.0),
+                RouteLeg(pattern=RoutePattern.TRANSIT, radius_nm=5.0),
+            ],
+        )
+
+    def test_only_the_offending_leg_is_widened(self):
+        corrected = correct_plan(
+            self._plan(),
+            [Violation(kind="turn_rate", waypoint_index=40, detail="too tight", leg_index=1)],
+        )
+        assert corrected.legs[0].radius_nm == 5.0
+        assert corrected.legs[1].radius_nm > 2.0
+        assert corrected.legs[2].radius_nm == 5.0
+
+    def test_an_unattributed_violation_corrects_every_leg(self):
+        """Older violations carry no leg, so they keep the previous behaviour."""
+        corrected = correct_plan(
+            self._plan(), [Violation(kind="turn_rate", waypoint_index=0, detail="too tight")]
+        )
+        assert all(
+            new.radius_nm > old.radius_nm for new, old in zip(corrected.legs, self._plan().legs)
+        )
+
+    def test_violations_on_different_legs_are_both_applied(self):
+        corrected = correct_plan(
+            self._plan(),
+            [
+                Violation(kind="turn_rate", waypoint_index=1, detail="x", leg_index=0),
+                Violation(kind="turn_rate", waypoint_index=40, detail="y", leg_index=2),
+            ],
+        )
+        assert corrected.legs[0].radius_nm > 5.0
+        assert corrected.legs[1].radius_nm == 2.0
+        assert corrected.legs[2].radius_nm > 5.0

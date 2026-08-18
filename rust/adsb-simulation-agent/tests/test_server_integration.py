@@ -14,7 +14,8 @@ import pytest
 from starlette.applications import Starlette
 
 from adsb_simulation_agent.agent_card import AGENT_NAME, SKILL_GENERATE_TRAJECTORY
-from adsb_simulation_agent.server import build_app
+from adsb_simulation_agent.config import settings
+from adsb_simulation_agent.server import build_app, build_llm, reasoning_kwargs
 
 BASE = "http://testserver"
 CARD_PATH = "/.well-known/agent-card.json"
@@ -296,3 +297,120 @@ class TestProtocolVersioning:
                 "/", json=_send_message_payload({"origin_lat": 45.5, "origin_lng": -73.6})
             )
         assert "error" in response.json()
+
+
+class TestLLMRetryBudgetIsBounded:
+    """The OpenAI client must not silently multiply the timeout.
+
+    `ChatOpenAI` defaults to `max_retries=2`, so one classification is really
+    three attempts. With `llm_timeout_s=300` that is a 900-second worst case for
+    a call the caller abandons after 60 — the retries buy nothing and are
+    invisible in the logs. `intent.parse_route_hint` already owns the one retry
+    that is worth making (a truncated answer, with a bigger budget).
+    """
+
+    def test_the_chat_model_does_not_retry_internally(self):
+        llm = build_llm()
+        if llm is None:  # langchain_openai absent — nothing to assert
+            pytest.skip("langchain_openai not installed")
+        assert llm.max_retries == 0
+
+    def test_the_configured_timeout_is_applied(self):
+        llm = build_llm()
+        if llm is None:
+            pytest.skip("langchain_openai not installed")
+        assert llm.request_timeout == settings.llm_timeout_s
+
+
+class TestReasoningBudget:
+    """Reasoning controls are pass-through, and absent unless configured.
+
+    Reasoning tokens come out of the same `max_tokens` budget as the answer, so
+    a model that thinks hard returns `finish_reason='length'` with empty
+    content. These knobs ask it to think less. Support varies by provider, so
+    they are only *sent* when set — an unconditional `reasoning_effort: None`
+    would be a new field on every request for no benefit.
+    """
+
+    def test_nothing_is_sent_when_unconfigured(self):
+        assert reasoning_kwargs(effort=None, max_tokens=None) == {}
+
+    def test_effort_is_passed_through(self):
+        assert reasoning_kwargs(effort="low", max_tokens=None) == {"reasoning_effort": "low"}
+
+    def test_effort_is_normalised(self):
+        assert reasoning_kwargs(effort="  LOW  ", max_tokens=None) == {"reasoning_effort": "low"}
+
+    def test_a_blank_effort_is_treated_as_unset(self):
+        assert reasoning_kwargs(effort="   ", max_tokens=None) == {}
+
+    def test_max_tokens_becomes_a_reasoning_budget(self):
+        assert reasoning_kwargs(effort=None, max_tokens=256) == {
+            "extra_body": {"reasoning": {"max_tokens": 256}}
+        }
+
+    def test_both_can_be_sent_together(self):
+        assert reasoning_kwargs(effort="minimal", max_tokens=128) == {
+            "reasoning_effort": "minimal",
+            "extra_body": {"reasoning": {"max_tokens": 128}},
+        }
+
+    def test_a_non_positive_budget_is_ignored(self):
+        """Zero would be a request to disable reasoning, which is not what the
+        field means and which no provider spells this way."""
+        assert reasoning_kwargs(effort=None, max_tokens=0) == {}
+        assert reasoning_kwargs(effort=None, max_tokens=-5) == {}
+
+    def test_the_model_carries_the_configured_controls(self, monkeypatch):
+        monkeypatch.setattr(settings, "reasoning_effort", "low", raising=False)
+        monkeypatch.setattr(settings, "reasoning_max_tokens", 200, raising=False)
+        llm = build_llm()
+        if llm is None:
+            pytest.skip("langchain_openai not installed")
+        assert llm.reasoning_effort == "low"
+        assert llm.extra_body == {"reasoning": {"max_tokens": 200}}
+
+    def test_the_model_carries_none_when_unconfigured(self, monkeypatch):
+        monkeypatch.setattr(settings, "reasoning_effort", None, raising=False)
+        monkeypatch.setattr(settings, "reasoning_max_tokens", None, raising=False)
+        llm = build_llm()
+        if llm is None:
+            pytest.skip("langchain_openai not installed")
+        assert llm.reasoning_effort is None
+        assert not llm.extra_body
+
+
+class TestReasoningOnOff:
+    """Some models expose reasoning as a toggle, not a dial.
+
+    `gemma-4-12b-qat` is one: `reasoning_effort="none"` turns it off (measured
+    4s / 162 tokens versus 23s / 1083 with it on), while `minimal`/`low` and the
+    `reasoning={enabled:false}` and `chat_template_kwargs` spellings are all
+    accepted and silently ignored. So the off switch has to be expressible
+    plainly, and the obvious words for it must reach the one value that works.
+    """
+
+    @pytest.mark.parametrize("word", ["off", "OFF", " off ", "false", "no", "disabled", "none"])
+    def test_off_synonyms_all_reach_none(self, word):
+        assert reasoning_kwargs(effort=word, max_tokens=None) == {"reasoning_effort": "none"}
+
+    @pytest.mark.parametrize("word", ["on", "true", "yes", "enabled"])
+    def test_on_synonyms_send_nothing(self, word):
+        """On is the model's own default; saying so explicitly would only risk
+        an endpoint rejecting a value it doesn't know."""
+        assert reasoning_kwargs(effort=word, max_tokens=None) == {}
+
+    @pytest.mark.parametrize("level", ["minimal", "low", "medium", "high"])
+    def test_graded_levels_still_pass_through(self, level):
+        """For providers that do implement a dial."""
+        assert reasoning_kwargs(effort=level, max_tokens=None) == {"reasoning_effort": level}
+
+    def test_off_survives_alongside_a_token_cap(self):
+        assert reasoning_kwargs(effort="off", max_tokens=128) == {
+            "reasoning_effort": "none",
+            "extra_body": {"reasoning": {"max_tokens": 128}},
+        }
+
+    def test_an_unknown_word_is_passed_through_untouched(self):
+        """Not our place to second-guess a provider we don't know."""
+        assert reasoning_kwargs(effort="ultra", max_tokens=None) == {"reasoning_effort": "ultra"}

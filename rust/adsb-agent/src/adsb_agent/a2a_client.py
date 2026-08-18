@@ -63,6 +63,18 @@ class TrajectoryResult:
     error: str = ""
 
 
+def _describe(exc: BaseException) -> str:
+    """A non-empty description of an exception.
+
+    Several httpx transport errors — ``ReadTimeout``, ``ConnectError`` — carry an
+    empty message, so ``f"({e})"`` renders as a bare ``()``. That is how a real
+    failure came to be reported as "...at http://127.0.0.1:8300 (). Is it
+    running?", which says nothing at all about what went wrong.
+    """
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
 def build_trajectory_payload(args: dict[str, Any]) -> dict[str, Any]:
     """Select the recognised tool args, dropping anything absent."""
     return {key: args[key] for key in _PAYLOAD_FIELDS if args.get(key) is not None}
@@ -159,13 +171,34 @@ async def call_simulation_agent(
             ok=False,
             error=f"simulation agent returned HTTP {e.response.status_code}",
         )
+    except httpx.TimeoutException as e:
+        # Emphatically *not* "is it running?". A timeout means it answered the
+        # connection and then took too long — usually the LLM classification hop
+        # inside it, which has its own (much larger) budget. Saying "unreachable"
+        # here sent a debugging session after a service that was up and healthy.
+        logger.warning(
+            "Simulation agent timed out after %.0fs (%s)",
+            settings.simulation_agent_timeout,
+            _describe(e),
+        )
+        return TrajectoryResult(
+            ok=False,
+            error=(
+                f"the simulation agent at {settings.simulation_agent_url} timed out after "
+                f"{settings.simulation_agent_timeout:.0f}s ({_describe(e)}). It is running but "
+                f"did not answer in time — the route classification step is the usual cause. "
+                f"Raise ADSB_AGENT_SIMULATION_AGENT_TIMEOUT, or lower "
+                f"ADSB_SIM_AGENT_LLM_TIMEOUT_S / ADSB_SIM_AGENT_MAX_TOKENS on the "
+                f"simulation agent so it gives up first."
+            ),
+        )
     except Exception as e:  # noqa: BLE001 — surface transport/parse failures readably
-        logger.warning("Simulation agent unreachable: %s", e)
+        logger.warning("Simulation agent unreachable: %s", _describe(e))
         return TrajectoryResult(
             ok=False,
             error=(
                 f"could not reach the simulation agent at {settings.simulation_agent_url} "
-                f"({e}). Is it running?"
+                f"({_describe(e)}). Is it running?"
             ),
         )
 

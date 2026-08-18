@@ -560,8 +560,13 @@ TOOLS: list[dict] = [
                         "type": "string",
                         "description": (
                             "The user's own words describing the desired route, passed "
-                            "verbatim — do NOT convert it into coordinates, headings or "
-                            "distances. The simulation agent interprets it."
+                            "verbatim. Copy the WHOLE route description, including every "
+                            "leg of a multi-leg request ('come from here, circle there, "
+                            "then head over there') and every latitude/longitude the "
+                            "user wrote, exactly as they wrote them. Do not summarise "
+                            "it, do not drop the coordinates, and do not invent "
+                            "coordinates, headings or distances of your own. The "
+                            "simulation agent interprets the whole thing."
                         ),
                     },
                     "originLat": {
