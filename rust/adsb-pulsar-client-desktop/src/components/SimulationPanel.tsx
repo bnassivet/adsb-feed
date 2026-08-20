@@ -13,8 +13,8 @@
  * demo flights are a separate source behind the Filters "simulation" toggle —
  * the two were briefly coupled, which made Start here launch all 20.
  */
-import { useCallback, useMemo, useState } from "react";
-import { simulateTrajectory } from "@/lib/simulate-api";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { simulateTrajectory, type SimulateRequest } from "@/lib/simulate-api";
 import { summarizeTrajectory, type AgentTrajectory } from "@/lib/simulation-data";
 import {
   formatClock,
@@ -39,6 +39,33 @@ const STATE_STYLE: Record<string, { dot: string; label: string }> = {
   stopped: { dot: "bg-slate-600", label: "stopped" },
 };
 
+/**
+ * Scenario wiring, supplied by `page.tsx`.
+ *
+ * Optional so the panel still works — and still tests — as a pure generator
+ * when there is no scenario layer, which is also what the user gets by choosing
+ * "No scenario" in the bar.
+ */
+export interface ScenarioIntegration {
+  bar: ReactNode;
+  /** hex_idents already saved in the active scenario, keyed by track id. */
+  savedTrackIds: Record<string, string>;
+  /** Start offsets of saved tracks, by hex_ident. */
+  offsetsByHex: Record<string, number>;
+  /** Null when no scenario is selected — "+ Add" is then unavailable. */
+  activeScenarioId: string | null;
+  /**
+   * `request` is the `SimulateRequest` this panel generated the trajectory
+   * from, or `null` when the panel did not generate it (a chat-generated
+   * aircraft arrives as a prop with no request attached). It is persisted as
+   * the track's `request_json`, which is where the route hint — the best
+   * description of what the aircraft actually does — survives.
+   */
+  onAddToScenario: (trajectory: AgentTrajectory, request: SimulateRequest | null) => void;
+  onRemoveFromScenario: (trackId: string) => void;
+  onOffsetChange: (trackId: string, startOffsetS: number) => void;
+}
+
 interface Props {
   receiverLocation: { lat: number; lng: number } | null;
   trajectories: AgentTrajectory[];
@@ -49,6 +76,7 @@ interface Props {
   onResume: (ids: string[]) => void;
   onStop: (ids: string[]) => void;
   onSeek: (id: string, elapsedS: number) => void;
+  scenario?: ScenarioIntegration;
 }
 
 export function SimulationPanel({
@@ -61,6 +89,7 @@ export function SimulationPanel({
   onResume,
   onStop,
   onSeek,
+  scenario,
 }: Props) {
   const [category, setCategory] = useState<Category>("helicopter");
   // Held as text so the field can be emptied while typing. Coercing on every
@@ -68,6 +97,24 @@ export function SimulationPanel({
   // read as "1x".
   const [countText, setCountText] = useState("1");
   const [routeHint, setRouteHint] = useState("");
+  /*
+   * The request this panel last generated from, and the callsigns it produced.
+   *
+   * Kept so "+ Add to scenario" can persist it as the track's `request_json`:
+   * the route hint is the best description of what an aircraft does and is not
+   * recoverable from its waypoints.
+   *
+   * Scoped by *callsign*, not `hex_ident`, and that matters — `page.tsx` runs
+   * incoming aircraft through `stageTrajectories`, which reassigns a colliding
+   * hex, so the ids coming back as props need not be the ones we sent up.
+   * Callsigns are left alone. Scoping it at all is the point: chat-generated
+   * aircraft land in the same list, and attaching this panel's route hint to
+   * one of those would describe it as something it is not.
+   */
+  const [lastRequest, setLastRequest] = useState<{
+    request: SimulateRequest;
+    callsigns: Set<string>;
+  } | null>(null);
   const [altitude, setAltitude] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,17 +128,24 @@ export function SimulationPanel({
     try {
       const parsedAltitude = altitude.trim() ? Number(altitude) : undefined;
       const count = Math.max(1, Math.min(20, parseInt(countText, 10) || 1));
-      const result = await simulateTrajectory({
+      const request: SimulateRequest = {
         category,
         originLat: receiverLocation.lat,
         originLng: receiverLocation.lng,
         count,
         routeHint: routeHint.trim() || undefined,
         cruiseAltitudeFt: Number.isFinite(parsedAltitude) ? parsedAltitude : undefined,
-      });
+      };
+      const result = await simulateTrajectory(request);
       // Selection is handled by the arrival rule below, which covers the chat
       // path too — this only has to hand the aircraft up.
       onTrajectories(result.aircraft);
+      // Only after a successful call: a failed generation must not leave a
+      // request attached to whatever is still listed from before.
+      setLastRequest({
+        request,
+        callsigns: new Set(result.aircraft.map((a) => a.callsign)),
+      });
       setSummary(result.summary);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -106,6 +160,7 @@ export function SimulationPanel({
     setSelected(new Set());
     setSummary(null);
     setError(null);
+    setLastRequest(null);
   }, [onTrajectories]);
 
   /*
@@ -160,6 +215,13 @@ export function SimulationPanel({
     [trajectories, selected],
   );
 
+  // Clear discards only the *unsaved* results, so it must be disabled when
+  // everything on screen is already saved in the scenario — otherwise the
+  // button looks live but does nothing.
+  const hasStaged = scenario
+    ? trajectories.some((t) => !scenario.savedTrackIds[t.hex_ident])
+    : trajectories.length > 0;
+
   // Which transport actions make sense for the current selection.
   const states = selectedIds.map((id) => playback[id]?.state ?? "stopped");
   const canStart = states.some((s) => s === "stopped");
@@ -169,6 +231,8 @@ export function SimulationPanel({
 
   return (
     <div className="flex flex-col gap-3 p-4">
+      {scenario?.bar}
+
       <div className="text-xs text-slate-400">
         Generate simulated aircraft with realistic flight dynamics around the
         receiver.
@@ -255,7 +319,8 @@ export function SimulationPanel({
         <button
           type="button"
           onClick={handleClear}
-          disabled={trajectories.length === 0}
+          disabled={!hasStaged}
+          title={scenario ? "Discard the unsaved generated trajectories" : undefined}
           className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 disabled:text-slate-600 rounded text-sm text-slate-200 transition-colors"
         >
           Clear
@@ -298,6 +363,13 @@ export function SimulationPanel({
                 selected={selected.has(trajectory.hex_ident)}
                 onToggle={() => toggleOne(trajectory.hex_ident)}
                 onSeek={onSeek}
+                scenario={scenario}
+                savedTrackId={scenario?.savedTrackIds[trajectory.hex_ident]}
+                generatedRequest={
+                  lastRequest?.callsigns.has(trajectory.callsign)
+                    ? lastRequest.request
+                    : null
+                }
               />
             ))}
           </ul>
@@ -351,12 +423,20 @@ function TrajectoryRow({
   selected,
   onToggle,
   onSeek,
+  scenario,
+  savedTrackId,
+  generatedRequest,
 }: {
   trajectory: AgentTrajectory;
   entry: PlaybackEntry | undefined;
   selected: boolean;
   onToggle: () => void;
   onSeek: (id: string, elapsedS: number) => void;
+  scenario?: ScenarioIntegration;
+  /** Present when this trajectory is saved in the active scenario. */
+  savedTrackId?: string;
+  /** The request that generated this aircraft, when this panel generated it. */
+  generatedRequest: SimulateRequest | null;
 }) {
   const summary = useMemo(() => summarizeTrajectory(trajectory), [trajectory]);
   const duration = trajectoryDurationS(trajectory);
@@ -407,6 +487,58 @@ function TrajectoryRow({
           {formatClock(elapsed)}/{formatClock(duration)}
         </span>
       </div>
+
+      {scenario && (
+        <div className="mt-1 flex items-center gap-2">
+          {savedTrackId ? (
+            <>
+              {/* Saved: the offset is what places this aircraft in the
+                  scenario's timeline, so it is editable right here. */}
+              <label className="flex items-center gap-1 text-xs text-slate-500">
+                Enters at
+                <input
+                  type="number"
+                  min={0}
+                  step={5}
+                  value={scenario.offsetsByHex[trajectory.hex_ident] ?? 0}
+                  onChange={(e) =>
+                    scenario.onOffsetChange(savedTrackId, Number(e.target.value) || 0)
+                  }
+                  aria-label={`${label} start offset seconds`}
+                  className="w-16 px-1 py-0.5 bg-slate-700 border border-slate-600 rounded text-xs text-slate-200 focus:border-blue-500 focus:outline-none"
+                />
+                s
+              </label>
+              <button
+                type="button"
+                onClick={() => scenario.onRemoveFromScenario(savedTrackId)}
+                aria-label={`Remove ${label} from scenario`}
+                className="ml-auto px-1.5 py-0.5 text-xs text-slate-500 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors"
+              >
+                Remove
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="text-xs text-amber-500/80">unsaved</span>
+              <button
+                type="button"
+                onClick={() => scenario.onAddToScenario(trajectory, generatedRequest)}
+                disabled={scenario.activeScenarioId === null}
+                title={
+                  scenario.activeScenarioId === null
+                    ? "Select or create a scenario first"
+                    : undefined
+                }
+                aria-label={`Add ${label} to scenario`}
+                className="ml-auto px-1.5 py-0.5 text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-900/20 disabled:text-slate-600 disabled:hover:bg-transparent rounded transition-colors"
+              >
+                + Add to scenario
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="sr-only" aria-live="polite">
         {label} {style.label} at {Math.round(progressOf(entry, trajectory) * 100)} percent

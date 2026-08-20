@@ -496,6 +496,87 @@ export interface EventOfInterestQuery {
   limit?: number | null;
 }
 
+// --- Simulation scenarios ---
+//
+// Mirrors the `adsb-data-engine` serde output (snake_case). A scenario is a
+// named, persisted collection of timed tracks — the artifact the Simulation
+// Agent panel authors, as opposed to the session-only trajectories it generates.
+
+export interface Scenario {
+  id: string;
+  name: string;
+  description: string;
+  origin_lat: number | null;
+  origin_lng: number | null;
+  tags: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+  /** Number of tracks, computed by the list query. */
+  track_count: number;
+}
+
+export interface ScenarioTrack {
+  id: string;
+  scenario_id: string;
+  ordinal: number;
+  /** Unique within its scenario — playback is keyed by this. */
+  hex_ident: string;
+  callsign: string;
+  category: string;
+  /** Seconds into the scenario's master clock at which this aircraft appears. */
+  start_offset_s: number;
+  /** `DynamicWaypoint[]` as JSON, stored verbatim by the engine. */
+  waypoints_json: string;
+  /** The `SimulateRequest` that produced this track. Null if hand-authored. */
+  request_json: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface ScenarioWithTracks {
+  scenario: Scenario;
+  tracks: ScenarioTrack[];
+}
+
+export interface CreateScenario {
+  name: string;
+  description?: string | null;
+  origin_lat?: number | null;
+  origin_lng?: number | null;
+  tags?: string | null;
+}
+
+export interface UpdateScenario {
+  id: string;
+  name: string;
+  description?: string | null;
+  origin_lat?: number | null;
+  origin_lng?: number | null;
+  tags?: string | null;
+}
+
+export interface CreateScenarioTrack {
+  scenario_id: string;
+  hex_ident: string;
+  callsign: string;
+  category: string;
+  start_offset_s?: number | null;
+  waypoints_json: string;
+  request_json?: string | null;
+}
+
+/**
+ * Only the editable fields; omitted ones keep their stored value.
+ *
+ * Waypoints are never edited in place — regenerating replaces the track.
+ */
+export interface UpdateScenarioTrack {
+  id: string;
+  callsign?: string | null;
+  start_offset_s?: number | null;
+  ordinal?: number | null;
+}
+
 export const DEFAULT_FILTERS: Filters = {
   callsign: "",
   altitudeMin: 0,

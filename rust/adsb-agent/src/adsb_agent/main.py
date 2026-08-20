@@ -29,9 +29,12 @@ from .config import settings
 from .llm import stream_llm_response
 from .tracing import make_span, set_session_tag
 from .a2a_client import call_simulation_agent
+from .describe import describe_scenario
 from .models import (
     AgUiErrorResponse,
     AgUiRequest,
+    DescribeScenarioRequest,
+    DescribeScenarioResponse,
     HealthResponse,
     RuntimeInfoResponse,
     SimulateTrajectoryRequest,
@@ -495,6 +498,48 @@ async def simulate_trajectory(body: SimulateTrajectoryRequest) -> SimulateTrajec
             violations=violations,
             summary=result.summary,
         )
+
+
+# ---------------------------------------------------------------------------
+# Scenario endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post(
+    "/scenario/describe",
+    tags=["simulation"],
+    response_model=DescribeScenarioResponse,
+    summary="Draft a prose description of a simulation scenario",
+    responses={502: {"description": "LLM unreachable or returned no description"}},
+)
+async def describe_scenario_endpoint(
+    body: DescribeScenarioRequest,
+) -> DescribeScenarioResponse:
+    """Draft a description from a scenario's track digests.
+
+    Backs the scenario panel's explicit "Generate from trajectories" button.
+    That button lives outside the chat tree and must work with the chat closed,
+    so — exactly like `/simulate/trajectory` — it gets its own endpoint rather
+    than faking a chat turn.
+
+    The result is a *draft*: the panel drops it into an editable textarea and
+    the user saves it deliberately. Nothing here writes to the database.
+    """
+    with make_span("describe_scenario_request", span_type="CHAIN") as span:
+        if span is not None:
+            span.set_inputs({"name": body.name, "tracks": len(body.tracks)})
+
+        try:
+            description = await describe_scenario(body)
+        except Exception as e:  # noqa: BLE001 — surfaced verbatim to the panel
+            # 502 not 500: the failure is the LLM endpoint behind us, and the
+            # panel says so ("Is LM Studio running?") rather than blaming itself.
+            raise HTTPException(status_code=502, detail=str(e)) from e
+
+        if span is not None:
+            span.set_outputs({"description": description})
+
+        return DescribeScenarioResponse(description=description)
 
 
 # ---------------------------------------------------------------------------

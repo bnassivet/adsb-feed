@@ -100,6 +100,65 @@ The application maintains five independent track categories in `AircraftTracking
 | **dbHistory** | DuckDB queries via DB History panel | Cyan | No (controlled by panel) |
 | **analysis** | DuckDB queries loaded to Analysis mode | Cyan (via dbHistory styling) | Yes (independent filter state) |
 
+### Simulation Scenarios
+
+Simulated aircraft come from the `adsb-simulation-agent` and are held outside the five
+track categories above, in `page.tsx`'s `agentTrajectories`. That array is **derived from
+two feeds**:
+
+| Feed | Source | Persisted |
+|------|--------|-----------|
+| **Scenario tracks** | The active scenario's rows in DuckDB (`useScenarios`) | Yes — replay survives restart and needs no Python agent |
+| **Staged trajectories** | The most recent generation, from the panel form or from chat | No — until committed with "+ Add to scenario" |
+
+A **scenario** is a named collection of tracks, each carrying a `start_offset_s` that says
+when it enters the scenario's timeline. Two DuckDB tables back it (`scenarios`,
+`scenario_tracks`); a track stores its waypoints verbatim as JSON *and* the
+`SimulateRequest` that produced them, so replay is deterministic and offline while
+regeneration remains possible.
+
+Playback composes rather than replaces: `projectScenario` maps the scenario master clock
+onto the same per-trajectory `PlaybackMap` the renderer already consumes, and
+`mergeScenarioPlayback` leaves that map untouched while the master clock is stopped — so
+per-track transport still works while authoring. Full design:
+`docs/plans/2026-08-18-simulation-scenario-builder-design.md`.
+
+#### Scenario descriptions
+
+A scenario also carries a prose `description` — what makes it legible a week later, when
+a name and a track count no longer say what the situation was for. It can be typed, or
+drafted by the LLM from the scenario's own tracks via an explicit
+**"Generate from trajectories"** button.
+
+That button calls `POST /scenario/describe` on `adsb-agent` directly rather than going
+through chat, for the same reason `/simulate/trajectory` exists: the control lives in the
+left panel, outside the chat component tree, and has to work with the chat closed. The
+endpoint makes a single-shot LLM call with no graph and no tools — describing a payload
+that is already in hand needs no reasoning hops, and routing it through the ReAct graph
+would only give the model room to wander into data tools.
+
+Only a **digest** of each track is sent (`trackDigest`), never the raw waypoints — a
+smaller prompt aimed at what a description actually needs. Where a track records the route
+hint it was generated from, that hint replaces the derived kinematics entirely: "orbit the
+port then land downtown" says what an aircraft is *doing*, where an altitude and speed
+envelope only says it is a helicopter. Identity and timing are always kept, since neither
+is recoverable from a hint. The description itself is capped at four sentences and
+explicitly forbidden from reciting altitudes, speeds, coordinates or waypoint counts —
+those are already on screen.
+
+Reasoning is requested **off** by default (`ADSB_AGENT_REASONING_EFFORT`, configurable).
+Reasoning tokens are charged against the same budget as the answer, so a deliberating
+model can spend the entire budget thinking and return empty content — which presents as
+the button hanging rather than as any error.
+
+The result is a **draft**: it lands in the editor for the user to review and save
+deliberately, so the model never writes to the database on its own.
+The same field is readable and writable from chat via `getScenario` and
+`setScenarioDescription`.
+
+Because storage now applies partial updates (`COALESCE(?, column)`), each setter sends only
+the field it changes — a rename cannot clobber a description, and vice versa.
+
 ### Key Design Principles
 
 1. **Separation of Concerns**: Frontend handles UI/UX, backend handles I/O, parsing, and persistence

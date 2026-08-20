@@ -19,9 +19,19 @@ import { MapContextMenu } from "@/components/MapContextMenu";
 import { useAircraftTracks } from "@/hooks/useAircraftTracks";
 import { useSimulatedTracks } from "@/hooks/useSimulatedTracks";
 import { useAgentSimulatedTracks } from "@/hooks/useAgentSimulatedTracks";
+import type { SimulateRequest } from "@/lib/simulate-api";
 import { useTrajectoryPlayback } from "@/hooks/useTrajectoryPlayback";
+import { useScenarioPlayback } from "@/hooks/useScenarioPlayback";
+import { useScenarios } from "@/hooks/useScenarios";
 import { isVisible } from "@/lib/trajectory-playback";
+import { mergeScenarioPlayback } from "@/lib/scenario-playback";
+import {
+  dedupeTrajectoriesByHex,
+  stageTrajectories,
+  trackToTrajectory,
+} from "@/lib/scenario-convert";
 import { SimulationPanel } from "@/components/SimulationPanel";
+import { ScenarioBar } from "@/components/ScenarioBar";
 import type { AgentTrajectory } from "@/lib/simulation-data";
 import { useMetrics } from "@/hooks/useMetrics";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
@@ -201,17 +211,58 @@ export default function Dashboard() {
   }
   const simulatedTracks = useSimulatedTracks(showSimulation, receiverLocation);
   // Agent-generated trajectories: additive to the hardcoded demo flights above.
-  // Session-only — nothing is persisted (see the simulation agent's design).
-  const [agentTrajectories, setAgentTrajectories] = useState<AgentTrajectory[]>([]);
+  //
+  // Two sources, deliberately separate:
+  // - the active *scenario*'s tracks, persisted in DuckDB, and
+  // - `stagedTrajectories`, the last generation result, not yet saved.
+  //
+  // Generation stages rather than replaces, which is what makes a scenario
+  // accumulate — before this, each generation destroyed the previous one.
+  const scenarios = useScenarios();
+  const [stagedTrajectories, setStagedTrajectories] = useState<AgentTrajectory[]>([]);
+  const scenarioTrajectories = scenarios.tracksAsTrajectories;
+
+  // Deduped because the same hex_ident can legitimately be in both feeds for a
+  // render — committing a trajectory refetches the scenario before the staged
+  // set is filtered — and React keys the markers by it. Scenario tracks come
+  // first, so the saved aircraft wins.
+  const agentTrajectories = useMemo(
+    () => dedupeTrajectoriesByHex([...scenarioTrajectories, ...stagedTrajectories]),
+    [scenarioTrajectories, stagedTrajectories],
+  );
+
+  // Timings drive the master clock: a track's offset is when it enters.
+  const scenarioTimings = useMemo(
+    () =>
+      scenarios.tracks.map((t) => ({
+        trajectory: trackToTrajectory(t),
+        startOffsetS: t.start_offset_s,
+      })),
+    [scenarios.tracks],
+  );
+  const scenarioPlayback = useScenarioPlayback(scenarioTimings);
+
   const trajectoryPlayback = useTrajectoryPlayback(agentTrajectories);
+  // While the scenario master clock runs it owns the scenario's tracks; staged
+  // trajectories keep their own per-track clocks either way.
+  const effectivePlayback = useMemo(
+    () =>
+      mergeScenarioPlayback(
+        trajectoryPlayback.playback,
+        scenarioPlayback.clock,
+        scenarioTimings,
+      ),
+    [trajectoryPlayback.playback, scenarioPlayback.clock, scenarioTimings],
+  );
+
   const agentSimulatedTracks = useAgentSimulatedTracks(
     agentTrajectories,
-    trajectoryPlayback.playback,
+    effectivePlayback,
   );
   // Only routes for aircraft actually on the map get an overlay.
   const visibleRoutes = useMemo(
-    () => agentTrajectories.filter((t) => isVisible(trajectoryPlayback.playback[t.hex_ident])),
-    [agentTrajectories, trajectoryPlayback.playback],
+    () => agentTrajectories.filter((t) => isVisible(effectivePlayback[t.hex_ident])),
+    [agentTrajectories, effectivePlayback],
   );
 
   // Agent trajectories are deliberately NOT gated on `showSimulation`: that
@@ -223,13 +274,126 @@ export default function Dashboard() {
   // Chat-generated trajectories start on arrival: asking the agent to
   // "simulate a helicopter" should show it flying. Panel-generated ones stay
   // stopped until the user presses Start.
+  //
+  // Chat results land in the *staged* set, exactly like panel results: they are
+  // not silently written into the user's saved scenario. "+ Add to scenario"
+  // (or the addTrajectoryToScenario chat tool) is the deliberate commit step.
   const applyChatTrajectories = useCallback(
     (aircraft: AgentTrajectory[]) => {
-      trajectoryPlayback.requestAutoStart(aircraft.map((a) => a.hex_ident));
-      setAgentTrajectories(aircraft);
+      // Reassign any hex the scenario already owns, so a generated aircraft is
+      // never hidden behind a saved one holding the same React key.
+      const staged = stageTrajectories(
+        aircraft,
+        scenarioTrajectories.map((t) => t.hex_ident),
+      );
+      trajectoryPlayback.requestAutoStart(staged.map((a) => a.hex_ident));
+      setStagedTrajectories(staged);
     },
-    [trajectoryPlayback],
+    [trajectoryPlayback, scenarioTrajectories],
   );
+
+  // The panel's own generate/clear path. Same collision handling, but these
+  // arrive stopped rather than auto-starting.
+  const applyPanelTrajectories = useCallback(
+    (aircraft: AgentTrajectory[]) => {
+      setStagedTrajectories(
+        stageTrajectories(
+          aircraft,
+          scenarioTrajectories.map((t) => t.hex_ident),
+        ),
+      );
+    },
+    [scenarioTrajectories],
+  );
+  // Committing a staged trajectory into the active scenario. The trajectory
+  // leaves the staged set on success, so it stops being listed twice once the
+  // scenario reloads with it.
+  const handleAddToScenario = useCallback(
+    async (trajectory: AgentTrajectory, request: SimulateRequest | null = null) => {
+      try {
+        // `request` carries the route hint, which is the only record of what
+        // the aircraft was asked to do — the waypoints never recover it, and
+        // the description generator prefers it over derived kinematics.
+        await scenarios.addTrajectory(trajectory, 0, request);
+        setStagedTrajectories((prev) =>
+          prev.filter((t) => t.hex_ident !== trajectory.hex_ident),
+        );
+      } catch (e) {
+        console.error("Could not add the trajectory to the scenario", e);
+      }
+    },
+    [scenarios],
+  );
+
+  const scenarioIntegration = useMemo(() => {
+    const savedTrackIds: Record<string, string> = {};
+    const offsetsByHex: Record<string, number> = {};
+    for (const t of scenarios.tracks) {
+      savedTrackIds[t.hex_ident] = t.id;
+      offsetsByHex[t.hex_ident] = t.start_offset_s;
+    }
+
+    return {
+      bar: (
+        <ScenarioBar
+          scenarios={scenarios.scenarios}
+          activeScenarioId={scenarios.activeScenarioId}
+          storageUnavailable={scenarios.storageUnavailable}
+          tracks={scenarios.tracks}
+          onSelect={scenarios.selectScenario}
+          onCreate={(name: string) => void scenarios.createScenario({ name })}
+          onRename={(id: string, name: string) => void scenarios.renameScenario(id, name)}
+          onSaveDescription={scenarios.setDescription}
+          onDelete={(id: string) => void scenarios.removeScenario(id)}
+          clock={scenarioPlayback.clock}
+          durationS={scenarioPlayback.durationS}
+          onStart={scenarioPlayback.start}
+          onPause={scenarioPlayback.pause}
+          onStop={scenarioPlayback.stop}
+          onSeek={scenarioPlayback.seek}
+        />
+      ),
+      savedTrackIds,
+      offsetsByHex,
+      activeScenarioId: scenarios.activeScenarioId,
+      onAddToScenario: (t: AgentTrajectory, request: SimulateRequest | null) =>
+        void handleAddToScenario(t, request),
+      onRemoveFromScenario: (trackId: string) => void scenarios.removeTrack(trackId),
+      onOffsetChange: (trackId: string, offsetS: number) =>
+        void scenarios.setTrackOffset(trackId, offsetS),
+    };
+  }, [scenarios, scenarioPlayback, handleAddToScenario]);
+
+  // The chat tools' view of the scenario layer. Adding a trajectory from chat
+  // goes through the same staged-then-committed path as the panel button.
+  const scenarioToolsConfig = useMemo(
+    () => ({
+      scenarios: scenarios.scenarios,
+      activeScenarioId: scenarios.activeScenarioId,
+      tracks: scenarios.tracks,
+      storageUnavailable: scenarios.storageUnavailable,
+      selectScenario: scenarios.selectScenario,
+      createScenario: scenarios.createScenario,
+      renameScenario: scenarios.renameScenario,
+      setDescription: scenarios.setDescription,
+      removeScenario: scenarios.removeScenario,
+      addTrajectory: async (
+        trajectory: AgentTrajectory,
+        startOffsetS?: number,
+        request?: unknown | null,
+      ) => {
+        const saved = await scenarios.addTrajectory(trajectory, startOffsetS, request);
+        setStagedTrajectories((prev) =>
+          prev.filter((t) => t.hex_ident !== trajectory.hex_ident),
+        );
+        return saved;
+      },
+      removeTrack: scenarios.removeTrack,
+      setTrackOffset: scenarios.setTrackOffset,
+    }),
+    [scenarios],
+  );
+
   const allTracks = useMemo(
     () => [...tracks, ...simulatedTracks, ...agentSimulatedTracks],
     [tracks, simulatedTracks, agentSimulatedTracks],
@@ -258,6 +422,7 @@ export default function Dashboard() {
     receiverLocation: simReceiverLocation,
     agentTrajectories,
     setAgentTrajectories: applyChatTrajectories,
+    scenarios: scenarioToolsConfig,
     showReceiver,
     showEvents,
     liveColorMode,
@@ -970,13 +1135,16 @@ export default function Dashboard() {
             <SimulationPanel
               receiverLocation={simReceiverLocation}
               trajectories={agentTrajectories}
-              onTrajectories={setAgentTrajectories}
-              playback={trajectoryPlayback.playback}
+              /* Generation replaces only the *staged* set, so aircraft already
+                 saved into the scenario survive the next Generate or Clear. */
+              onTrajectories={applyPanelTrajectories}
+              playback={effectivePlayback}
               onStart={trajectoryPlayback.start}
               onPause={trajectoryPlayback.pause}
               onResume={trajectoryPlayback.resume}
               onStop={trajectoryPlayback.stop}
               onSeek={trajectoryPlayback.seek}
+              scenario={scenarioIntegration}
             />
           }
           historySliderMin={historySliderMin}

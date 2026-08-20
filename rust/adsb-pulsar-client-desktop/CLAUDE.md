@@ -81,7 +81,7 @@ All changes follow Test-Driven Development:
 
 ### Rust Tests
 
-**adsb-data-engine** crate (~113 tests, in `adsb-data-engine/src/`):
+**adsb-data-engine** crate (~180 tests, in `adsb-data-engine/src/`):
 
 | Module | Tests | What's Covered |
 |--------|-------|----------------|
@@ -110,10 +110,10 @@ Test stack: **Vitest** + jsdom + @testing-library/react + @testing-library/user-
 
 | Directory | Tests | What's Covered |
 |-----------|-------|----------------|
-| `src/lib/__tests__/` | ~84+ | `altitudeToColor`, `zoomToH3Resolution`, `computeH3Density`, `formatBytes`/`timeAgo`, `track-ordering`, `aircraft-icon`, `verticalTendency`/`formatVerticalRate`/`altitudeHistory`/`altitudeSparklinePoints`/`altitudeRange`/`formatTrackTime`, **DuckDB command wrappers** (`commands.test.ts` — incl. import) |
-| `src/contexts/__tests__/` | ~5 | `appendPosition`, `mergePositionInto` message_count accumulation |
-| `src/hooks/__tests__/` | ~41 | `useLocalStorage`, `useAircraftTracks` filter logic, `useSimulatedTracks` heading/interpolation, **`useAgentSimulatedTracks`** time-based sampling + hold-then-despawn |
-| `src/components/__tests__/` | ~72 | `ConnectionStatus` states, `MetricsBar` formatting + import button, `Filters` interactions, `AircraftTable` selection/RxTS/Msg#, `AltitudeLegend`, `AircraftDetailsPanel` fold/unfold/identity/tendency/sparkline/axes, **`SimulationPanel`** form/error/clear |
+| `src/lib/__tests__/` | ~476 | `altitudeToColor`, `zoomToH3Resolution`, `computeH3Density`, `formatBytes`/`timeAgo`, `track-ordering`, `aircraft-icon`, `verticalTendency`/`formatVerticalRate`/`altitudeHistory`/`altitudeSparklinePoints`/`altitudeRange`/`formatTrackTime`, **DuckDB command wrappers** (`commands.test.ts` — incl. import), **scenario playback/convert/commands** (`scenario-*.test.ts`, incl. `scenario-describe-api`) |
+| `src/contexts/__tests__/` | ~23 | `appendPosition`, `mergePositionInto` message_count accumulation |
+| `src/hooks/__tests__/` | ~278 | `useLocalStorage`, `useAircraftTracks` filter logic, `useSimulatedTracks` heading/interpolation, **`useAgentSimulatedTracks`** time-based sampling + hold-then-despawn, **`useScenarios`** CRUD + hex-collision guard, **`useScenarioPlayback`** master clock (under StrictMode), **scenario chat tools** |
+| `src/components/__tests__/` | ~426 | `ConnectionStatus` states, `MetricsBar` formatting + import button, `Filters` interactions, `AircraftTable` selection/RxTS/Msg#, `AltitudeLegend`, `AircraftDetailsPanel` fold/unfold/identity/tendency/sparkline/axes, **`SimulationPanel`** form/error/clear + scenario add/remove/offset, **`ScenarioBar`** picker/transport/delete-confirm |
 
 ```bash
 npm test                          # All tests once (CI mode)
@@ -190,6 +190,165 @@ npm test && npm run lint
 |--------|------|----------|----------|
 | `useSimulatedTracks` | `SIMULATED_FLIGHTS` (20 hardcoded routes in `simulation-data.ts`) | Fixed progress-per-tick; `ground_speed` is a display field only | Loops forever |
 | `useAgentSimulatedTracks` | `AgentTrajectory[]` from the simulation agent | Sampled from each trajectory's own playback clock against its waypoints' `t_offset_s`, so speed is real | User-driven: start / pause / resume / stop, per aircraft |
+
+The second source now has **two feeds of its own**, both ending up in the single
+`agentTrajectories` array that `page.tsx` derives:
+
+| Feed | Where it comes from | Persisted? |
+|------|---------------------|------------|
+| **Scenario tracks** | The active scenario's rows in DuckDB, via `useScenarios().tracksAsTrajectories` | Yes — survive restart, replay with no Python agent running |
+| **Staged trajectories** | The last generation (panel form *or* chat), held in `stagedTrajectories` | No — until "+ Add to scenario" commits them |
+
+**Generation stages, it does not replace.** `onTrajectories` is wired to
+`setStagedTrajectories`, so Generate and Clear only affect the unsaved set and
+aircraft already saved into the scenario survive both. Before scenarios existed
+this was a plain `setAgentTrajectories`, and each generation destroyed the last.
+
+### Simulation scenarios
+
+A *scenario* is a named, persisted collection of tracks, each with a
+`start_offset_s`. Design doc:
+`docs/plans/2026-08-18-simulation-scenario-builder-design.md`.
+
+| Piece | Role |
+|-------|------|
+| `scenarios` / `scenario_tracks` tables | `SCHEMA_SQL` in `adsb-data-engine/src/storage.rs`; `waypoints_json` is stored **verbatim and never parsed** by the engine, `request_json` keeps the generating `SimulateRequest` so a track can be regenerated |
+| `lib/scenario-playback.ts` | Pure master clock: `ScenarioClock`, `projectScenario`, `mergeScenarioPlayback`, `tick/seek/start/pause/stop` |
+| `lib/scenario-convert.ts` | `trackToTrajectory`, `trajectoryToCreateTrack`, `uniqueHexIdent`, `trackDigest` |
+| `lib/scenario-describe-api.ts` | `POST /scenario/describe` on adsb-agent — the AI description button |
+| `hooks/useScenarios.ts` | Scenario list, active scenario + tracks, all CRUD |
+| `hooks/useScenarioPlayback.ts` | Owns the master clock and its timer |
+| `components/ScenarioBar.tsx` | Picker, new/rename/delete, master transport + scrubber |
+| `components/ScenarioDescription.tsx` | Description editor + "Generate from trajectories" |
+
+**The master clock is a projection, not a second playback engine.** Because
+`useAgentSimulatedTracks` is a stateless renderer over a `PlaybackMap`,
+`projectScenario` maps scenario time onto that same map — `T < offset` →
+stopped, within the span → the master state at `T - offset`, past the end →
+paused at the final waypoint. Sampling, trails, route polylines and `isVisible`
+needed no changes at all. `mergeScenarioPlayback` returns the per-track map
+untouched while the scenario clock is stopped, so per-track Start/Pause/Stop
+still works for authoring one aircraft at a time.
+
+**`useScenarioPlayback` is deliberately separate from `useTrajectoryPlayback`.**
+The latter owns the StrictMode-sensitive `requestAutoStart` path documented
+below; folding a master clock into it risked reintroducing that bug for no gain.
+
+**`hex_ident` must be unique *across both feeds*, not just within the scenario.**
+This bit twice, in two different ways:
+
+1. Within a scenario, `PlaybackMap` is keyed by hex, so two tracks sharing one
+   share a clock and an aircraft silently becomes unreachable.
+   `useScenarios.addTrajectory` calls `uniqueHexIdent` to prevent it.
+2. Across the saved/staged split, React keys map markers by hex and threw
+   *"Encountered two children with the same key"* from `MapInner`. Committing a
+   trajectory refetches the scenario **before** the staged set is filtered, so
+   for one render the same aircraft is in both feeds. A fresh generation can
+   also return a hex the scenario already holds.
+
+Two guards, both needed and both pure:
+
+| Function | Role |
+|----------|------|
+| `stageTrajectories(incoming, existingHexes)` | Reassigns colliding hexes **as trajectories are staged**, so a generated aircraft is never hidden behind a saved one |
+| `dedupeTrajectoriesByHex(list)` | Safety net where the feeds are concatenated in `page.tsx`; scenario tracks are first, so the saved aircraft wins |
+
+Dedupe alone is not enough — it would drop the newcomer and the user would
+press Generate and see nothing appear. Staging alone is not enough either,
+because it cannot close the async window during a commit.
+
+#### Scenario descriptions
+
+A scenario carries a prose `description`, written by hand or drafted by the LLM
+from the tracks it contains.
+
+**`update_scenario_sync` must stay a partial update.** It used to overwrite
+every column, with `description.unwrap_or_default()` turning an omitted
+description into `""`. The rename path sends only `{ id, name }` — so renaming a
+scenario silently destroyed its description, origin and tags. It now uses
+`COALESCE(?, column)` like `update_scenario_track_sync`: `None` preserves,
+`Some("")` is a deliberate clear. Pinned from both sides
+(`test_update_scenario_rename_preserves_description_and_origin` in Rust, *"does
+not send a description when renaming"* in `useScenarios.test.ts`). Any new
+setter on a scenario must send **only** the fields it means to change.
+
+**The AI button uses a REST endpoint, not the chat.** It lives in the left panel,
+outside `AIChatContent`'s tree, and must work with the chat closed — the same
+reason `/simulate/trajectory` exists. `POST /scenario/describe` makes a
+single-shot LLM call in `adsb-agent/describe.py` with **no graph and no tools**,
+so the model cannot wander off calling DuckDB tools instead of writing two
+sentences. Chat gets `setScenarioDescription` as a tool instead.
+
+**Reasoning is off by default (`ADSB_AGENT_REASONING_EFFORT`).** Reasoning tokens
+are charged against the *same* `max_tokens` budget as the answer, so a model that
+deliberates hits `finish_reason='length'` with **empty content** — which the user
+experiences as the button hanging, not as an error. `reasoning.py` maps every
+plain word for "off" onto `reasoning_effort="none"`, the one value a toggle-style
+model like `gemma-4-12b-qat` actually honours (4 s / 162 tokens with it, 23 s /
+1083 without). Set it to `on` to restore the model's default, or a graded level
+for providers with a real dial. Ported from `adsb_simulation_agent.server`, which
+hit this first; `graph.py` does not use it yet and could.
+
+**`max_retries=0` on the describe model.** The OpenAI client retries twice by
+default, so one call is three attempts and `describe_timeout` is silently tripled
+— a 60 s budget becomes 180 s, long after the user gave up. A description is not
+worth a transport-level retry.
+
+**Only digests are sent, never waypoints.** `trackDigest` summarises each track
+(phases, altitude/speed envelope, extent, offset) into the shape of the Python
+`TrackDigest` model. Keeps the prompt small and points the model at what a
+description needs.
+
+**The route hint beats derived kinematics.** `request_json` stores the
+`SimulateRequest` an aircraft was generated from, and `trackDigest` lifts its
+`routeHint` into `route`. When present, `_describe_track` emits *only* identity,
+timing and the route — "orbit the port then land downtown" says what the aircraft
+is doing, where "altitude 0–2500 ft, speed 0–110 kts" only says it is a
+helicopter. Identity and timing always survive: neither is derivable from a hint.
+
+`request_json` was dead until this landed — nothing populated it.
+`SimulationPanel` now keeps its last successful request and hands it to
+"+ Add to scenario". It is scoped **by callsign, not `hex_ident`**, because
+`page.tsx` runs incoming aircraft through `stageTrajectories`, which reassigns a
+colliding hex — the ids coming back as props need not be the ones sent up.
+Scoping it at all is the point: chat-generated aircraft share the list, and
+attaching the panel's route hint to one would describe it as something it is not.
+
+**Generated text is a draft, never auto-saved.** It lands in the textarea; the
+user edits and saves deliberately. One save path serves both authoring modes.
+
+**Cancel is not an error.** `describeScenario` rethrows `AbortError` untouched,
+duck-typed on `.name` — a `DOMException` is *not* `instanceof Error` under jsdom
+(nor in every browser), so an instanceof guard silently misses it and every
+deliberate cancel surfaces as "agent unreachable". `simulate-api.ts` still has
+this latent bug; it is invisible only because that path never aborts.
+
+**`agentTrajectories` is a derived list, and chat tools must not treat it as
+"things not yet saved".** `addTrajectoryToScenario` searched it for a match, but
+it is *scenario tracks + staged* — so aircraft already in the scenario matched
+just as readily, `addTrajectory` called `uniqueHexIdent`, the colliding hex was
+renamed to `AAA111-2`, and a **second row** was inserted. Asking chat to add one
+aircraft recreated the ones already saved.
+
+The tool now refuses anything `scenarios.tracks` already holds, matching on
+callsign as well as hex — callsign is the load-bearing half, because a duplicate
+created before the fix carries a renamed hex but the original callsign. It
+returns `{ added: false, alreadyInScenario: true }`, not an error.
+
+Consequence, accepted deliberately: a freshly generated aircraft that reuses a
+saved callsign is refused from chat. That is correct — `removeTrackFromScenario`
+and `setTrackStartOffset` both address tracks *by callsign*, so two tracks
+sharing one would make them ambiguous. The panel's "+ Add" button still allows it.
+
+Every test missed this because the harness only put the staged trajectory in
+`agentTrajectories`, which never happens in the running app. **When a fixture
+stands in for derived state, build it from both sources.**
+
+**Scenario writes never reach the agent tool server.** `tool_server.rs` exposes
+only `listScenarios` / `getScenario`; every mutation goes through a CopilotKit
+frontend tool (as `createEventOfInterest` does) so it passes through a UI layer
+that can confirm it. `scenario_writes_are_not_reachable_from_the_tool_server`
+pins that boundary.
 
 ### Agent trajectory playback
 

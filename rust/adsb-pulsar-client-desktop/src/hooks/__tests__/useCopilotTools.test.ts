@@ -120,8 +120,9 @@ describe("useCopilotTools — display control tools", () => {
     renderHook(() => useCopilotTools(config));
   });
 
-  it("registers all 26 tools", () => {
-    expect(registeredTools.size).toBe(26);
+  it("registers all 35 tools", () => {
+    // 26 display/query tools + 9 simulation-scenario tools.
+    expect(registeredTools.size).toBe(35);
   });
 
   describe("simulation agent tools", () => {

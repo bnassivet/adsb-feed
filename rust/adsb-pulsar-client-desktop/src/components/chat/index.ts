@@ -9,3 +9,4 @@ export { ActionConfirmCard } from "./ActionConfirmCard";
 export { DisplaySettingCard } from "./DisplaySettingCard";
 export { EventsCard } from "./EventsCard";
 export { LiveFlightsCard } from "./LiveFlightsCard";
+export { ScenarioCard } from "./ScenarioCard";

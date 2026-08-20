@@ -432,6 +432,112 @@ pub struct EventOfInterestQuery {
     pub limit: Option<usize>,
 }
 
+/// A named, persisted simulation scenario: a collection of timed tracks.
+///
+/// Scenarios are authored in the Simulation Agent panel — generate a trajectory,
+/// add it, repeat — and replayed as a whole against one master clock.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Scenario {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    /// Receiver location the scenario was authored around. Informational: track
+    /// coordinates are absolute, so a scenario replays wherever it was built.
+    pub origin_lat: Option<f64>,
+    pub origin_lng: Option<f64>,
+    /// Comma-separated free-form labels, for future scenario libraries.
+    pub tags: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    /// How many tracks belong to this scenario.
+    ///
+    /// Computed by the list query so the scenario picker can show a count
+    /// without loading every track's waypoints.
+    pub track_count: i64,
+}
+
+/// One aircraft within a scenario: a generated trajectory plus its timing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioTrack {
+    pub id: String,
+    pub scenario_id: String,
+    /// Position within the scenario's track list.
+    pub ordinal: i64,
+    /// Playback is keyed by this, so it is unique within a scenario.
+    pub hex_ident: String,
+    pub callsign: String,
+    /// "airliner" | "ga" | "helicopter" | "fighter".
+    pub category: String,
+    /// Seconds into the scenario's master clock at which this aircraft appears.
+    pub start_offset_s: f64,
+    /// The `DynamicWaypoint[]` array as JSON, stored verbatim.
+    ///
+    /// Deliberately opaque to the storage layer: the engine never parses it, so
+    /// waypoint-schema additions need no migration here.
+    pub waypoints_json: String,
+    /// The `SimulateRequest` that produced this track, as JSON.
+    ///
+    /// `None` for hand-authored or imported tracks. Present ones can be
+    /// regenerated, which is what makes a scenario editable rather than frozen.
+    pub request_json: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// A scenario together with its tracks, ordered by `ordinal`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioWithTracks {
+    pub scenario: Scenario,
+    pub tracks: Vec<ScenarioTrack>,
+}
+
+/// Parameters for creating a new scenario.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CreateScenario {
+    pub name: String,
+    /// Defaults to empty if not provided.
+    pub description: Option<String>,
+    pub origin_lat: Option<f64>,
+    pub origin_lng: Option<f64>,
+    pub tags: Option<String>,
+}
+
+/// Parameters for updating an existing scenario's metadata.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdateScenario {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub origin_lat: Option<f64>,
+    pub origin_lng: Option<f64>,
+    pub tags: Option<String>,
+}
+
+/// Parameters for adding a track to a scenario.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CreateScenarioTrack {
+    pub scenario_id: String,
+    pub hex_ident: String,
+    pub callsign: String,
+    pub category: String,
+    /// Defaults to 0.0 if not provided.
+    pub start_offset_s: Option<f64>,
+    pub waypoints_json: String,
+    pub request_json: Option<String>,
+}
+
+/// Parameters for updating a scenario track.
+///
+/// Only the editable fields: waypoints change by regenerating, which replaces
+/// the track rather than updating it in place.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdateScenarioTrack {
+    pub id: String,
+    pub callsign: Option<String>,
+    pub start_offset_s: Option<f64>,
+    pub ordinal: Option<i64>,
+}
+
 /// Configuration for opening a storage handle.
 #[derive(Debug, Clone)]
 pub struct StorageConfig {

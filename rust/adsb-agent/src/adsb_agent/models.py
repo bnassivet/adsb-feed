@@ -131,3 +131,52 @@ class SimulateTrajectoryResponse(BaseModel):
     aircraft: list[dict[str, Any]]
     violations: list[dict[str, Any]] = Field(default_factory=list)
     summary: str
+
+
+class TrackDigest(BaseModel):
+    """One scenario track, summarised for the description generator.
+
+    Deliberately not the waypoints. The desktop app builds this (see
+    `scenario-convert.ts::trackDigest`) so the raw arrays never leave it: the
+    prompt stays small and the model sees only what a description needs.
+
+    Every geometry field is nullable — a track whose stored waypoints failed to
+    parse still has an identity and must still be describable.
+    """
+
+    callsign: str
+    category: str
+    start_offset_s: float = 0
+    """Seconds into the scenario before this aircraft appears."""
+
+    route: str | None = None
+    """The route hint the aircraft was generated from, when one is known.
+
+    This is what the aircraft was *asked* to do ("orbit the port then land
+    downtown"), and it beats anything derivable from the waypoints. When it is
+    present the kinematic fields below are left out of the prompt entirely."""
+
+    waypoint_count: int = 0
+    duration_s: float = 0
+    phases: list[str] = Field(default_factory=list)
+    alt_ft_min: float | None = None
+    alt_ft_max: float | None = None
+    speed_kts_min: float | None = None
+    speed_kts_max: float | None = None
+    start_lat: float | None = None
+    start_lng: float | None = None
+    end_lat: float | None = None
+    end_lng: float | None = None
+
+
+class DescribeScenarioRequest(BaseModel):
+    """Request from the scenario panel's "Generate from trajectories" button."""
+
+    name: str
+    tracks: list[TrackDigest] = Field(default_factory=list)
+
+
+class DescribeScenarioResponse(BaseModel):
+    """Prose the user reviews and edits before saving — never auto-persisted."""
+
+    description: str
