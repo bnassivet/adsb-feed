@@ -29,6 +29,7 @@ const B = traj("SIM-B2", "HELI002");
 
 function setup(over: Partial<Parameters<typeof SimulationPanel>[0]> = {}) {
   const handlers = {
+    onToggleSimulation: vi.fn(),
     onTrajectories: vi.fn(),
     onStart: vi.fn(),
     onPause: vi.fn(),
@@ -40,6 +41,8 @@ function setup(over: Partial<Parameters<typeof SimulationPanel>[0]> = {}) {
     receiverLocation: RECEIVER,
     trajectories: [] as AgentTrajectory[],
     playback: {} as PlaybackMap,
+    showSimulation: false,
+    simulationCount: 0,
     ...handlers,
     ...over,
   };
@@ -207,6 +210,9 @@ describe("SimulationPanel — selection", () => {
       onResume: vi.fn(),
       onStop: vi.fn(),
       onSeek: vi.fn(),
+      showSimulation: false,
+      onToggleSimulation: vi.fn(),
+      simulationCount: 0,
     };
     const view = render(
       <StrictMode>
@@ -401,5 +407,72 @@ describe("SimulationPanel — time scrubber", () => {
     };
     setup({ trajectories: [instant] });
     expect(Number(screen.getByRole("slider").getAttribute("max"))).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The demo-flight layer is a *different* data source from agent trajectories
+ * (20 hardcoded routes in `useSimulatedTracks`). It moved here from the Filters
+ * panel because it is the cheapest way to put aircraft on the map — but the two
+ * sources stay independent, which is what the last assertion pins.
+ */
+describe("SimulationPanel — demo flights shortcut", () => {
+  it("renders the toggle", () => {
+    setup();
+    expect(screen.getByLabelText(/demo flights/i)).not.toBeChecked();
+  });
+
+  it("shows the live count only while enabled", () => {
+    const { rerender } = setup({ simulationCount: 20 });
+    expect(screen.queryByText(/20 sim/)).not.toBeInTheDocument();
+    rerender({ showSimulation: true, simulationCount: 20 });
+    expect(screen.getByText(/20 sim/)).toBeInTheDocument();
+  });
+
+  it("calls onToggleSimulation when clicked", async () => {
+    const user = userEvent.setup();
+    const { onToggleSimulation } = setup();
+    await user.click(screen.getByLabelText(/demo flights/i));
+    expect(onToggleSimulation).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not touch agent playback", async () => {
+    const user = userEvent.setup();
+    const { onStart, onStop, onTrajectories } = setup({ trajectories: [A] });
+    await user.click(screen.getByLabelText(/demo flights/i));
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onStop).not.toHaveBeenCalled();
+    expect(onTrajectories).not.toHaveBeenCalled();
+  });
+});
+
+describe("SimulationPanel — generation fold", () => {
+  const fold = () =>
+    screen.getByText("Generate trajectories").closest("details") as HTMLDetailsElement;
+
+  beforeEach(() => window.localStorage.clear());
+
+  it("starts open when there is nothing generated yet", () => {
+    setup();
+    expect(fold().open).toBe(true);
+  });
+
+  it("starts closed once trajectories exist, to make room for the list", () => {
+    setup({ trajectories: [A, B] });
+    expect(fold().open).toBe(false);
+  });
+
+  it("remembers a deliberate choice and lets it beat the derived default", async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(screen.getByText("Generate trajectories"));
+    expect(fold().open).toBe(false);
+    expect(window.localStorage.getItem("adsb-sim-generate-open")).toBe("false");
+  });
+
+  it("keeps a stored preference across a remount with trajectories present", () => {
+    window.localStorage.setItem("adsb-sim-generate-open", "true");
+    setup({ trajectories: [A] });
+    expect(fold().open).toBe(true);
   });
 });

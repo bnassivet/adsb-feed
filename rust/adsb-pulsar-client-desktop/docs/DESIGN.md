@@ -417,7 +417,7 @@ accumulation even when users navigate to Settings or other pages.
 - `showHistory: boolean`: Whether to display expired aircraft (persisted)
 - `showDensity: boolean`: H3 density overlay toggle (persisted)
 - `densityMetric: DensityMetric`: Which metric to display in H3 hexagons (persisted)
-- `showSimulation: boolean`: Simulated demo flight toggle (persisted)
+- `showSimulation: boolean`: Demo flight toggle (persisted as `adsb-show-simulation`; surfaced in `SimulationPanel`, not `FiltersPanel`)
 - `liveColorMode: AltitudeColorMode`: Color mode for live tracks (persisted)
 - `historyColorMode: AltitudeColorMode`: Color mode for history tracks (persisted)
 - `showImported: boolean`: Visibility of imported GeoJSON tracks (persisted)
@@ -801,7 +801,7 @@ DotsLayer({ tracks, colorMode, type: "history" | "live" })
 - `width: number`: Panel width in px (clamped 180–400, persisted)
 - `onToggle: () => void`: Toggle expanded/collapsed
 - `onWidthChange: (w: number) => void`: Called during drag resize
-- Plus all `FiltersPanel` props: `filters`, `onChange`, `trackCount`, `showHistory`, `onToggleHistory`, `historyCount`, `showDensity`, `onToggleDensity`, `densityMetric`, `onDensityMetricChange`, `showSimulation`, `onToggleSimulation`, `simulationCount`, `liveColorMode`, `onLiveColorModeChange`, `historyColorMode`, `onHistoryColorModeChange`, `importedCount`, `showImported`, `onToggleImported`, `onClearImported`, `includeImportedInDensity`, `onToggleIncludeImportedInDensity` (note: `onImportTracks` removed — DB History browsing moved to `DBHistoryPanel`)
+- Plus all `FiltersPanel` props: `filters`, `onChange`, `trackCount`, `showHistory`, `onToggleHistory`, `historyCount`, `showDensity`, `onToggleDensity`, `densityMetric`, `onDensityMetricChange`, `liveColorMode`, `onLiveColorModeChange`, `historyColorMode`, `onHistoryColorModeChange`, `importedCount`, `showImported`, `onToggleImported`, `onClearImported`, `includeImportedInDensity`, `onToggleIncludeImportedInDensity` (note: `onImportTracks` removed — DB History browsing moved to `DBHistoryPanel`)
 
 **Two States**:
 1. **Collapsed** — 32px strip with `>>` button ("Show filters panel")
@@ -3235,7 +3235,7 @@ The application includes a built-in simulation mode that animates 20 aircraft al
 
 ### How It Works
 
-1. **Enable**: Toggle "Show simulation" in `LeftPanel` → sets `showSimulation = true`
+1. **Enable**: Toggle "Demo flights" at the top of `SimulationPanel` → sets `showSimulation = true`
 2. **Hook**: `useSimulatedTracks(true)` starts a 2-second tick interval
 3. **Animation**: Each tick advances aircraft by `PROGRESS_PER_TICK = 0.04` along their waypoint segments
 4. **Merge**: `allTracks = [...tracks, ...simulatedTracks]` — simulated tracks are indistinguishable from live tracks in rendering

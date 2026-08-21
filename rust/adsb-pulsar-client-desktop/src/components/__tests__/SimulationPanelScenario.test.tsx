@@ -47,6 +47,9 @@ function setup(scenarioOver: Partial<ScenarioIntegration> = {}, trajectories = [
       onResume={vi.fn()}
       onStop={vi.fn()}
       onSeek={vi.fn()}
+      showSimulation={false}
+      onToggleSimulation={vi.fn()}
+      simulationCount={0}
       scenario={scenario}
     />,
   );
@@ -177,6 +180,9 @@ describe("SimulationPanel scenario integration", () => {
         onResume={vi.fn()}
         onStop={vi.fn()}
         onSeek={vi.fn()}
+        showSimulation={false}
+        onToggleSimulation={vi.fn()}
+        simulationCount={0}
       />,
     );
 
@@ -217,6 +223,9 @@ describe("SimulationPanel scenario integration", () => {
           onResume={vi.fn()}
           onStop={vi.fn()}
           onSeek={vi.fn()}
+          showSimulation={false}
+          onToggleSimulation={vi.fn()}
+          simulationCount={0}
           scenario={{
             bar: null,
             savedTrackIds: { "SIM-SAVED": "track-1" },

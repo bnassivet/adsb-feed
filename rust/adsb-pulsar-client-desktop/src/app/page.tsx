@@ -1115,9 +1115,6 @@ export default function Dashboard() {
           onDensityAltitudeChange={handleDensityAltitudeChange}
           densityTooltipMode={densityTooltipMode}
           onDensityTooltipModeChange={setDensityTooltipMode}
-          showSimulation={showSimulation}
-          onToggleSimulation={handleToggleSimulation}
-          simulationCount={simulatedTracks.length}
           liveColorMode={liveColorMode}
           onLiveColorModeChange={setLiveColorMode}
           historyColorMode={historyColorMode}
@@ -1144,6 +1141,9 @@ export default function Dashboard() {
               onResume={trajectoryPlayback.resume}
               onStop={trajectoryPlayback.stop}
               onSeek={trajectoryPlayback.seek}
+              showSimulation={showSimulation}
+              onToggleSimulation={handleToggleSimulation}
+              simulationCount={simulatedTracks.length}
               scenario={scenarioIntegration}
             />
           }

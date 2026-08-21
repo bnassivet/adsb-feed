@@ -28,9 +28,6 @@ interface LeftPanelProps {
   onDensityAltitudeChange: (min: number, max: number) => void;
   densityTooltipMode: DensityTooltipMode;
   onDensityTooltipModeChange: (mode: DensityTooltipMode) => void;
-  showSimulation: boolean;
-  onToggleSimulation: () => void;
-  simulationCount: number;
   liveColorMode: AltitudeColorMode;
   onLiveColorModeChange: (mode: AltitudeColorMode) => void;
   historyColorMode: AltitudeColorMode;

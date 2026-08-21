@@ -9,11 +9,17 @@
  * Generated aircraft arrive **stopped**; nothing moves until the user presses
  * Start. Each has its own clock, so they run independently.
  *
- * These controls affect ONLY agent-generated trajectories. The 20 hardcoded
- * demo flights are a separate source behind the Filters "simulation" toggle —
- * the two were briefly coupled, which made Start here launch all 20.
+ * Layout is three zones: the demo-flight shortcut and scenario bar stay
+ * visible, generation folds away once there is something to look at, and the
+ * trajectory list scrolls in its own box so transport stays reachable.
+ *
+ * The transport controls affect ONLY agent-generated trajectories. The 20
+ * hardcoded demo flights are a separate source behind the "Demo flights"
+ * checkbox at the top — the two were briefly coupled, which made Start here
+ * launch all 20. Keep them apart.
  */
 import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { simulateTrajectory, type SimulateRequest } from "@/lib/simulate-api";
 import { summarizeTrajectory, type AgentTrajectory } from "@/lib/simulation-data";
 import {
@@ -76,6 +82,10 @@ interface Props {
   onResume: (ids: string[]) => void;
   onStop: (ids: string[]) => void;
   onSeek: (id: string, elapsedS: number) => void;
+  /** Demo-flight layer — an independent source, surfaced here as a shortcut. */
+  showSimulation: boolean;
+  onToggleSimulation: () => void;
+  simulationCount: number;
   scenario?: ScenarioIntegration;
 }
 
@@ -89,6 +99,9 @@ export function SimulationPanel({
   onResume,
   onStop,
   onSeek,
+  showSimulation,
+  onToggleSimulation,
+  simulationCount,
   scenario,
 }: Props) {
   const [category, setCategory] = useState<Category>("helicopter");
@@ -222,6 +235,22 @@ export function SimulationPanel({
     ? trajectories.some((t) => !scenario.savedTrackIds[t.hex_ident])
     : trajectories.length > 0;
 
+  /*
+   * Fold state for the generation form.
+   *
+   * Stored as `boolean | null` so "the user has never touched it" is a state we
+   * can represent: while the preference is null the fold follows the panel's
+   * content — open while there is nothing to look at, closed once trajectories
+   * fill the space below. A deliberate toggle is remembered and wins from then
+   * on. Deriving it during render keeps this out of an effect, which would
+   * otherwise fight the user under StrictMode.
+   */
+  const [genOpenPref, setGenOpenPref] = useLocalStorage<boolean | null>(
+    "adsb-sim-generate-open",
+    null,
+  );
+  const genOpen = genOpenPref ?? trajectories.length === 0;
+
   // Which transport actions make sense for the current selection.
   const states = selectedIds.map((id) => playback[id]?.state ?? "stopped");
   const canStart = states.some((s) => s === "stopped");
@@ -230,114 +259,147 @@ export function SimulationPanel({
   const canStop = states.some((s) => s !== "stopped");
 
   return (
-    <div className="flex flex-col gap-3 p-4">
-      {scenario?.bar}
+    <div className="flex flex-col">
+      {/*
+        Shortcut onto the demo-flight layer. It lives here because it is the
+        cheapest way to put aircraft on the map, but it drives an entirely
+        separate source and must never be wired to the transport below.
+      */}
+      <label className="flex items-center gap-2 px-4 py-2 border-b border-slate-700 text-xs text-slate-400 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={showSimulation}
+          onChange={onToggleSimulation}
+          className="accent-emerald-500"
+        />
+        <span>
+          Demo flights{" "}
+          {showSimulation && (
+            <span className="text-slate-500 font-mono">({simulationCount} sim)</span>
+          )}
+        </span>
+      </label>
 
-      <div className="text-xs text-slate-400">
-        Generate simulated aircraft with realistic flight dynamics around the
-        receiver.
-      </div>
+      {scenario && <div className="px-4 py-3">{scenario.bar}</div>}
 
-      {!receiverLocation && (
-        <div className="text-xs text-amber-400">
-          Set a receiver location first — generated routes are built around it.
+      <details
+        className="group border-t border-slate-700"
+        open={genOpen}
+        onToggle={(e) => setGenOpenPref(e.currentTarget.open)}
+      >
+        <summary className="flex items-center gap-1.5 px-4 py-2 cursor-pointer select-none text-xs font-semibold text-slate-400 list-none [&::-webkit-details-marker]:hidden">
+          <span className="text-[10px] transition-transform duration-150 group-open:rotate-90">▶</span>
+          Generate trajectories
+        </summary>
+
+        <div className="flex flex-col gap-3 px-4 pb-4">
+          <div className="text-xs text-slate-400">
+            Generate simulated aircraft with realistic flight dynamics around the
+            receiver.
+          </div>
+
+          {!receiverLocation && (
+            <div className="text-xs text-amber-400">
+              Set a receiver location first — generated routes are built around it.
+            </div>
+          )}
+
+          <div>
+            <label htmlFor="sim-category" className="block text-xs text-slate-400 mb-1">
+              Aircraft type
+            </label>
+            <select
+              id="sim-category"
+              value={category}
+              onChange={(e) => setCategory(e.target.value as Category)}
+              className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded text-sm text-slate-200 focus:border-blue-500 focus:outline-none"
+            >
+              {CATEGORIES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="sim-count" className="block text-xs text-slate-400 mb-1">
+              How many
+            </label>
+            <input
+              id="sim-count"
+              type="number"
+              min={1}
+              max={20}
+              value={countText}
+              onChange={(e) => setCountText(e.target.value)}
+              className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded text-sm text-slate-200 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="sim-hint" className="block text-xs text-slate-400 mb-1">
+              Route description <span className="text-slate-500">(optional)</span>
+            </label>
+            <input
+              id="sim-hint"
+              type="text"
+              value={routeHint}
+              onChange={(e) => setRouteHint(e.target.value)}
+              placeholder="circling the port, final approach from the west…"
+              className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded text-sm text-slate-200 placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="sim-alt" className="block text-xs text-slate-400 mb-1">
+              Altitude ft <span className="text-slate-500">(optional)</span>
+            </label>
+            <input
+              id="sim-alt"
+              type="number"
+              min={0}
+              max={60000}
+              value={altitude}
+              onChange={(e) => setAltitude(e.target.value)}
+              placeholder="auto"
+              className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded text-sm text-slate-200 placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={handleGenerate}
+              disabled={busy || !receiverLocation}
+              className="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 rounded text-sm text-white font-medium transition-colors"
+            >
+              {busy ? "Generating…" : "Generate"}
+            </button>
+            <button
+              type="button"
+              onClick={handleClear}
+              disabled={!hasStaged}
+              title={scenario ? "Discard the unsaved generated trajectories" : undefined}
+              className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 disabled:text-slate-600 rounded text-sm text-slate-200 transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+
+          {error && (
+            <div role="alert" className="text-xs text-red-400 break-words">
+              {error}
+            </div>
+          )}
+
+          {summary && !error && <div className="text-xs text-slate-400">{summary}</div>}
         </div>
-      )}
-
-      <div>
-        <label htmlFor="sim-category" className="block text-xs text-slate-400 mb-1">
-          Aircraft type
-        </label>
-        <select
-          id="sim-category"
-          value={category}
-          onChange={(e) => setCategory(e.target.value as Category)}
-          className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded text-sm text-slate-200 focus:border-blue-500 focus:outline-none"
-        >
-          {CATEGORIES.map((c) => (
-            <option key={c.value} value={c.value}>
-              {c.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div>
-        <label htmlFor="sim-count" className="block text-xs text-slate-400 mb-1">
-          How many
-        </label>
-        <input
-          id="sim-count"
-          type="number"
-          min={1}
-          max={20}
-          value={countText}
-          onChange={(e) => setCountText(e.target.value)}
-          className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded text-sm text-slate-200 focus:border-blue-500 focus:outline-none"
-        />
-      </div>
-
-      <div>
-        <label htmlFor="sim-hint" className="block text-xs text-slate-400 mb-1">
-          Route description <span className="text-slate-500">(optional)</span>
-        </label>
-        <input
-          id="sim-hint"
-          type="text"
-          value={routeHint}
-          onChange={(e) => setRouteHint(e.target.value)}
-          placeholder="circling the port, final approach from the west…"
-          className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded text-sm text-slate-200 placeholder-slate-500 focus:border-blue-500 focus:outline-none"
-        />
-      </div>
-
-      <div>
-        <label htmlFor="sim-alt" className="block text-xs text-slate-400 mb-1">
-          Altitude ft <span className="text-slate-500">(optional)</span>
-        </label>
-        <input
-          id="sim-alt"
-          type="number"
-          min={0}
-          max={60000}
-          value={altitude}
-          onChange={(e) => setAltitude(e.target.value)}
-          placeholder="auto"
-          className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded text-sm text-slate-200 placeholder-slate-500 focus:border-blue-500 focus:outline-none"
-        />
-      </div>
-
-      <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={handleGenerate}
-          disabled={busy || !receiverLocation}
-          className="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 rounded text-sm text-white font-medium transition-colors"
-        >
-          {busy ? "Generating…" : "Generate"}
-        </button>
-        <button
-          type="button"
-          onClick={handleClear}
-          disabled={!hasStaged}
-          title={scenario ? "Discard the unsaved generated trajectories" : undefined}
-          className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 disabled:text-slate-600 rounded text-sm text-slate-200 transition-colors"
-        >
-          Clear
-        </button>
-      </div>
-
-      {error && (
-        <div role="alert" className="text-xs text-red-400 break-words">
-          {error}
-        </div>
-      )}
-
-      {summary && !error && <div className="text-xs text-slate-400">{summary}</div>}
+      </details>
 
       {trajectories.length > 0 && (
-        <>
-          <div className="flex items-center justify-between border-t border-slate-700 pt-2">
+        <div className="flex flex-col gap-3 px-4 py-3 border-t border-slate-700">
+          <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-400">
               Trajectories{" "}
               <span className="font-mono text-slate-500">({trajectories.length})</span>
@@ -354,7 +416,8 @@ export function SimulationPanel({
             </label>
           </div>
 
-          <ul className="flex flex-col gap-2 list-none m-0 p-0">
+          {/* Bounded so the transport row below never scrolls out of reach. */}
+          <ul className="flex flex-col gap-2 list-none m-0 p-0 max-h-[40vh] overflow-y-auto">
             {trajectories.map((trajectory) => (
               <TrajectoryRow
                 key={trajectory.hex_ident}
@@ -390,7 +453,7 @@ export function SimulationPanel({
               Select a trajectory to control its playback.
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );
