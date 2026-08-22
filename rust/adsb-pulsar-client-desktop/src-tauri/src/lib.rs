@@ -103,6 +103,15 @@ pub fn run() {
             commands::get_event_of_interest,
             commands::update_event_of_interest,
             commands::delete_event_of_interest,
+            commands::list_scenarios,
+            commands::get_scenario,
+            commands::create_scenario,
+            commands::update_scenario,
+            commands::delete_scenario,
+            commands::create_scenario_track,
+            commands::update_scenario_track,
+            commands::delete_scenario_track,
+            commands::reorder_scenario_tracks,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

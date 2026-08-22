@@ -22,6 +22,7 @@ import {
   stopFeed,
   getEventsOfInterest,
   createEventOfInterest,
+  getScenario as getScenarioCommand,
 } from "@/lib/commands";
 import {
   StorageStatsCard,
@@ -34,17 +35,48 @@ import {
   DisplaySettingCard,
   EventsCard,
   LiveFlightsCard,
+  ScenarioCard,
 } from "@/components/chat";
+import type { AgentTrajectory } from "@/lib/simulation-data";
 import type {
   ActiveMode,
   AircraftTrack,
   AltitudeColorMode,
+  CreateScenario,
   DensityMetric,
   DensityTooltipMode,
   EventFilterMode,
   Filters,
+  Scenario,
+  ScenarioTrack,
 } from "@/lib/types";
 import { trackKey } from "@/lib/types";
+
+/**
+ * The scenario CRUD surface, supplied by `useScenarios`.
+ *
+ * Optional so a caller without a scenario layer (and the existing tool tests)
+ * keeps working — the scenario tools then report that scenarios are
+ * unavailable rather than throwing.
+ */
+export interface ScenarioToolsConfig {
+  scenarios: Scenario[];
+  activeScenarioId: string | null;
+  tracks: ScenarioTrack[];
+  storageUnavailable: boolean;
+  selectScenario: (id: string | null) => void;
+  createScenario: (scenario: CreateScenario) => Promise<Scenario>;
+  renameScenario: (id: string, name: string) => Promise<void>;
+  setDescription: (id: string, description: string) => Promise<void>;
+  removeScenario: (id: string) => Promise<void>;
+  addTrajectory: (
+    trajectory: AgentTrajectory,
+    startOffsetS?: number,
+    request?: unknown | null,
+  ) => Promise<ScenarioTrack>;
+  removeTrack: (trackId: string) => Promise<void>;
+  setTrackOffset: (trackId: string, startOffsetS: number) => Promise<void>;
+}
 
 /** Display state + setters passed from page.tsx for UI control tools. */
 export interface DisplayToolsConfig {
@@ -57,6 +89,10 @@ export interface DisplayToolsConfig {
   showDensity: boolean;
   showSimulation: boolean;
   showImported: boolean;
+  /** Receiver location, so the agent can anchor generated routes to the antenna. */
+  receiverLocation: { lat: number; lng: number } | null;
+  /** Agent-generated trajectories currently playing back. */
+  agentTrajectories: AgentTrajectory[];
   showReceiver: boolean;
   showEvents: boolean;
   liveColorMode: AltitudeColorMode;
@@ -77,6 +113,7 @@ export interface DisplayToolsConfig {
   setShowDensity: (fn: (prev: boolean) => boolean) => void;
   setShowSimulation: (fn: (prev: boolean) => boolean) => void;
   setShowImported: (fn: (prev: boolean) => boolean) => void;
+  setAgentTrajectories: (v: AgentTrajectory[]) => void;
   setShowReceiver: (fn: (prev: boolean) => boolean) => void;
   setShowEvents: (fn: (prev: boolean) => boolean) => void;
   setLiveColorMode: (v: AltitudeColorMode) => void;
@@ -96,6 +133,8 @@ export interface DisplayToolsConfig {
   activeFilters: Filters;
   setActiveFilters: (v: Filters) => void;
   flyTo: (lat: number, lng: number, zoom: number) => void;
+  /** Saved simulation scenarios. Absent when the scenario layer is not mounted. */
+  scenarios?: ScenarioToolsConfig;
 }
 
 /** Map CopilotKit ToolCallStatus strings to our card status prop. */
@@ -755,8 +794,17 @@ export function useCopilotTools(config: DisplayToolsConfig) {
 
   useSafeFrontendTool({
     name: "toggleDemoFlights",
+    /*
+     * Wording matters here, not just in the Python tool list: the model saw
+     * "start ... simulated demo flights" and answered "start simulated flights"
+     * with this tool, launching the 20 canned routes and generating nothing.
+     * Keep it describing a fixed layer, and keep the pointer to the generator.
+     */
     description:
-      "Start or stop simulated demo flights on the map. Omit 'enabled' to toggle.",
+      "Show or hide the built-in demo flight layer — a fixed set of pre-defined canned " +
+      "routes that loop forever. It creates no aircraft. Use ONLY when the user names " +
+      "this demo layer explicitly; for any request to start, run, create or simulate " +
+      "their own flights use generateSimulatedTrajectory. Omit 'enabled' to toggle.",
     parameters: z.object({
       enabled: z
         .boolean()
@@ -776,6 +824,95 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       }),
   });
 
+  /*
+   * Simulation-agent pair.
+   *
+   * `generateSimulatedTrajectory` executes SERVER-side (it is listed in the
+   * Python agent's SERVER_TOOL_NAMES, which proxies it over A2A to
+   * adsb-simulation-agent). It is still declared here because
+   * `partition_tool_names` intersects against the frontend-supplied tool list —
+   * a tool the frontend never declares is invisible to the model. Same pattern
+   * as getStorageStats. The handler below is a fallback that should not run.
+   *
+   * `applySimulatedTrajectory` is the real client tool. The model never calls
+   * it; the agent synthesizes the call after a successful generation so the
+   * waypoint payload reaches us without passing through the LLM's context.
+   */
+  useSafeFrontendTool({
+    name: "generateSimulatedTrajectory",
+    description:
+      "Generate new simulated aircraft with realistic flight paths and show them flying " +
+      "on the map. THE tool for any request to start, run, create, add, simulate or fake " +
+      "flights or aircraft — do not use toggleDemoFlights for these. Pass the user's own " +
+      "wording as routeHint — do not convert it into coordinates or headings.",
+    parameters: z.object({
+      category: z
+        .enum(["airliner", "ga", "helicopter", "fighter"])
+        .optional()
+        .describe(
+          "Aircraft performance class to simulate. Optional — defaults to 'ga'. " +
+            "Infer it from the request when the user names an aircraft type; otherwise " +
+            "omit it rather than asking them which type they want.",
+        ),
+      count: z.number().optional().describe("How many aircraft (default 1, max 20)"),
+      routeHint: z
+        .string()
+        .optional()
+        .describe("The user's own words describing the route, passed verbatim"),
+      originLat: z.number().optional().describe("Receiver latitude"),
+      originLng: z.number().optional().describe("Receiver longitude"),
+      cruiseAltitudeFt: z.number().optional().describe("Optional target altitude in feet"),
+    }),
+    handler: async () =>
+      // Reached only if the Python agent stopped treating this as a server
+      // tool; generation genuinely requires the A2A service.
+      JSON.stringify({
+        error: "Trajectory generation runs on the simulation agent, not in the app.",
+      }),
+    render: (props) =>
+      createElement(DisplaySettingCard, {
+        setting: "Simulated Aircraft",
+        status: toCardStatus(props.status),
+        result: props.result,
+      }),
+  });
+
+  useSafeFrontendTool({
+    name: "applySimulatedTrajectory",
+    description:
+      "Internal: display generated simulated aircraft on the map. Called automatically " +
+      "after generateSimulatedTrajectory succeeds; never call this directly.",
+    parameters: z.object({
+      aircraft: z.array(z.any()).describe("Generated aircraft with timed waypoints"),
+      violations: z.array(z.any()).optional(),
+      summary: z.string().optional(),
+    }),
+    handler: async (args: {
+      aircraft?: AgentTrajectory[];
+      violations?: unknown[];
+      summary?: string;
+    }) => {
+      const aircraft = (args.aircraft ?? []).filter(
+        (a) => Array.isArray(a?.waypoints) && a.waypoints.length > 0,
+      );
+      // Deliberately does NOT touch `showSimulation`: that toggle owns the 20
+      // hardcoded demo flights, and enabling it here launched all of them
+      // alongside the requested aircraft. Agent trajectories render from their
+      // own playback state, and the chat path auto-starts them (see page.tsx).
+      configRef.current.setAgentTrajectories(aircraft);
+      return JSON.stringify({
+        applied: aircraft.length,
+        summary: args.summary ?? `${aircraft.length} aircraft`,
+      });
+    },
+    render: (props) =>
+      createElement(DisplaySettingCard, {
+        setting: "Simulated Aircraft",
+        status: toCardStatus(props.status),
+        result: props.result,
+      }),
+  });
+
   useSafeFrontendTool({
     name: "setLayerVisibility",
     description:
@@ -783,7 +920,13 @@ export function useCopilotTools(config: DisplayToolsConfig) {
     parameters: z.object({
       history: z.boolean().optional().describe("Show history trails"),
       density: z.boolean().optional().describe("Show density heatmap"),
-      simulation: z.boolean().optional().describe("Show simulated tracks"),
+      simulation: z
+        .boolean()
+        .optional()
+        .describe(
+          "Show the built-in demo flight layer (same canned routes as toggleDemoFlights); " +
+            "does not generate aircraft",
+        ),
       imported: z.boolean().optional().describe("Show imported tracks"),
       receiver: z.boolean().optional().describe("Show receiver location marker"),
       events: z.boolean().optional().describe("Show events of interest"),
@@ -950,6 +1093,366 @@ export function useCopilotTools(config: DisplayToolsConfig) {
         setting: "Event Filter",
         status: toCardStatus(props.status),
         result: props.result,
+      }),
+  });
+
+  // --- Simulation scenario tools ---
+  //
+  // A *scenario* is a saved, named collection of trajectories with start
+  // offsets. These descriptions deliberately speak of saved collections and
+  // never of generating or starting aircraft: `generateSimulatedTrajectory`
+  // owns those verbs, and description collisions have silently misrouted calls
+  // in this app before (see the toggleDemoFlights note above).
+
+  useSafeFrontendTool({
+    name: "listScenarios",
+    description:
+      "List the user's saved simulation scenarios. A scenario is a stored, named collection of previously generated trajectories with their start offsets. Read-only: this neither generates aircraft nor starts playback.",
+    parameters: z.object({}),
+    handler: async () => {
+      const scenarios = configRef.current.scenarios;
+      if (!scenarios) return JSON.stringify({ error: "Scenarios are unavailable." });
+      if (scenarios.storageUnavailable) {
+        return JSON.stringify({
+          error: "Scenarios need the local database, which is unavailable.",
+        });
+      }
+      return JSON.stringify({
+        activeScenarioId: scenarios.activeScenarioId,
+        scenarios: scenarios.scenarios.map((s) => ({
+          id: s.id,
+          name: s.name,
+          trackCount: s.track_count,
+          updatedAtMs: s.updated_at_ms,
+        })),
+      });
+    },
+    render: (props) =>
+      createElement(ScenarioCard, {
+        status: toCardStatus(props.status),
+        result: props.result,
+      }),
+  });
+
+  useSafeFrontendTool({
+    name: "getScenario",
+    description:
+      "Open a saved scenario by id and make it the active one, returning the tracks it contains with their callsigns and start offsets. Use listScenarios first to find the id.",
+    parameters: z.object({
+      scenarioId: z.string().describe("Id of the saved scenario to open"),
+    }),
+    handler: async (args: { scenarioId: string }) => {
+      const scenarios = configRef.current.scenarios;
+      if (!scenarios) return JSON.stringify({ error: "Scenarios are unavailable." });
+
+      const found = await getScenarioCommand(args.scenarioId);
+      scenarios.selectScenario(args.scenarioId);
+      return JSON.stringify({
+        id: found.scenario.id,
+        name: found.scenario.name,
+        // So the assistant can answer "what is this scenario about?" and can
+        // refine an existing description rather than overwriting it blind.
+        description: found.scenario.description,
+        tracks: found.tracks.map((t) => ({
+          trackId: t.id,
+          callsign: t.callsign,
+          category: t.category,
+          startOffsetS: t.start_offset_s,
+        })),
+      });
+    },
+    render: (props) =>
+      createElement(ScenarioCard, {
+        status: toCardStatus(props.status),
+        result: props.result,
+      }),
+  });
+
+  useSafeFrontendTool({
+    name: "createScenario",
+    description:
+      "Create a new empty saved scenario with the given name and make it active. Only call when the user explicitly asks to create or start a new scenario. This creates no aircraft — use generateSimulatedTrajectory for that.",
+    parameters: z.object({
+      name: z.string().describe("Name for the new scenario"),
+      description: z.string().optional().describe("Optional description"),
+    }),
+    handler: async (args: { name: string; description?: string }) => {
+      const scenarios = configRef.current.scenarios;
+      if (!scenarios) return JSON.stringify({ error: "Scenarios are unavailable." });
+
+      const created = await scenarios.createScenario({
+        name: args.name,
+        description: args.description ?? null,
+      });
+      return JSON.stringify({ id: created.id, name: created.name, created: true });
+    },
+    render: (props) =>
+      createElement(ActionConfirmCard, {
+        action: "start",
+        status: toCardStatus(props.status),
+        result: props.status === "complete" ? "Scenario created." : props.result,
+      }),
+  });
+
+  useSafeFrontendTool({
+    name: "renameScenario",
+    description:
+      "Change the title of a saved scenario — its name only, not its description or its tracks. Use setScenarioDescription to write what the scenario is about.",
+    parameters: z.object({
+      scenarioId: z.string().describe("Id of the scenario to rename"),
+      name: z.string().describe("New name"),
+    }),
+    handler: async (args: { scenarioId: string; name: string }) => {
+      const scenarios = configRef.current.scenarios;
+      if (!scenarios) return JSON.stringify({ error: "Scenarios are unavailable." });
+
+      await scenarios.renameScenario(args.scenarioId, args.name);
+      return JSON.stringify({ id: args.scenarioId, name: args.name, renamed: true });
+    },
+    render: (props) =>
+      createElement(ActionConfirmCard, {
+        action: "start",
+        status: toCardStatus(props.status),
+        result: props.status === "complete" ? "Scenario renamed." : props.result,
+      }),
+  });
+
+  useSafeFrontendTool({
+    name: "setScenarioDescription",
+    // Deliberately worded against renameScenario (which writes the *name*) and
+    // createEventOfInterest (which also has a `description` field): this one
+    // says "scenario" and "not its name" so the model can tell them apart.
+    description:
+      "Write or replace the description of a saved scenario — the prose summary of what happens in it, not its name. Use it when the user asks you to describe, summarise or re-describe a scenario. Read it back with getScenario.",
+    parameters: z.object({
+      description: z
+        .string()
+        .describe("The description text. Pass an empty string to clear it."),
+      scenarioId: z
+        .string()
+        .optional()
+        .describe("Id of the scenario. Defaults to the active one."),
+    }),
+    handler: async (args: { description: string; scenarioId?: string }) => {
+      const scenarios = configRef.current.scenarios;
+      if (!scenarios) return JSON.stringify({ error: "Scenarios are unavailable." });
+      if (scenarios.storageUnavailable) {
+        return JSON.stringify({
+          error: "Scenarios need the local database, which is unavailable.",
+        });
+      }
+
+      const id = args.scenarioId ?? scenarios.activeScenarioId;
+      if (id === null || id === undefined) {
+        return JSON.stringify({
+          error: "There is no active scenario to describe. Select or create one first.",
+        });
+      }
+
+      await scenarios.setDescription(id, args.description);
+      return JSON.stringify({ id, description: args.description, saved: true });
+    },
+    render: (props) =>
+      createElement(ActionConfirmCard, {
+        action: "start",
+        status: toCardStatus(props.status),
+        result: props.status === "complete" ? "Description saved." : props.result,
+      }),
+  });
+
+  useSafeFrontendTool({
+    name: "deleteScenario",
+    description:
+      "Permanently delete a saved scenario and every track stored in it. This cannot be undone. Only call when the user explicitly asks to delete that specific scenario by name or id.",
+    parameters: z.object({
+      scenarioId: z.string().describe("Id of the scenario to delete"),
+    }),
+    handler: async (args: { scenarioId: string }) => {
+      const scenarios = configRef.current.scenarios;
+      if (!scenarios) return JSON.stringify({ error: "Scenarios are unavailable." });
+
+      await scenarios.removeScenario(args.scenarioId);
+      return JSON.stringify({ id: args.scenarioId, deleted: true });
+    },
+    render: (props) =>
+      createElement(ActionConfirmCard, {
+        action: "stop",
+        status: toCardStatus(props.status),
+        result: props.status === "complete" ? "Scenario deleted." : props.result,
+      }),
+  });
+
+  useSafeFrontendTool({
+    name: "addTrajectoryToScenario",
+    description:
+      "Save ONE newly generated trajectory into the active scenario, so it persists and replays with the scenario. Identify it by callsign or ICAO hex. Generate the aircraft first with generateSimulatedTrajectory. Aircraft already saved in the scenario are also on screen — do not re-add those, and do not call this once per aircraft on screen; use getScenario to see what is already saved.",
+    parameters: z.object({
+      identifier: z
+        .string()
+        .describe("Callsign or ICAO hex of a trajectory currently on screen"),
+      startOffsetS: z
+        .number()
+        .optional()
+        .describe("Seconds into the scenario at which this aircraft appears. Defaults to 0"),
+    }),
+    handler: async (args: { identifier: string; startOffsetS?: number }) => {
+      const scenarios = configRef.current.scenarios;
+      if (!scenarios) return JSON.stringify({ error: "Scenarios are unavailable." });
+      if (scenarios.activeScenarioId === null) {
+        return JSON.stringify({
+          error: "No scenario is selected. Create or open one first.",
+        });
+      }
+
+      const needle = args.identifier.trim().toUpperCase();
+
+      /*
+       * Refuse anything the scenario already holds.
+       *
+       * `agentTrajectories` is DERIVED — the saved scenario tracks concatenated
+       * with the staged ones — so aircraft already in the scenario are equally
+       * "on screen" and match here just as readily. Without this guard,
+       * `addTrajectory` called `uniqueHexIdent`, which renamed the colliding
+       * hex and inserted a SECOND row: asking chat to add one aircraft
+       * recreated the ones already saved.
+       *
+       * Matched on callsign as well as hex, and callsign is the load-bearing
+       * half: a duplicate created before this fix carries a renamed hex
+       * (`AAA111-2`) but the original callsign. Callsign is also how every
+       * other scenario tool addresses a track, so uniqueness within a scenario
+       * is already an invariant these tools depend on.
+       */
+      const existing = scenarios.tracks.find(
+        (t) =>
+          t.hex_ident.toUpperCase() === needle || t.callsign.toUpperCase() === needle,
+      );
+      if (existing) {
+        return JSON.stringify({
+          added: false,
+          alreadyInScenario: true,
+          trackId: existing.id,
+          callsign: existing.callsign,
+          startOffsetS: existing.start_offset_s,
+          message: `${existing.callsign} is already in this scenario.`,
+        });
+      }
+
+      const match = configRef.current.agentTrajectories.find(
+        (t) =>
+          t.hex_ident.toUpperCase() === needle || t.callsign.toUpperCase() === needle,
+      );
+      if (!match) {
+        return JSON.stringify({
+          error: `No generated trajectory matches "${args.identifier}".`,
+        });
+      }
+
+      // Second guard, on the resolved aircraft rather than the search term: the
+      // needle may have matched by hex while the scenario holds that callsign
+      // under a different hex, or vice versa.
+      const sameAircraft = scenarios.tracks.find(
+        (t) =>
+          t.hex_ident.toUpperCase() === match.hex_ident.toUpperCase() ||
+          t.callsign.toUpperCase() === match.callsign.toUpperCase(),
+      );
+      if (sameAircraft) {
+        return JSON.stringify({
+          added: false,
+          alreadyInScenario: true,
+          trackId: sameAircraft.id,
+          callsign: sameAircraft.callsign,
+          startOffsetS: sameAircraft.start_offset_s,
+          message: `${sameAircraft.callsign} is already in this scenario.`,
+        });
+      }
+
+      const saved = await scenarios.addTrajectory(match, args.startOffsetS ?? 0);
+      return JSON.stringify({
+        trackId: saved.id,
+        callsign: saved.callsign,
+        startOffsetS: saved.start_offset_s,
+        added: true,
+      });
+    },
+    render: (props) =>
+      createElement(ActionConfirmCard, {
+        action: "start",
+        status: toCardStatus(props.status),
+        result: props.status === "complete" ? "Added to the scenario." : props.result,
+      }),
+  });
+
+  useSafeFrontendTool({
+    name: "removeTrackFromScenario",
+    description:
+      "Remove one saved track from the active scenario. Identify it by callsign; use getScenario to see what the scenario contains.",
+    parameters: z.object({
+      identifier: z.string().describe("Callsign of the saved track to remove"),
+    }),
+    handler: async (args: { identifier: string }) => {
+      const scenarios = configRef.current.scenarios;
+      if (!scenarios) return JSON.stringify({ error: "Scenarios are unavailable." });
+
+      const needle = args.identifier.trim().toUpperCase();
+      const match = scenarios.tracks.find(
+        (t) =>
+          t.callsign.toUpperCase() === needle || t.hex_ident.toUpperCase() === needle,
+      );
+      if (!match) {
+        return JSON.stringify({
+          error: `The active scenario has no track called "${args.identifier}".`,
+        });
+      }
+
+      await scenarios.removeTrack(match.id);
+      return JSON.stringify({ trackId: match.id, removed: true });
+    },
+    render: (props) =>
+      createElement(ActionConfirmCard, {
+        action: "stop",
+        status: toCardStatus(props.status),
+        result: props.status === "complete" ? "Removed from the scenario." : props.result,
+      }),
+  });
+
+  useSafeFrontendTool({
+    name: "setTrackStartOffset",
+    description:
+      "Set how many seconds into the scenario a saved track appears — for example making an aircraft show up 90 seconds in. Identify the track by callsign.",
+    parameters: z.object({
+      identifier: z.string().describe("Callsign of the saved track"),
+      startOffsetS: z
+        .number()
+        .describe("Seconds from the start of the scenario at which it appears"),
+    }),
+    handler: async (args: { identifier: string; startOffsetS: number }) => {
+      const scenarios = configRef.current.scenarios;
+      if (!scenarios) return JSON.stringify({ error: "Scenarios are unavailable." });
+
+      const needle = args.identifier.trim().toUpperCase();
+      const match = scenarios.tracks.find(
+        (t) =>
+          t.callsign.toUpperCase() === needle || t.hex_ident.toUpperCase() === needle,
+      );
+      if (!match) {
+        return JSON.stringify({
+          error: `The active scenario has no track called "${args.identifier}".`,
+        });
+      }
+
+      const offset = Math.max(0, args.startOffsetS);
+      await scenarios.setTrackOffset(match.id, offset);
+      return JSON.stringify({
+        trackId: match.id,
+        callsign: match.callsign,
+        startOffsetS: offset,
+      });
+    },
+    render: (props) =>
+      createElement(ActionConfirmCard, {
+        action: "start",
+        status: toCardStatus(props.status),
+        result: props.status === "complete" ? "Start offset updated." : props.result,
       }),
   });
 }

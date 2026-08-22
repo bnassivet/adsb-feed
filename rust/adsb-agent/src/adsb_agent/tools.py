@@ -388,7 +388,12 @@ TOOLS: list[dict] = [
         "function": {
             "name": "toggleDemoFlights",
             "description": (
-                "Start or stop simulated demo flights on the map. "
+                "Show or hide the built-in demo flight layer — a fixed set of "
+                "pre-defined canned routes that loop forever. It creates no "
+                "aircraft and takes no description of what to fly. Use ONLY "
+                "when the user names this demo layer explicitly. If they ask to "
+                "start, run, create or simulate flights or aircraft of their "
+                "own, use generateSimulatedTrajectory instead. "
                 "Omit 'enabled' to toggle."
             ),
             "parameters": {
@@ -415,7 +420,13 @@ TOOLS: list[dict] = [
                 "properties": {
                     "history": {"type": "boolean", "description": "Show history trails"},
                     "density": {"type": "boolean", "description": "Show density heatmap"},
-                    "simulation": {"type": "boolean", "description": "Show simulated tracks"},
+                    "simulation": {
+                        "type": "boolean",
+                        "description": (
+                            "Show the built-in demo flight layer (same canned "
+                            "routes as toggleDemoFlights); does not generate aircraft"
+                        ),
+                    },
                     "imported": {"type": "boolean", "description": "Show imported tracks"},
                     "receiver": {"type": "boolean", "description": "Show receiver location"},
                     "events": {"type": "boolean", "description": "Show events of interest"},
@@ -510,6 +521,71 @@ TOOLS: list[dict] = [
                         "description": "End of time range (ms epoch)",
                     },
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generateSimulatedTrajectory",
+            "description": (
+                "Generate new simulated aircraft with realistic flight paths and "
+                "show them flying on the map. This is THE tool for any request to "
+                "start, run, create, add, simulate or fake flights or aircraft — "
+                "e.g. 'start simulated flights', 'run three simulated flights', "
+                "'simulate a helicopter circling downtown', 'show me a fighter "
+                "doing aerobatics'. Do not use toggleDemoFlights for these. "
+                "The aircraft appear on the map automatically; "
+                "just confirm what you generated. These are simulated, not real "
+                "traffic — never mix them into answers about observed aircraft."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "enum": ["airliner", "ga", "helicopter", "fighter"],
+                        "description": (
+                            "Aircraft performance class to simulate. Optional — "
+                            "defaults to 'ga'. Infer it from the request when the "
+                            "user names an aircraft type; otherwise omit it rather "
+                            "than asking them which type they want."
+                        ),
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "How many aircraft to generate (default 1, max 20)",
+                    },
+                    "routeHint": {
+                        "type": "string",
+                        "description": (
+                            "The user's own words describing the desired route, passed "
+                            "verbatim. Copy the WHOLE route description, including every "
+                            "leg of a multi-leg request ('come from here, circle there, "
+                            "then head over there') and every latitude/longitude the "
+                            "user wrote, exactly as they wrote them. Do not summarise "
+                            "it, do not drop the coordinates, and do not invent "
+                            "coordinates, headings or distances of your own. The "
+                            "simulation agent interprets the whole thing."
+                        ),
+                    },
+                    "originLat": {
+                        "type": "number",
+                        "description": "Receiver latitude; the routes are built around this point",
+                    },
+                    "originLng": {
+                        "type": "number",
+                        "description": "Receiver longitude; the routes are built around this point",
+                    },
+                    "cruiseAltitudeFt": {
+                        "type": "integer",
+                        "description": "Optional target altitude in feet",
+                    },
+                },
+                # Nothing is required: every field has a sensible default, so a
+                # bare "start simulated flights" generates aircraft instead of
+                # stalling to ask which type the user wants.
+                "required": [],
             },
         },
     },

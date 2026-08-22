@@ -41,6 +41,13 @@ struct TimeWindowArgs {
     end_ms: Option<i64>,
 }
 
+/// Args for `getScenario` — a single scenario id.
+#[derive(Debug, Default, Deserialize)]
+struct ScenarioIdArgs {
+    #[serde(default)]
+    id: String,
+}
+
 /// Dispatch a tool call to the shared service layer and wrap the result in the
 /// `{ ok, data | error }` envelope.
 ///
@@ -90,6 +97,15 @@ pub async fn dispatch(storage: &SharedStorage, name: &str, args: Value) -> Value
         },
         "getEventsOfInterest" => match parse::<EventOfInterestQuery>(args) {
             Ok(q) => tool_service::get_events_of_interest(storage, q)
+                .await
+                .and_then(to_value),
+            Err(e) => Err(e),
+        },
+        "listScenarios" => tool_service::list_scenarios(storage)
+            .await
+            .and_then(to_value),
+        "getScenario" => match parse::<ScenarioIdArgs>(args) {
+            Ok(a) => tool_service::get_scenario(storage, a.id)
                 .await
                 .and_then(to_value),
             Err(e) => Err(e),
@@ -227,5 +243,99 @@ mod tests {
         let resp = dispatch(&storage, "getTrajectory", json!({"hex_ident": "ABC123"})).await;
         assert_eq!(resp["ok"], true);
         assert!(resp["data"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_scenarios_accepts_null_body() {
+        let storage = in_memory_storage();
+        let resp = dispatch(&storage, "listScenarios", Value::Null).await;
+        assert_eq!(resp["ok"], true);
+        assert!(resp["data"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_scenarios_returns_saved_scenarios() {
+        let storage = in_memory_storage();
+        {
+            let guard = storage.read().await;
+            guard
+                .as_ref()
+                .unwrap()
+                .insert_scenario_sync(&adsb_data_engine::CreateScenario {
+                    name: "Approach Rush".to_string(),
+                    ..Default::default()
+                })
+                .expect("insert scenario");
+        }
+
+        let resp = dispatch(&storage, "listScenarios", json!({})).await;
+        assert_eq!(resp["ok"], true);
+        let rows = resp["data"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["name"], "Approach Rush");
+        assert_eq!(rows[0]["track_count"], 0);
+    }
+
+    #[tokio::test]
+    async fn get_scenario_returns_scenario_with_tracks() {
+        let storage = in_memory_storage();
+        let scenario_id = {
+            let guard = storage.read().await;
+            let handle = guard.as_ref().unwrap();
+            let scenario = handle
+                .insert_scenario_sync(&adsb_data_engine::CreateScenario {
+                    name: "Night Patrol".to_string(),
+                    ..Default::default()
+                })
+                .expect("insert scenario");
+            handle
+                .insert_scenario_track_sync(&adsb_data_engine::CreateScenarioTrack {
+                    scenario_id: scenario.id.clone(),
+                    hex_ident: "AAA111".to_string(),
+                    callsign: "HELI01".to_string(),
+                    category: "helicopter".to_string(),
+                    waypoints_json: "[]".to_string(),
+                    ..Default::default()
+                })
+                .expect("insert track");
+            scenario.id
+        };
+
+        let resp = dispatch(&storage, "getScenario", json!({ "id": scenario_id })).await;
+        assert_eq!(resp["ok"], true);
+        assert_eq!(resp["data"]["scenario"]["name"], "Night Patrol");
+        assert_eq!(resp["data"]["tracks"].as_array().unwrap().len(), 1);
+        assert_eq!(resp["data"]["tracks"][0]["callsign"], "HELI01");
+    }
+
+    #[tokio::test]
+    async fn get_scenario_missing_id_is_an_error_envelope() {
+        let storage = in_memory_storage();
+        let resp = dispatch(&storage, "getScenario", json!({ "id": "nope" })).await;
+        assert_eq!(resp["ok"], false);
+        assert!(
+            resp["error"]
+                .as_str()
+                .unwrap()
+                .contains("Scenario not found")
+        );
+    }
+
+    #[tokio::test]
+    async fn scenario_writes_are_not_reachable_from_the_tool_server() {
+        // The tool server is deliberately read-only: scenario mutations go
+        // through the CopilotKit frontend tools so they stay user-visible.
+        let storage = in_memory_storage();
+        for name in [
+            "createScenario",
+            "deleteScenario",
+            "createScenarioTrack",
+            "updateScenarioTrack",
+            "deleteScenarioTrack",
+        ] {
+            let resp = dispatch(&storage, name, json!({})).await;
+            assert_eq!(resp["ok"], false, "{name} must not be dispatchable");
+            assert!(resp["error"].as_str().unwrap().contains("Unknown tool"));
+        }
     }
 }

@@ -26,9 +26,6 @@ function renderFilters(overrides = {}) {
     onDensityAltitudeChange: vi.fn(),
     densityTooltipMode: "compact" as const,
     onDensityTooltipModeChange: vi.fn(),
-    showSimulation: false,
-    onToggleSimulation: vi.fn(),
-    simulationCount: 0,
     liveColorMode: "track" as const,
     onLiveColorModeChange: vi.fn(),
     historyColorMode: "track" as const,
@@ -96,15 +93,6 @@ describe("FiltersPanel", () => {
     renderFilters({ trackCount: 42 });
     expect(screen.getByText("42")).toBeInTheDocument();
     expect(screen.getByText(/aircraft/)).toBeInTheDocument();
-  });
-
-  it("demo flights toggle calls handler", async () => {
-    const user = userEvent.setup();
-    const onToggleSimulation = vi.fn();
-    renderFilters({ onToggleSimulation });
-    const checkbox = screen.getByText("Demo flights").closest("label")!.querySelector("input")!;
-    await user.click(checkbox);
-    expect(onToggleSimulation).toHaveBeenCalledTimes(1);
   });
 
   it("density toggle calls handler", async () => {

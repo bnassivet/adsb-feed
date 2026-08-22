@@ -33,6 +33,10 @@ export interface CopilotContextConfig {
   activeFilters: Filters;
   tracks: AircraftTrack[];
   storageStatus: StorageAvailability;
+  /** Receiver location — the agent needs it to anchor generated routes. */
+  receiverLocation: { lat: number; lng: number } | null;
+  /** How many agent-generated simulated aircraft are currently playing. */
+  agentSimulatedCount: number;
 }
 
 export function useCopilotContext(config: CopilotContextConfig) {
@@ -88,4 +92,19 @@ export function useCopilotContext(config: CopilotContextConfig) {
     description: "Live aircraft track count",
     value: { trackCount: config.tracks.length },
   });
+
+  useAgentContext({
+    description:
+      "Receiver (antenna) location as lat/lng. Pass these as originLat/originLng " +
+      "when generating simulated trajectories so demo aircraft appear locally.",
+    value: config.receiverLocation
+      ? `${config.receiverLocation.lat}, ${config.receiverLocation.lng}`
+      : "not configured",
+  });
+
+  useAgentContext({
+    description: "Number of agent-generated simulated aircraft currently on the map",
+    value: config.agentSimulatedCount,
+  });
+
 }

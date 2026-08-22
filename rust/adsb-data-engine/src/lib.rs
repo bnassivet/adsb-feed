@@ -18,10 +18,12 @@ pub use sbs_parser::{
 };
 pub use storage::{StorageHandle, move_database_to_snapshot};
 pub use types::{
-    AircraftSummary, BboxQuery, CreateEventOfInterest, DetectionRangeQuery, DetectionRangeSector,
-    EventOfInterest, EventOfInterestQuery, FlightSummary, FlightSummaryQuery, HourlyHeatmapCell,
-    HourlyHeatmapQuery, ImportPreview, ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord,
-    StatusEvent, StatusEventQuery, StatusEventStatus, StatusEventType, StorageConfig, StorageStats,
-    TablePreview, TimeDistributionBucket, TimeDistributionMetric, TimeDistributionQuery,
-    TrajectoryQuery, UpdateEventOfInterest,
+    AircraftSummary, BboxQuery, CreateEventOfInterest, CreateScenario, CreateScenarioTrack,
+    DetectionRangeQuery, DetectionRangeSector, EventOfInterest, EventOfInterestQuery,
+    FlightSummary, FlightSummaryQuery, HourlyHeatmapCell, HourlyHeatmapQuery, ImportPreview,
+    ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord, Scenario, ScenarioTrack,
+    ScenarioWithTracks, StatusEvent, StatusEventQuery, StatusEventStatus, StatusEventType,
+    StorageConfig, StorageStats, TablePreview, TimeDistributionBucket, TimeDistributionMetric,
+    TimeDistributionQuery, TrajectoryQuery, UpdateEventOfInterest, UpdateScenario,
+    UpdateScenarioTrack,
 };

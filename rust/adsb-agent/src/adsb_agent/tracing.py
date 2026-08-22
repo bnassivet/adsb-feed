@@ -79,6 +79,28 @@ def set_session_tag(thread_id: str, **extra: str) -> None:
         pass
 
 
+def tracing_headers() -> dict[str, str]:
+    """W3C trace-context headers for the currently active span.
+
+    Attach these to an outgoing HTTP call and the receiving service can join
+    *this* trace instead of starting its own — that is what makes the
+    simulation agent's spans appear nested under the chat turn rather than in a
+    second, unrelated trace.
+
+    Returns ``{}`` when tracing is disabled, mlflow is unimportable, or no trace
+    is active. The last is ordinary rather than exceptional, so all three are
+    silent.
+    """
+    try:
+        from .config import settings
+        if not settings.mlflow_enabled:
+            return {}
+        from mlflow.tracing import get_tracing_context_headers_for_http_request
+        return dict(get_tracing_context_headers_for_http_request() or {})
+    except Exception:
+        return {}
+
+
 def make_span(name: str, span_type: str = "LLM"):
     """Return an MLflow span context manager, or nullcontext when disabled.
 

@@ -7,11 +7,13 @@ use crate::state::{
     AppState, ConnectionStatus, RecordingState, StatusResponse, StorageAvailability,
 };
 use adsb_data_engine::{
-    AircraftSummary, BboxQuery, CreateEventOfInterest, DetectionRangeQuery, DetectionRangeSector,
-    EventOfInterest, EventOfInterestQuery, FlightSummary, FlightSummaryQuery, HourlyHeatmapCell,
-    HourlyHeatmapQuery, ImportPreview, ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord,
-    StatusEvent, StatusEventQuery, StatusEventStatus, StatusEventType, StorageHandle, StorageStats,
-    TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery, UpdateEventOfInterest,
+    AircraftSummary, BboxQuery, CreateEventOfInterest, CreateScenario, CreateScenarioTrack,
+    DetectionRangeQuery, DetectionRangeSector, EventOfInterest, EventOfInterestQuery,
+    FlightSummary, FlightSummaryQuery, HourlyHeatmapCell, HourlyHeatmapQuery, ImportPreview,
+    ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord, Scenario, ScenarioTrack,
+    ScenarioWithTracks, StatusEvent, StatusEventQuery, StatusEventStatus, StatusEventType,
+    StorageHandle, StorageStats, TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
+    UpdateEventOfInterest, UpdateScenario, UpdateScenarioTrack,
 };
 use adsb_pulsar_client::Config;
 
@@ -761,6 +763,121 @@ pub async fn delete_event_of_interest(
         .ok_or_else(|| "Storage not available".to_string())?;
     storage
         .delete_event_of_interest(id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// --- Simulation scenario commands ---
+//
+// Reads go through `tool_service` so the agent tool server shares them; writes
+// take the lock here, mirroring the events-of-interest commands above.
+
+#[tauri::command]
+pub async fn list_scenarios(state: State<'_, AppState>) -> Result<Vec<Scenario>, String> {
+    crate::tool_service::list_scenarios(&state.storage).await
+}
+
+#[tauri::command]
+pub async fn get_scenario(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<ScenarioWithTracks, String> {
+    crate::tool_service::get_scenario(&state.storage, id).await
+}
+
+#[tauri::command]
+pub async fn create_scenario(
+    scenario: CreateScenario,
+    state: State<'_, AppState>,
+) -> Result<Scenario, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .insert_scenario(scenario)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_scenario(
+    scenario: UpdateScenario,
+    state: State<'_, AppState>,
+) -> Result<Scenario, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .update_scenario(scenario)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_scenario(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage.delete_scenario(id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn create_scenario_track(
+    track: CreateScenarioTrack,
+    state: State<'_, AppState>,
+) -> Result<ScenarioTrack, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .insert_scenario_track(track)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_scenario_track(
+    track: UpdateScenarioTrack,
+    state: State<'_, AppState>,
+) -> Result<ScenarioTrack, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .update_scenario_track(track)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_scenario_track(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .delete_scenario_track(id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn reorder_scenario_tracks(
+    scenario_id: String,
+    track_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .reorder_scenario_tracks(scenario_id, track_ids)
         .await
         .map_err(|e| e.to_string())
 }

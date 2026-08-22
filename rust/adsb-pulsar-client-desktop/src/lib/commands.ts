@@ -5,6 +5,8 @@ import type {
   BboxQuery,
   Config,
   CreateEventOfInterest,
+  CreateScenario,
+  CreateScenarioTrack,
   DetectionRangeQuery,
   DetectionRangeSector,
   EventOfInterest,
@@ -20,6 +22,9 @@ import type {
   RawMessageQuery,
   RawSbsRecord,
   RecordingState,
+  Scenario,
+  ScenarioTrack,
+  ScenarioWithTracks,
   StatusEvent,
   StatusEventQuery,
   StatusResponse,
@@ -29,6 +34,8 @@ import type {
   TimeDistributionQuery,
   TrajectoryQuery,
   UpdateEventOfInterest,
+  UpdateScenario,
+  UpdateScenarioTrack,
 } from "./types";
 
 export async function startFeed(): Promise<void> {
@@ -239,4 +246,58 @@ export async function updateEventOfInterest(
 
 export async function deleteEventOfInterest(id: string): Promise<void> {
   return invoke("delete_event_of_interest", { id });
+}
+
+// --- Simulation scenario commands ---
+//
+// Every one of these rejects with "Storage not available" when DuckDB init
+// failed or the connection was released; callers surface that as a disabled
+// scenario UI rather than an error.
+
+export async function listScenarios(): Promise<Scenario[]> {
+  return invoke("list_scenarios");
+}
+
+export async function getScenario(id: string): Promise<ScenarioWithTracks> {
+  return invoke("get_scenario", { id });
+}
+
+export async function createScenario(
+  scenario: CreateScenario
+): Promise<Scenario> {
+  return invoke("create_scenario", { scenario });
+}
+
+export async function updateScenario(
+  scenario: UpdateScenario
+): Promise<Scenario> {
+  return invoke("update_scenario", { scenario });
+}
+
+export async function deleteScenario(id: string): Promise<void> {
+  return invoke("delete_scenario", { id });
+}
+
+export async function createScenarioTrack(
+  track: CreateScenarioTrack
+): Promise<ScenarioTrack> {
+  return invoke("create_scenario_track", { track });
+}
+
+export async function updateScenarioTrack(
+  track: UpdateScenarioTrack
+): Promise<ScenarioTrack> {
+  return invoke("update_scenario_track", { track });
+}
+
+export async function deleteScenarioTrack(id: string): Promise<void> {
+  return invoke("delete_scenario_track", { id });
+}
+
+export async function reorderScenarioTracks(
+  scenarioId: string,
+  trackIds: string[]
+): Promise<void> {
+  // Tauri converts snake_case command args from camelCase automatically.
+  return invoke("reorder_scenario_tracks", { scenarioId, trackIds });
 }

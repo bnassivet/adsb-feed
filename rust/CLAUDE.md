@@ -14,7 +14,59 @@ Cargo workspace containing the ADS-B feed client library, adsd-data-engine and T
 
 | Component | Path | Purpose |
 |-----------|------|---------|
-| `adsb-agent` | `adsb-agent/` | Optional **Python** AI agent (LangGraph + FastAPI) providing AG-UI chat + voice for the desktop app. Built/run with `uv` (`uv sync --all-extras`, `uv run python -m adsb_agent`), **not** part of the Cargo workspace — `cargo` commands ignore it. Lives here as a sibling component (moved out of `adsb-pulsar-client-desktop/agent/`). |
+| `adsb-agent` | `adsb-agent/` | Optional **Python** AI agent (LangGraph + FastAPI) providing AG-UI chat + voice for the desktop app. Built/run with `uv` (`uv sync --all-extras`, `uv run python -m adsb_agent`), **not** part of the Cargo workspace — `cargo` commands ignore it. Lives here as a sibling component (moved out of `adsb-pulsar-client-desktop/agent/`). Serves on **:8000**. |
+| `adsb-simulation-agent` | `adsb-simulation-agent/` | Optional **Python** agent (LangGraph + Starlette) generating kinematically plausible simulated flight trajectories, exposed over the **A2A protocol** and called by `adsb-agent` as an A2A client. Built/run with `uv` (`uv sync --all-extras`, `uv run python -m adsb_simulation_agent`), **not** part of the Cargo workspace. Serves on **:8300**. See its `CLAUDE.md` for a2a-sdk v1.x gotchas. |
+
+## AG-UI run lifecycle (adsb-agent)
+
+`RUN_ERROR` is **terminal**: CopilotKit rejects anything after it with
+*"Cannot send event type 'RUN_FINISHED': the run has already errored"*, which
+masks the real failure behind a protocol error.
+
+The agent fails in two different ways, and only one of them raises:
+
+| Failure | Path | How `_produce` sees it |
+|---------|------|------------------------|
+| Exception escapes `stream_llm_response` | `except` clause in `main.py` | sets `errored` |
+| `llm.py` / `graph.py` **yield** a `RunErrorEvent` | ordinary event in the stream | must be detected while forwarding |
+
+The second is the common one — `run_graph_to_agui` deliberately reports failures
+as an event so it can forward already-computed tool calls first (a stalled
+narration turn must not discard a generated trajectory). `_produce` therefore
+sets `errored` when it *sees* a `RUN_ERROR` event, not only when it catches an
+exception. Covered by `tests/test_run_lifecycle.py`, including the
+tool-call-then-error ordering.
+
+### The `'id'` RUN_ERROR (MLflow gateway, not us)
+
+A chat turn can die with a red box whose entire message is `'id'`. That is a
+`KeyError('id')` **three components upstream**:
+
+```
+LM Studio streams a chunk with no `id`
+  -> mlflow/gateway/providers/openai_compatible.py:114  `id=resp["id"]`  KeyError
+  -> gateway relays it as an SSE `error` event
+  -> openai SDK re-raises it as APIError('id')  (_streaming.py:205)
+  -> run_graph_to_agui reports str(e) -> "'id'"
+```
+
+Confirmed from the container: `docker logs mlflow-server | grep -A20 "Error
+during streaming response"`. Intermittent — 1 turn in 4 in the observed log, and
+it only affects the **streaming** path, so `adsb-simulation-agent` (which uses
+`ainvoke`) is immune.
+
+Nothing to fix here; `describe_run_error()` now names the exception type and the
+LLM endpoint and says the failure is upstream, so the next occurrence points at
+the gateway instead of looking like a bug in this agent. Workarounds, if it
+becomes annoying: point `ADSB_AGENT_LLM_BASE_URL` at LM Studio directly
+(`http://localhost:1234/v1` — note the model must then be the **full** name
+`google/gemma-4-12b-qat`; the bare name only resolves through the gateway), or
+patch `resp["id"]` to `resp.get("id")` in the container.
+
+**Debugging note:** the agent logs the full traceback via `logger.error(...,
+exc_info=True)`, so run it with output redirected (`... 2>&1 | tee
+/tmp/adsb-agent.log`). Two separate investigations stalled because it was only
+on a tty.
 
 ## Testing
 

@@ -18,6 +18,22 @@ import { EventFormDialog } from "@/components/EventFormDialog";
 import { MapContextMenu } from "@/components/MapContextMenu";
 import { useAircraftTracks } from "@/hooks/useAircraftTracks";
 import { useSimulatedTracks } from "@/hooks/useSimulatedTracks";
+import { useAgentSimulatedTracks } from "@/hooks/useAgentSimulatedTracks";
+import type { SimulateRequest } from "@/lib/simulate-api";
+import { useTrajectoryPlayback } from "@/hooks/useTrajectoryPlayback";
+import { useScenarioPlayback } from "@/hooks/useScenarioPlayback";
+import { useScenarios } from "@/hooks/useScenarios";
+import { visibleRouteTrajectories } from "@/lib/trajectory-playback";
+import { toggleScopedVisibility } from "@/lib/track-visibility";
+import { mergeScenarioPlayback } from "@/lib/scenario-playback";
+import {
+  dedupeTrajectoriesByHex,
+  stageTrajectories,
+  trackToTrajectory,
+} from "@/lib/scenario-convert";
+import { SimulationPanel } from "@/components/SimulationPanel";
+import { ScenarioBar } from "@/components/ScenarioBar";
+import type { AgentTrajectory } from "@/lib/simulation-data";
 import { useMetrics } from "@/hooks/useMetrics";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { useRecordingState } from "@/hooks/useRecordingState";
@@ -195,7 +211,208 @@ export default function Dashboard() {
     setHistorySliderMax(null);
   }
   const simulatedTracks = useSimulatedTracks(showSimulation, receiverLocation);
-  const allTracks = useMemo(() => [...tracks, ...simulatedTracks], [tracks, simulatedTracks]);
+  // Agent-generated trajectories: additive to the hardcoded demo flights above.
+  //
+  // Two sources, deliberately separate:
+  // - the active *scenario*'s tracks, persisted in DuckDB, and
+  // - `stagedTrajectories`, the last generation result, not yet saved.
+  //
+  // Generation stages rather than replaces, which is what makes a scenario
+  // accumulate — before this, each generation destroyed the previous one.
+  const scenarios = useScenarios();
+  const [stagedTrajectories, setStagedTrajectories] = useState<AgentTrajectory[]>([]);
+  const scenarioTrajectories = scenarios.tracksAsTrajectories;
+
+  // Deduped because the same hex_ident can legitimately be in both feeds for a
+  // render — committing a trajectory refetches the scenario before the staged
+  // set is filtered — and React keys the markers by it. Scenario tracks come
+  // first, so the saved aircraft wins.
+  const agentTrajectories = useMemo(
+    () => dedupeTrajectoriesByHex([...scenarioTrajectories, ...stagedTrajectories]),
+    [scenarioTrajectories, stagedTrajectories],
+  );
+
+  // Timings drive the master clock: a track's offset is when it enters.
+  const scenarioTimings = useMemo(
+    () =>
+      scenarios.tracks.map((t) => ({
+        trajectory: trackToTrajectory(t),
+        startOffsetS: t.start_offset_s,
+      })),
+    [scenarios.tracks],
+  );
+  const scenarioPlayback = useScenarioPlayback(scenarioTimings);
+
+  const trajectoryPlayback = useTrajectoryPlayback(agentTrajectories);
+  // While the scenario master clock runs it owns the scenario's tracks; staged
+  // trajectories keep their own per-track clocks either way.
+  const effectivePlayback = useMemo(
+    () =>
+      mergeScenarioPlayback(
+        trajectoryPlayback.playback,
+        scenarioPlayback.clock,
+        scenarioTimings,
+      ),
+    [trajectoryPlayback.playback, scenarioPlayback.clock, scenarioTimings],
+  );
+
+  const agentSimulatedTracks = useAgentSimulatedTracks(
+    agentTrajectories,
+    effectivePlayback,
+  );
+  /*
+   * Simulated aircraft markers are hidden downstream, where `mapTracks` applies
+   * `filterBySection("live", …)` — they are ordinary tracks in `allTracks` by
+   * then. Their *route overlays* are not, so the hidden set has to be applied
+   * here too or a hidden aircraft keeps drawing its dashed route.
+   *
+   * Routes deliberately do NOT consult playback: a shown trajectory draws its
+   * planned route even with the scenario stopped, so the geometry can be
+   * inspected before anything is played.
+   */
+  const hiddenLive = hiddenSections.get("live");
+  const visibleRoutes = useMemo(
+    () => visibleRouteTrajectories(agentTrajectories, hiddenLive),
+    [agentTrajectories, hiddenLive],
+  );
+
+  // Agent trajectories are deliberately NOT gated on `showSimulation`: that
+  // toggle owns the 20 hardcoded demo flights, and reusing it here meant
+  // pressing Start in the Simulation Agent panel also launched all 20. Agent
+  // aircraft are controlled solely by their own transport state — Stop or
+  // Clear removes them.
+  //
+  // Chat-generated trajectories start on arrival: asking the agent to
+  // "simulate a helicopter" should show it flying. Panel-generated ones stay
+  // stopped until the user presses Start.
+  //
+  // Chat results land in the *staged* set, exactly like panel results: they are
+  // not silently written into the user's saved scenario. "+ Add to scenario"
+  // (or the addTrajectoryToScenario chat tool) is the deliberate commit step.
+  const applyChatTrajectories = useCallback(
+    (aircraft: AgentTrajectory[]) => {
+      // Reassign any hex the scenario already owns, so a generated aircraft is
+      // never hidden behind a saved one holding the same React key.
+      const staged = stageTrajectories(
+        aircraft,
+        scenarioTrajectories.map((t) => t.hex_ident),
+      );
+      trajectoryPlayback.requestAutoStart(staged.map((a) => a.hex_ident));
+      setStagedTrajectories(staged);
+    },
+    [trajectoryPlayback, scenarioTrajectories],
+  );
+
+  // The panel's own generate/clear path. Same collision handling, but these
+  // arrive stopped rather than auto-starting.
+  const applyPanelTrajectories = useCallback(
+    (aircraft: AgentTrajectory[]) => {
+      setStagedTrajectories(
+        stageTrajectories(
+          aircraft,
+          scenarioTrajectories.map((t) => t.hex_ident),
+        ),
+      );
+    },
+    [scenarioTrajectories],
+  );
+  // Committing a staged trajectory into the active scenario. The trajectory
+  // leaves the staged set on success, so it stops being listed twice once the
+  // scenario reloads with it.
+  const handleAddToScenario = useCallback(
+    async (trajectory: AgentTrajectory, request: SimulateRequest | null = null) => {
+      try {
+        // `request` carries the route hint, which is the only record of what
+        // the aircraft was asked to do — the waypoints never recover it, and
+        // the description generator prefers it over derived kinematics.
+        await scenarios.addTrajectory(trajectory, 0, request);
+        setStagedTrajectories((prev) =>
+          prev.filter((t) => t.hex_ident !== trajectory.hex_ident),
+        );
+      } catch (e) {
+        console.error("Could not add the trajectory to the scenario", e);
+      }
+    },
+    [scenarios],
+  );
+
+  const scenarioIntegration = useMemo(() => {
+    const savedTrackIds: Record<string, string> = {};
+    const offsetsByHex: Record<string, number> = {};
+    for (const t of scenarios.tracks) {
+      savedTrackIds[t.hex_ident] = t.id;
+      offsetsByHex[t.hex_ident] = t.start_offset_s;
+    }
+
+    return {
+      bar: (
+        <ScenarioBar
+          scenarios={scenarios.scenarios}
+          activeScenarioId={scenarios.activeScenarioId}
+          storageUnavailable={scenarios.storageUnavailable}
+          tracks={scenarios.tracks}
+          onSelect={scenarios.selectScenario}
+          onCreate={(name: string) => void scenarios.createScenario({ name })}
+          onRename={(id: string, name: string) => void scenarios.renameScenario(id, name)}
+          onSaveDescription={scenarios.setDescription}
+          onDelete={(id: string) => void scenarios.removeScenario(id)}
+          clock={scenarioPlayback.clock}
+          durationS={scenarioPlayback.durationS}
+          onStart={scenarioPlayback.start}
+          onPause={scenarioPlayback.pause}
+          onStop={scenarioPlayback.stop}
+          onSeek={scenarioPlayback.seek}
+        />
+      ),
+      savedTrackIds,
+      offsetsByHex,
+      activeScenarioId: scenarios.activeScenarioId,
+      onAddToScenario: (t: AgentTrajectory, request: SimulateRequest | null) =>
+        void handleAddToScenario(t, request),
+      onRemoveFromScenario: (trackId: string) => void scenarios.removeTrack(trackId),
+      onOffsetChange: (trackId: string, offsetS: number) =>
+        void scenarios.setTrackOffset(trackId, offsetS),
+    };
+  }, [scenarios, scenarioPlayback, handleAddToScenario]);
+
+  // The chat tools' view of the scenario layer. Adding a trajectory from chat
+  // goes through the same staged-then-committed path as the panel button.
+  const scenarioToolsConfig = useMemo(
+    () => ({
+      scenarios: scenarios.scenarios,
+      activeScenarioId: scenarios.activeScenarioId,
+      tracks: scenarios.tracks,
+      storageUnavailable: scenarios.storageUnavailable,
+      selectScenario: scenarios.selectScenario,
+      createScenario: scenarios.createScenario,
+      renameScenario: scenarios.renameScenario,
+      setDescription: scenarios.setDescription,
+      removeScenario: scenarios.removeScenario,
+      addTrajectory: async (
+        trajectory: AgentTrajectory,
+        startOffsetS?: number,
+        request?: unknown | null,
+      ) => {
+        const saved = await scenarios.addTrajectory(trajectory, startOffsetS, request);
+        setStagedTrajectories((prev) =>
+          prev.filter((t) => t.hex_ident !== trajectory.hex_ident),
+        );
+        return saved;
+      },
+      removeTrack: scenarios.removeTrack,
+      setTrackOffset: scenarios.setTrackOffset,
+    }),
+    [scenarios],
+  );
+
+  const allTracks = useMemo(
+    () => [...tracks, ...simulatedTracks, ...agentSimulatedTracks],
+    [tracks, simulatedTracks, agentSimulatedTracks],
+  );
+  const simReceiverLocation = useMemo(
+    () => (receiverLocation ? { lat: receiverLocation.lat, lng: receiverLocation.lng } : null),
+    [receiverLocation],
+  );
 
   // Map flyTo callback — set by MapInner via prop, called by copilot panMapTo tool
   const flyToRef = useRef<((lat: number, lng: number, zoom: number) => void) | null>(null);
@@ -213,6 +430,10 @@ export default function Dashboard() {
     showDensity,
     showSimulation,
     showImported,
+    receiverLocation: simReceiverLocation,
+    agentTrajectories,
+    setAgentTrajectories: applyChatTrajectories,
+    scenarios: scenarioToolsConfig,
     showReceiver,
     showEvents,
     liveColorMode,
@@ -407,6 +628,8 @@ export default function Dashboard() {
     lastSelectedHexIdent,
     activeFilters,
     tracks: allTracks,
+    receiverLocation: simReceiverLocation,
+    agentSimulatedCount: agentSimulatedTracks.length,
     storageStatus,
   });
 
@@ -709,6 +932,31 @@ export default function Dashboard() {
     });
   }, []);
 
+  /*
+   * Simulated aircraft live in the "live" section like any other track, so the
+   * panel's eye and the aircraft table's eye are the same switch — one aircraft,
+   * one visibility, whichever list you click it in.
+   */
+  const handleToggleSimulatedVisibility = useCallback((hexIdent: string) => {
+    handleToggleMapVisibility(hexIdent, "live");
+  }, [handleToggleMapVisibility]);
+
+  /*
+   * Scoped variant for the Simulation panel: its trajectories are a *subset* of
+   * the live section, so it must union/subtract only its own hexes. Reusing
+   * `handleToggleGroupVisibility` would `set(section, new Set(hexIdents))` and
+   * silently reveal every other hidden live aircraft.
+   */
+  const handleToggleTrajectoriesVisibility = useCallback((hexIdents: string[]) => {
+    setHiddenSections(prev => {
+      const next = new Map(prev);
+      const scoped = toggleScopedVisibility(next.get("live"), hexIdents);
+      if (scoped) next.set("live", scoped);
+      else next.delete("live");
+      return next;
+    });
+  }, []);
+
   const handleToggleGroupVisibility = useCallback((section: TrackSection, hexIdents: string[]) => {
     setHiddenSections(prev => {
       const next = new Map(prev);
@@ -903,9 +1151,6 @@ export default function Dashboard() {
           onDensityAltitudeChange={handleDensityAltitudeChange}
           densityTooltipMode={densityTooltipMode}
           onDensityTooltipModeChange={setDensityTooltipMode}
-          showSimulation={showSimulation}
-          onToggleSimulation={handleToggleSimulation}
-          simulationCount={simulatedTracks.length}
           liveColorMode={liveColorMode}
           onLiveColorModeChange={setLiveColorMode}
           historyColorMode={historyColorMode}
@@ -919,6 +1164,28 @@ export default function Dashboard() {
           showReceiver={showReceiver}
           onToggleReceiver={handleToggleReceiver}
           hasReceiverLocation={receiverLocation != null}
+          simulationPanel={
+            <SimulationPanel
+              receiverLocation={simReceiverLocation}
+              trajectories={agentTrajectories}
+              /* Generation replaces only the *staged* set, so aircraft already
+                 saved into the scenario survive the next Generate or Clear. */
+              onTrajectories={applyPanelTrajectories}
+              playback={effectivePlayback}
+              onStart={trajectoryPlayback.start}
+              onPause={trajectoryPlayback.pause}
+              onResume={trajectoryPlayback.resume}
+              onStop={trajectoryPlayback.stop}
+              onSeek={trajectoryPlayback.seek}
+              showSimulation={showSimulation}
+              onToggleSimulation={handleToggleSimulation}
+              simulationCount={simulatedTracks.length}
+              hiddenHexes={hiddenLive}
+              onToggleVisibility={handleToggleSimulatedVisibility}
+              onToggleAllVisibility={handleToggleTrajectoriesVisibility}
+              scenario={scenarioIntegration}
+            />
+          }
           historySliderMin={historySliderMin}
           historySliderMax={effectiveSliderMax}
           historySliderRange={trackHistoryHours}
@@ -940,7 +1207,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} />
+              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel

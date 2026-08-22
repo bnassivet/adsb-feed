@@ -9,8 +9,8 @@
 use crate::state::SharedStorage;
 use adsb_data_engine::{
     AircraftSummary, EventOfInterest, EventOfInterestQuery, FlightSummary, FlightSummaryQuery,
-    HourlyHeatmapCell, HourlyHeatmapQuery, PositionRecord, StorageStats, TimeDistributionBucket,
-    TimeDistributionQuery, TrajectoryQuery,
+    HourlyHeatmapCell, HourlyHeatmapQuery, PositionRecord, Scenario, ScenarioWithTracks,
+    StorageStats, TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
 };
 
 /// Returned (and relayed to the agent) when the DuckDB connection is `None`
@@ -106,6 +106,31 @@ pub async fn get_events_of_interest(
         .map_err(|e| e.to_string())
 }
 
+/// List saved simulation scenarios, most recently updated first.
+///
+/// Read-only, like everything else here: scenario *writes* deliberately go
+/// through the CopilotKit frontend tools instead of the agent tool server, so
+/// every mutation passes through a UI layer that can confirm it.
+pub async fn list_scenarios(storage: &SharedStorage) -> Result<Vec<Scenario>, String> {
+    let guard = storage.read().await;
+    let s = guard
+        .as_ref()
+        .ok_or_else(|| STORAGE_UNAVAILABLE.to_string())?;
+    s.list_scenarios().await.map_err(|e| e.to_string())
+}
+
+/// Get one saved scenario together with its tracks.
+pub async fn get_scenario(
+    storage: &SharedStorage,
+    id: String,
+) -> Result<ScenarioWithTracks, String> {
+    let guard = storage.read().await;
+    let s = guard
+        .as_ref()
+        .ok_or_else(|| STORAGE_UNAVAILABLE.to_string())?;
+    s.get_scenario(id).await.map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,5 +195,70 @@ mod tests {
             .await
             .expect("events");
         assert!(events.is_empty());
+
+        let scenarios = list_scenarios(&storage).await.expect("scenarios");
+        assert!(scenarios.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_scenarios_unavailable_when_none() {
+        let storage = empty_storage();
+        let err = list_scenarios(&storage).await.unwrap_err();
+        assert_eq!(err, STORAGE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn get_scenario_unavailable_when_none() {
+        let storage = empty_storage();
+        let err = get_scenario(&storage, "any-id".to_string())
+            .await
+            .unwrap_err();
+        assert_eq!(err, STORAGE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn get_scenario_reports_missing_id_distinctly() {
+        // A missing scenario must not be confused with unavailable storage —
+        // the UI treats those two cases very differently.
+        let handle = adsb_data_engine::StorageHandle::open(adsb_data_engine::StorageConfig {
+            db_path: None,
+            source_id: "test".to_string(),
+            gap_threshold_ms: 3_600_000,
+        })
+        .expect("open in-memory storage");
+        let storage: SharedStorage = Arc::new(RwLock::new(Some(handle)));
+
+        let err = get_scenario(&storage, "nope".to_string())
+            .await
+            .unwrap_err();
+        assert_ne!(err, STORAGE_UNAVAILABLE);
+        assert!(err.contains("Scenario not found"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn scenario_round_trip_through_service_layer() {
+        let handle = adsb_data_engine::StorageHandle::open(adsb_data_engine::StorageConfig {
+            db_path: None,
+            source_id: "test".to_string(),
+            gap_threshold_ms: 3_600_000,
+        })
+        .expect("open in-memory storage");
+        let created = handle
+            .insert_scenario_sync(&adsb_data_engine::CreateScenario {
+                name: "Approach Rush".to_string(),
+                ..Default::default()
+            })
+            .expect("insert scenario");
+        let storage: SharedStorage = Arc::new(RwLock::new(Some(handle)));
+
+        let listed = list_scenarios(&storage).await.expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "Approach Rush");
+
+        let fetched = get_scenario(&storage, created.id.clone())
+            .await
+            .expect("get");
+        assert_eq!(fetched.scenario.id, created.id);
+        assert!(fetched.tracks.is_empty());
     }
 }
