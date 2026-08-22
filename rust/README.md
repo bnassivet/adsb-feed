@@ -17,12 +17,17 @@ adsb-feed/rust/
 ├── adsb-data-engine/            # Cargo: Shared library: SBS-1 parser + DuckDB storage
 ├── adsb-pulsar-client-desktop/  # Cargo: Tauri v2 desktop app (Rust backend + Next.js frontend)
 │   └── src-tauri/               #   (workspace member)
-└── adsb-agent/                  # Python: optional AI agent (AG-UI chat + voice) — not a Cargo member
+├── adsb-agent/                  # Python: optional AI agent (AG-UI chat + voice) — not a Cargo member
+└── adsb-simulation-agent/       # Python: optional A2A trajectory simulation agent — not a Cargo member
 ```
 
-The first three are members of the Rust Cargo workspace. `adsb-agent` is a standalone,
-optional **Python** component (built/run with `uv`, not `cargo`) — see its
-[README](adsb-agent/README.md).
+The first three are members of the Rust Cargo workspace. `adsb-agent` and
+`adsb-simulation-agent` are standalone, optional **Python** components (built/run with
+`uv`, not `cargo`) — see their READMEs ([agent](adsb-agent/README.md),
+[simulation agent](adsb-simulation-agent/README.md)).
+
+Service ports: `8000` = adsb-agent, `8300` = adsb-simulation-agent, `8787` = Tauri
+loopback tool server.
 
 | Component | Build | Purpose | README |
 |-----------|-------|---------|--------|
@@ -30,6 +35,7 @@ optional **Python** component (built/run with `uv`, not `cargo`) — see its
 | [**adsb-data-engine**](adsb-data-engine/) | Cargo | Shared library for SBS-1 parsing and DuckDB persistent storage. Provides spatial queries, flight tracking, analytics (detection range, heatmaps), and Arrow IPC serialization. | [README](adsb-data-engine/README.md) |
 | [**adsb-pulsar-client-desktop**](adsb-pulsar-client-desktop/) | Cargo | Tauri v2 desktop application with interactive Leaflet map, historical analysis, storage management, and GeoJSON export/import. | [README](adsb-pulsar-client-desktop/README.md) |
 | [**adsb-agent**](adsb-agent/) | uv (Python) | Optional local AI agent (LangGraph + FastAPI): AG-UI chat and voice over the desktop app's live and historical data. Separate process; the app works without it. | [README](adsb-agent/README.md) |
+| [**adsb-simulation-agent**](adsb-simulation-agent/) | uv (Python) | Optional A2A agent (LangGraph) that turns a natural-language route request into kinematically plausible timed waypoints. Called by `adsb-agent`; the LLM only classifies, Python computes the geometry. | [README](adsb-simulation-agent/README.md) |
 
 ## Architecture
 
@@ -50,7 +56,7 @@ optional **Python** component (built/run with `uv`, not `cargo`) — see its
                     │  ┌────────────────────────────────────────────┐  │
                     │  │     adsb-pulsar-client-desktop (Tauri v2)   │  │
                     │  │                                            │  │
-                    │  │  Rust backend ◄────────► Next.js 15        │  │
+                    │  │  Rust backend ◄────────► Next.js 16        │  │
                     │  │  (Tauri IPC)              React 19         │  │
                     │  │       │                     │              │  │
                     │  │       ▼                     ▼              │  │
@@ -121,7 +127,17 @@ The bridge throttles ~50k msg/s down to ~2 UI updates/sec while persisting every
 
 **Storage management** including release/reclaim for external tools, live export, import with deduplication, and zero-loss database swap.
 
-**GeoJSON export/import**, events of interest, status timeline audit trail, simulated demo flights, and resizable panels with persistent layout.
+**GeoJSON export/import**, events of interest, status timeline audit trail, a built-in demo-flight layer, and resizable panels with persistent layout.
+
+**Flight simulation** — a Simulation Agent panel (and the chat) generate aircraft from a
+plain-language route request: `adsb-agent` proxies over A2A to
+[`adsb-simulation-agent`](adsb-simulation-agent/README.md), which returns timed waypoints
+built to real flight-dynamics limits (turn radius per aircraft category, arc-rounded
+corners, time-derived altitude profiles). Each aircraft has its own transport
+(start/pause/resume/stop) and time scrubber; the trail renderer is stateless so playback
+can be seeked backwards. Trajectories can be saved as named **scenarios** that store
+waypoints verbatim and replay offline with no Python service running. Distinct from the
+demo-flight toggle above, which is a fixed layer you show and hide.
 
 **AI assistant (AG-UI)** — an optional, fully local natural-language chat panel for querying live and historical traffic and driving the UI by text or voice. A LangGraph ReAct agent runs read-only DuckDB queries in-loop via a loopback tool server and forwards UI actions back to the frontend; voice input is handled by Voxtral or LFM2.5-Audio. See [docs/DESIGN.md §18](adsb-pulsar-client-desktop/docs/DESIGN.md#ai-agent--ag-ui-integration) and the [agent README](adsb-agent/README.md).
 
@@ -184,6 +200,23 @@ npm run tauri dev
 
 The desktop app setup config allow to run with the adsb-pulsar-client either in standalone mode or in library mode (embedded).
 
+### Run the optional Python agents
+
+Both are separate processes; the desktop app runs without them.
+
+```bash
+# AI assistant (AG-UI chat + voice) — port 8000
+cd adsb-agent && uv sync --all-extras && uv run python -m adsb_agent
+
+# Flight simulation agent (A2A) — port 8300
+cd adsb-simulation-agent && uv sync --all-extras && uv run python -m adsb_simulation_agent
+```
+
+Start the simulation agent *before* asking the assistant to generate aircraft — the chat
+tool proxies to it over A2A. Each agent can point at any OpenAI-compatible LLM endpoint
+(LM Studio by default); the simulation agent also works with no LLM at all, falling back
+to seeded default route plans.
+
 ## Performance
 
 Benchmarked on Raspberry Pi 4 (vs. the Python implementation):
@@ -198,22 +231,27 @@ Benchmarked on Raspberry Pi 4 (vs. the Python implementation):
 
 ## Testing
 
-All crates follow **Test-Driven Development** (Red-Green-Refactor). **985 tests** across Rust and TypeScript. CI gate:
+All components follow **Test-Driven Development** (Red-Green-Refactor). **2539 tests** across Rust, TypeScript, and Python. CI gate:
 
 ```bash
-# Rust (291 tests)
+# Rust (338 tests, from rust/)
 cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --all --check
 
-# TypeScript (694 tests, from adsb-pulsar-client-desktop/)
-npm test && npx next lint
+# TypeScript (1289 tests, from adsb-pulsar-client-desktop/)
+npm test && npm run lint     # `next lint` was removed in Next.js 16 — flat ESLint config
+
+# Python (from adsb-agent/ and adsb-simulation-agent/)
+uv run pytest
 ```
 
-| Crate | Tests | Coverage |
-|-------|------:|----------|
+| Component | Tests | Coverage |
+|-----------|------:|----------|
 | adsb-pulsar-client | 117 | Config, errors, metrics, buffer processing, integration (MockDump1090), doc-tests |
-| adsb-data-engine | 158 | SBS-1 parsing, storage CRUD, flight tracking, analytics, geodesic math, doc-tests |
-| adsb-pulsar-client-desktop (Rust) | 16 | AppState, serialization |
-| adsb-pulsar-client-desktop (TS) | 694 | Utilities, hooks, components (Vitest + testing-library) |
+| adsb-data-engine | 186 | SBS-1 parsing, storage CRUD, flight tracking, analytics, geodesic math, doc-tests |
+| adsb-pulsar-client-desktop (Rust) | 35 | AppState, serialization |
+| adsb-pulsar-client-desktop (TS) | 1289 | Utilities, hooks, components, playback state machines, scenario conversion (Vitest + testing-library) |
+| adsb-agent (Python) | 301 | Graph, tools, A2A simulation client, AG-UI streaming, voice |
+| adsb-simulation-agent (Python) | 611 | Geometry, kinematics, intent parsing, validation, A2A server, tracing spans |
 
 ## Documentation
 
@@ -224,6 +262,8 @@ npm test && npx next lint
 | Desktop App README | [adsb-pulsar-client-desktop/README.md](adsb-pulsar-client-desktop/README.md) | Features, architecture, tech stack |
 | Desktop Design Doc | [adsb-pulsar-client-desktop/docs/DESIGN.md](adsb-pulsar-client-desktop/docs/DESIGN.md) | IPC flow, track lifecycle, state management |
 | Desktop Dev Guide | [adsb-pulsar-client-desktop/docs/DOCUMENTATION.md](adsb-pulsar-client-desktop/docs/DOCUMENTATION.md) | Patterns, conventions, performance |
+| AI Agent README | [adsb-agent/README.md](adsb-agent/README.md) | AG-UI chat, voice, tool server, MLflow tracing |
+| Simulation Agent README | [adsb-simulation-agent/README.md](adsb-simulation-agent/README.md) | A2A protocol, route patterns, flight-dynamics model, tracing |
 | Rust vs Python | [RUST_IMPLEMENTATION.md](RUST_IMPLEMENTATION.md) | Detailed performance comparison |
 
 ## Part of the ADS-B Project
