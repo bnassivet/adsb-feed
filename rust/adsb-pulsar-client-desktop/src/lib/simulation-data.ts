@@ -414,3 +414,144 @@ export const SIMULATED_FLIGHTS: SimulatedFlight[] = [
     ],
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Agent-generated trajectories
+//
+// Additive to SIMULATED_FLIGHTS above, which stays as the quick-toggle demo
+// baseline. These come from the simulation agent (adsb-simulation-agent) via
+// adsb-agent, and differ in two ways that matter for playback:
+//
+//  * waypoints carry absolute timestamps (`tOffsetS`) rather than being walked
+//    at a fixed progress-per-tick, so speed is real rather than decorative;
+//  * coordinates are absolute — the agent already generated them around the
+//    receiver, so no SIMULATION_ORIGIN offset is applied.
+// ---------------------------------------------------------------------------
+
+/** Phase of flight a waypoint belongs to. Mirrors the agent's FlightPhase. */
+export type FlightPhase =
+  | "climb"
+  | "cruise"
+  | "descent"
+  | "approach"
+  | "hover"
+  | "loiter"
+  | "maneuver";
+
+/** One timed point on an agent-generated track. */
+export interface DynamicWaypoint {
+  lat: number;
+  lng: number;
+  alt_ft: number;
+  speed_kts: number;
+  heading_deg: number;
+  phase: FlightPhase;
+  /** Seconds from the start of this aircraft's trajectory. */
+  t_offset_s: number;
+  /**
+   * Which leg of a multi-leg route this point belongs to.
+   *
+   * Optional because trajectories generated before multi-leg support have no
+   * such field; absent means the whole route is one leg.
+   */
+  leg_index?: number;
+}
+
+/** One aircraft's complete agent-generated track. */
+export interface AgentTrajectory {
+  hex_ident: string;
+  callsign: string;
+  category: "airliner" | "ga" | "helicopter" | "fighter";
+  waypoints: DynamicWaypoint[];
+}
+
+/** Payload delivered by the `applySimulatedTrajectory` tool / simulate endpoint. */
+export interface AgentTrajectoryPayload {
+  aircraft: AgentTrajectory[];
+  violations?: { kind: string; waypoint_index: number; detail: string }[];
+  summary?: string;
+}
+
+/** Derived facts about a generated trajectory, for the Simulation Agent list. */
+export interface TrajectorySummary {
+  waypointCount: number;
+  durationS: number;
+  minAltFt: number;
+  maxAltFt: number;
+  /** Distinct phases of flight, in the order first encountered. */
+  phases: FlightPhase[];
+  /** How many legs the route has. 1 for a simple route, 0 when empty. */
+  legCount: number;
+}
+
+/** Summarize a trajectory for display. Pure — no playback state involved. */
+export function summarizeTrajectory(trajectory: AgentTrajectory): TrajectorySummary {
+  const wps = trajectory.waypoints;
+  if (wps.length === 0) {
+    return { waypointCount: 0, durationS: 0, minAltFt: 0, maxAltFt: 0, phases: [], legCount: 0 };
+  }
+
+  const alts = wps.map((w) => w.alt_ft);
+  const phases: FlightPhase[] = [];
+  for (const w of wps) {
+    if (!phases.includes(w.phase)) phases.push(w.phase);
+  }
+
+  return {
+    waypointCount: wps.length,
+    durationS: wps[wps.length - 1].t_offset_s,
+    minAltFt: Math.min(...alts),
+    maxAltFt: Math.max(...alts),
+    phases,
+    legCount: legCount(trajectory),
+  };
+}
+
+/**
+ * A trajectory's full planned route as Leaflet positions.
+ *
+ * Drawn on the map as a polyline so the generated geometry is visible in full,
+ * rather than only the portion the aircraft has already flown.
+ */
+export function routeLatLngs(trajectory: AgentTrajectory): [number, number][] {
+  return trajectory.waypoints.map((w) => [w.lat, w.lng]);
+}
+
+/** One leg of a multi-leg route, ready to draw as its own polyline. */
+export interface RouteLeg {
+  legIndex: number;
+  positions: [number, number][];
+}
+
+/**
+ * A trajectory's route split into its legs.
+ *
+ * Drawing the legs separately is what makes a multi-leg route readable: "fly
+ * here, work this area, then leave" is three distinct intentions, and as one
+ * undifferentiated polyline they are impossible to tell apart.
+ *
+ * Each leg repeats the previous leg's final point as its own first point, so
+ * consecutive polylines meet instead of leaving a gap at every boundary.
+ */
+export function routeLegs(trajectory: AgentTrajectory): RouteLeg[] {
+  const legs: RouteLeg[] = [];
+
+  for (const w of trajectory.waypoints) {
+    const legIndex = w.leg_index ?? 0;
+    const current = legs[legs.length - 1];
+    if (!current || current.legIndex !== legIndex) {
+      // Start the new leg where the previous one ended, so the line is unbroken.
+      const seam = current ? [current.positions[current.positions.length - 1]] : [];
+      legs.push({ legIndex, positions: [...seam, [w.lat, w.lng]] });
+    } else {
+      current.positions.push([w.lat, w.lng]);
+    }
+  }
+
+  return legs;
+}
+
+/** How many legs a trajectory's route has. */
+export function legCount(trajectory: AgentTrajectory): number {
+  return new Set(trajectory.waypoints.map((w) => w.leg_index ?? 0)).size;
+}

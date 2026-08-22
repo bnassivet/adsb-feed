@@ -7,12 +7,13 @@
 use crate::error::StorageError;
 use crate::sbs_parser::AircraftPosition;
 use crate::types::{
-    AircraftSummary, BboxQuery, CreateEventOfInterest, DetectionRangeQuery, DetectionRangeSector,
-    EventOfInterest, EventOfInterestQuery, FlightSummary, FlightSummaryQuery, HourlyHeatmapCell,
-    HourlyHeatmapQuery, ImportPreview, ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord,
-    StatusEvent, StatusEventQuery, StorageConfig, StorageStats, TablePreview,
+    AircraftSummary, BboxQuery, CreateEventOfInterest, CreateScenario, CreateScenarioTrack,
+    DetectionRangeQuery, DetectionRangeSector, EventOfInterest, EventOfInterestQuery,
+    FlightSummary, FlightSummaryQuery, HourlyHeatmapCell, HourlyHeatmapQuery, ImportPreview,
+    ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord, Scenario, ScenarioTrack,
+    ScenarioWithTracks, StatusEvent, StatusEventQuery, StorageConfig, StorageStats, TablePreview,
     TimeDistributionBucket, TimeDistributionMetric, TimeDistributionQuery, TrajectoryQuery,
-    UpdateEventOfInterest,
+    UpdateEventOfInterest, UpdateScenario, UpdateScenarioTrack,
 };
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
@@ -154,6 +155,35 @@ const SCHEMA_SQL: &str = r#"
     CREATE INDEX IF NOT EXISTS idx_eoi_created ON events_of_interest (created_at_ms);
     CREATE INDEX IF NOT EXISTS idx_eoi_source ON events_of_interest (source);
     CREATE INDEX IF NOT EXISTS idx_eoi_category ON events_of_interest (category);
+
+    CREATE TABLE IF NOT EXISTS scenarios (
+        id            TEXT   PRIMARY KEY,
+        name          TEXT   NOT NULL,
+        description   TEXT   NOT NULL DEFAULT '',
+        origin_lat    DOUBLE,
+        origin_lng    DOUBLE,
+        tags          TEXT,
+        created_at_ms BIGINT NOT NULL,
+        updated_at_ms BIGINT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scenarios_updated ON scenarios (updated_at_ms);
+
+    CREATE TABLE IF NOT EXISTS scenario_tracks (
+        id             TEXT    PRIMARY KEY,
+        scenario_id    TEXT    NOT NULL,
+        ordinal        INTEGER NOT NULL DEFAULT 0,
+        hex_ident      TEXT    NOT NULL,
+        callsign       TEXT    NOT NULL,
+        category       TEXT    NOT NULL,
+        start_offset_s DOUBLE  NOT NULL DEFAULT 0,
+        waypoints_json TEXT    NOT NULL,
+        request_json   TEXT,
+        created_at_ms  BIGINT  NOT NULL,
+        updated_at_ms  BIGINT  NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scenario_tracks_scenario ON scenario_tracks (scenario_id, ordinal);
 "#;
 
 impl StorageHandle {
@@ -1935,6 +1965,471 @@ impl StorageHandle {
         Ok(())
     }
 
+    // --- Scenario CRUD (synchronous) ---
+
+    /// Column list shared by every `scenarios` read, kept in one place so the
+    /// `row.get(N)` indices below can never drift out of step with the SELECT.
+    const SCENARIO_COLUMNS: &'static str =
+        "id, name, description, origin_lat, origin_lng, tags, created_at_ms, updated_at_ms";
+
+    /// Column list shared by every `scenario_tracks` read.
+    const SCENARIO_TRACK_COLUMNS: &'static str =
+        "id, scenario_id, ordinal, hex_ident, callsign, category, start_offset_s,
+         waypoints_json, request_json, created_at_ms, updated_at_ms";
+
+    /// Map a `scenarios` row (in `SCENARIO_COLUMNS` order) plus a track count.
+    fn scenario_from_row(
+        row: &duckdb::Row<'_>,
+        track_count: i64,
+    ) -> Result<Scenario, duckdb::Error> {
+        Ok(Scenario {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            description: row.get(2)?,
+            origin_lat: row.get(3)?,
+            origin_lng: row.get(4)?,
+            tags: row.get(5)?,
+            created_at_ms: row.get(6)?,
+            updated_at_ms: row.get(7)?,
+            track_count,
+        })
+    }
+
+    /// Map a `scenario_tracks` row (in `SCENARIO_TRACK_COLUMNS` order).
+    fn scenario_track_from_row(row: &duckdb::Row<'_>) -> Result<ScenarioTrack, duckdb::Error> {
+        Ok(ScenarioTrack {
+            id: row.get(0)?,
+            scenario_id: row.get(1)?,
+            ordinal: row.get(2)?,
+            hex_ident: row.get(3)?,
+            callsign: row.get(4)?,
+            category: row.get(5)?,
+            start_offset_s: row.get(6)?,
+            waypoints_json: row.get(7)?,
+            request_json: row.get(8)?,
+            created_at_ms: row.get(9)?,
+            updated_at_ms: row.get(10)?,
+        })
+    }
+
+    /// List all scenarios, most recently updated first (synchronous).
+    ///
+    /// Each row carries its track count from a `LEFT JOIN`, so the scenario
+    /// picker can show "Approach Rush (3)" without loading any waypoints.
+    pub fn list_scenarios_sync(&self) -> Result<Vec<Scenario>, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let sql = format!(
+            "SELECT {cols}, COUNT(t.id) AS track_count
+             FROM scenarios s
+             LEFT JOIN scenario_tracks t ON t.scenario_id = s.id
+             GROUP BY {cols}
+             ORDER BY s.updated_at_ms DESC, s.name ASC",
+            cols = "s.id, s.name, s.description, s.origin_lat, s.origin_lng, \
+                    s.tags, s.created_at_ms, s.updated_at_ms"
+        );
+
+        let mut stmt = storage.conn.prepare(&sql)?;
+        let rows = stmt.query_map([], |row| {
+            let track_count: i64 = row.get(8)?;
+            Self::scenario_from_row(row, track_count)
+        })?;
+
+        let mut scenarios = Vec::new();
+        for row in rows {
+            scenarios.push(row?);
+        }
+        Ok(scenarios)
+    }
+
+    /// Get one scenario with its tracks, ordered by `ordinal` (synchronous).
+    pub fn get_scenario_sync(&self, id: &str) -> Result<ScenarioWithTracks, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let track_count: i64 = storage.conn.query_row(
+            "SELECT COUNT(*) FROM scenario_tracks WHERE scenario_id = ?",
+            params![id],
+            |row| row.get(0),
+        )?;
+
+        let scenario = storage
+            .conn
+            .query_row(
+                &format!(
+                    "SELECT {} FROM scenarios WHERE id = ?",
+                    Self::SCENARIO_COLUMNS
+                ),
+                params![id],
+                |row| Self::scenario_from_row(row, track_count),
+            )
+            .map_err(|e| match e {
+                duckdb::Error::QueryReturnedNoRows => {
+                    StorageError::Query(format!("Scenario not found: {id}"))
+                }
+                other => StorageError::DuckDb(other),
+            })?;
+
+        let mut stmt = storage.conn.prepare(&format!(
+            "SELECT {} FROM scenario_tracks WHERE scenario_id = ? ORDER BY ordinal ASC",
+            Self::SCENARIO_TRACK_COLUMNS
+        ))?;
+        let rows = stmt.query_map(params![id], Self::scenario_track_from_row)?;
+
+        let mut tracks = Vec::new();
+        for row in rows {
+            tracks.push(row?);
+        }
+
+        Ok(ScenarioWithTracks { scenario, tracks })
+    }
+
+    /// Insert a new scenario (synchronous).
+    ///
+    /// Generates a UUID and sets created_at/updated_at to now.
+    pub fn insert_scenario_sync(
+        &self,
+        scenario: &CreateScenario,
+    ) -> Result<Scenario, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+        let description = scenario.description.clone().unwrap_or_default();
+
+        storage.conn.execute(
+            "INSERT INTO scenarios
+             (id, name, description, origin_lat, origin_lng, tags, created_at_ms, updated_at_ms)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                id,
+                scenario.name,
+                description,
+                scenario.origin_lat,
+                scenario.origin_lng,
+                scenario.tags,
+                now,
+                now,
+            ],
+        )?;
+
+        Ok(Scenario {
+            id,
+            name: scenario.name.clone(),
+            description,
+            origin_lat: scenario.origin_lat,
+            origin_lng: scenario.origin_lng,
+            tags: scenario.tags.clone(),
+            created_at_ms: now,
+            updated_at_ms: now,
+            track_count: 0,
+        })
+    }
+
+    /// Update a scenario's metadata (synchronous). Tracks are untouched.
+    pub fn update_scenario_sync(
+        &self,
+        scenario: &UpdateScenario,
+    ) -> Result<Scenario, StorageError> {
+        {
+            let storage = self
+                .inner
+                .lock()
+                .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+            let now = chrono::Utc::now().timestamp_millis();
+
+            // COALESCE(?, column) keeps an omitted field at its current value,
+            // matching `update_scenario_track_sync`. This is load-bearing: the
+            // rename path sends only `{ id, name }`, and a full-row overwrite
+            // silently destroyed the description, origin and tags. `None`
+            // preserves; `Some("")` is still a deliberate clear.
+            let rows_affected = storage.conn.execute(
+                "UPDATE scenarios SET
+                    name = ?,
+                    description = COALESCE(?, description),
+                    origin_lat = COALESCE(?, origin_lat),
+                    origin_lng = COALESCE(?, origin_lng),
+                    tags = COALESCE(?, tags),
+                    updated_at_ms = ?
+                 WHERE id = ?",
+                params![
+                    scenario.name,
+                    scenario.description,
+                    scenario.origin_lat,
+                    scenario.origin_lng,
+                    scenario.tags,
+                    now,
+                    scenario.id,
+                ],
+            )?;
+
+            if rows_affected == 0 {
+                return Err(StorageError::Query(format!(
+                    "Scenario not found: {}",
+                    scenario.id
+                )));
+            }
+        }
+
+        // Read back so created_at_ms and track_count are consistent.
+        Ok(self.get_scenario_sync(&scenario.id)?.scenario)
+    }
+
+    /// Delete a scenario and all of its tracks (synchronous).
+    ///
+    /// DuckDB's `ON DELETE CASCADE` support is limited, so the tracks are
+    /// removed explicitly. Both statements run in one transaction: a scenario
+    /// that half-deleted would leave orphan tracks that nothing can reach.
+    pub fn delete_scenario_sync(&self, id: &str) -> Result<(), StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        storage.conn.execute_batch("BEGIN TRANSACTION")?;
+
+        let result = (|| -> Result<usize, duckdb::Error> {
+            storage.conn.execute(
+                "DELETE FROM scenario_tracks WHERE scenario_id = ?",
+                params![id],
+            )?;
+            storage
+                .conn
+                .execute("DELETE FROM scenarios WHERE id = ?", params![id])
+        })();
+
+        match result {
+            Ok(rows_affected) => {
+                if rows_affected == 0 {
+                    storage.conn.execute_batch("ROLLBACK")?;
+                    return Err(StorageError::Query(format!("Scenario not found: {id}")));
+                }
+                storage.conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(e) => {
+                storage.conn.execute_batch("ROLLBACK")?;
+                Err(StorageError::DuckDb(e))
+            }
+        }
+    }
+
+    // --- Scenario track CRUD (synchronous) ---
+
+    /// Add a track to a scenario (synchronous).
+    ///
+    /// `ordinal` is assigned as the scenario's current maximum plus one, so
+    /// tracks append in the order they were added.
+    pub fn insert_scenario_track_sync(
+        &self,
+        track: &CreateScenarioTrack,
+    ) -> Result<ScenarioTrack, StorageError> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+        let start_offset_s = track.start_offset_s.unwrap_or(0.0);
+
+        let ordinal = {
+            let storage = self
+                .inner
+                .lock()
+                .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+            // COUNT rather than MAX+1 would renumber wrongly after a delete;
+            // COALESCE handles the first track, where MAX is NULL.
+            let next: i64 = storage.conn.query_row(
+                "SELECT COALESCE(MAX(ordinal) + 1, 0) FROM scenario_tracks WHERE scenario_id = ?",
+                params![track.scenario_id],
+                |row| row.get(0),
+            )?;
+
+            storage.conn.execute(
+                "INSERT INTO scenario_tracks
+                 (id, scenario_id, ordinal, hex_ident, callsign, category,
+                  start_offset_s, waypoints_json, request_json,
+                  created_at_ms, updated_at_ms)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    id,
+                    track.scenario_id,
+                    next,
+                    track.hex_ident,
+                    track.callsign,
+                    track.category,
+                    start_offset_s,
+                    track.waypoints_json,
+                    track.request_json,
+                    now,
+                    now,
+                ],
+            )?;
+
+            next
+        };
+
+        self.touch_scenario(&track.scenario_id, now)?;
+
+        Ok(ScenarioTrack {
+            id,
+            scenario_id: track.scenario_id.clone(),
+            ordinal,
+            hex_ident: track.hex_ident.clone(),
+            callsign: track.callsign.clone(),
+            category: track.category.clone(),
+            start_offset_s,
+            waypoints_json: track.waypoints_json.clone(),
+            request_json: track.request_json.clone(),
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+    }
+
+    /// Update a scenario track's editable fields (synchronous).
+    ///
+    /// Only `callsign`, `start_offset_s`, and `ordinal` can change; `None`
+    /// leaves the stored value alone. Waypoints are replaced by regenerating
+    /// the track, never edited in place.
+    pub fn update_scenario_track_sync(
+        &self,
+        track: &UpdateScenarioTrack,
+    ) -> Result<ScenarioTrack, StorageError> {
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let updated = {
+            let storage = self
+                .inner
+                .lock()
+                .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+            // COALESCE(?, column) keeps an omitted field at its current value,
+            // which avoids a read-modify-write round trip per field.
+            let rows_affected = storage.conn.execute(
+                "UPDATE scenario_tracks SET
+                    callsign = COALESCE(?, callsign),
+                    start_offset_s = COALESCE(?, start_offset_s),
+                    ordinal = COALESCE(?, ordinal),
+                    updated_at_ms = ?
+                 WHERE id = ?",
+                params![
+                    track.callsign,
+                    track.start_offset_s,
+                    track.ordinal,
+                    now,
+                    track.id,
+                ],
+            )?;
+
+            if rows_affected == 0 {
+                return Err(StorageError::Query(format!(
+                    "Track not found: {}",
+                    track.id
+                )));
+            }
+
+            storage.conn.query_row(
+                &format!(
+                    "SELECT {} FROM scenario_tracks WHERE id = ?",
+                    Self::SCENARIO_TRACK_COLUMNS
+                ),
+                params![track.id],
+                Self::scenario_track_from_row,
+            )?
+        };
+
+        self.touch_scenario(&updated.scenario_id, now)?;
+        Ok(updated)
+    }
+
+    /// Remove a track from its scenario (synchronous).
+    pub fn delete_scenario_track_sync(&self, id: &str) -> Result<(), StorageError> {
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let scenario_id = {
+            let storage = self
+                .inner
+                .lock()
+                .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+            let scenario_id: String = storage
+                .conn
+                .query_row(
+                    "SELECT scenario_id FROM scenario_tracks WHERE id = ?",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| match e {
+                    duckdb::Error::QueryReturnedNoRows => {
+                        StorageError::Query(format!("Track not found: {id}"))
+                    }
+                    other => StorageError::DuckDb(other),
+                })?;
+
+            storage
+                .conn
+                .execute("DELETE FROM scenario_tracks WHERE id = ?", params![id])?;
+
+            scenario_id
+        };
+
+        self.touch_scenario(&scenario_id, now)?;
+        Ok(())
+    }
+
+    /// Renumber a scenario's tracks to match the given id order (synchronous).
+    ///
+    /// Ids not belonging to the scenario are ignored, so a stale client list
+    /// cannot move another scenario's tracks.
+    pub fn reorder_scenario_tracks_sync(
+        &self,
+        scenario_id: &str,
+        track_ids: &[String],
+    ) -> Result<(), StorageError> {
+        let now = chrono::Utc::now().timestamp_millis();
+
+        {
+            let storage = self
+                .inner
+                .lock()
+                .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+            for (index, track_id) in track_ids.iter().enumerate() {
+                storage.conn.execute(
+                    "UPDATE scenario_tracks SET ordinal = ?, updated_at_ms = ?
+                     WHERE id = ? AND scenario_id = ?",
+                    params![index as i64, now, track_id, scenario_id],
+                )?;
+            }
+        }
+
+        self.touch_scenario(scenario_id, now)?;
+        Ok(())
+    }
+
+    /// Bump a scenario's `updated_at_ms`, so the picker's ordering reflects
+    /// track activity and not just metadata edits.
+    ///
+    /// Takes the lock itself, so callers must have released theirs.
+    fn touch_scenario(&self, scenario_id: &str, now: i64) -> Result<(), StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        storage.conn.execute(
+            "UPDATE scenarios SET updated_at_ms = ? WHERE id = ?",
+            params![now, scenario_id],
+        )?;
+        Ok(())
+    }
+
     // --- Async wrappers (Step 3) ---
 
     /// Batch insert parsed positions (async via spawn_blocking).
@@ -2374,6 +2869,98 @@ impl StorageHandle {
         tokio::task::spawn_blocking(move || handle.delete_event_of_interest_sync(&id))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    // --- Scenario CRUD (async via spawn_blocking) ---
+
+    /// List all scenarios, most recently updated first (async).
+    pub async fn list_scenarios(&self) -> Result<Vec<Scenario>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.list_scenarios_sync())
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Get one scenario with its tracks (async).
+    pub async fn get_scenario(&self, id: String) -> Result<ScenarioWithTracks, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.get_scenario_sync(&id))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Insert a new scenario (async).
+    pub async fn insert_scenario(
+        &self,
+        scenario: CreateScenario,
+    ) -> Result<Scenario, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.insert_scenario_sync(&scenario))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Update a scenario's metadata (async).
+    pub async fn update_scenario(
+        &self,
+        scenario: UpdateScenario,
+    ) -> Result<Scenario, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.update_scenario_sync(&scenario))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Delete a scenario and all of its tracks (async).
+    pub async fn delete_scenario(&self, id: String) -> Result<(), StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.delete_scenario_sync(&id))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Add a track to a scenario (async).
+    pub async fn insert_scenario_track(
+        &self,
+        track: CreateScenarioTrack,
+    ) -> Result<ScenarioTrack, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.insert_scenario_track_sync(&track))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Update a scenario track's editable fields (async).
+    pub async fn update_scenario_track(
+        &self,
+        track: UpdateScenarioTrack,
+    ) -> Result<ScenarioTrack, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.update_scenario_track_sync(&track))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Remove a track from its scenario (async).
+    pub async fn delete_scenario_track(&self, id: String) -> Result<(), StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.delete_scenario_track_sync(&id))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Renumber a scenario's tracks to match the given id order (async).
+    pub async fn reorder_scenario_tracks(
+        &self,
+        scenario_id: String,
+        track_ids: Vec<String>,
+    ) -> Result<(), StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || {
+            handle.reorder_scenario_tracks_sync(&scenario_id, &track_ids)
+        })
+        .await
+        .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
 
     // --- Private helpers for import ---
@@ -5576,5 +6163,555 @@ mod tests {
         }
         assert!(flight_ids.contains(&"A1B2C3_0".to_string()));
         assert!(flight_ids.contains(&"D4E5F6_0".to_string()));
+    }
+
+    // --- Scenario CRUD ---
+
+    fn make_create_scenario(name: &str) -> CreateScenario {
+        CreateScenario {
+            name: name.to_string(),
+            description: Some("a test scenario".to_string()),
+            origin_lat: Some(45.5),
+            origin_lng: Some(-73.6),
+            tags: None,
+        }
+    }
+
+    /// A minimal but realistic waypoints blob — the storage layer never parses
+    /// it, so the test only needs it to survive the round-trip byte for byte.
+    fn sample_waypoints_json() -> String {
+        r#"[{"lat":45.5,"lng":-73.6,"alt_ft":1000,"speed_kts":80,"heading_deg":90,"phase":"cruise","t_offset_s":0,"leg_index":0}]"#
+            .to_string()
+    }
+
+    fn make_create_track(scenario_id: &str, hex: &str) -> CreateScenarioTrack {
+        CreateScenarioTrack {
+            scenario_id: scenario_id.to_string(),
+            hex_ident: hex.to_string(),
+            callsign: format!("CS{hex}"),
+            category: "helicopter".to_string(),
+            start_offset_s: None,
+            waypoints_json: sample_waypoints_json(),
+            request_json: Some(r#"{"category":"helicopter"}"#.to_string()),
+        }
+    }
+
+    #[test]
+    fn test_insert_and_get_scenario() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let created = handle
+            .insert_scenario_sync(&make_create_scenario("Approach Rush"))
+            .unwrap();
+
+        assert!(!created.id.is_empty());
+        assert_eq!(created.name, "Approach Rush");
+        assert_eq!(created.description, "a test scenario");
+        assert_eq!(created.origin_lat, Some(45.5));
+        assert_eq!(created.track_count, 0);
+        assert_eq!(created.created_at_ms, created.updated_at_ms);
+
+        let found = handle.get_scenario_sync(&created.id).unwrap();
+        assert_eq!(found.scenario.id, created.id);
+        assert!(found.tracks.is_empty());
+    }
+
+    #[test]
+    fn test_create_scenario_defaults_description_to_empty() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let created = handle
+            .insert_scenario_sync(&CreateScenario {
+                name: "Bare".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(created.description, "");
+        assert_eq!(created.origin_lat, None);
+        assert_eq!(created.tags, None);
+    }
+
+    #[test]
+    fn test_get_scenario_not_found() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let result = handle.get_scenario_sync("nope");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Scenario not found")
+        );
+    }
+
+    #[test]
+    fn test_list_scenarios_newest_updated_first() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let first = handle
+            .insert_scenario_sync(&make_create_scenario("First"))
+            .unwrap();
+        let second = handle
+            .insert_scenario_sync(&make_create_scenario("Second"))
+            .unwrap();
+
+        // Force a distinct updated_at_ms so the ordering is unambiguous even
+        // when both inserts land in the same millisecond.
+        handle
+            .update_scenario_sync(&UpdateScenario {
+                id: first.id.clone(),
+                name: "First".to_string(),
+                description: Some("touched".to_string()),
+                origin_lat: None,
+                origin_lng: None,
+                tags: None,
+            })
+            .unwrap();
+
+        let list = handle.list_scenarios_sync().unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].id, first.id, "most recently updated comes first");
+        assert_eq!(list[1].id, second.id);
+    }
+
+    #[test]
+    fn test_list_scenarios_reports_track_count() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let empty = handle
+            .insert_scenario_sync(&make_create_scenario("Empty"))
+            .unwrap();
+        let populated = handle
+            .insert_scenario_sync(&make_create_scenario("Populated"))
+            .unwrap();
+
+        handle
+            .insert_scenario_track_sync(&make_create_track(&populated.id, "AAA111"))
+            .unwrap();
+        handle
+            .insert_scenario_track_sync(&make_create_track(&populated.id, "BBB222"))
+            .unwrap();
+
+        let list = handle.list_scenarios_sync().unwrap();
+        let by_id = |id: &str| list.iter().find(|s| s.id == id).unwrap().track_count;
+
+        assert_eq!(by_id(&empty.id), 0, "a scenario with no tracks still lists");
+        assert_eq!(by_id(&populated.id), 2);
+    }
+
+    #[test]
+    fn test_update_scenario() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let created = handle
+            .insert_scenario_sync(&make_create_scenario("Before"))
+            .unwrap();
+
+        let updated = handle
+            .update_scenario_sync(&UpdateScenario {
+                id: created.id.clone(),
+                name: "After".to_string(),
+                description: Some("changed".to_string()),
+                origin_lat: Some(1.0),
+                origin_lng: Some(2.0),
+                tags: Some("night,busy".to_string()),
+            })
+            .unwrap();
+
+        assert_eq!(updated.name, "After");
+        assert_eq!(updated.description, "changed");
+        assert_eq!(updated.tags, Some("night,busy".to_string()));
+        assert_eq!(
+            updated.created_at_ms, created.created_at_ms,
+            "created_at is preserved across updates"
+        );
+    }
+
+    // Regression: `update_scenario_sync` used to overwrite every column, and
+    // `description.unwrap_or_default()` turned an omitted description into "".
+    // The rename path sends only `{ id, name }`, so renaming silently destroyed
+    // the description, origin and tags. Omitted now means "leave it alone".
+    #[test]
+    fn test_update_scenario_rename_preserves_description_and_origin() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let created = handle
+            .insert_scenario_sync(&make_create_scenario("Before"))
+            .unwrap();
+
+        // Exactly what the rename path sends: a name and nothing else.
+        let renamed = handle
+            .update_scenario_sync(&UpdateScenario {
+                id: created.id.clone(),
+                name: "After".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(renamed.name, "After");
+        assert_eq!(
+            renamed.description, "a test scenario",
+            "renaming must not wipe the description"
+        );
+        assert_eq!(renamed.origin_lat, Some(45.5));
+        assert_eq!(renamed.origin_lng, Some(-73.6));
+    }
+
+    #[test]
+    fn test_update_scenario_preserves_tags_when_omitted() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let created = handle
+            .insert_scenario_sync(&CreateScenario {
+                name: "Tagged".to_string(),
+                tags: Some("night,busy".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let renamed = handle
+            .update_scenario_sync(&UpdateScenario {
+                id: created.id.clone(),
+                name: "Still tagged".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(renamed.tags, Some("night,busy".to_string()));
+    }
+
+    // The other half of the COALESCE contract: `None` preserves, but an
+    // explicit empty string is a deliberate clear and must go through.
+    #[test]
+    fn test_update_scenario_empty_description_clears_it() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let created = handle
+            .insert_scenario_sync(&make_create_scenario("Wordy"))
+            .unwrap();
+        assert_eq!(created.description, "a test scenario");
+
+        let cleared = handle
+            .update_scenario_sync(&UpdateScenario {
+                id: created.id.clone(),
+                name: "Wordy".to_string(),
+                description: Some(String::new()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(cleared.description, "");
+    }
+
+    #[test]
+    fn test_update_scenario_not_found() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let result = handle.update_scenario_sync(&UpdateScenario {
+            id: "nope".to_string(),
+            name: "X".to_string(),
+            ..Default::default()
+        });
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Scenario not found")
+        );
+    }
+
+    #[test]
+    fn test_delete_scenario_also_deletes_its_tracks() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let doomed = handle
+            .insert_scenario_sync(&make_create_scenario("Doomed"))
+            .unwrap();
+        let keeper = handle
+            .insert_scenario_sync(&make_create_scenario("Keeper"))
+            .unwrap();
+
+        handle
+            .insert_scenario_track_sync(&make_create_track(&doomed.id, "AAA111"))
+            .unwrap();
+        let survivor = handle
+            .insert_scenario_track_sync(&make_create_track(&keeper.id, "BBB222"))
+            .unwrap();
+
+        handle.delete_scenario_sync(&doomed.id).unwrap();
+
+        assert!(handle.get_scenario_sync(&doomed.id).is_err());
+
+        // DuckDB has no reliable ON DELETE CASCADE here, so the tracks are
+        // removed explicitly — and only the doomed scenario's.
+        let remaining = handle.get_scenario_sync(&keeper.id).unwrap();
+        assert_eq!(remaining.tracks.len(), 1);
+        assert_eq!(remaining.tracks[0].id, survivor.id);
+    }
+
+    #[test]
+    fn test_delete_scenario_not_found() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let result = handle.delete_scenario_sync("nope");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Scenario not found")
+        );
+    }
+
+    #[test]
+    fn test_insert_scenario_track_round_trips_fields() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let scenario = handle
+            .insert_scenario_sync(&make_create_scenario("S"))
+            .unwrap();
+
+        let mut create = make_create_track(&scenario.id, "ABC123");
+        create.start_offset_s = Some(90.0);
+        let track = handle.insert_scenario_track_sync(&create).unwrap();
+
+        assert_eq!(track.hex_ident, "ABC123");
+        assert_eq!(track.callsign, "CSABC123");
+        assert_eq!(track.category, "helicopter");
+        assert_eq!(track.start_offset_s, 90.0);
+        assert_eq!(track.waypoints_json, sample_waypoints_json());
+        assert_eq!(
+            track.request_json,
+            Some(r#"{"category":"helicopter"}"#.to_string())
+        );
+
+        let fetched = handle.get_scenario_sync(&scenario.id).unwrap();
+        assert_eq!(fetched.tracks.len(), 1);
+        assert_eq!(
+            fetched.tracks[0].waypoints_json,
+            sample_waypoints_json(),
+            "waypoints survive the round-trip verbatim"
+        );
+    }
+
+    #[test]
+    fn test_scenario_track_start_offset_defaults_to_zero() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let scenario = handle
+            .insert_scenario_sync(&make_create_scenario("S"))
+            .unwrap();
+
+        let track = handle
+            .insert_scenario_track_sync(&make_create_track(&scenario.id, "ABC123"))
+            .unwrap();
+
+        assert_eq!(track.start_offset_s, 0.0);
+    }
+
+    #[test]
+    fn test_scenario_track_request_json_may_be_null() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let scenario = handle
+            .insert_scenario_sync(&make_create_scenario("S"))
+            .unwrap();
+
+        let mut create = make_create_track(&scenario.id, "ABC123");
+        create.request_json = None;
+        let track = handle.insert_scenario_track_sync(&create).unwrap();
+
+        assert_eq!(
+            track.request_json, None,
+            "hand-authored tracks have no request"
+        );
+
+        let fetched = handle.get_scenario_sync(&scenario.id).unwrap();
+        assert_eq!(fetched.tracks[0].request_json, None);
+    }
+
+    #[test]
+    fn test_scenario_track_ordinal_auto_increments() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let scenario = handle
+            .insert_scenario_sync(&make_create_scenario("S"))
+            .unwrap();
+
+        let a = handle
+            .insert_scenario_track_sync(&make_create_track(&scenario.id, "AAA111"))
+            .unwrap();
+        let b = handle
+            .insert_scenario_track_sync(&make_create_track(&scenario.id, "BBB222"))
+            .unwrap();
+        let c = handle
+            .insert_scenario_track_sync(&make_create_track(&scenario.id, "CCC333"))
+            .unwrap();
+
+        assert_eq!((a.ordinal, b.ordinal, c.ordinal), (0, 1, 2));
+
+        let fetched = handle.get_scenario_sync(&scenario.id).unwrap();
+        let hexes: Vec<_> = fetched
+            .tracks
+            .iter()
+            .map(|t| t.hex_ident.as_str())
+            .collect();
+        assert_eq!(hexes, vec!["AAA111", "BBB222", "CCC333"]);
+    }
+
+    #[test]
+    fn test_scenario_track_ordinals_are_per_scenario() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let one = handle
+            .insert_scenario_sync(&make_create_scenario("A"))
+            .unwrap();
+        let two = handle
+            .insert_scenario_sync(&make_create_scenario("B"))
+            .unwrap();
+
+        handle
+            .insert_scenario_track_sync(&make_create_track(&one.id, "AAA111"))
+            .unwrap();
+        let first_of_two = handle
+            .insert_scenario_track_sync(&make_create_track(&two.id, "BBB222"))
+            .unwrap();
+
+        assert_eq!(
+            first_of_two.ordinal, 0,
+            "a new scenario's first track starts at 0 regardless of other scenarios"
+        );
+    }
+
+    #[test]
+    fn test_update_scenario_track() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let scenario = handle
+            .insert_scenario_sync(&make_create_scenario("S"))
+            .unwrap();
+        let track = handle
+            .insert_scenario_track_sync(&make_create_track(&scenario.id, "ABC123"))
+            .unwrap();
+
+        let updated = handle
+            .update_scenario_track_sync(&UpdateScenarioTrack {
+                id: track.id.clone(),
+                callsign: Some("RENAMED".to_string()),
+                start_offset_s: Some(45.5),
+                ordinal: None,
+            })
+            .unwrap();
+
+        assert_eq!(updated.callsign, "RENAMED");
+        assert_eq!(updated.start_offset_s, 45.5);
+        assert_eq!(
+            updated.ordinal, track.ordinal,
+            "omitted fields are untouched"
+        );
+        assert_eq!(
+            updated.waypoints_json, track.waypoints_json,
+            "waypoints are never edited in place"
+        );
+    }
+
+    #[test]
+    fn test_update_scenario_track_not_found() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let result = handle.update_scenario_track_sync(&UpdateScenarioTrack {
+            id: "nope".to_string(),
+            ..Default::default()
+        });
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Track not found"));
+    }
+
+    #[test]
+    fn test_delete_scenario_track() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let scenario = handle
+            .insert_scenario_sync(&make_create_scenario("S"))
+            .unwrap();
+        let a = handle
+            .insert_scenario_track_sync(&make_create_track(&scenario.id, "AAA111"))
+            .unwrap();
+        handle
+            .insert_scenario_track_sync(&make_create_track(&scenario.id, "BBB222"))
+            .unwrap();
+
+        handle.delete_scenario_track_sync(&a.id).unwrap();
+
+        let fetched = handle.get_scenario_sync(&scenario.id).unwrap();
+        assert_eq!(fetched.tracks.len(), 1);
+        assert_eq!(fetched.tracks[0].hex_ident, "BBB222");
+    }
+
+    #[test]
+    fn test_delete_scenario_track_not_found() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let result = handle.delete_scenario_track_sync("nope");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Track not found"));
+    }
+
+    #[test]
+    fn test_reorder_scenario_tracks() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let scenario = handle
+            .insert_scenario_sync(&make_create_scenario("S"))
+            .unwrap();
+        let a = handle
+            .insert_scenario_track_sync(&make_create_track(&scenario.id, "AAA111"))
+            .unwrap();
+        let b = handle
+            .insert_scenario_track_sync(&make_create_track(&scenario.id, "BBB222"))
+            .unwrap();
+        let c = handle
+            .insert_scenario_track_sync(&make_create_track(&scenario.id, "CCC333"))
+            .unwrap();
+
+        handle
+            .reorder_scenario_tracks_sync(&scenario.id, &[c.id.clone(), a.id.clone(), b.id.clone()])
+            .unwrap();
+
+        let fetched = handle.get_scenario_sync(&scenario.id).unwrap();
+        let hexes: Vec<_> = fetched
+            .tracks
+            .iter()
+            .map(|t| t.hex_ident.as_str())
+            .collect();
+        assert_eq!(hexes, vec!["CCC333", "AAA111", "BBB222"]);
+        assert_eq!(
+            fetched.tracks.iter().map(|t| t.ordinal).collect::<Vec<_>>(),
+            vec![0, 1, 2],
+            "ordinals are renumbered densely from zero"
+        );
+    }
+
+    #[test]
+    fn test_track_mutation_bumps_scenario_updated_at() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let scenario = handle
+            .insert_scenario_sync(&make_create_scenario("S"))
+            .unwrap();
+
+        handle
+            .insert_scenario_track_sync(&make_create_track(&scenario.id, "AAA111"))
+            .unwrap();
+
+        let after = handle.get_scenario_sync(&scenario.id).unwrap().scenario;
+        assert!(
+            after.updated_at_ms >= scenario.updated_at_ms,
+            "adding a track counts as activity on the scenario"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_async_scenario_round_trip() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+
+        let scenario = handle
+            .insert_scenario(make_create_scenario("Async"))
+            .await
+            .unwrap();
+        handle
+            .insert_scenario_track(make_create_track(&scenario.id, "AAA111"))
+            .await
+            .unwrap();
+
+        let list = handle.list_scenarios().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].track_count, 1);
+
+        let fetched = handle.get_scenario(scenario.id.clone()).await.unwrap();
+        assert_eq!(fetched.tracks.len(), 1);
+
+        handle.delete_scenario(scenario.id.clone()).await.unwrap();
+        assert!(handle.list_scenarios().await.unwrap().is_empty());
     }
 }

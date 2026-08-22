@@ -557,6 +557,70 @@ useSafeFrontendTool({
 while guaranteeing UI-affecting actions stay user-in-the-loop and never run silently
 inside the agent's reasoning. See DESIGN.md §18 for the `route()` semantics.
 
+**Persisted data follows the same split.** Simulation scenarios put `listScenarios` and
+`getScenario` on the server plane, but every *write* (`createScenario`, `deleteScenario`,
+`addTrajectoryToScenario`, …) is a client tool, mirroring `createEventOfInterest`. A
+destructive tool reachable from `tool_server.rs` could delete a user's saved work from
+inside the agent's reasoning loop with nothing on screen;
+`scenario_writes_are_not_reachable_from_the_tool_server` in `tool_server.rs` pins this.
+
+**Tool descriptions are an interface, not documentation.** The model routes on them, and
+two tools that describe themselves similarly will be confused for each other. This app has
+already shipped that bug once: `toggleDemoFlights` and `generateSimulatedTrajectory` both
+spoke of "simulated flights", so "start simulated flights" launched 20 canned routes and
+generated nothing. When adding a tool near an existing one:
+
+- give it nouns the neighbouring tool does not use (scenarios say *saved*, *collection*,
+  *stored*; generation owns *start*, *run*, *create* an aircraft);
+- name the alternative *inside* the description at the point of confusion
+  (`createScenario` says "creates no aircraft — use generateSimulatedTrajectory");
+- add a prose assertion in the tool tests. `useCopilotTools.test.ts`,
+  `useCopilotScenarioTools.test.ts` and the Python
+  `test_simulation_tool_disambiguation.py` all assert on description wording, because
+  this class of regression is invisible until a user phrases a request the wrong way.
+
+The trap repeats whenever two tools write *different fields of the same object*.
+`renameScenario` and `setScenarioDescription` both "set text on a scenario", and
+`createEventOfInterest` also has a `description` argument. Each description therefore
+names the field it writes **and** the field it does not: rename says "its name only, not
+its description", and `setScenarioDescription` says "not its name" and scopes itself to
+scenarios. Both halves are asserted in `useCopilotScenarioTools.test.ts`.
+
+### Non-chat agent endpoints
+
+Two controls in the left panel call `adsb-agent` over plain REST instead of going through
+the chat pipeline: **Generate** (`POST /simulate/trajectory`) and **Generate from
+trajectories** (`POST /scenario/describe`). Both live outside `AIChatContent`'s component
+tree and must work with the chat panel closed, and a button press should not have to fake
+a chat turn to be answered.
+
+`/scenario/describe` is a single-shot summarisation call — `describe.py`, no LangGraph and
+no tools — with a `model=None` injection seam so every test runs without an LLM endpoint.
+
+**An empty answer is the failure mode to design against.** Reasoning tokens are charged
+against the same `max_tokens` budget as the reply, so a model that deliberates hits
+`finish_reason='length'` having written nothing. There is no error, no partial output and
+no signal — the caller simply waits out its timeout. Two settings guard it, and both
+matter independently:
+
+| Setting | Why |
+|---|---|
+| `ADSB_AGENT_REASONING_EFFORT` (default `off`) | Maps every plain word for "off" onto `reasoning_effort="none"` — the one value a toggle-style model honours. `on` restores the model's default; a graded level works where a provider offers a dial. |
+| `max_retries=0` | The OpenAI client retries twice by default, making one call three attempts and silently tripling the timeout budget. |
+
+Neither is a guarantee: reasoning control is a *request*, and an endpoint that does not
+understand the field ignores it. The reliable lever remains choosing a model that does not
+reason. `describe_scenario` therefore still raises on empty content, so the failure
+surfaces as a readable 502 rather than a blank textarea.
+It returns **502** when the LLM behind the agent is unreachable or emits no content, which
+the panel renders inline; the empty-content case is explicit because a reasoning-variant
+model can emit only reasoning tokens and fail completely silently.
+
+On the client, `describeScenario` rethrows an `AbortError` untouched so a cancel is not
+reported as a failure. The guard is duck-typed on `.name`, not `instanceof Error`: a
+`DOMException` is not an `Error` instance under jsdom, so an instanceof check silently
+misses it and every deliberate cancel surfaces as "agent unreachable".
+
 ---
 
 ## Performance Guidelines

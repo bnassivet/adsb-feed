@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useCallback, useRef, useState } from "react";
 import { MapContainer, TileLayer, Marker, Polyline, GeoJSON, Tooltip, useMap, useMapEvents } from "react-leaflet";
+import { routeLegs, type AgentTrajectory } from "@/lib/simulation-data";
 import L from "leaflet";
 import type { AircraftTrack, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventOfInterest, MapPickResult, Positions } from "@/lib/types";
 import { zoomToH3Resolution, trackKey, cornersToBox, isColumnar } from "@/lib/types";
@@ -13,8 +14,18 @@ import { haversineDistanceNm } from "@/lib/geo";
 import { orderTracksWithSelectedLast } from "@/lib/track-ordering";
 import { subsamplePositions } from "@/lib/subsample";
 import { MapTileToggle } from "./MapTileToggle";
+
 import { CenterOnAntennaButton } from "./CenterOnAntennaButton";
 import { AltitudeLegend } from "./AltitudeLegend";
+
+/**
+ * Per-leg colours for a generated route.
+ *
+ * A multi-leg route is a sequence of distinct intentions — get there, work the
+ * area, leave — and drawn in one colour they are indistinguishable. Cycled by
+ * leg index, so a single-leg route keeps the original blue.
+ */
+const SIM_LEG_COLORS = ["#38bdf8", "#a78bfa", "#fbbf24", "#34d399", "#f472b6", "#fb7185"];
 
 // Default center: Montreal
 const DEFAULT_CENTER: [number, number] = [45.5, -73.6];
@@ -267,6 +278,8 @@ interface Props {
   selectedHexIdents: Set<string>;
   onSelectTrack: (hex: string | null) => void;
   receiverLocation?: { lat: number; lng: number; alt: number | null };
+  /** Planned routes of agent-generated trajectories currently on the map. */
+  simulatedRoutes?: AgentTrajectory[];
   eventsOfInterest?: EventOfInterest[];
   onContextMenu?: (lat: number, lng: number, x: number, y: number) => void;
   mapPickingMode?: "point" | "area" | null;
@@ -582,7 +595,7 @@ function DotsLayer({
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady }: Props) {
+export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
@@ -739,6 +752,44 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         {trajectoryStyle === "dots" && tracks.length > 0 && (
           <DotsLayer tracks={tracks} colorMode={liveColorMode} type="live" selectedHexIdents={selectedHexIdents} theme={mapTheme} />
         )}
+
+        {/* Planned routes of agent-generated trajectories.
+            Dashed and dimmed so they read as *intent* rather than as flown
+            history — the solid trail behind the aircraft is the flown part. */}
+        {simulatedRoutes?.map((route) => {
+          const legs = routeLegs(route);
+          const total = legs.length;
+          return legs.map((leg) => {
+            if (leg.positions.length < 2) return null;
+            return (
+              <Polyline
+                key={`sim-route-${route.hex_ident}-${leg.legIndex}`}
+                positions={leg.positions}
+                pathOptions={{
+                  color: SIM_LEG_COLORS[leg.legIndex % SIM_LEG_COLORS.length],
+                  weight: 1.5,
+                  opacity: 0.45,
+                  dashArray: "4 6",
+                }}
+              >
+                <Tooltip sticky>
+                  <div style={{ fontSize: 11 }}>
+                    <div style={{ fontWeight: 600, color: "#38bdf8" }}>
+                      {route.callsign || route.hex_ident}
+                    </div>
+                    <div>Simulated route ({route.category})</div>
+                    {total > 1 && (
+                      <div>
+                        Leg {leg.legIndex + 1} of {total}
+                      </div>
+                    )}
+                    <div>{route.waypoints.length} waypoints</div>
+                  </div>
+                </Tooltip>
+              </Polyline>
+            );
+          });
+        })}
 
         {/* Receiver location marker */}
         {receiverLocation && (

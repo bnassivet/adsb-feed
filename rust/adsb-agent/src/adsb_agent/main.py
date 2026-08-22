@@ -20,18 +20,25 @@ from ag_ui.core import (
     RunStartedEvent,
 )
 from ag_ui.encoder import EventEncoder
-from fastapi import FastAPI, Request
+import httpx
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .config import settings
 from .llm import stream_llm_response
 from .tracing import make_span, set_session_tag
+from .a2a_client import call_simulation_agent
+from .describe import describe_scenario
 from .models import (
     AgUiErrorResponse,
     AgUiRequest,
+    DescribeScenarioRequest,
+    DescribeScenarioResponse,
     HealthResponse,
     RuntimeInfoResponse,
+    SimulateTrajectoryRequest,
+    SimulateTrajectoryResponse,
     SSE_RESPONSES,
     VOICE_SSE_RESPONSES,
     VoiceBackendsResponse,
@@ -286,6 +293,13 @@ async def _run_agent(input_data: RunAgentInput, request: Request):
                         name = getattr(event, "tool_call_name", None)
                         if name:
                             tool_call_names.append(name)
+                    elif event.type == EventType.RUN_ERROR:
+                        # RUN_ERROR is terminal in AG-UI: the client rejects
+                        # anything after it ("the run has already errored").
+                        # `stream_llm_response` reports failures by *yielding*
+                        # this event rather than raising, so the except-clause
+                        # below never runs and would not set the flag for us.
+                        errored = True
                     logger.debug("Event: %s", event.type)
                     if event.type in (EventType.TEXT_MESSAGE_END):
                         logger.debug(f"{event}")
@@ -428,6 +442,104 @@ async def runtime_single_endpoint(body: AgUiRequest, request: Request):
 async def health() -> HealthResponse:
     """Health check endpoint."""
     return HealthResponse(status="healthy", service="adsb-agent")
+
+
+# ---------------------------------------------------------------------------
+# Simulation endpoint
+# ---------------------------------------------------------------------------
+
+
+@app.post(
+    "/simulate/trajectory",
+    tags=["simulation"],
+    response_model=SimulateTrajectoryResponse,
+    summary="Generate simulated flight trajectories",
+    responses={502: {"description": "Simulation agent unreachable or generation failed"}},
+)
+async def simulate_trajectory(body: SimulateTrajectoryRequest) -> SimulateTrajectoryResponse:
+    """Generate trajectories for the desktop app's simulation panel.
+
+    Bypasses the chat pipeline entirely — a form submission shouldn't have to
+    fake a chat turn — but shares `call_simulation_agent` with the
+    `generateSimulatedTrajectory` tool, so both paths behave identically.
+    """
+    # Root span for this path. The chat path already has `chat_turn`, but a form
+    # submission has nothing — and with no active trace there is no traceparent
+    # to send, so the simulation agent would strand its spans in a separate
+    # trace instead of nesting them here.
+    # Named distinctly from the simulation agent's own `simulate_trajectory`
+    # span, which nests directly inside this one.
+    with make_span("simulate_trajectory_request", span_type="CHAIN") as span:
+        if span is not None:
+            span.set_inputs(body.model_dump(mode="json"))
+
+        async with httpx.AsyncClient() as client:
+            result = await call_simulation_agent(body.to_tool_args(), client)
+
+        if not result.ok or result.data is None:
+            raise HTTPException(
+                status_code=502, detail=result.error or "trajectory generation failed"
+            )
+
+        aircraft = result.data.get("aircraft", [])
+        violations = result.data.get("violations", [])
+        if span is not None:
+            # Summary and counts only — the waypoints stay out of the trace.
+            span.set_outputs(
+                {
+                    "summary": result.summary,
+                    "aircraft": len(aircraft),
+                    "violations": len(violations),
+                }
+            )
+
+        return SimulateTrajectoryResponse(
+            aircraft=aircraft,
+            violations=violations,
+            summary=result.summary,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Scenario endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post(
+    "/scenario/describe",
+    tags=["simulation"],
+    response_model=DescribeScenarioResponse,
+    summary="Draft a prose description of a simulation scenario",
+    responses={502: {"description": "LLM unreachable or returned no description"}},
+)
+async def describe_scenario_endpoint(
+    body: DescribeScenarioRequest,
+) -> DescribeScenarioResponse:
+    """Draft a description from a scenario's track digests.
+
+    Backs the scenario panel's explicit "Generate from trajectories" button.
+    That button lives outside the chat tree and must work with the chat closed,
+    so — exactly like `/simulate/trajectory` — it gets its own endpoint rather
+    than faking a chat turn.
+
+    The result is a *draft*: the panel drops it into an editable textarea and
+    the user saves it deliberately. Nothing here writes to the database.
+    """
+    with make_span("describe_scenario_request", span_type="CHAIN") as span:
+        if span is not None:
+            span.set_inputs({"name": body.name, "tracks": len(body.tracks)})
+
+        try:
+            description = await describe_scenario(body)
+        except Exception as e:  # noqa: BLE001 — surfaced verbatim to the panel
+            # 502 not 500: the failure is the LLM endpoint behind us, and the
+            # panel says so ("Is LM Studio running?") rather than blaming itself.
+            raise HTTPException(status_code=502, detail=str(e)) from e
+
+        if span is not None:
+            span.set_outputs({"description": description})
+
+        return DescribeScenarioResponse(description=description)
 
 
 # ---------------------------------------------------------------------------

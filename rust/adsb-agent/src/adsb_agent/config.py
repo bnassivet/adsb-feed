@@ -20,6 +20,19 @@ class Settings(BaseSettings):
     max_tokens: int = 8192
     temperature: float = 0.1
 
+    # Reasoning control. Defaults to OFF because reasoning tokens are charged
+    # against `max_tokens`: a model that deliberates can spend the entire budget
+    # thinking and return EMPTY content, which the caller experiences as a
+    # timeout rather than as an error. Set ADSB_AGENT_REASONING_EFFORT=on to
+    # restore the model's own default, or a graded level (minimal/low/medium/
+    # high) for providers that offer a dial rather than a toggle.
+    reasoning_effort: str | None = "off"
+    reasoning_max_tokens: int | None = None
+    """Hard cap on reasoning tokens, for providers that accept one.
+
+    Sent as ``reasoning: {max_tokens: N}``. Same caveat as ``reasoning_effort``:
+    it is a request, not an enforcement."""
+
     # Server-side tool plane: the Tauri localhost tool server that executes the
     # read-only DuckDB data tools the agent chains internally. Must match
     # ADSB_AGENT_TOOL_SERVER_PORT on the Rust side (default 8787).
@@ -27,6 +40,21 @@ class Settings(BaseSettings):
     tool_server_timeout: float = 30.0
     # Max agent loop steps (LangGraph recursion limit) — caps tool-call hops.
     agent_recursion_limit: int = 25
+
+    # Simulation agent: a separate Python service (adsb-simulation-agent) that
+    # generates simulated flight trajectories, reached over the A2A protocol.
+    # Optional — if it isn't running, the tool reports a readable error and the
+    # rest of the agent is unaffected.
+    simulation_agent_url: str = "http://127.0.0.1:8300"
+    # Generation runs an LLM classification hop plus geometry, so it is slower
+    # than the DuckDB data tools.
+    simulation_agent_timeout: float = 60.0
+
+    # Scenario description: one short summarisation call, no tools and no graph
+    # hops, so it is far cheaper than a chat turn. Stated explicitly rather than
+    # left to the client default — an unstated caller/callee timeout mismatch
+    # has previously surfaced as an unreadable "could not reach ... ()" error.
+    describe_timeout: float = 60.0
 
     # MLflow tracing
     mlflow_enabled: bool = True

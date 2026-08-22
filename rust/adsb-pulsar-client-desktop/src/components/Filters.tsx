@@ -19,9 +19,6 @@ interface Props {
   onDensityAltitudeChange: (min: number, max: number) => void;
   densityTooltipMode: DensityTooltipMode;
   onDensityTooltipModeChange: (mode: DensityTooltipMode) => void;
-  showSimulation: boolean;
-  onToggleSimulation: () => void;
-  simulationCount: number;
   liveColorMode: AltitudeColorMode;
   onLiveColorModeChange: (mode: AltitudeColorMode) => void;
   historyColorMode: AltitudeColorMode;
@@ -71,7 +68,7 @@ function Section({ title, defaultOpen, children }: { title: string; defaultOpen?
   );
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, showSimulation, onToggleSimulation, simulationCount, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange, showEvents, onToggleEvents, eventsCount, eventFilterMode, onEventFilterModeChange, eventUpcomingDays, onEventUpcomingDaysChange, eventTimeRangeStart, eventTimeRangeEnd, onEventTimeRangeChange }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange, showEvents, onToggleEvents, eventsCount, eventFilterMode, onEventFilterModeChange, eventUpcomingDays, onEventUpcomingDaysChange, eventTimeRangeStart, eventTimeRangeEnd, onEventTimeRangeChange }: Props) {
   return (
     <div className="flex flex-col gap-2 p-4">
 
@@ -428,24 +425,6 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
             </div>
           )}
         </div>
-      </Section>
-
-      {/* ── Simulation ── */}
-      <Section title="Simulation">
-        <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={showSimulation}
-            onChange={onToggleSimulation}
-            className="accent-emerald-500"
-          />
-          <span>
-            Demo flights{" "}
-            {showSimulation && (
-              <span className="text-slate-500 font-mono">({simulationCount} sim)</span>
-            )}
-          </span>
-        </label>
       </Section>
 
     </div>
