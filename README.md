@@ -22,10 +22,22 @@ Higher-performance and desktop components (Cargo workspace):
 |-------------------|-------------|
 | `adsb-pulsar-client/` | Rust Pulsar client library + CLI binary (~5 MB, ~50k msg/s) |
 | `adsb-data-engine/` | Shared SBS-1 parser, geo utilities, and DuckDB local storage |
-| `adsb-pulsar-client-desktop/` | Tauri v2 desktop app (Rust backend + Next.js 15 frontend) |
-| `adsb-agent/` | AI agent layer (LangGraph ReAct loop, voice/audio models) |
+| `adsb-pulsar-client-desktop/` | Tauri v2 desktop app (Rust backend + Next.js 16 / React 19 frontend) |
+| `adsb-agent/` | AI agent layer (LangGraph ReAct loop, AG-UI chat, voice/audio models) — Python, not a Cargo member |
+| `adsb-simulation-agent/` | A2A agent generating kinematically plausible simulated trajectories — Python, not a Cargo member |
 
 See [`rust/README.md`](rust/README.md) for detailed setup, build commands, and crate documentation.
+
+### Flight simulation
+
+The desktop app can fly **simulated aircraft** described in plain language
+("police helicopter circling the old port"): `adsb-agent` (:8000) proxies the request
+over A2A to `adsb-simulation-agent` (:8300), which returns timed waypoints respecting
+real flight-dynamics limits. Trajectories play back per aircraft and can be saved as
+named scenarios that replay offline. Both Python services are optional.
+
+See the [simulation agent README](rust/adsb-simulation-agent/README.md) and the
+[desktop app README](rust/adsb-pulsar-client-desktop/README.md).
 
 ### `graphify-out/`
 
