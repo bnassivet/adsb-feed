@@ -26,7 +26,7 @@ brew install node
 nvm install --lts
 ```
 
-**Python 3.12+ and [uv](https://github.com/astral-sh/uv)** (only for the optional AI assistant — see section 5):
+**Python 3.12+ and [uv](https://github.com/astral-sh/uv)** (only for the optional AI assistant and trajectory generation — see sections 5 and 6; demo flights need neither):
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
@@ -63,13 +63,25 @@ The app window opens automatically. Use **Settings** to configure the connection
 
 Open **Settings** from the top-right corner of the dashboard.
 
-### Test Mode (no Pulsar, no dump1090 needed)
+### No hardware at all: demo flights
+
+If you have no receiver yet and just want aircraft on the map, skip the connection
+entirely: open the **Simulation** panel in the left sidebar and tick **Demo flights**.
+Twenty aircraft start flying predefined Montreal-area routes immediately — no settings,
+no dump1090, no Pulsar, nothing to install. They render through exactly the same paths as
+live traffic, so the map, table, filters and details panel all behave normally.
+
+This is the fastest way to check the app works. See §6 for generating your own flights.
+
+### Test Mode (no Pulsar needed)
 
 1. Check **Test mode**
 2. Set **Socket Host** to `localhost` and **Socket Port** to `30003`
 3. Click **Save**
 
-The client will attempt to connect to the socket but won't require a Pulsar broker.
+The client will attempt to connect to the socket but won't require a Pulsar broker. Note
+this still needs *something* listening on the socket — for a completely standalone run,
+use demo flights above.
 
 ### With Local dump1090
 
@@ -103,7 +115,7 @@ Aircraft should appear on the map and in the table within seconds.
 | Area | Description |
 |------|-------------|
 | **Header** | Connection status indicators (Socket / Pulsar), Start/Stop button, Settings link |
-| **Sidebar** | Filter aircraft by callsign, altitude range, and ground speed range |
+| **Sidebar** | Filter aircraft by callsign, altitude range, and ground speed range; also holds the **Simulation** panel (demo flights, scenarios, generated trajectories — see §6) |
 | **Map** | Leaflet map with aircraft markers colored by altitude and rotated by heading |
 | **Details Panel** | Click any aircraft (map marker or table row) to open a right panel with full details: altitude sparkline with time/altitude axes, vertical tendency, squawk, message count, and last-seen time. Drag the left edge to resize; use `<<`/`>>` to fold/unfold |
 | **Table** | Sortable aircraft list with callsign, altitude, speed, squawk, and position |
@@ -141,7 +153,47 @@ For configuration, environment variables, and voice-input (Voxtral / LFM2.5-Audi
 see [`agent/README.md`](../adsb-agent/README.md). For the architecture, see
 [docs/DESIGN.md §18](docs/DESIGN.md#ai-agent--ag-ui-integration).
 
-## 6. Build for Production
+## 6. (Optional) Generate Your Own Flights
+
+Demo flights (§3) need nothing at all. To describe a flight in plain language and get
+real waypoint geometry back, start the **simulation agent** as well — it is a second
+process, called by `adsb-agent` over A2A, so you need both running:
+
+```bash
+cd adsb-feed/rust/adsb-simulation-agent
+
+uv sync --all-extras
+
+# Start the agent (defaults to port 8300)
+uv run python -m adsb_simulation_agent
+```
+
+Verify it is up:
+
+```bash
+curl http://localhost:8300/health
+```
+
+Then, in the **Simulation** panel, open **Generate trajectories**, describe what you want
+("police helicopter circling the old port"), and press Generate — or just ask in the chat
+panel, which starts the aircraft flying immediately.
+
+| Control | What it does |
+|---------|--------------|
+| **Start / Pause / Resume / Stop** | Transport, per trajectory or for the whole scenario |
+| Timeline slider | Scrub to any point; the trail shortens when you drag backwards |
+| **Eye** icon | Hide a trajectory (or all of them) **without stopping its clock** — un-hiding reveals it where it should be by now |
+| **+ Add to scenario** | Save into a named scenario in DuckDB. Saved scenarios replay offline — no Python agent needed |
+
+> **The LLM is optional here.** Without an LLM endpoint the simulation agent ignores the
+> route hint and uses seeded default plans; a missing LM Studio degrades the feature
+> rather than breaking it. Without either agent running, the panel shows a readable error
+> and demo flights plus saved scenarios still work.
+
+For configuration and the A2A details, see
+[`adsb-simulation-agent/README.md`](../adsb-simulation-agent/README.md).
+
+## 7. Build for Production
 
 ```bash
 npm run tauri build
@@ -160,6 +212,26 @@ The socket host is unreachable. Go to **Settings** and verify the **Socket Host*
 Pulsar isn't running at the configured broker URL. Either:
 - Start Pulsar: `docker run -it -p 6650:6650 -p 8080:8080 apachepulsar/pulsar:latest bin/pulsar standalone`
 - Or enable **Test mode** in Settings to skip Pulsar
+
+### Generate fails in the Simulation panel
+
+Trajectory generation needs **both** Python agents: `adsb-agent` on :8000 and
+`adsb-simulation-agent` on :8300 (see §6). Check each:
+
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8300/health
+```
+
+Demo flights and already-saved scenarios need neither, so if those still work the app
+itself is fine.
+
+### No aircraft appear at all
+
+Before debugging the feed, tick **Demo flights** in the Simulation panel. If simulated
+aircraft render, the map, filters and rendering pipeline are all working and the problem
+is the connection (see the two issues above). If they *don't*, check the Web Inspector
+console — it is a frontend problem, not a receiver one.
 
 ### First build is slow
 

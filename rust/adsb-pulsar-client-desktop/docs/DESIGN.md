@@ -28,7 +28,7 @@
 
 The ADS-B Aircraft Tracker is a **cross-platform desktop application** built with **Tauri v2**, combining:
 - **Backend**: Rust (performance-critical data ingestion and processing)
-- **Frontend**: Next.js 15 + React 19 + TypeScript (modern, reactive UI)
+- **Frontend**: Next.js 16 + React 19 + TypeScript (modern, reactive UI)
 - **Styling**: Tailwind CSS 4 (utility-first styling)
 - **Mapping**: Leaflet + React-Leaflet (interactive geospatial visualization)
 
@@ -159,6 +159,55 @@ The same field is readable and writable from chat via `getScenario` and
 Because storage now applies partial updates (`COALESCE(?, column)`), each setter sends only
 the field it changes — a rename cannot clobber a description, and vice versa.
 
+#### Panel layout
+
+`SimulationPanel` is laid out in **three zones**, ordered by how often each is touched:
+
+| Zone | Contents | Behaviour |
+|------|----------|-----------|
+| Top | "Demo flights" shortcut, `ScenarioBar` | Always visible |
+| Middle | Generation form | `<details>` — folds away once it has been used |
+| Bottom | Trajectory list + transport | `max-h-[40vh] overflow-y-auto` on the list only |
+
+The list gets its **own** scroll area so the transport row beneath it cannot scroll out
+of reach — with a dozen trajectories the panel would otherwise push Start/Pause/Stop
+below the fold, which is exactly when they are wanted.
+
+The fold state is `useLocalStorage<boolean | null>("adsb-sim-generate-open", null)`, and
+the `null` is load-bearing. Two-valued state cannot distinguish "closed by default" from
+"the user closed it", so a smart default would silently overwrite a real preference.
+With three values the default is *derived during render* —
+`genOpenPref ?? trajectories.length === 0`, open while there is nothing to show, closed
+once the list fills — and the first deliberate toggle wins permanently. Deriving it in
+render rather than in an effect also keeps it StrictMode-safe.
+
+#### Trajectory visibility
+
+Show/hide is a **third axis, independent of transport**. `isVisible(entry)` is only
+`state !== "stopped"`, so before this existed the sole way to take an aircraft off the
+map was to Stop it — which rewinds `elapsedS` to 0. Hiding leaves the clock running: an
+un-hidden aircraft reappears where it should be by now, which is what makes it usable
+for isolating one aircraft in a busy scenario.
+
+**Marker and route deliberately take different rules, because they answer different
+questions:**
+
+| Overlay | Question | Rule |
+|---------|----------|------|
+| Aircraft marker | "where is it *now*?" | `isVisible(entry)` — genuinely needs a clock |
+| Planned route (dashed) | "where will it *go*?" | `visibleRouteTrajectories(trajectories, hidden?)` — the eye alone |
+
+A route is static geometry, so it is worth seeing before anything has been played —
+that is the whole point of inspecting a scenario you have not run yet. The first cut
+tied the route to playback and a freshly generated scenario was invisible until Start
+was pressed.
+
+State reuses `hiddenSections` under section `"live"` rather than adding a parallel
+hidden set (see *Section-Aware Track Visibility* below). Simulated aircraft are ordinary
+members of `allTracks`, so the panel's eye and the aircraft table's eye are already the
+same switch for the same aircraft; a second set would mean two things to keep in
+agreement. Session-only — nothing is persisted, everything is visible again on restart.
+
 ### Key Design Principles
 
 1. **Separation of Concerns**: Frontend handles UI/UX, backend handles I/O, parsing, and persistence
@@ -173,7 +222,7 @@ the field it changes — a rename cannot clobber a description, and vice versa.
 | Layer | Technology | Version | Purpose |
 |-------|-----------|---------|---------|
 | **Desktop Framework** | Tauri | 2.x | Native app wrapper, IPC bridge |
-| **Frontend Framework** | Next.js | 15.x | React framework with SSG/SSR |
+| **Frontend Framework** | Next.js | 16.x | React framework with SSG/SSR |
 | **UI Library** | React | 19.x | Component-based UI |
 | **Language** | TypeScript | 5.x | Type-safe frontend code |
 | **Styling** | Tailwind CSS | 4.x | Utility-first CSS framework |
@@ -216,7 +265,7 @@ the field it changes — a rename cannot clobber a description, and vice versa.
 
 ## Frontend Architecture
 
-### Framework: Next.js 15 (App Router)
+### Framework: Next.js 16 (App Router)
 
 The frontend uses **Next.js App Router** with:
 - **Static Site Generation (SSG)**: Output to `out/` directory for Tauri
@@ -3477,12 +3526,44 @@ const filterBySection = (section: TrackSection, tracks: AircraftTrack[]) => {
 
 Table arrays are passed unfiltered — the table shows all tracks with visual dimming for hidden ones.
 
+### Second entry point: the Simulation panel
+
+`SimulationPanel` exposes the same eyes over its trajectories, writing to the **same**
+`hiddenSections["live"]` set — simulated aircraft are ordinary members of `allTracks`, so
+one aircraft has one visibility wherever it is toggled from.
+
+Two things had to change to make that true:
+
+**1. The route overlay was never filtered.** `visibleRoutes` consulted playback alone, so
+a simulated aircraft hidden from the *table* still drew its dashed planned route. That was
+a live pre-existing bug; the route list now applies the hidden set (and, per
+*Trajectory visibility* above, nothing else).
+
+**2. A subset toggle must not replace the section's set.** `handleToggleGroupVisibility`
+does `set(section, new Set(hexIdents))`, which is correct for the table — its hexes *are*
+the whole section — and wrong for the panel, whose trajectories are a **subset** of live.
+Reusing it would silently reveal every other hidden live aircraft. `toggleScopedVisibility`
+unions/subtracts only the hexes it is handed:
+
+```typescript
+// lib/track-visibility.ts — pure, so the scoping rule carries its own tests
+const allHidden = hexIdents.length > 0 && hexIdents.every(h => next.has(h));
+for (const h of hexIdents) allHidden ? next.delete(h) : next.add(h);
+return next.size === 0 ? undefined : next;   // empty set ⇒ drop the entry
+```
+
+Group state stays derived the same way as the table's: the header eye reads closed only
+when *every* trajectory is hidden.
+
 ### Files
 
 | File | Role |
 |------|------|
-| `src/app/page.tsx` | `hiddenSections` state, `handleToggleMapVisibility` (per-track), `handleToggleGroupVisibility` (bulk add/remove), `filterBySection`, `densityTracks` (unfiltered) |
+| `src/app/page.tsx` | `hiddenSections` state, `handleToggleMapVisibility` (per-track), `handleToggleGroupVisibility` (bulk add/remove), `handleToggleTrajectoriesVisibility` (scoped, panel-only), `filterBySection`, `visibleRoutes`, `densityTracks` (unfiltered) |
 | `src/components/AircraftTable.tsx` | `GroupEyeButton` (derived state from tracks + hiddenSections), per-track eye with selection-aware batch toggle, row dimming |
+| `src/components/SimulationPanel.tsx` | Per-trajectory + all-trajectories eyes, row dimming; the eye sits **outside** the row `<label>` (a button inside it would also toggle the transport checkbox) |
+| `src/components/EyeIcon.tsx` | Shared open/closed SVG, lifted out of `AircraftTable`; keeps `data-icon="eye-open"` / `"eye-closed"` (tests key on them) |
+| `src/lib/track-visibility.ts` | `toggleScopedVisibility` — the subset rule |
 
 ---
 

@@ -1,6 +1,6 @@
 # ADS-B Aircraft Tracker
 
-A desktop application for real-time aircraft tracking and historical analysis, built with **Tauri v2**, **Next.js 15**, and **DuckDB**.
+A desktop application for real-time aircraft tracking and historical analysis, built with **Tauri v2**, **Next.js 16**, and **DuckDB**.
 
 Connects to a [dump1090](https://github.com/flightaware/dump1090) receiver (directly or via [Apache Pulsar](https://pulsar.apache.org/)), displays live aircraft positions on an interactive map, and persists every data point to a local DuckDB database for later exploration.
 
@@ -50,8 +50,37 @@ Connects to a [dump1090](https://github.com/flightaware/dump1090) receiver (dire
 - Mark and annotate notable occurrences (unusual altitudes, rare callsigns)
 - Status timeline with color-coded audit trail of feed and storage events
 
+### Flight Simulation
+Put aircraft on the map with no receiver, no feed, and no live traffic — for demos,
+UI work, and reproducing a situation on demand. Three levels, cheapest first:
+
+- **Demo flights** — one toggle at the top of the Simulation panel animates 20
+  predefined Montreal-area routes. Zero setup; nothing to generate or save.
+- **Generated trajectories** — describe a flight in plain language ("orbit the port,
+  then land downtown") and the simulation agent returns real waypoint geometry:
+  multi-leg routes, climb/cruise/descent phases, and per-waypoint timing. Generate
+  from the panel form, or just ask in chat — chat-generated aircraft start flying
+  immediately.
+- **Scenarios** — name a collection of trajectories, each with its own
+  `start_offset_s` saying when it enters the timeline, and persist it to DuckDB.
+  Scenarios **replay offline**: the waypoints are stored verbatim, so a saved
+  scenario survives a restart and needs no Python agent to play back. Each carries a
+  prose description you can write yourself or have the LLM draft from the tracks it
+  contains.
+
+Playback is a proper transport: **Start / Pause / Resume / Stop** plus a scrub
+timeline, available per trajectory *and* for the scenario as a whole via its master
+clock. Visibility is an independent axis — the **eye** hides a trajectory's marker
+and route without touching its clock, per trajectory or all at once, so you can
+isolate one aircraft and un-hide the rest exactly where they should be by now. A
+shown trajectory draws its dashed **planned route** whether or not it is playing,
+which is what makes a freshly generated scenario inspectable before you press Start.
+
+> Generation needs `adsb-agent` (:8000) and `adsb-simulation-agent` (:8300). Without
+> them the panel shows a readable error, and demo flights plus saved scenarios still
+> work — the rest of the app is unaffected.
+
 ### Additional
-- **Simulated flights** demo mode with 20 predefined routes (no live feed needed)
 - **Receiver location** marker on the map with altitude tooltip
 - **Dark / Light** map tile themes
 - **Resizable panels** with state persisted across sessions
@@ -63,7 +92,7 @@ Connects to a [dump1090](https://github.com/flightaware/dump1090) receiver (dire
 │                     Tauri v2 Desktop App                     │
 │                                                             │
 │  ┌──────────────────────┐    ┌────────────────────────────┐ │
-│  │     Rust Backend      │    │    Next.js 15 Frontend     │ │
+│  │     Rust Backend      │    │    Next.js 16 Frontend     │ │
 │  │                       │    │                            │ │
 │  │  dump1090 TCP ──────────── Tauri Events ──► Leaflet Map │ │
 │  │  (or Pulsar)  bridge  │    │              ──► Data Table │ │
@@ -122,7 +151,7 @@ See [QUICKSTART.md](QUICKSTART.md) for full setup instructions including `protoc
 | Layer | Technology |
 |-------|------------|
 | Desktop framework | [Tauri v2](https://v2.tauri.app/) (Rust) |
-| Frontend | [Next.js 15](https://nextjs.org/) + [React 19](https://react.dev/) |
+| Frontend | [Next.js 16](https://nextjs.org/) + [React 19](https://react.dev/) |
 | Styling | [Tailwind CSS v4](https://tailwindcss.com/) |
 | Map | [Leaflet](https://leafletjs.com/) via [react-leaflet](https://react-leaflet.js.org/) |
 | Database | [DuckDB](https://duckdb.org/) (embedded, via `adsb-data-engine` crate) |
@@ -136,7 +165,7 @@ See [QUICKSTART.md](QUICKSTART.md) for full setup instructions including `protoc
 
 ## Testing
 
-~360 tests across Rust and TypeScript:
+~1,370 tests across Rust and TypeScript:
 
 ```bash
 # Rust (from adsb-feed/rust/)
@@ -147,7 +176,7 @@ npm test
 
 # Full CI gate
 cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --all --check
-npm test && npx next lint
+npm test && npm run lint
 ```
 
 ## Part of the ADS-B Project
