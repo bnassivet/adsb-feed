@@ -520,6 +520,70 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
 ---
 
+### Pattern 8: Nullable Persisted Preference (smart default + user override)
+
+**Use case**: a UI preference that should have a *context-sensitive* default until the
+user expresses an opinion — a section that starts open while it is empty and closes once
+it fills, but stays exactly where the user last put it thereafter.
+
+```typescript
+// SimulationPanel.tsx — the generation fold
+const [genOpenPref, setGenOpenPref] = useLocalStorage<boolean | null>(
+  "adsb-sim-generate-open",
+  null,
+);
+const genOpen = genOpenPref ?? trajectories.length === 0;   // derived during render
+
+<details open={genOpen} onToggle={(e) => setGenOpenPref(e.currentTarget.open)}>
+```
+
+**Why the third value**: `boolean` alone cannot distinguish *"closed because that is the
+default"* from *"closed because the user closed it"*. `null` means "no opinion yet", so
+the default is free to change with context while a real choice wins permanently.
+
+**Why during render, not in an effect**: an effect that "fixes up" the value would run
+after the user's own toggle and fight it — and StrictMode double-invocation makes that
+misbehave in ways non-Strict tests will not catch. Deriving with `??` is a pure
+expression: nothing to synchronise, nothing to race.
+
+**Don't** reach for a second `hasUserToggled` boolean. That is the same three states in
+two variables, with the extra ability to represent the impossible fourth.
+
+---
+
+### Pattern 9: Scoped Subset Toggle
+
+**Use case**: a bulk show/hide (or select-all) control acting on a **subset** of a set
+that another control owns in full.
+
+```typescript
+// lib/track-visibility.ts
+export function toggleScopedVisibility(
+  hidden: ReadonlySet<string> | undefined,
+  hexIdents: string[],
+): Set<string> | undefined {
+  const next = new Set(hidden ?? []);
+  const allHidden = hexIdents.length > 0 && hexIdents.every(h => next.has(h));
+  for (const h of hexIdents) allHidden ? next.delete(h) : next.add(h);
+  return next.size === 0 ? undefined : next;   // empty ⇒ drop the entry entirely
+}
+```
+
+**The trap**: the whole-set version is naturally written as
+`set(section, new Set(hexIdents))` — a *replace*. That is correct only while the control
+owns every member of the set. Point a subset control at it and everything outside the
+subset is silently reset: in this codebase, hiding the scenario's trajectories would have
+revealed every other hidden live aircraft.
+
+**Rules**:
+- A subset toggle **unions/subtracts**; only a whole-set toggle may replace.
+- Derive "all hidden" from the scoped list, not from the stored set's size.
+- Normalise empty back to `undefined`/absent so "nothing hidden" has one representation.
+- Put it in `src/lib/` as a pure function. The bug is invisible in a component test that
+  only renders the subset — the missing assertion is about the members you *didn't* pass.
+
+---
+
 ### Pattern 7: Agent Tool Registration (AG-UI)
 
 When adding a new capability the AI assistant can use, the **first decision is which
