@@ -372,6 +372,29 @@ The `SimulationPanel` lists each trajectory (waypoints, duration, altitude range
 
 **Multi-leg routes are drawn per leg.** A generated route can now be a sequence of legs — "come from here, work this area, then head over there" — and each waypoint carries an optional `leg_index`. `routeLegs()` splits the route at those boundaries and `MapInner` draws one polyline per leg, cycling `SIM_LEG_COLORS`; a single-leg route keeps the original blue, so nothing changes for simple results. Each leg repeats the previous leg's last point as its own first, otherwise there is a visible gap at every boundary. Playback needs no changes at all: `t_offset_s` stays monotonic across legs, so `sampleTrajectory`/`trailUpTo` are unaffected.
 
+**Show/hide is a third axis, independent of transport.** `isVisible(entry)` is
+just `state !== "stopped"`, so before this existed the only way to take an
+aircraft off the map was to Stop it — which rewinds `elapsedS` to 0. Hiding
+leaves the clock alone: un-hiding reveals the aircraft where it should be by now.
+`visibleTrajectories(trajectories, playback, hidden?)` in
+`lib/trajectory-playback.ts` is the single predicate.
+
+**The eyes reuse `hiddenSections`, they do not add a second hidden set.**
+Simulated aircraft are ordinary members of `allTracks`, so their *markers* were
+already filtered by `filterBySection("live", …)` — the panel's eye and the
+aircraft table's eye are the same switch for the same aircraft. Their **route
+overlays** were not filtered at all, so a hidden simulated aircraft kept drawing
+its dashed route; `visibleRoutes` now applies the hidden set too. Session state
+only — nothing is persisted, everything is visible again on restart.
+
+**A subset toggle must not replace the section's set.** `handleToggleGroupVisibility`
+does `set(section, new Set(hexIdents))`, which is right for the table (its hexes
+*are* the whole section) and wrong for the panel, whose trajectories are a subset
+— it would silently reveal every other hidden live aircraft.
+`toggleScopedVisibility` (`lib/track-visibility.ts`) unions/subtracts only the
+hexes it is given and is pinned by its own tests; `handleToggleTrajectoriesVisibility`
+is its only caller. The shared `EyeIcon` lives in `components/EyeIcon.tsx`.
+
 **The two sources are independent.** `showSimulation` gates **only** the 20 hardcoded demo flights. Its checkbox now lives at the top of `SimulationPanel` (it moved out of `Filters` — it is the cheapest way to put aircraft on the map, so it belongs beside the other simulation controls), but *proximity is not coupling*: it must stay wired to `useSimulatedTracks` alone. Agent trajectories render purely from their own playback state — Stop or Clear removes them. Coupling the two meant pressing Start in the Simulation Agent panel also launched all 20 demo flights; don't reintroduce it (there are regression tests in `useCopilotTools.test.ts` and `useTrajectoryPlayback.test.ts`).
 
 **The tool descriptions also have to keep them apart.** Both tools once described

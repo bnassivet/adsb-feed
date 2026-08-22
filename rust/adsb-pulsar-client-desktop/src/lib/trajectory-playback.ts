@@ -34,6 +34,23 @@ export function isVisible(entry: PlaybackEntry | undefined): boolean {
   return entry !== undefined && entry.state !== "stopped";
 }
 
+/**
+ * Trajectories that should actually be drawn: running, and not hidden.
+ *
+ * Visibility is a **separate axis** from transport. Hiding leaves the clock
+ * alone, so an aircraft un-hidden later reappears where it should be by now
+ * rather than back at the start — which is what stopping it would do.
+ */
+export function visibleTrajectories(
+  trajectories: AgentTrajectory[],
+  playback: PlaybackMap,
+  hidden?: ReadonlySet<string>,
+): AgentTrajectory[] {
+  return trajectories.filter(
+    (t) => isVisible(playback[t.hex_ident]) && !hidden?.has(t.hex_ident),
+  );
+}
+
 function clamp(value: number, lo: number, hi: number): number {
   return Math.min(Math.max(value, lo), hi);
 }

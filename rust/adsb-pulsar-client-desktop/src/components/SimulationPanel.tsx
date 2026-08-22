@@ -20,6 +20,7 @@
  */
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
+import { EyeIcon } from "./EyeIcon";
 import { simulateTrajectory, type SimulateRequest } from "@/lib/simulate-api";
 import { summarizeTrajectory, type AgentTrajectory } from "@/lib/simulation-data";
 import {
@@ -86,6 +87,16 @@ interface Props {
   showSimulation: boolean;
   onToggleSimulation: () => void;
   simulationCount: number;
+  /*
+   * Map visibility — a third axis, independent of both the selection checkbox
+   * (which targets transport) and the transport state itself. Hiding leaves the
+   * clock running, so un-hiding shows the aircraft where it should be by now.
+   *
+   * Optional: the panel is still usable as a plain generator without them.
+   */
+  hiddenHexes?: ReadonlySet<string>;
+  onToggleVisibility?: (hexIdent: string) => void;
+  onToggleAllVisibility?: (hexIdents: string[]) => void;
   scenario?: ScenarioIntegration;
 }
 
@@ -102,6 +113,9 @@ export function SimulationPanel({
   showSimulation,
   onToggleSimulation,
   simulationCount,
+  hiddenHexes,
+  onToggleVisibility,
+  onToggleAllVisibility,
   scenario,
 }: Props) {
   const [category, setCategory] = useState<Category>("helicopter");
@@ -218,6 +232,11 @@ export function SimulationPanel({
 
   const allSelected =
     trajectories.length > 0 && trajectories.every((t) => selected.has(t.hex_ident));
+
+  // Group eye reads "show all" only once *every* trajectory is hidden, matching
+  // `GroupEyeButton` in AircraftTable — there is no partial state.
+  const allHidden =
+    trajectories.length > 0 && trajectories.every((t) => hiddenHexes?.has(t.hex_ident));
 
   const toggleAll = useCallback(() => {
     setSelected(allSelected ? new Set() : new Set(trajectories.map((t) => t.hex_ident)));
@@ -404,16 +423,32 @@ export function SimulationPanel({
               Trajectories{" "}
               <span className="font-mono text-slate-500">({trajectories.length})</span>
             </span>
-            <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={allSelected}
-                onChange={toggleAll}
-                className="accent-blue-500"
-                aria-label="Select all trajectories"
-              />
-              All
-            </label>
+            <div className="flex items-center gap-2">
+              {onToggleAllVisibility && (
+                <button
+                  type="button"
+                  onClick={() => onToggleAllVisibility(trajectories.map((t) => t.hex_ident))}
+                  aria-label={
+                    allHidden
+                      ? "Show all trajectories on map"
+                      : "Hide all trajectories from map"
+                  }
+                  className={`transition ${allHidden ? "text-slate-600 hover:text-slate-300" : "text-slate-400 hover:text-slate-200"}`}
+                >
+                  <EyeIcon open={!allHidden} />
+                </button>
+              )}
+              <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={toggleAll}
+                  className="accent-blue-500"
+                  aria-label="Select all trajectories"
+                />
+                All
+              </label>
+            </div>
           </div>
 
           {/* Bounded so the transport row below never scrolls out of reach. */}
@@ -425,6 +460,8 @@ export function SimulationPanel({
                 entry={playback[trajectory.hex_ident]}
                 selected={selected.has(trajectory.hex_ident)}
                 onToggle={() => toggleOne(trajectory.hex_ident)}
+                hidden={hiddenHexes?.has(trajectory.hex_ident) ?? false}
+                onToggleVisibility={onToggleVisibility}
                 onSeek={onSeek}
                 scenario={scenario}
                 savedTrackId={scenario?.savedTrackIds[trajectory.hex_ident]}
@@ -485,6 +522,8 @@ function TrajectoryRow({
   entry,
   selected,
   onToggle,
+  hidden,
+  onToggleVisibility,
   onSeek,
   scenario,
   savedTrackId,
@@ -494,6 +533,8 @@ function TrajectoryRow({
   entry: PlaybackEntry | undefined;
   selected: boolean;
   onToggle: () => void;
+  hidden: boolean;
+  onToggleVisibility?: (hexIdent: string) => void;
   onSeek: (id: string, elapsedS: number) => void;
   scenario?: ScenarioIntegration;
   /** Present when this trajectory is saved in the active scenario. */
@@ -509,22 +550,38 @@ function TrajectoryRow({
   const label = trajectory.callsign || trajectory.hex_ident;
 
   return (
-    <li className="rounded border border-slate-700 bg-slate-800/50 px-2 py-1.5">
-      <label className="flex items-center gap-2 cursor-pointer select-none">
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={onToggle}
-          className="accent-blue-500"
-          aria-label={`Select ${label}`}
-        />
-        <span className="text-sm text-slate-200 font-mono">{label}</span>
-        <span className="text-xs text-slate-500">{trajectory.category}</span>
-        <span className="ml-auto flex items-center gap-1.5 text-xs text-slate-400">
-          <span className={`inline-block w-1.5 h-1.5 rounded-full ${style.dot}`} />
-          {style.label}
-        </span>
-      </label>
+    <li className={`rounded border border-slate-700 bg-slate-800/50 px-2 py-1.5 ${hidden ? "opacity-50" : ""}`}>
+      {/*
+        The eye sits *outside* the label: a <button> nested in a <label> would
+        toggle the selection checkbox as well as firing its own handler.
+      */}
+      <div className="flex items-center gap-2">
+        {onToggleVisibility && (
+          <button
+            type="button"
+            onClick={() => onToggleVisibility(trajectory.hex_ident)}
+            aria-label={hidden ? `Show ${label} on map` : `Hide ${label} from map`}
+            className={`transition ${hidden ? "text-slate-600 hover:text-slate-300" : "text-slate-400 hover:text-slate-200"}`}
+          >
+            <EyeIcon open={!hidden} />
+          </button>
+        )}
+        <label className="flex flex-1 min-w-0 items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggle}
+            className="accent-blue-500"
+            aria-label={`Select ${label}`}
+          />
+          <span className="text-sm text-slate-200 font-mono">{label}</span>
+          <span className="text-xs text-slate-500">{trajectory.category}</span>
+          <span className="ml-auto flex items-center gap-1.5 text-xs text-slate-400">
+            <span className={`inline-block w-1.5 h-1.5 rounded-full ${style.dot}`} />
+            {style.label}
+          </span>
+        </label>
+      </div>
 
       <div className="mt-1 text-xs text-slate-500">
         {summary.waypointCount} wp · {formatClock(summary.durationS)} ·{" "}

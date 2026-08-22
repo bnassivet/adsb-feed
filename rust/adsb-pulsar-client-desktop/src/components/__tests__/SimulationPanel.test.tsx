@@ -30,6 +30,8 @@ const B = traj("SIM-B2", "HELI002");
 function setup(over: Partial<Parameters<typeof SimulationPanel>[0]> = {}) {
   const handlers = {
     onToggleSimulation: vi.fn(),
+    onToggleVisibility: vi.fn(),
+    onToggleAllVisibility: vi.fn(),
     onTrajectories: vi.fn(),
     onStart: vi.fn(),
     onPause: vi.fn(),
@@ -474,5 +476,85 @@ describe("SimulationPanel — generation fold", () => {
     window.localStorage.setItem("adsb-sim-generate-open", "true");
     setup({ trajectories: [A] });
     expect(fold().open).toBe(true);
+  });
+});
+
+/**
+ * Show/hide is a third axis, independent of both the selection checkbox (which
+ * targets transport) and the transport state itself.
+ */
+describe("SimulationPanel — map visibility", () => {
+  it("offers an eye per trajectory", () => {
+    setup({ trajectories: [A, B] });
+    expect(screen.getByLabelText("Hide HELI001 from map")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hide HELI002 from map")).toBeInTheDocument();
+  });
+
+  it("reports the hex when a row eye is clicked", async () => {
+    const user = userEvent.setup();
+    const { onToggleVisibility } = setup({ trajectories: [A, B] });
+    await user.click(screen.getByLabelText("Hide HELI002 from map"));
+    expect(onToggleVisibility).toHaveBeenCalledWith("SIM-B2");
+  });
+
+  it("flips the row eye label for an already hidden trajectory", () => {
+    setup({ trajectories: [A, B], hiddenHexes: new Set(["SIM-A1"]) });
+    expect(screen.getByLabelText("Show HELI001 on map")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hide HELI002 from map")).toBeInTheDocument();
+  });
+
+  it("hides all trajectories from the group eye", async () => {
+    const user = userEvent.setup();
+    const { onToggleAllVisibility } = setup({ trajectories: [A, B] });
+    await user.click(screen.getByLabelText("Hide all trajectories from map"));
+    expect(onToggleAllVisibility).toHaveBeenCalledWith(["SIM-A1", "SIM-B2"]);
+  });
+
+  it("reads as show-all only when every trajectory is hidden", () => {
+    const { rerender } = setup({ trajectories: [A, B], hiddenHexes: new Set(["SIM-A1"]) });
+    // One of two hidden is still "hide all" — the group eye follows the majority
+    // rule used by the aircraft table, not a partial state.
+    expect(screen.getByLabelText("Hide all trajectories from map")).toBeInTheDocument();
+    rerender({ hiddenHexes: new Set(["SIM-A1", "SIM-B2"]) });
+    expect(screen.getByLabelText("Show all trajectories on map")).toBeInTheDocument();
+  });
+
+  it("never touches transport when hiding", async () => {
+    const user = userEvent.setup();
+    const { onStart, onPause, onResume, onStop, onSeek } = setup({ trajectories: [A, B] });
+    await user.click(screen.getByLabelText("Hide HELI001 from map"));
+    await user.click(screen.getByLabelText("Hide all trajectories from map"));
+    for (const fn of [onStart, onPause, onResume, onStop, onSeek]) {
+      expect(fn).not.toHaveBeenCalled();
+    }
+  });
+
+  it("does not change the selection when hiding", async () => {
+    const user = userEvent.setup();
+    setup({ trajectories: [A, B] });
+    expect(screen.getByLabelText("Select HELI001")).toBeChecked();
+    await user.click(screen.getByLabelText("Hide HELI001 from map"));
+    expect(screen.getByLabelText("Select HELI001")).toBeChecked();
+  });
+
+  it("omits the eyes entirely when no visibility handlers are supplied", () => {
+    render(
+      <SimulationPanel
+        receiverLocation={RECEIVER}
+        trajectories={[A]}
+        playback={{} as PlaybackMap}
+        showSimulation={false}
+        simulationCount={0}
+        onToggleSimulation={vi.fn()}
+        onTrajectories={vi.fn()}
+        onStart={vi.fn()}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onStop={vi.fn()}
+        onSeek={vi.fn()}
+      />,
+    );
+    expect(screen.queryByLabelText(/from map/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/on map/)).not.toBeInTheDocument();
   });
 });

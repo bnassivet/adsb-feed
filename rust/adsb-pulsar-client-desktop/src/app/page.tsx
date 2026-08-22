@@ -23,7 +23,8 @@ import type { SimulateRequest } from "@/lib/simulate-api";
 import { useTrajectoryPlayback } from "@/hooks/useTrajectoryPlayback";
 import { useScenarioPlayback } from "@/hooks/useScenarioPlayback";
 import { useScenarios } from "@/hooks/useScenarios";
-import { isVisible } from "@/lib/trajectory-playback";
+import { visibleTrajectories } from "@/lib/trajectory-playback";
+import { toggleScopedVisibility } from "@/lib/track-visibility";
 import { mergeScenarioPlayback } from "@/lib/scenario-playback";
 import {
   dedupeTrajectoriesByHex,
@@ -259,10 +260,16 @@ export default function Dashboard() {
     agentTrajectories,
     effectivePlayback,
   );
-  // Only routes for aircraft actually on the map get an overlay.
+  /*
+   * Simulated aircraft markers are hidden downstream, where `mapTracks` applies
+   * `filterBySection("live", …)` — they are ordinary tracks in `allTracks` by
+   * then. Their *route overlays* are not, so the hidden set has to be applied
+   * here too or a hidden aircraft keeps drawing its dashed route.
+   */
+  const hiddenLive = hiddenSections.get("live");
   const visibleRoutes = useMemo(
-    () => agentTrajectories.filter((t) => isVisible(effectivePlayback[t.hex_ident])),
-    [agentTrajectories, effectivePlayback],
+    () => visibleTrajectories(agentTrajectories, effectivePlayback, hiddenLive),
+    [agentTrajectories, effectivePlayback, hiddenLive],
   );
 
   // Agent trajectories are deliberately NOT gated on `showSimulation`: that
@@ -921,6 +928,31 @@ export default function Dashboard() {
     });
   }, []);
 
+  /*
+   * Simulated aircraft live in the "live" section like any other track, so the
+   * panel's eye and the aircraft table's eye are the same switch — one aircraft,
+   * one visibility, whichever list you click it in.
+   */
+  const handleToggleSimulatedVisibility = useCallback((hexIdent: string) => {
+    handleToggleMapVisibility(hexIdent, "live");
+  }, [handleToggleMapVisibility]);
+
+  /*
+   * Scoped variant for the Simulation panel: its trajectories are a *subset* of
+   * the live section, so it must union/subtract only its own hexes. Reusing
+   * `handleToggleGroupVisibility` would `set(section, new Set(hexIdents))` and
+   * silently reveal every other hidden live aircraft.
+   */
+  const handleToggleTrajectoriesVisibility = useCallback((hexIdents: string[]) => {
+    setHiddenSections(prev => {
+      const next = new Map(prev);
+      const scoped = toggleScopedVisibility(next.get("live"), hexIdents);
+      if (scoped) next.set("live", scoped);
+      else next.delete("live");
+      return next;
+    });
+  }, []);
+
   const handleToggleGroupVisibility = useCallback((section: TrackSection, hexIdents: string[]) => {
     setHiddenSections(prev => {
       const next = new Map(prev);
@@ -1144,6 +1176,9 @@ export default function Dashboard() {
               showSimulation={showSimulation}
               onToggleSimulation={handleToggleSimulation}
               simulationCount={simulatedTracks.length}
+              hiddenHexes={hiddenLive}
+              onToggleVisibility={handleToggleSimulatedVisibility}
+              onToggleAllVisibility={handleToggleTrajectoriesVisibility}
               scenario={scenarioIntegration}
             />
           }

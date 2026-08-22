@@ -3,6 +3,7 @@ import {
   STOPPED,
   formatClock,
   isVisible,
+  visibleTrajectories,
   pausePlayback,
   progressOf,
   resumePlayback,
@@ -257,5 +258,53 @@ describe("formatClock", () => {
 
   it("truncates fractional seconds", () => {
     expect(formatClock(9.9)).toBe("0:09");
+  });
+});
+
+/**
+ * Visibility is a *separate axis* from transport: hiding must never disturb the
+ * clock, so an aircraft un-hidden later reappears where it should be by now
+ * rather than back at the start.
+ */
+describe("visibleTrajectories", () => {
+  const A = traj("SIM-A");
+  const B = traj("SIM-B");
+  const C = traj("SIM-C");
+  const playing = { state: "playing", elapsedS: 30 } as const;
+
+  it("keeps every running trajectory when nothing is hidden", () => {
+    const out = visibleTrajectories([A, B], { "SIM-A": playing, "SIM-B": playing });
+    expect(out.map((t) => t.hex_ident)).toEqual(["SIM-A", "SIM-B"]);
+  });
+
+  it("drops stopped trajectories", () => {
+    const out = visibleTrajectories([A, B], { "SIM-A": playing, "SIM-B": STOPPED });
+    expect(out.map((t) => t.hex_ident)).toEqual(["SIM-A"]);
+  });
+
+  it("drops trajectories with no playback entry at all", () => {
+    const out = visibleTrajectories([A, B], { "SIM-A": playing });
+    expect(out.map((t) => t.hex_ident)).toEqual(["SIM-A"]);
+  });
+
+  it("drops hidden trajectories even while they are playing", () => {
+    const playback = { "SIM-A": playing, "SIM-B": playing, "SIM-C": playing };
+    const out = visibleTrajectories([A, B, C], playback, new Set(["SIM-B"]));
+    expect(out.map((t) => t.hex_ident)).toEqual(["SIM-A", "SIM-C"]);
+  });
+
+  it("leaves the playback map untouched when hiding", () => {
+    const playback = { "SIM-A": { state: "playing", elapsedS: 42 } as const };
+    visibleTrajectories([A], playback, new Set(["SIM-A"]));
+    expect(playback["SIM-A"]).toEqual({ state: "playing", elapsedS: 42 });
+  });
+
+  it("treats an omitted hidden set as nothing hidden", () => {
+    expect(visibleTrajectories([A], { "SIM-A": playing })).toHaveLength(1);
+  });
+
+  it("returns nothing when everything is hidden", () => {
+    const playback = { "SIM-A": playing, "SIM-B": playing };
+    expect(visibleTrajectories([A, B], playback, new Set(["SIM-A", "SIM-B"]))).toEqual([]);
   });
 });
