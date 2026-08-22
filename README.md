@@ -31,33 +31,13 @@ See [`rust/README.md`](rust/README.md) for detailed setup, build commands, and c
 ### Flight simulation
 
 The desktop app can fly **simulated aircraft** described in plain language
-("police helicopter circling the old port", "airliner on final into runway 27").
+("police helicopter circling the old port"): `adsb-agent` (:8000) proxies the request
+over A2A to `adsb-simulation-agent` (:8300), which returns timed waypoints respecting
+real flight-dynamics limits. Trajectories play back per aircraft and can be saved as
+named scenarios that replay offline. Both Python services are optional.
 
-```
-chat or Simulation panel
-   └─ adsb-agent (:8000) ──A2A──► adsb-simulation-agent (:8300) ──► timed waypoints
-                                                                       │
-                                      desktop playback engine ◄────────┘
-```
-
-- **The LLM only classifies.** It returns a route-pattern enum plus four scalars;
-  every coordinate is computed in Python. Any coordinates the model volunteers are
-  discarded — which is what makes this reliable on a small local model, and why the
-  feature degrades to seeded default plans when no LLM endpoint is reachable.
-- **Flight dynamics are structural, not checked after the fact.** Patterns are
-  enlarged per aircraft category to respect turn radius (`v/ω`), polyline corners are
-  replaced by true circular arcs, and altitude profiles are derived from the time the
-  route actually takes rather than clipped.
-- **Playback is per aircraft** — start / pause / resume / stop plus a time scrubber,
-  each with its own clock. The renderer is stateless (the trail is derived from the
-  route, not accumulated), so the timeline can be dragged backwards.
-- **Scenarios** save a named collection of trajectories with their waypoints verbatim,
-  so they replay offline after a restart with no Python service running.
-- Both Python services are **optional**: without them the app keeps live tracking, the
-  built-in demo-flight layer, and saved scenarios.
-
-Details: [`rust/adsb-simulation-agent/README.md`](rust/adsb-simulation-agent/README.md)
-and the [desktop app README](rust/adsb-pulsar-client-desktop/README.md).
+See the [simulation agent README](rust/adsb-simulation-agent/README.md) and the
+[desktop app README](rust/adsb-pulsar-client-desktop/README.md).
 
 ### `graphify-out/`
 

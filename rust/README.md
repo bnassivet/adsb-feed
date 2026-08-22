@@ -129,15 +129,7 @@ The bridge throttles ~50k msg/s down to ~2 UI updates/sec while persisting every
 
 **GeoJSON export/import**, events of interest, status timeline audit trail, a built-in demo-flight layer, and resizable panels with persistent layout.
 
-**Flight simulation** — a Simulation Agent panel (and the chat) generate aircraft from a
-plain-language route request: `adsb-agent` proxies over A2A to
-[`adsb-simulation-agent`](adsb-simulation-agent/README.md), which returns timed waypoints
-built to real flight-dynamics limits (turn radius per aircraft category, arc-rounded
-corners, time-derived altitude profiles). Each aircraft has its own transport
-(start/pause/resume/stop) and time scrubber; the trail renderer is stateless so playback
-can be seeked backwards. Trajectories can be saved as named **scenarios** that store
-waypoints verbatim and replay offline with no Python service running. Distinct from the
-demo-flight toggle above, which is a fixed layer you show and hide.
+**Flight simulation** — a Simulation Agent panel (and the chat) generate aircraft from a plain-language route request, proxied over A2A to [`adsb-simulation-agent`](adsb-simulation-agent/README.md), which returns timed waypoints built to real flight-dynamics limits. Each aircraft has its own transport controls and time scrubber, and trajectories can be saved as named **scenarios** that replay offline with no Python service running. Distinct from the demo-flight layer above, which is fixed and only toggled on or off.
 
 **AI assistant (AG-UI)** — an optional, fully local natural-language chat panel for querying live and historical traffic and driving the UI by text or voice. A LangGraph ReAct agent runs read-only DuckDB queries in-loop via a loopback tool server and forwards UI actions back to the frontend; voice input is handled by Voxtral or LFM2.5-Audio. See [docs/DESIGN.md §18](adsb-pulsar-client-desktop/docs/DESIGN.md#ai-agent--ag-ui-integration) and the [agent README](adsb-agent/README.md).
 
