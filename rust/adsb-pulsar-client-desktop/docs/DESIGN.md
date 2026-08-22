@@ -8,17 +8,25 @@
 5. [Data Flow](#data-flow)
 6. [State Management](#state-management)
 7. [Global Context Manager Pattern](#global-context-manager-pattern)
-8. [In-Memory Aircraft History](#in-memory-aircraft-history)
-9. [DuckDB Persistent History](#duckdb-persistent-history)
-10. [Storage Management (Release/Reclaim/Export)](#storage-management-releasereclaimexport)
-11. [DB History Panel](#db-history-panel)
-12. [GeoJSON Export/Import](#geojson-exportimport)
-13. [Imported Tracks Selection](#imported-tracks-selection)
-14. [Simulated Flights (Demo Mode)](#simulated-flights-demo-mode)
-15. [Config Persistence & Receiver Location](#config-persistence--receiver-location)
-16. [Analysis Mode](#analysis-mode)
-17. [Arrow IPC Query Pipeline](#arrow-ipc-query-pipeline)
-18. [AI Agent & AG-UI Integration](#ai-agent--ag-ui-integration)
+8. [Performance Considerations](#performance-considerations)
+9. [Security Considerations](#security-considerations)
+10. [Build and Deployment](#build-and-deployment)
+11. [Testing](#testing)
+12. [Future Enhancements](#future-enhancements)
+13. [In-Memory Aircraft History](#in-memory-aircraft-history)
+14. [DuckDB Persistent History](#duckdb-persistent-history)
+15. [Storage Management (Release/Reclaim/Export)](#storage-management-releasereclaimexport)
+16. [DB History Panel](#db-history-panel)
+17. [Status Event Audit Trail](#status-event-audit-trail)
+18. [Bidirectional Track Selection](#bidirectional-track-selection)
+19. [GeoJSON Export/Import](#geojson-exportimport)
+20. [Imported Tracks Selection](#imported-tracks-selection)
+21. [Simulated Flights (Demo Mode)](#simulated-flights-demo-mode)
+22. [Config Persistence & Receiver Location](#config-persistence--receiver-location)
+23. [Analysis Mode](#analysis-mode)
+24. [Section-Aware Track Visibility](#section-aware-track-visibility)
+25. [Arrow IPC Query Pipeline](#arrow-ipc-query-pipeline)
+26. [AI Agent & AG-UI Integration](#ai-agent--ag-ui-integration)
 
 ---
 
@@ -31,6 +39,221 @@ The ADS-B Aircraft Tracker is a **cross-platform desktop application** built wit
 - **Frontend**: Next.js 16 + React 19 + TypeScript (modern, reactive UI)
 - **Styling**: Tailwind CSS 4 (utility-first styling)
 - **Mapping**: Leaflet + React-Leaflet (interactive geospatial visualization)
+
+### System Architecture (C4 Model)
+
+The architecture is documented with the [C4 model](https://c4model.com/) at three levels
+of zoom. Each answers a different question, and the level boundaries are what keep any one
+diagram readable: **Context** says who uses the system and what it talks to, **Container**
+says what runs as a separate process or store, and **Component** says how the Rust side is
+built internally.
+
+Everything outside the Tauri binary is **optional**. The app degrades to real-time-only
+tracking rather than failing — no DuckDB, no agent, no LLM, no broker required.
+
+> **Notation.** These are Mermaid `flowchart` diagrams drawn to C4 conventions rather than
+> Mermaid's experimental `C4Context` syntax, which lays out poorly at this size. Every node
+> carries its C4 element type and technology in brackets; edges are labelled with intent
+> and protocol. Colours follow the standard C4 palette — dark blue people, mid blue
+> containers, light blue components, grey external systems — and **dashed edges mark
+> optional dependencies** the app runs without.
+
+#### Level 1 — System Context
+
+Who uses the tracker, and which external systems it depends on.
+
+```mermaid
+flowchart TB
+    operator["<b>Operator / Analyst</b><br/><i>[Person]</i><br/>Watches live traffic, replays history,<br/>authors scenarios, asks in natural language"]
+
+    tracker["<b>ADS-B Aircraft Tracker</b><br/><i>[Software System]</i><br/>Tauri desktop app. Ingests SBS-1, renders live<br/>and historical traffic, persists to an embedded<br/>OLAP store, hosts an optional AI assistant"]
+
+    dump["<b>dump1090 Receiver</b><br/><i>[External System]</i><br/>SDR decoder exposing SBS-1 on TCP 30003"]
+    pulsar["<b>Apache Pulsar</b><br/><i>[External System]</i><br/>Optional broker feeding the wider<br/>ads-b-project pipeline: Spark, Delta Lake"]
+    llm["<b>Local LLM Endpoint</b><br/><i>[External System]</i><br/>OpenAI-compatible server on :1234<br/>LM Studio or Ollama"]
+    mlflow["<b>MLflow</b><br/><i>[External System]</i><br/>Optional tracing backend on :5010"]
+
+    operator -->|"Tracks aircraft, queries history,<br/>speaks or types requests"| tracker
+    tracker -->|"Reads SBS-1 stream<br/><i>[TCP 30003]</i>"| dump
+    tracker -.->|"Publishes raw messages<br/><i>[Pulsar protocol]</i>"| pulsar
+    tracker -.->|"Reasoning, hint classification<br/><i>[HTTP / OpenAI API]</i>"| llm
+    tracker -.->|"Emits linked traces<br/><i>[HTTP]</i>"| mlflow
+
+    classDef person fill:#08427B,stroke:#052E56,color:#fff
+    classDef system fill:#1168BD,stroke:#0B4884,color:#fff
+    classDef external fill:#999999,stroke:#6B6B6B,color:#fff
+    class operator person
+    class tracker system
+    class dump,pulsar,llm,mlflow external
+```
+
+#### Level 2 — Container
+
+The separately runnable pieces. The tracker itself ships as **one Tauri binary**, but the
+frontend and the Rust backend are distinct runtimes with a real contract between them, so
+C4 treats them as two containers. The AI services are separate OS processes entirely.
+
+```mermaid
+flowchart TB
+    operator["<b>Operator / Analyst</b><br/><i>[Person]</i>"]
+
+    subgraph tracker["ADS-B Aircraft Tracker — one Tauri binary"]
+        frontend["<b>Frontend UI</b><br/><i>[Container: Next.js 16, React 19, Leaflet]</i><br/>Map, panels, five track categories, chat.<br/>Static export served from the webview"]
+        backend["<b>Tauri Backend</b><br/><i>[Container: Rust, Tokio, Tauri v2]</i><br/>Ingest lifecycle, IPC commands, throttling,<br/>batch persistence, loopback tool server"]
+        duckdb[("<b>History Store</b><br/><i>[Container: DuckDB 1.2 embedded]</i><br/>positions, raw_messages, status_events,<br/>scenarios, scenario_tracks")]
+    end
+
+    subgraph agents["Optional Local AI Services — separate processes"]
+        agent["<b>adsb-agent</b><br/><i>[Container: Python, FastAPI, LangGraph — :8000]</i><br/>ReAct chat agent, voice endpoints,<br/>simulate and describe proxies"]
+        simagent["<b>adsb-simulation-agent</b><br/><i>[Container: Python, A2A — :8300]</i><br/>Kinematically plausible trajectories<br/>from route hints"]
+        voice["<b>llama-liquid-audio</b><br/><i>[Container: llama.cpp — :2026]</i><br/>LFM2.5-Audio speech-to-text,<br/>auto-spawned on first voice request"]
+    end
+
+    dump["<b>dump1090</b><br/><i>[External System]</i><br/>SBS-1 over TCP 30003"]
+    pulsar["<b>Apache Pulsar</b><br/><i>[External System]</i><br/>Optional downstream broker"]
+    llm["<b>Local LLM</b><br/><i>[External System]</i><br/>OpenAI-compatible, :1234"]
+    mlflow["<b>MLflow</b><br/><i>[External System]</i><br/>Optional tracing, :5010"]
+
+    operator -->|"Uses<br/><i>[Tauri webview]</i>"| frontend
+    frontend -->|"invoke commands<br/><i>[Tauri IPC]</i>"| backend
+    backend -->|"adsb:message, adsb:status<br/><i>[Tauri events]</i>"| frontend
+    backend -->|"Reads message stream<br/><i>[TCP]</i>"| dump
+    backend -.->|"Forwards raw messages<br/><i>[Pulsar protocol]</i>"| pulsar
+    backend -->|"Batch insert every 500ms, queries<br/><i>[duckdb-rs on spawn_blocking]</i>"| duckdb
+
+    frontend -.->|"Chat, context, client-tool results;<br/>direct simulate and describe calls<br/><i>[AG-UI SSE + HTTP]</i>"| agent
+    agent -.->|"Read-only data tools<br/><i>[HTTP loopback 127.0.0.1:8787]</i>"| backend
+    agent -.->|"Generate trajectory<br/><i>[A2A]</i>"| simagent
+    agent -.->|"Transcribe<br/><i>[HTTP]</i>"| voice
+    agent -.->|"Reasoning<br/><i>[OpenAI API]</i>"| llm
+    simagent -.->|"Hint classification only<br/><i>[OpenAI API]</i>"| llm
+    agent -.->|"Traces"| mlflow
+    simagent -.->|"Linked child traces"| mlflow
+
+    classDef person fill:#08427B,stroke:#052E56,color:#fff
+    classDef container fill:#438DD5,stroke:#2E6295,color:#fff
+    classDef db fill:#438DD5,stroke:#2E6295,color:#fff
+    classDef external fill:#999999,stroke:#6B6B6B,color:#fff
+    classDef boundary fill:none,stroke:#666,stroke-dasharray: 6 4,color:#333
+    class operator person
+    class frontend,backend,agent,simagent,voice container
+    class duckdb db
+    class dump,pulsar,llm,mlflow external
+    class tracker,agents boundary
+```
+
+Note the asymmetry between the two arrows into the backend: the frontend calls it over
+Tauri IPC with full read/write access, while `adsb-agent` reaches it only over the
+**loopback tool server**, which exposes a strictly read-only surface.
+
+#### Level 3 — Component
+
+Inside the Tauri backend and the two Rust workspace crates it builds on. The dump1090 and
+Pulsar edges are omitted here — they belong to Level 2; `client.rs` is the component that
+owns them.
+
+```mermaid
+flowchart TB
+    frontend["<b>Frontend UI</b><br/><i>[Container: Next.js, React]</i>"]
+    agent["<b>adsb-agent</b><br/><i>[Container: Python, :8000]</i>"]
+
+    subgraph backend["Tauri Backend — src-tauri/src"]
+        lib["<b>lib.rs</b><br/><i>[Component: Rust]</i><br/>Tauri builder, init_storage,<br/>spawns the tool server"]
+        commands["<b>commands.rs</b><br/><i>[Component: Rust]</i><br/>IPC handlers: feed control, queries,<br/>scenario CRUD, Arrow variants"]
+        state["<b>state.rs</b><br/><i>[Component: Rust]</i><br/>AppState: Mutex Config, FeedHandle,<br/>SharedStorage, StorageAvailability"]
+        bridge["<b>bridge.rs</b><br/><i>[Component: Rust]</i><br/>Throttles 50k msg/s to ~2 updates/s,<br/>batch persist, StatusEventRecorder"]
+        toolserver["<b>tool_server.rs</b><br/><i>[Component: Rust, axum]</i><br/>POST /tools/name on 127.0.0.1:8787<br/>Loopback only, non-fatal bind failure"]
+        toolservice["<b>tool_service.rs</b><br/><i>[Component: Rust]</i><br/>Tool name to storage query<br/>Read-only surface"]
+    end
+
+    subgraph core["adsb-pulsar-client — core library and CLI"]
+        client["<b>client.rs</b><br/><i>[Component: Rust, Tokio]</i><br/>TCP ingest loop from dump1090,<br/>broadcast message tap"]
+        config["<b>config.rs</b><br/><i>[Component: Rust]</i><br/>Config with dual clap<br/>and serde derives"]
+        monitor["<b>connection_monitor.rs</b><br/><i>[Component: Rust]</i><br/>Heartbeat watchdog<br/>and reconnection policy"]
+        metrics["<b>metrics.rs</b><br/><i>[Component: Rust]</i><br/>Thread-safe throughput counters"]
+        forwarder["<b>forwarder/</b><br/><i>[Component: Rust trait]</i><br/>MessageForwarder fan-out:<br/>pulsar_forwarder.rs, file.rs"]
+    end
+
+    subgraph engine["adsb-data-engine — parser and storage"]
+        parser["<b>sbs_parser.rs</b><br/><i>[Component: Rust]</i><br/>22-field SBS-1 CSV parser,<br/>MSG types 1-8"]
+        storage["<b>storage.rs</b><br/><i>[Component: Rust, duckdb-rs]</i><br/>StorageHandle: inserts, bbox and<br/>trajectory queries, export, reclaim"]
+        geo["<b>geo.rs</b><br/><i>[Component: Rust]</i><br/>Pure geodesic math: haversine,<br/>bearing, sector mapping"]
+        types["<b>types.rs, error.rs</b><br/><i>[Component: Rust, serde]</i><br/>Wire types shared with<br/>TypeScript, StorageError"]
+    end
+
+    duckdb[("<b>adsb_history.db</b><br/><i>[DuckDB 1.2]</i>")]
+
+    frontend -->|"invoke<br/><i>[Tauri IPC]</i>"| commands
+    bridge -->|"adsb:message, adsb:status<br/><i>[Tauri events]</i>"| frontend
+    agent -.->|"Tool calls<br/><i>[HTTP loopback]</i>"| toolserver
+
+    lib --> commands
+    lib -->|"Initializes"| state
+    lib -->|"Spawns"| toolserver
+    commands -->|"Reads, mutates"| state
+    commands -->|"Start, stop feed"| bridge
+    commands -->|"Queries"| storage
+    toolserver -->|"Dispatches by name"| toolservice
+    toolservice -->|"Read-only queries"| storage
+
+    bridge -->|"Spawns, taps"| client
+    bridge -->|"Parses each line"| parser
+    bridge -->|"persist_batch every 500ms"| storage
+    client --> forwarder
+    client --> monitor
+    client --> metrics
+    config -->|"Configures"| client
+
+    storage --> geo
+    storage --> types
+    storage -->|"Reads, writes"| duckdb
+
+    classDef container fill:#438DD5,stroke:#2E6295,color:#fff
+    classDef component fill:#85BBF0,stroke:#5D82A8,color:#000
+    classDef boundary fill:none,stroke:#666,stroke-dasharray: 6 4,color:#333
+    class frontend,agent container
+    class lib,commands,state,bridge,toolserver,toolservice,client,config,monitor,metrics,forwarder,parser,storage,geo,types component
+    class duckdb container
+    class backend,core,engine boundary
+```
+
+#### Component inventory
+
+| Component | Location | Role | Optional? |
+|-----------|----------|------|-----------|
+| **dump1090** | External, TCP `:30003` | SBS-1 message source | Required for live data |
+| **adsb-pulsar-client** | `rust/adsb-pulsar-client/` | Core ingest library + standalone CLI. Owns the TCP loop, heartbeat watchdog, metrics, and the `MessageForwarder` fan-out | Compiled in |
+| ├ `forwarder/pulsar_forwarder.rs` | same | Publishes to Pulsar; behind the `pulsar` cargo feature | Yes — feature-gated |
+| └ `forwarder/file.rs` | same | Writes raw messages to disk for later replay | Yes |
+| **adsb-data-engine** | `rust/adsb-data-engine/` | SBS-1 parser, DuckDB `StorageHandle`, geodesic math. Deliberately Tauri-free so it is testable standalone | Compiled in |
+| **Tauri backend** | `src-tauri/src/` | `lib.rs` builder, `commands.rs` IPC, `state.rs` shared state, `bridge.rs` throttle + persist, `tool_server.rs`/`tool_service.rs` agent data plane | Compiled in |
+| **DuckDB file** | `adsb_history.db` | Persistent positions, raw messages, status events, scenarios | Yes — real-time-only mode if init fails |
+| **Next.js frontend** | `src/` | React 19 UI: Leaflet map, panels, five track categories in `AircraftTrackingContext` | Compiled in |
+| **Apache Pulsar** | External broker | Fan-out to the wider `ads-b-project` pipeline (Spark, Delta Lake) | Yes |
+| **adsb-agent** | `rust/adsb-agent/` (Python) | LangGraph ReAct chat agent on `:8000`; AG-UI SSE to the frontend, loopback HTTP to `:8787`, voice endpoints, `/simulate/trajectory` and `/scenario/describe` | Yes |
+| **adsb-simulation-agent** | `rust/adsb-simulation-agent/` (Python) | A2A service on `:8300` turning route hints into kinematically plausible waypoints | Yes |
+| **LLM endpoint** | External `:1234` | OpenAI-compatible model for both agents | Yes |
+| **llama-liquid-audio** | `127.0.0.1:2026` | LFM2.5-Audio batch STT, auto-spawned on first voice request | Yes |
+| **MLflow** | `:5010` | Shared tracing experiment across both agents | Yes |
+
+#### Trust and process boundaries
+
+Three boundaries matter, and they are not the same line:
+
+1. **Process boundary (Tauri IPC)** — frontend ↔ Rust backend. Crossed by `invoke` in one
+   direction and Tauri events in the other. Both sides ship in the same binary, so this is
+   a boundary of *concern*, not of trust.
+2. **Loopback boundary (`:8787`)** — the tool server binds `127.0.0.1` only and exposes a
+   strictly **read-only** surface. It is what lets an external agent process read the
+   DuckDB store without being handed the app's write path.
+3. **Service boundary (`:8000`, `:8300`)** — the Python agents. Every call across it is
+   failure-tolerant by construction: an unreachable agent disables chat and LLM-assisted
+   generation, and nothing else.
+
+The asymmetry is deliberate. The agent may *read* everything through `:8787`, but every
+action that **mutates** UI or app state is a client tool routed back through AG-UI to the
+frontend — so a model can never silently change what the user sees. See
+[AI Agent & AG-UI Integration](#ai-agent--ag-ui-integration).
 
 ### Architecture Pattern: Event-Driven IPC (Inter-Process Communication)
 
@@ -1316,8 +1539,10 @@ src-tauri/
 │   ├── main.rs           # Entry point (calls lib.rs::run())
 │   ├── lib.rs            # Tauri app initialization + init_storage()
 │   ├── commands.rs       # Tauri command handlers (feed control + DuckDB queries)
-│   ├── state.rs          # Application state (Mutex<Config>, FeedHandle, storage: Option<StorageHandle>)
-│   └── bridge.rs         # Bridge between client library and Tauri + DuckDB writes
+│   ├── state.rs          # Application state (Mutex<Config>, FeedHandle, storage: SharedStorage)
+│   ├── bridge.rs         # Bridge between client library and Tauri + DuckDB writes + StatusEventRecorder
+│   ├── tool_server.rs    # Loopback axum server on 127.0.0.1:8787 (agent read-only data plane)
+│   └── tool_service.rs   # Tool name → DuckDB query dispatch over SharedStorage
 ├── build.rs              # Build script
 ├── Cargo.toml            # Rust dependencies
 ├── tauri.conf.json       # Tauri configuration
@@ -1332,6 +1557,9 @@ graph TD
     Main[main.rs<br/>Entry Point] --> Lib[lib.rs<br/>Tauri Builder + init_storage]
     Lib --> Commands[commands.rs<br/>Tauri Commands]
     Lib --> State[state.rs<br/>AppState]
+    Lib --> ToolServer[tool_server.rs<br/>axum on 127.0.0.1:8787]
+    ToolServer --> ToolService[tool_service.rs<br/>tool name to query]
+    ToolService -->|read-only| Storage
 
     Commands --> Bridge[bridge.rs<br/>Bridge Layer]
     Bridge --> Client[adsb-pulsar-client<br/>Core Library]
@@ -1352,7 +1580,13 @@ graph TD
     style Frontend fill:#BA68C8
     style Storage fill:#CE93D8
     style Parser fill:#CE93D8
+    style ToolServer fill:#F48FB1
+    style ToolService fill:#F48FB1
 ```
+
+> The tool server is the **agent data plane** and is reachable only from loopback. It
+> shares `SharedStorage` with `commands.rs` but exposes no write path — see
+> [AI Agent & AG-UI Integration](#ai-agent--ag-ui-integration).
 
 ### Backend Modules
 
@@ -3676,7 +3910,7 @@ over the app's DuckDB store server-side and forwards UI actions back to the fron
 > The agent is a **separate, optional process**. If it is not running, the rest of the
 > app is unaffected — the chat panel simply reports the agent as unreachable. Backend
 > setup, environment variables, and voice-model installation live in
-> [`agent/README.md`](../../adsb-agent/README.md); this section documents the **design** and how
+> [`adsb-agent/README.md`](../../adsb-agent/README.md); this section documents the **design** and how
 > the pieces connect to the desktop app.
 
 ### Architecture Overview
@@ -3753,6 +3987,43 @@ The Rust backend exposes the read-only data plane over a **loopback-only** HTTP 
 | Result rendering | `src/components/chat/` | Each data tool has a `render()` callback that displays a rich card (e.g. `StorageStatsCard`, `AircraftSummaryTable`) keyed off CopilotKit status (`in_progress` / `executing` / `complete`). |
 | Chat panel shell | `src/components/AIChatPanel.tsx` | Three docking modes — collapsed (32px strip), docked (resizable 280–560px), floating (draggable window). State persisted via `useLocalStorage` keys `adsb-aichat-open` / `-docked-expanded` / `-width` / `-floating` / `-float-x/y/w/h`. |
 
+### Simulation Agent (A2A)
+
+Trajectory generation lives in a **second Python service**, `adsb-simulation-agent` on
+`:8300`, which `adsb-agent` calls over the [A2A protocol](https://a2a-protocol.org/). It
+is not part of the Cargo workspace.
+
+```
+Frontend ──POST /simulate/trajectory──▶ adsb-agent :8000 ──A2A──▶ adsb-simulation-agent :8300
+   or                                        │                            │
+Chat ──generateSimulatedTrajectory──────────▶ ┘                       LLM :1234
+                                                                  (route-hint classify only)
+```
+
+Why a separate service rather than a tool inside the chat agent:
+
+| Concern | Consequence |
+|---------|-------------|
+| **Flight dynamics is a domain, not a prompt** | `kinematics.py`, `geometry.py`, `trajectory.py` and `validate.py` encode turn rates, climb envelopes and plausibility checks. That is deterministic code with its own test suite — it does not belong in a reasoning loop. |
+| **The LLM is optional here** | The model only *classifies a route hint*. With no LLM reachable, seeded default plans are used and generation still succeeds. Degradation, never failure. |
+| **Two entry points, one implementation** | The Simulation panel calls it directly over HTTP; chat reaches it as a tool. Both land on the same generator. |
+| **Retry belongs next to validation** | `ADSB_SIM_AGENT_MAX_RETRIES` regenerates after a failed plausibility check, in-service — invisible to the caller. |
+
+Traces from both services share the **same MLflow experiment** and are linked, so one chat
+turn yields one trace spanning both processes:
+
+```
+chat_turn (adsb-agent)
+└─ tool.generateSimulatedTrajectory
+   └─ simulate_trajectory (adsb-simulation-agent)
+```
+
+Key modules: `graph.py` (LangGraph flow), `intent.py` (route-hint classification),
+`trajectory.py` + `kinematics.py` + `geometry.py` (generation), `validate.py`
+(plausibility), `executor.py`, `agent_card.py` (A2A discovery at
+`/.well-known/agent-card.json`), `server.py` (Starlette app, `/health`).
+Full setup: [`adsb-simulation-agent/README.md`](../../adsb-simulation-agent/README.md).
+
 ### Voice Input
 
 Voice is layered on top of the same chat thread (`src/hooks/useVoiceInput.ts`,
@@ -3783,6 +4054,7 @@ stop click → POST /voice/stop ─┘   → { transcript }
 | Service | Address | Purpose |
 |---------|---------|---------|
 | Agent (FastAPI) | `:8000` | AG-UI SSE chat + voice endpoints |
+| Simulation agent (A2A) | `:8300` | Trajectory generation, called by `adsb-agent` |
 | Tauri tool server | `127.0.0.1:8787` | Read-only DuckDB data tools (loopback only) |
 | LLM endpoint | `:1234` | OpenAI-compatible model (LM Studio / Ollama), external |
 | llama-liquid-audio | `127.0.0.1:2026` | LFM2.5-Audio inference (auto-spawned on first voice request) |
@@ -3790,16 +4062,18 @@ stop click → POST /voice/stop ─┘   → { transcript }
 
 Agent-side endpoints used by the app: `POST /ag-ui` (single-endpoint transport),
 `POST /ag-ui/agent/{agent_id}/run` (REST transport, SSE), `GET /ag-ui/info` (runtime
-discovery), plus the `/voice/*` routes above. See `agent/src/adsb_agent/main.py`.
+discovery), plus the `/voice/*` routes above. See `adsb-agent/src/adsb_agent/main.py`.
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
 | `adsb-agent/src/adsb_agent/graph.py` | LangGraph ReAct loop, `SERVER_TOOL_NAMES`, `route()`, arg transform |
-| `agent/src/adsb_agent/main.py` | FastAPI service: AG-UI + voice endpoints |
-| `agent/src/adsb_agent/config.py` | `ADSB_AGENT_*` settings (LLM, tool server, ports) |
-| `agent/src/adsb_agent/voice/` | `base.py`, `voxtral.py`, `lfm2_audio.py`, `audio_capture.py` |
+| `adsb-simulation-agent/src/adsb_simulation_agent/` | A2A trajectory generator: `graph.py`, `intent.py`, `trajectory.py`, `kinematics.py`, `geometry.py`, `validate.py` |
+| `src/lib/simulate-api.ts` / `scenario-describe-api.ts` | Direct HTTP calls to `adsb-agent`, usable with the chat panel closed |
+| `adsb-agent/src/adsb_agent/main.py` | FastAPI service: AG-UI + voice endpoints |
+| `adsb-agent/src/adsb_agent/config.py` | `ADSB_AGENT_*` settings (LLM, tool server, ports) |
+| `adsb-agent/src/adsb_agent/voice/` | `base.py`, `voxtral.py`, `lfm2_audio.py`, `audio_capture.py` |
 | `src-tauri/src/tool_server.rs` | Loopback HTTP tool server (`POST /tools/{name}`) |
 | `src-tauri/src/tool_service.rs` | Tool name → DuckDB query dispatch over `SharedStorage` |
 | `src/components/CopilotKitProvider.tsx` | AG-UI provider (agent URL + id) |
@@ -3808,7 +4082,7 @@ discovery), plus the `/voice/*` routes above. See `agent/src/adsb_agent/main.py`
 | `src/hooks/useVoiceInput.ts` | Voice capture, SSE transcript, auto-send |
 | `src/components/AIChatPanel.tsx` / `AIChatContent.tsx` / `MicButton.tsx` | Chat UI shell, content, mic control |
 
-See [`agent/README.md`](../../adsb-agent/README.md) for backend setup, environment variables, the
+See [`adsb-agent/README.md`](../../adsb-agent/README.md) for backend setup, environment variables, the
 model-capability requirement (a reliable tool-calling model such as Qwen2.5-7B-Instruct),
 and voice-model installation.
 
@@ -3832,4 +4106,4 @@ This design prioritizes developer experience (hot reload, TypeScript, TDD), user
 
 ---
 
-*Last updated: June 2026 — Added AI Agent & AG-UI integration (CopilotKit chat panel, LangGraph ReAct agent on `:8000`, loopback Tauri tool server `tool_server.rs`/`tool_service.rs` on `:8787`, server/client tool-plane split, ambient `useCopilotContext` readables, `useCopilotTools`, voice input via Voxtral / LFM2.5-Audio with auto-send). Previous: status event audit trail (`status_events` DuckDB table, `StatusEventRecorder` in bridge.rs, `get_status_timeline` command, `StatusTimeline` component with color-coded timeline and filter pills). Previous: Arrow IPC query pipeline, `write_arrow_ipc` shared helper, `arrow-utils.ts` converters, `useReducer` state batching in DB History, `@tanstack/react-virtual` flight list virtualization, storage management (release/reclaim/export/swap/import), section-aware track visibility, analysis mode, config persistence, `adsb-data-engine` workspace crate, DB History panel (docked/floating).*
+*Last updated: August 2026 — Added a **System Architecture (C4 Model)** view — three Mermaid diagrams drawn to C4 conventions (Level 1 Context, Level 2 Container, Level 3 Component), with C4 palette, element-type and technology annotations, and dashed edges for optional dependencies, plus a component inventory table and trust/process boundaries, refreshed the table of contents to match the document's 27 sections, added `tool_server.rs`/`tool_service.rs` to the backend directory tree and component diagram, documented the `adsb-simulation-agent` A2A service on `:8300`, and normalized `adsb-agent/` paths. Previous: simulation scenarios (scenario builder, descriptions, panel layout, trajectory visibility). Previous: AI Agent & AG-UI integration (CopilotKit chat panel, LangGraph ReAct agent on `:8000`, loopback Tauri tool server on `:8787`, server/client tool-plane split, ambient `useCopilotContext` readables, `useCopilotTools`, voice input via Voxtral / LFM2.5-Audio with auto-send). Previous: status event audit trail, Arrow IPC query pipeline, storage management (release/reclaim/export/swap/import), section-aware track visibility, analysis mode, config persistence, `adsb-data-engine` workspace crate, DB History panel.*
