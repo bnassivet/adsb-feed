@@ -23,7 +23,7 @@ import type { SimulateRequest } from "@/lib/simulate-api";
 import { useTrajectoryPlayback } from "@/hooks/useTrajectoryPlayback";
 import { useScenarioPlayback } from "@/hooks/useScenarioPlayback";
 import { useScenarios } from "@/hooks/useScenarios";
-import { visibleTrajectories } from "@/lib/trajectory-playback";
+import { visibleRouteTrajectories } from "@/lib/trajectory-playback";
 import { toggleScopedVisibility } from "@/lib/track-visibility";
 import { mergeScenarioPlayback } from "@/lib/scenario-playback";
 import {
@@ -265,11 +265,15 @@ export default function Dashboard() {
    * `filterBySection("live", …)` — they are ordinary tracks in `allTracks` by
    * then. Their *route overlays* are not, so the hidden set has to be applied
    * here too or a hidden aircraft keeps drawing its dashed route.
+   *
+   * Routes deliberately do NOT consult playback: a shown trajectory draws its
+   * planned route even with the scenario stopped, so the geometry can be
+   * inspected before anything is played.
    */
   const hiddenLive = hiddenSections.get("live");
   const visibleRoutes = useMemo(
-    () => visibleTrajectories(agentTrajectories, effectivePlayback, hiddenLive),
-    [agentTrajectories, effectivePlayback, hiddenLive],
+    () => visibleRouteTrajectories(agentTrajectories, hiddenLive),
+    [agentTrajectories, hiddenLive],
   );
 
   // Agent trajectories are deliberately NOT gated on `showSimulation`: that

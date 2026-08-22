@@ -376,15 +376,23 @@ The `SimulationPanel` lists each trajectory (waypoints, duration, altitude range
 just `state !== "stopped"`, so before this existed the only way to take an
 aircraft off the map was to Stop it — which rewinds `elapsedS` to 0. Hiding
 leaves the clock alone: un-hiding reveals the aircraft where it should be by now.
-`visibleTrajectories(trajectories, playback, hidden?)` in
-`lib/trajectory-playback.ts` is the single predicate.
+
+**Marker and route take different rules, because they answer different
+questions.** The *marker* is "where is it now" and genuinely needs a clock —
+`isVisible`, applied per entry in `useAgentSimulatedTracks`. The *route overlay*
+is "where will it go": static geometry, worth seeing before anything has been
+played. So `visibleRouteTrajectories(trajectories, hidden?)` consults **only the
+eye**, never playback. A shown trajectory draws its planned route with the
+scenario stopped; that is the point of being able to inspect a scenario you have
+not run yet. Tying the route to playback (as the first cut did) made a freshly
+generated scenario invisible until Start was pressed.
 
 **The eyes reuse `hiddenSections`, they do not add a second hidden set.**
 Simulated aircraft are ordinary members of `allTracks`, so their *markers* were
 already filtered by `filterBySection("live", …)` — the panel's eye and the
 aircraft table's eye are the same switch for the same aircraft. Their **route
 overlays** were not filtered at all, so a hidden simulated aircraft kept drawing
-its dashed route; `visibleRoutes` now applies the hidden set too. Session state
+its dashed route; `visibleRoutes` now applies the hidden set (and nothing else). Session state
 only — nothing is persisted, everything is visible again on restart.
 
 **A subset toggle must not replace the section's set.** `handleToggleGroupVisibility`

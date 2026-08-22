@@ -35,20 +35,22 @@ export function isVisible(entry: PlaybackEntry | undefined): boolean {
 }
 
 /**
- * Trajectories that should actually be drawn: running, and not hidden.
+ * Trajectories whose **planned route** should be drawn on the map.
  *
- * Visibility is a **separate axis** from transport. Hiding leaves the clock
- * alone, so an aircraft un-hidden later reappears where it should be by now
- * rather than back at the start — which is what stopping it would do.
+ * Deliberately ignores playback: a route is static geometry — "where this
+ * aircraft will go" — so it is worth seeing before anything has been started,
+ * which is the whole point of inspecting a scenario you have not played yet.
+ * Only the user's eye hides it.
+ *
+ * The aircraft *marker* is the thing that genuinely needs a clock; that is
+ * `isVisible`, applied per-entry in `useAgentSimulatedTracks`. Marker and route
+ * answer different questions, so they take different rules.
  */
-export function visibleTrajectories(
+export function visibleRouteTrajectories(
   trajectories: AgentTrajectory[],
-  playback: PlaybackMap,
   hidden?: ReadonlySet<string>,
 ): AgentTrajectory[] {
-  return trajectories.filter(
-    (t) => isVisible(playback[t.hex_ident]) && !hidden?.has(t.hex_ident),
-  );
+  return trajectories.filter((t) => !hidden?.has(t.hex_ident));
 }
 
 function clamp(value: number, lo: number, hi: number): number {

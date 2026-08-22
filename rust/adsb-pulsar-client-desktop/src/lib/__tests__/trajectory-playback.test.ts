@@ -3,7 +3,7 @@ import {
   STOPPED,
   formatClock,
   isVisible,
-  visibleTrajectories,
+  visibleRouteTrajectories,
   pausePlayback,
   progressOf,
   resumePlayback,
@@ -262,49 +262,45 @@ describe("formatClock", () => {
 });
 
 /**
- * Visibility is a *separate axis* from transport: hiding must never disturb the
- * clock, so an aircraft un-hidden later reappears where it should be by now
- * rather than back at the start.
+ * Route overlays are **planned geometry**, so they do not consult the clock at
+ * all: a scenario that has never been played still shows where its aircraft are
+ * going. Only the eye hides them. (The aircraft *marker* is the thing that needs
+ * a clock — that is `isVisible`, used by `useAgentSimulatedTracks`.)
  */
-describe("visibleTrajectories", () => {
+describe("visibleRouteTrajectories", () => {
   const A = traj("SIM-A");
   const B = traj("SIM-B");
   const C = traj("SIM-C");
-  const playing = { state: "playing", elapsedS: 30 } as const;
 
-  it("keeps every running trajectory when nothing is hidden", () => {
-    const out = visibleTrajectories([A, B], { "SIM-A": playing, "SIM-B": playing });
+  it("shows routes for stopped trajectories — the point of the planned route", () => {
+    const out = visibleRouteTrajectories([A, B]);
     expect(out.map((t) => t.hex_ident)).toEqual(["SIM-A", "SIM-B"]);
   });
 
-  it("drops stopped trajectories", () => {
-    const out = visibleTrajectories([A, B], { "SIM-A": playing, "SIM-B": STOPPED });
-    expect(out.map((t) => t.hex_ident)).toEqual(["SIM-A"]);
-  });
-
-  it("drops trajectories with no playback entry at all", () => {
-    const out = visibleTrajectories([A, B], { "SIM-A": playing });
-    expect(out.map((t) => t.hex_ident)).toEqual(["SIM-A"]);
-  });
-
-  it("drops hidden trajectories even while they are playing", () => {
-    const playback = { "SIM-A": playing, "SIM-B": playing, "SIM-C": playing };
-    const out = visibleTrajectories([A, B, C], playback, new Set(["SIM-B"]));
+  it("hides only what the eye hides", () => {
+    const out = visibleRouteTrajectories([A, B, C], new Set(["SIM-B"]));
     expect(out.map((t) => t.hex_ident)).toEqual(["SIM-A", "SIM-C"]);
   });
 
-  it("leaves the playback map untouched when hiding", () => {
-    const playback = { "SIM-A": { state: "playing", elapsedS: 42 } as const };
-    visibleTrajectories([A], playback, new Set(["SIM-A"]));
-    expect(playback["SIM-A"]).toEqual({ state: "playing", elapsedS: 42 });
-  });
-
   it("treats an omitted hidden set as nothing hidden", () => {
-    expect(visibleTrajectories([A], { "SIM-A": playing })).toHaveLength(1);
+    expect(visibleRouteTrajectories([A])).toHaveLength(1);
   });
 
   it("returns nothing when everything is hidden", () => {
-    const playback = { "SIM-A": playing, "SIM-B": playing };
-    expect(visibleTrajectories([A, B], playback, new Set(["SIM-A", "SIM-B"]))).toEqual([]);
+    expect(visibleRouteTrajectories([A, B], new Set(["SIM-A", "SIM-B"]))).toEqual([]);
+  });
+
+  it("is unaffected by playback state either way", () => {
+    // Same input, whatever the clock is doing elsewhere.
+    expect(visibleRouteTrajectories([A]).map((t) => t.hex_ident)).toEqual(["SIM-A"]);
+    expect(visibleRouteTrajectories([A], new Set()).map((t) => t.hex_ident)).toEqual(["SIM-A"]);
+  });
+
+  it("does not mutate its inputs", () => {
+    const list = [A, B];
+    const hidden = new Set(["SIM-A"]);
+    visibleRouteTrajectories(list, hidden);
+    expect(list).toHaveLength(2);
+    expect(hidden).toEqual(new Set(["SIM-A"]));
   });
 });
