@@ -52,6 +52,21 @@ Evidence behind the 2026-08-23 verdict:
 - **New:** the `bundled` build cannot statically link Quack (constraint 9 below). This was
   an open "verify" item in the June draft; it now has a concrete, blocking answer.
 
+**Documentation re-verification (2026-08-23).** The Quack docs were read in full, not
+summarised. Three corrections to this document came out of it:
+1. The **"no TLS" claim was right** and an earlier edit wrongly softened it — the Security
+   page states the server does not use TLS itself. Restored, with the client-side
+   `DISABLE_SSL` default (HTTPS for remote URIs) documented alongside it.
+2. The **per-user ACL upgrade path in §5 is impossible as written** — SQL macros cannot
+   execute DML, so the auth macro cannot populate a `quack_sessions` table. Table-level
+   authorization requires shipping a custom DuckDB extension. Corrected in place.
+3. **DuckDB now recommends DuckLake + PostgreSQL** as *the* stable multi-process-write
+   solution, with Quack presented as the beta option. See Alternatives.
+Plus a substantial API surface that did not exist in the announcement — see
+*Documented API surface* below. The docs still describe the v1.5.3 beta and were not
+updated for 1.5.4/1.5.5; `quack/troubleshooting` states plainly that Quack "is not ready
+for production and is subject to breaking changes until the release of DuckDB v2.0".
+
 ## Key facts grounding the design
 
 - `duckdb` Rust crate currently: `duckdb = { version = "1.2", features = ["bundled"] }`
@@ -68,6 +83,30 @@ Evidence behind the 2026-08-23 verdict:
   `bridge.rs::persist_batch()` (writes), `commands.rs` (~30 query commands),
   `tool_service.rs` (non-Arrow query helpers).
 - Today **only** the Tauri app touches the DB. webapp/spark are not wired to it at all.
+
+## Documented API surface (re-verified 2026-08-23)
+
+The docs grew a full section since the announcement — `quack/overview`, `quack/reference`,
+`quack/security`, `quack/setup/{overview,deployment,reverse_proxy,quack_wasm}` and
+`quack/troubleshooting`. They still describe the **v1.5.3 beta** (the `whoami()` example
+prints `v1.5.3`, and `connect/concurrency` even says "beta as of v1.5.2"), so the docs are
+not internally consistent on versions and carry no 1.5.4/1.5.5 updates — but the API is now
+specified in far more detail than this design assumed. Items below were **not** in the
+original blueprint and should be used when it is built:
+
+| Feature | Why it matters here |
+|---|---|
+| `quack_query(uri, query, token := …, disable_ssl := …)` | **Stateless** remote query, no `ATTACH` needed. The right client shape for **spark-adsb and external/ad-hoc readers** — no catalog attachment, no session to keep alive. |
+| `ATTACH` vs `quack_query` | `ATTACH` is a **sticky session**: temp tables and `SET` values persist server-side across calls; `quack_query` does not. The Tauri app wants `ATTACH`; the read-only clients do not. |
+| `whoami()` + `quack_identify(name, provider, hostname, region, meta)` | Returns node identity plus `duckdb_version` and `platform`. This **is** the version handshake constraints 3 and 8 asked for — use it instead of hand-rolling one, and use `quack_identify` to label the daemon (e.g. `name => 'adsb-daemon'`). |
+| `CREATE SECRET (TYPE quack, TOKEN …, SCOPE 'quack:host')` then `ATTACH … (TYPE quack)` | The exact syntax for the "store the token as a secret, not inline" rule in §5. |
+| `quack_stop(uri)` | Clean server shutdown — needed for daemon lifecycle and for tearing down embedded self-host mode. |
+| `quack_uri_parser(uri, ssl)` | Validate/parse a configured URI into `STRUCT(host, port, ipv6, ssl, url)` — use it when parsing `Backend::Remote { uri }` config. |
+| `quack_query_by_name(catalog, query)` | Ad-hoc SQL against an already-attached catalog (backs `remote_db.query(...)`). |
+| `enable_logging('Quack')` + `duckdb_logs_parsed('Quack')` | Structured per-message log with `duration_ms`, `message_type`, `quack_connection_id`, `client_query_id`. **Use this for the constraint 6 latency measurement** instead of guessing. |
+| `quack_fetch_batch_chunks` (default 12) | Server-side FETCH batching knob if result streaming needs tuning. |
+| `httpfs_connection_caching` | **Off by default**: every client request otherwise opens a fresh TCP (and TLS) connection. Directly relevant to constraint 6 — the 500 ms `persist_batch()` write path must enable this or pay a handshake per batch. Also confirms Quack rides on **httpfs**. |
+
 
 ## Target architecture
 
@@ -150,6 +189,9 @@ between a working shared store and a corrupted one.
      the `quack` extension published) — see *Deployment → On the Raspberry Pi*.
    - `httpfs_connection_caching` appears in the Quack settings, suggesting Quack rides on
      **httpfs**, which is likewise not in the bundled static set. Verify before coding.
+   - Corroborated by DuckDB's own troubleshooting page, whose remedy for Quack problems is
+     `FORCE INSTALL quack;` — a downloaded extension, and one all nodes are expected to keep
+     upgraded in lockstep (reinforcing constraint 8).
    **Decision: before any implementation, re-check whether the DuckDB-2.0-aligned
    `libduckdb-sys` exposes a static `quack` feature.** If not, choose deliberately between
    accepting the autoinstall path (documented + pre-seeded for the Pi) and linking against
@@ -167,6 +209,17 @@ between a working shared store and a corrupted one.
   catalog (catalog DB + object-storage data) as the durable multi-writer story. If the goal
   is many concurrent writers long-term, DuckLake may be a better destination than point-to-
   point Quack attachments. Revisit at DuckDB 2.0.
+  **Update 2026-08-23 — DuckDB's own guidance now says this out loud.** The canonical
+  `docs/current/connect/concurrency` page presents multi-process writes as: Quack, "in beta
+  stage … expected to become mature by DuckDB v2.0", and then — *"For a stable solution,
+  consider using the DuckLake format with PostgreSQL as the catalog database"*, noting the
+  DuckLake v1.0 spec and implementation were published in April 2026 and are **intended for
+  production use**. So the vendor's recommended answer *today* is DuckLake, not Quack.
+  This does not flip the decision — DuckLake means a PostgreSQL catalog plus object storage,
+  which is a much heavier operational footprint than one daemon holding one `.db` file, and
+  our requirement is "a handful of local services read/update one live DB", not a lakehouse.
+  But it must be re-weighed at the greenlight: if Quack slips past 2.0 again, DuckLake is the
+  supported fallback rather than a further deferral.
 - **Chosen path:** Quack client/server (this document), because it directly delivers
   "other services read/update the live DB" with native SQL and minimal client code — accepted
   *only* as a deferred build pending GA.
@@ -249,12 +302,29 @@ SET GLOBAL quack_authentication_function = 'check_token';
 -- read-only gate for spark/external; tauri/webapp omitted from the restriction
 CREATE MACRO read_only(sid, query) AS
   regexp_matches(upper(trim(query)), '^(SELECT|FROM|WITH|EXPLAIN|DESCRIBE|SHOW)\b');
-SET GLOBAL quack_authorization_function = 'read_only';  -- start simple; per-user ACL later
+SET GLOBAL quack_authorization_function = 'read_only';  -- start simple; see the note below
 ```
-For finer control (e.g. webapp may write `events_of_interest` but not `positions`), upgrade
-to the per-user ACL pattern: a `quack_sessions(sid, user_name)` table populated by the auth
-macro joined against a `quack_user_acls(user_name, query_kind)` allowlist in the
-authorization macro.
+**Both auth settings are global-scoped, and `RESET` is a trap.** The callbacks run on a
+fresh transient server-side connection each time, so a plain `SET` is forwarded to the global
+slot automatically — but a plain `RESET` only clears the *session* view and the auth path
+keeps reading the stale global value. Use `RESET GLOBAL` to restore a default. Default
+callback names are `quack_check_token` / `quack_nop_authorization` (the latter allows
+everything).
+**Finer control needs a native extension, not a macro** *(corrected 2026-08-23 — the
+originally sketched upgrade path does not work).* The plan was a `quack_sessions(sid,
+user_name)` table **populated by the auth macro**, joined against a per-user ACL in the
+authorization macro. The Security page rules this out: a macro body "is restricted to a
+single expression and cannot execute DML directly: there is no `INSERT`, `UPDATE`, or
+`DELETE` inside a macro". Since `sid → user_name` is only knowable at authentication time
+and cannot be recorded from a macro, table-level authorization is unreachable this way.
+
+DuckDB's own answer is to **register a scalar function from a DuckDB extension** (C++, or
+any language with C-extension-API bindings — Rust included) with the same
+`(VARCHAR, …) → BOOLEAN` signature, then point the setting at it. That is a real project:
+shipping and distributing a custom DuckDB extension to every node. **Decision stands from
+constraint 7** — treat Quack auth as homelab-grade, enforce the webapp's
+`events_of_interest`-only rule *server-side in our own code* rather than in Quack, and only
+consider the extension route if genuine table-level enforcement becomes a requirement.
 
 **Generation & distribution process.**
 1. Daemon generates four random tokens at first run (e.g. 32-char base62), writes them to a
@@ -266,13 +336,20 @@ authorization macro.
 3. Rotation = update the row in `quack_tokens` + redistribute that one client's token; other
    clients are unaffected (another benefit of multi-token over the single shared default).
 
-**Network/TLS.** *(Re-verify at GA — as of 2026-08-23 the client `ATTACH` documents a
-`DISABLE_SSL` option, which implies SSL may now be on by default and that the flat
-"no TLS" claim below is outdated. The reverse-proxy recommendation stands either way.)*
-Quack was documented as having **no TLS**, and binds `localhost` only by default;
-`allow_other_hostname => true` is required for remote bind. For anything beyond local dev,
-**do not expose Quack directly** — front it with a proven HTTP reverse proxy terminating
-TLS (per the Quack reverse-proxy guide). Default to `localhost` in dev.
+**Network/TLS** *(re-verified against the docs 2026-08-23 — the original claim was correct)*.
+The Quack **server does not use TLS itself**; the Security page states this outright and
+justifies it ("involving TLS for localhost communication only adds dependencies for no real
+benefit"). It binds `localhost` only by default; `allow_other_hostname => true` is required
+for a remote bind. For anything beyond local dev, **do not expose Quack directly** — front it
+with a proven HTTP reverse proxy terminating TLS (per the Quack reverse-proxy guide; DuckDB
+ships nginx and Caddy recipes, and an EC2 CloudFormation template using nginx + Let's Encrypt).
+Default to `localhost` in dev.
+
+The **client** side is the part that surprises: `DISABLE_SSL` defaults to `true` for local
+URIs (`localhost`, `127.0.0.1`, `::1`) and `false` otherwise — i.e. **a client attaching to a
+remote daemon assumes HTTPS**. A properly proxied server therefore "just works", but a bare
+remote daemon with no proxy requires an explicit `DISABLE_SSL true` on every client. Treat
+needing that flag as the signal that the deployment is missing its proxy.
 
 **Deployment.** Two supported targets for the daemon:
 - **Workstation/analytics box (default, recommended).** Keeps the Pi a thin Pulsar feed per
@@ -355,8 +432,15 @@ code is written; any **no** means append a row to the reevaluation log and defer
       `ATTACH 'quack:…'` option list (`TOKEN`, `DISABLE_SSL`, …), and the
       `quack_authentication_function` / `quack_authorization_function` setting names used
       in §5 above.
-- [ ] **TLS posture confirmed** — whether Quack now terminates SSL itself, or the reverse
-      proxy is still mandatory for anything off `localhost`.
+- [ ] **TLS posture re-confirmed.** *(Answered 2026-08-23: the server does not terminate
+      TLS, so the reverse proxy is mandatory off `localhost`. Re-check only that 2.0 did not
+      change it.)*
+- [ ] **DuckLake re-weighed** — DuckDB currently recommends DuckLake + PostgreSQL as the
+      *stable* multi-process-write path. If Quack has slipped again at 2.0, take DuckLake
+      rather than deferring a third time (see Alternatives).
+- [ ] **Authorization requirement settled** — confirm we still accept homelab-grade,
+      connection-level auth. Real table-level rules need a custom DuckDB extension
+      (macros cannot do DML); budget for it explicitly or keep enforcement in our own code.
 
 ## References
 - [Quack: The DuckDB Client-Server Protocol](https://duckdb.org/2026/05/12/quack-remote-protocol)
@@ -368,3 +452,7 @@ code is written; any **no** means append a row to the reevaluation log and defer
 - [Quack Extension (core extensions)](https://duckdb.org/docs/current/core_extensions/quack) — autoinstall/autoload on first use
 - [Announcing DuckDB 1.5.5](https://duckdb.org/2026/07/22/announcing-duckdb-155) — no Quack mention
 - [duckdb/duckdb-quack](https://github.com/duckdb/duckdb-quack) — protocol churn through 2026-08-20
+- [Quack Reference](https://duckdb.org/docs/current/quack/reference) — functions, settings, ATTACH options, logging
+- [Quack Troubleshooting](https://duckdb.org/docs/current/quack/troubleshooting) — "not ready for production … until DuckDB v2.0"; `FORCE INSTALL quack`
+- [Quack Deployment](https://duckdb.org/docs/current/quack/setup/deployment) — EC2 recipe; sticky `ATTACH` vs stateless `quack_query`
+- [DuckDB Concurrency](https://duckdb.org/docs/current/connect/concurrency) — recommends DuckLake + PostgreSQL as the stable multi-process-write solution
