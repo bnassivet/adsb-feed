@@ -1,7 +1,9 @@
 # Redesign: `adsb-data-engine` as a DuckDB-native client/server (Quack)
 
-> **Status: DEFERRED.** Design-only blueprint. Do not implement until DuckDB 2.0 / Quack GA.
-> Authored June 2026 against DuckDB v1.5.3 (Quack beta).
+> **Status: DEFERRED — reevaluated 2026-08-23** against DuckDB 1.5.5 / `duckdb-rs` 1.10505.0.
+> Quack is still beta; the gate remains DuckDB 2.0, **now scheduled September 2026**.
+> Design-only blueprint. Do not implement until DuckDB 2.0 / Quack GA.
+> Originally authored June 2026 against DuckDB v1.5.3 (Quack beta).
 
 ## Context
 
@@ -30,11 +32,33 @@ tools all read *and* update the live ADS-B DuckDB directly.
   production-ready (DuckDB 2.0 / `libduckdb-sys ~1.10503+` proven stable).
 - **Client scope: all four** — Tauri app, Python webapp/agent, spark-adsb, external/ad-hoc.
 
+## Reevaluation log
+
+Append a row per review. The design itself has not needed revision; only its version
+facts and build assumptions.
+
+| Reviewed | DuckDB stable | `duckdb` crate | Quack status | GA target | Verdict |
+|---|---|---|---|---|---|
+| 2026-06 (authored) | 1.5.3 | `1.10503.1` | beta | "fall 2026" | Defer |
+| **2026-08-23** | **1.5.5** (2026-07-22) | **`1.10505.0`** / `libduckdb-sys =1.10505.0` (2026-07-22) | **still beta** | **September 2026** | **Defer — re-gate on the 2.0 release, not a date** |
+
+Evidence behind the 2026-08-23 verdict:
+- The Quack FAQ and extension page still say breaking changes are expected in "the
+  protocol, function names and default settings".
+- Neither the 1.5.4 nor the 1.5.5 announcement mentions Quack at all — no stabilization
+  signal, and 1.5.5 only says "v2.0.0 in the fall".
+- `duckdb/duckdb-quack` was still reworking core plumbing on **2026-08-20** — connection
+  leases, statement-vs-connection locking, the result cache, fetch read-ahead.
+- **New:** the `bundled` build cannot statically link Quack (constraint 9 below). This was
+  an open "verify" item in the June draft; it now has a concrete, blocking answer.
+
 ## Key facts grounding the design
 
 - `duckdb` Rust crate currently: `duckdb = { version = "1.2", features = ["bundled"] }`
-  at `adsb-feed/rust/adsb-data-engine/Cargo.toml:9`. Quack needs the `1.5.3`-based release
-  (`libduckdb-sys ~1.10503.1`).
+  at `adsb-feed/rust/adsb-data-engine/Cargo.toml:9`. Quack needs at minimum the `1.5.3`-based
+  release; the **latest published is `duckdb 1.10505.0` / `libduckdb-sys =1.10505.0`**
+  (2026-07-22, tracking DuckDB 1.5.5). The eventual target is whatever release tracks
+  DuckDB 2.0 — see *Crate/version changes* and constraint 9.
 - Storage core: `adsb-data-engine/src/storage.rs` (~2850 lines) — `StorageHandle` wraps
   `Arc<Mutex<Storage>>`, runs `SCHEMA_SQL` on open, maintains an in-memory flight tracker.
   All ops are `*_sync` (blocking) with async wrappers via `tokio::task::spawn_blocking`.
@@ -110,12 +134,35 @@ between a working shared store and a corrupted one.
    must all run Quack-protocol-compatible versions simultaneously while it is beta — pin and
    roll them together.
 
+9. **The `bundled` build cannot statically link Quack** (found 2026-08-23; this was an open
+   "verify" item in the June draft). `libduckdb-sys 1.10505.0` statically links only
+   `core_functions`, `parquet` and `json` — its `extension_enabled` gate in
+   `build_bundled_cc.rs` lists no `quack` feature. The same file *does* set
+   `DUCKDB_EXTENSION_AUTOINSTALL_DEFAULT=1` / `AUTOLOAD_DEFAULT=1`, so
+   `CALL quack_serve(...)` would **download the extension from extensions.duckdb.org on
+   first use**. Consequences:
+   - The daemon needs **outbound network on its first run** and a **writable extension
+     directory**; a locked-down or air-gapped host must have the extension **pre-seeded**.
+   - Extension binaries are tied to the **exact DuckDB build**, so the exact (`=`) crate pin
+     stops being hygiene and becomes a correctness requirement — a patch bump invalidates
+     the cached extension.
+   - The **aarch64 Pi** target needs a per-arch availability check (`linux_arm64` build of
+     the `quack` extension published) — see *Deployment → On the Raspberry Pi*.
+   - `httpfs_connection_caching` appears in the Quack settings, suggesting Quack rides on
+     **httpfs**, which is likewise not in the bundled static set. Verify before coding.
+   **Decision: before any implementation, re-check whether the DuckDB-2.0-aligned
+   `libduckdb-sys` exposes a static `quack` feature.** If not, choose deliberately between
+   accepting the autoinstall path (documented + pre-seeded for the Pi) and linking against
+   a system/prebuilt libduckdb instead of `bundled`.
+
 ## Alternatives considered (recorded for the deferred decision)
 
 - **Minimal stable service API now (bridge option).** The repo already has `tool_server.rs`
   (HTTP-ish tool plane) and Arrow export. A small read API in front of the daemon-owned DB
   gives webapp/spark access *today* without a beta dependency — a low-risk bridge until
   DuckDB 2.0. Trade-off: bespoke API surface vs. native SQL/ATTACH.
+  **Still unchosen as of 2026-08-23, and now for a stronger reason:** with GA roughly a
+  month out, a bespoke read API would likely be obsolete before it finished shipping.
 - **DuckLake as the strategic target.** DuckDB's own roadmap points at Quack-as-DuckLake-
   catalog (catalog DB + object-storage data) as the durable multi-writer story. If the goal
   is many concurrent writers long-term, DuckLake may be a better destination than point-to-
@@ -219,7 +266,10 @@ authorization macro.
 3. Rotation = update the row in `quack_tokens` + redistribute that one client's token; other
    clients are unaffected (another benefit of multi-token over the single shared default).
 
-**Network/TLS.** Quack itself has **no TLS** and binds `localhost` only by default;
+**Network/TLS.** *(Re-verify at GA — as of 2026-08-23 the client `ATTACH` documents a
+`DISABLE_SSL` option, which implies SSL may now be on by default and that the flat
+"no TLS" claim below is outdated. The reverse-proxy recommendation stands either way.)*
+Quack was documented as having **no TLS**, and binds `localhost` only by default;
 `allow_other_hostname => true` is required for remote bind. For anything beyond local dev,
 **do not expose Quack directly** — front it with a proven HTTP reverse proxy terminating
 TLS (per the Quack reverse-proxy guide). Default to `localhost` in dev.
@@ -233,16 +283,24 @@ TLS (per the Quack reverse-proxy guide). Default to `localhost` in dev.
   (run 1–2 threads on the Pi; the 500 ms batched writes stay well within this); **32-bit
   `armv7`/Pi Zero are not supported** (would need an unsupported source build); and the
   `bundled` DuckDB compile is heavy — **cross-compile from the workstation or build in an
-  `aarch64` Docker image**, don't compile on the Pi. Trade-off: co-locates storage at the
+  `aarch64` Docker image**, don't compile on the Pi. **Also see constraint 9**: the Pi will
+  need to *download* the `quack` extension on first run (confirm a `linux_arm64` build is
+  published) or have it pre-seeded, since it is not statically linked. Trade-off: co-locates storage at the
   edge, so webapp/spark/external clients reach back to the Pi over the LAN, diverging from
   the decoupled-architecture principle. Reasonable for a single-Pi home setup; avoid for
   the multi-Pi production topology.
 
 ## Crate/version changes (deferred until greenlit)
-- `adsb-data-engine/Cargo.toml`: bump `duckdb` from `"1.2"` to the `1.5.3`-aligned release
-  (verify `quack_serve`/`quack_query` autoload in the **bundled** build; if the core
-  extension isn't statically present, document the autoload/network requirement).
-- Pin exactly (`=`) while Quack is beta to avoid protocol drift; add a CHANGELOG note.
+- `adsb-data-engine/Cargo.toml`: bump `duckdb` from `"1.2"` to **the release that tracks
+  DuckDB 2.0** (not 1.5.x — by the time this is greenlit, 2.0 is the target). Latest
+  published today for reference: `duckdb 1.10505.0` / `libduckdb-sys =1.10505.0`.
+- **Pre-flight task (blocking, constraint 9):** confirm whether the 2.0-aligned
+  `libduckdb-sys` exposes a static `quack` feature (and `httpfs`, if Quack requires it).
+  If it does not, decide explicitly between the **autoinstall path** — outbound network on
+  first run, writable extension dir, pre-seeded on the Pi — and **dropping `bundled`** in
+  favour of linking a system/prebuilt libduckdb that ships the extension.
+- Pin exactly (`=`), not just to avoid protocol drift but because the downloaded extension
+  binary is keyed to the exact DuckDB build. Add a CHANGELOG note.
 
 ## Verification (when implemented)
 1. Start `adsb-data-server`; confirm it prints a listen URI + token and holds `ads.db`.
@@ -265,9 +323,40 @@ TLS (per the Quack reverse-proxy guide). Default to `localhost` in dev.
 ## Out of scope / risks
 - Quack protocol/function-name breaking changes until DuckDB 2.0 — the reason build is
   deferred. Re-validate `quack_serve`/`ATTACH` syntax against the GA docs before coding.
+  This is not theoretical: as of **2026-08-20** the `duckdb/duckdb-quack` repo was still
+  reworking connection leases, statement-vs-connection locking, the result cache and fetch
+  read-ahead, and the docs still warn that "the protocol, function names, settings and
+  defaults are still subject to change". The `ATTACH` surface has already moved since this
+  document was written (`DISABLE_SSL`, `httpfs_connection_caching`, and a portless
+  `'quack:localhost'` URI form).
 - Throughput: DuckDB caps concurrent single-table insert rate (~5.4k tx/s in DuckDB's
   benchmark); the 500 ms batched-write design already stays well under this.
 - Do not migrate the spark medallion pipeline onto Quack; keep Pulsar→Spark→Delta intact.
+
+## Greenlight checklist (run the week DuckDB 2.0 ships)
+
+Each item is a yes/no someone can settle in an afternoon. All must be **yes** before any
+code is written; any **no** means append a row to the reevaluation log and defer again.
+
+- [ ] **DuckDB 2.0 released** and Quack **declared stable** (not "beta" / "experimental")
+      in the FAQ and the extension page.
+- [ ] **`duckdb-rs` published against 2.0** — a `duckdb` / `libduckdb-sys` pair on crates.io
+      tracking the 2.0 C API.
+- [ ] **Quack is statically linkable** from `libduckdb-sys` (a `quack` feature in
+      `extension_enabled`) **or** the autoinstall path is explicitly accepted, documented,
+      and pre-seeded for the Pi (constraint 9).
+- [ ] **`httpfs` dependency resolved** — either Quack does not need it, or it is covered by
+      the same decision as above.
+- [ ] **Python `duckdb` package** available on a protocol-compatible version, so webapp,
+      agent and spark clients can be rolled together (constraint 8).
+- [ ] **`quack` extension binary published for `linux_arm64`**, if the Pi deployment is in
+      scope for the first cut.
+- [ ] **Syntax re-validated against the GA docs**: `quack_serve` named parameters, the
+      `ATTACH 'quack:…'` option list (`TOKEN`, `DISABLE_SSL`, …), and the
+      `quack_authentication_function` / `quack_authorization_function` setting names used
+      in §5 above.
+- [ ] **TLS posture confirmed** — whether Quack now terminates SSL itself, or the reverse
+      proxy is still mandatory for anything off `localhost`.
 
 ## References
 - [Quack: The DuckDB Client-Server Protocol](https://duckdb.org/2026/05/12/quack-remote-protocol)
@@ -275,3 +364,7 @@ TLS (per the Quack reverse-proxy guide). Default to `localhost` in dev.
 - [Quack — Security (auth/authorization macros)](https://duckdb.org/docs/current/quack/security)
 - [Securing Quack with a Reverse Proxy](https://duckdb.org/docs/current/quack/setup/reverse_proxy)
 - [DuckDB 1.5.3 release notes](https://duckdb.org/2026/05/20/announcing-duckdb-153)
+- [Frequently Asked Questions for Quack](https://duckdb.org/quack/faq) — beta status, September 2026 target
+- [Quack Extension (core extensions)](https://duckdb.org/docs/current/core_extensions/quack) — autoinstall/autoload on first use
+- [Announcing DuckDB 1.5.5](https://duckdb.org/2026/07/22/announcing-duckdb-155) — no Quack mention
+- [duckdb/duckdb-quack](https://github.com/duckdb/duckdb-quack) — protocol churn through 2026-08-20
