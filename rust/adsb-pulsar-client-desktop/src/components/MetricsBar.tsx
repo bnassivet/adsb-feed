@@ -157,7 +157,7 @@ export function MetricsBar({
         <button
           onClick={onStopSharing}
           className="flex items-center gap-1 hover:text-red-200 transition cursor-pointer"
-          title={`Shared at ${shareStatus.listen_uri} — click to stop. Anyone with the token has full read/write access.`}
+          title={`Shared at ${shareStatus.listen_uri} (${shareStatus.listen_url}) — click to stop. Anyone with the token has full read/write access.`}
         >
           <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
           <span className="font-mono text-green-400">Shared</span>
