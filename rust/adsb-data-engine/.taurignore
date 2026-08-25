@@ -9,6 +9,10 @@
 # Patterns are intentionally written without a leading slash so they match at
 # any depth: the watcher roots its matcher at the common ancestor of all
 # watched folders, not necessarily at this directory.
+#
+# NOTE: the Tauri CLI builds its ignore matcher ONCE, when `tauri dev` starts.
+# Editing this file has no effect on a session that is already running — you
+# have to restart `tauri dev`.
 
 *.ipynb
 .ipynb_checkpoints/
