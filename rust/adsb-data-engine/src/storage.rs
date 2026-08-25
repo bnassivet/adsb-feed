@@ -5438,7 +5438,7 @@ mod tests {
                 vertical_rate: None,
                 squawk: None,
                 is_on_ground: None,
-                timestamp: "2024/01/15,10:00:00.000".to_string(),
+                timestamp: "2024/01/15 10:00:00.000".to_string(),
                 message_count: 0,
             },
             AircraftPosition {
@@ -5452,7 +5452,7 @@ mod tests {
                 vertical_rate: None,
                 squawk: None,
                 is_on_ground: None,
-                timestamp: "2024/01/15,10:00:01.000".to_string(),
+                timestamp: "2024/01/15 10:00:01.000".to_string(),
                 message_count: 0,
             },
             AircraftPosition {
@@ -5466,7 +5466,7 @@ mod tests {
                 vertical_rate: None,
                 squawk: None,
                 is_on_ground: None,
-                timestamp: "2024/01/15,10:00:02.000".to_string(),
+                timestamp: "2024/01/15 10:00:02.000".to_string(),
                 message_count: 0,
             },
             AircraftPosition {
@@ -5480,7 +5480,7 @@ mod tests {
                 vertical_rate: None,
                 squawk: None,
                 is_on_ground: None,
-                timestamp: "2024/01/15,10:00:03.000".to_string(),
+                timestamp: "2024/01/15 10:00:03.000".to_string(),
                 message_count: 0,
             },
             AircraftPosition {
@@ -5494,7 +5494,7 @@ mod tests {
                 vertical_rate: None,
                 squawk: None,
                 is_on_ground: None,
-                timestamp: "2024/01/15,10:00:04.000".to_string(),
+                timestamp: "2024/01/15 10:00:04.000".to_string(),
                 message_count: 0,
             },
         ];
@@ -5511,6 +5511,12 @@ mod tests {
         assert_eq!(flights[0].position_count, 5);
         assert_eq!(flights[0].min_altitude, Some(50.0));
         assert_eq!(flights[0].max_altitude, Some(300.0));
+        // Pin the timestamps. `parse_timestamp_to_ms` silently falls back to
+        // `Utc::now()` on an unparseable input, so without these the batch's
+        // times could drift to "now" and every other assertion here would
+        // still pass. 2024-01-15 10:00:00Z .. 10:00:04Z.
+        assert_eq!(flights[0].first_seen_ms, 1_705_312_800_000);
+        assert_eq!(flights[0].last_seen_ms, 1_705_312_804_000);
     }
 
     // --- Flights metric in time distribution ---
