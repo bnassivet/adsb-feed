@@ -6,8 +6,13 @@ description = "ADS-B data storage and query engine with DuckDB"
 authors = ["ADS-B Project Contributors"]
 
 [dependencies]
-duckdb = { version = "1.2", features = ["bundled"] }
-arrow = { version = "56", default-features = false, features = ["ipc"] }
+# Pinned exactly: the `quack` extension is not statically linked into the bundled
+# build and is autoinstalled at runtime, and extension binaries are keyed to the
+# exact DuckDB build — a version drift here invalidates the cached extension.
+duckdb = { version = "=1.10505.0", features = ["bundled"] }
+# Must track the `arrow` major that `duckdb` depends on — `Statement::query_arrow`
+# returns duckdb's RecordBatch, and a version skew makes the types fail to unify.
+arrow = { version = "58", default-features = false, features = ["ipc"] }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
