@@ -584,6 +584,7 @@ pub async fn swap_database(
         db_path: Some(staging_path.clone()),
         source_id: config.source_id.clone(),
         gap_threshold_ms: config.gap_threshold_ms,
+        share: None,
     };
     let new_handle = StorageHandle::open(staging_config)
         .map_err(|e| format!("Failed to create staging database: {e}"))?;

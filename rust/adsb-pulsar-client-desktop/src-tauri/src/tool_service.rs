@@ -178,6 +178,7 @@ mod tests {
             db_path: None,
             source_id: "test".to_string(),
             gap_threshold_ms: 3_600_000,
+            share: None,
         })
         .expect("open in-memory storage");
         let storage: SharedStorage = Arc::new(RwLock::new(Some(handle)));
@@ -224,6 +225,7 @@ mod tests {
             db_path: None,
             source_id: "test".to_string(),
             gap_threshold_ms: 3_600_000,
+            share: None,
         })
         .expect("open in-memory storage");
         let storage: SharedStorage = Arc::new(RwLock::new(Some(handle)));
@@ -241,6 +243,7 @@ mod tests {
             db_path: None,
             source_id: "test".to_string(),
             gap_threshold_ms: 3_600_000,
+            share: None,
         })
         .expect("open in-memory storage");
         let created = handle

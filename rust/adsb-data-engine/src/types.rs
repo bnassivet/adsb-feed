@@ -548,6 +548,8 @@ pub struct StorageConfig {
     /// Time gap in milliseconds that separates flights. Default: 3_600_000 (1 hour).
     /// Positions for the same hex_ident separated by more than this gap start a new flight.
     pub gap_threshold_ms: i64,
+    /// Optional Quack sharing configuration. `None` keeps the database private.
+    pub share: Option<ShareConfig>,
 }
 
 impl Default for StorageConfig {
@@ -556,6 +558,61 @@ impl Default for StorageConfig {
             db_path: None,
             source_id: "unknown".to_string(),
             gap_threshold_ms: 3_600_000, // 1 hour
+            share: None,
         }
     }
+}
+
+/// Configuration for exposing the managed database over the Quack protocol.
+///
+/// Sharing is opt-in; `StorageConfig::share == None` means the database is
+/// private to this process, exactly as before this existed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareConfig {
+    /// Quack URI to bind. The port defaults to 9494 when omitted.
+    pub uri: String,
+    /// Auth token. `None` lets DuckDB generate a random one at serve time.
+    pub token: Option<String>,
+    /// Required by DuckDB to bind anything other than a local hostname.
+    ///
+    /// The Quack server does not terminate TLS itself, so binding off-host
+    /// should be fronted by a TLS-terminating reverse proxy.
+    pub allow_other_hostname: bool,
+    /// Begin sharing as soon as storage opens.
+    pub auto_start: bool,
+}
+
+impl Default for ShareConfig {
+    fn default() -> Self {
+        Self {
+            uri: "quack:localhost".to_string(),
+            token: None,
+            allow_other_hostname: false,
+            auto_start: false,
+        }
+    }
+}
+
+/// Connection details of a running Quack server, as returned by `quack_serve`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShareInfo {
+    pub listen_uri: String,
+    pub listen_url: String,
+    /// Anyone holding this token has full read *and* write access to every
+    /// table in the database — treat it as a credential, not an identifier.
+    pub token: String,
+}
+
+/// Whether the database is currently exposed over Quack.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ShareStatus {
+    /// Not shared. The default.
+    Off,
+    /// Shared and reachable at these coordinates.
+    Active(ShareInfo),
+    /// Sharing was requested but cannot run here — most commonly because the
+    /// `quack` extension could not be installed (it is not statically linked
+    /// into the bundled build and is fetched on first use).
+    Unavailable { reason: String },
 }

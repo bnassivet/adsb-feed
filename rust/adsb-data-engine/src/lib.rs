@@ -8,6 +8,7 @@
 pub mod error;
 pub mod geo;
 pub mod sbs_parser;
+pub mod share;
 pub mod storage;
 pub mod types;
 
@@ -22,8 +23,8 @@ pub use types::{
     DetectionRangeQuery, DetectionRangeSector, EventOfInterest, EventOfInterestQuery,
     FlightSummary, FlightSummaryQuery, HourlyHeatmapCell, HourlyHeatmapQuery, ImportPreview,
     ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord, Scenario, ScenarioTrack,
-    ScenarioWithTracks, StatusEvent, StatusEventQuery, StatusEventStatus, StatusEventType,
-    StorageConfig, StorageStats, TablePreview, TimeDistributionBucket, TimeDistributionMetric,
-    TimeDistributionQuery, TrajectoryQuery, UpdateEventOfInterest, UpdateScenario,
-    UpdateScenarioTrack,
+    ScenarioWithTracks, ShareConfig, ShareInfo, ShareStatus, StatusEvent, StatusEventQuery,
+    StatusEventStatus, StatusEventType, StorageConfig, StorageStats, TablePreview,
+    TimeDistributionBucket, TimeDistributionMetric, TimeDistributionQuery, TrajectoryQuery,
+    UpdateEventOfInterest, UpdateScenario, UpdateScenarioTrack,
 };

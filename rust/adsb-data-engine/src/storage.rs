@@ -6,21 +6,23 @@
 
 use crate::error::StorageError;
 use crate::sbs_parser::AircraftPosition;
+use crate::share;
 use crate::types::{
     AircraftSummary, BboxQuery, CreateEventOfInterest, CreateScenario, CreateScenarioTrack,
     DetectionRangeQuery, DetectionRangeSector, EventOfInterest, EventOfInterestQuery,
     FlightSummary, FlightSummaryQuery, HourlyHeatmapCell, HourlyHeatmapQuery, ImportPreview,
     ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord, Scenario, ScenarioTrack,
-    ScenarioWithTracks, StatusEvent, StatusEventQuery, StorageConfig, StorageStats, TablePreview,
-    TimeDistributionBucket, TimeDistributionMetric, TimeDistributionQuery, TrajectoryQuery,
-    UpdateEventOfInterest, UpdateScenario, UpdateScenarioTrack,
+    ScenarioWithTracks, ShareConfig, ShareInfo, ShareStatus, StatusEvent, StatusEventQuery,
+    StorageConfig, StorageStats, TablePreview, TimeDistributionBucket, TimeDistributionMetric,
+    TimeDistributionQuery, TrajectoryQuery, UpdateEventOfInterest, UpdateScenario,
+    UpdateScenarioTrack,
 };
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
 use duckdb::{Connection, params};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tracing::info;
+use tracing::{info, warn};
 
 /// Write Arrow RecordBatches to an IPC stream, returning the raw bytes.
 fn write_arrow_ipc(batches: impl Iterator<Item = RecordBatch>) -> Result<Vec<u8>, StorageError> {
@@ -72,6 +74,11 @@ struct Storage {
     gap_threshold_ms: i64,
     /// In-memory index: hex_ident → latest flight. Rebuilt from DB on open().
     flight_tracker: HashMap<String, ActiveFlight>,
+    /// Quack sharing settings, retained so a UI-driven start uses the same
+    /// URI/token the configured one would have.
+    share_config: Option<ShareConfig>,
+    /// Live sharing state. The single authority — config only seeds the default.
+    share_status: ShareStatus,
 }
 
 const SCHEMA_SQL: &str = r#"
@@ -213,12 +220,16 @@ impl StorageHandle {
                 .unwrap_or_else(|| ":memory:".to_string())
         );
 
+        let auto_start_sharing = config.share.as_ref().is_some_and(|s| s.auto_start);
+
         let handle = Self {
             inner: Arc::new(Mutex::new(Storage {
                 conn,
                 source_id: config.source_id,
                 gap_threshold_ms: config.gap_threshold_ms,
                 flight_tracker: HashMap::new(),
+                share_config: config.share,
+                share_status: ShareStatus::Off,
             })),
         };
 
@@ -227,7 +238,99 @@ impl StorageHandle {
         // Rebuild in-memory tracker from flights table
         handle.rebuild_flight_tracker_sync()?;
 
+        // Sharing is a convenience, never a precondition for storage working.
+        // A failure here (most likely: no network to fetch the `quack`
+        // extension) is recorded as `Unavailable` and the handle is still
+        // returned — the app runs exactly as it would with sharing off.
+        if auto_start_sharing {
+            let _ = handle.start_sharing_sync();
+        }
+
         Ok(handle)
+    }
+
+    /// Expose this database over the Quack protocol so other DuckDB clients
+    /// can `ATTACH` to it.
+    ///
+    /// Idempotent: if sharing is already active, the existing [`ShareInfo`]
+    /// is returned rather than starting a second server.
+    ///
+    /// On failure the status becomes [`ShareStatus::Unavailable`] carrying the
+    /// reason, *and* the error is returned, so a UI-driven call can surface
+    /// what went wrong while `open()` can ignore it.
+    pub fn start_sharing_sync(&self) -> Result<ShareInfo, StorageError> {
+        let mut storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        if let ShareStatus::Active(info) = &storage.share_status {
+            return Ok(info.clone());
+        }
+
+        let cfg = storage.share_config.clone().unwrap_or_default();
+        match share::start(&storage.conn, &cfg) {
+            Ok(info) => {
+                storage.share_status = ShareStatus::Active(info.clone());
+                Ok(info)
+            }
+            Err(e) => {
+                let reason = e.to_string();
+                warn!("Could not share database over Quack: {reason}");
+                storage.share_status = ShareStatus::Unavailable { reason };
+                Err(e)
+            }
+        }
+    }
+
+    /// Stop exposing this database. No-op when sharing is not active.
+    pub fn stop_sharing_sync(&self) -> Result<(), StorageError> {
+        let mut storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let listen_uri = match &storage.share_status {
+            ShareStatus::Active(info) => info.listen_uri.clone(),
+            _ => return Ok(()),
+        };
+
+        share::stop(&storage.conn, &listen_uri)?;
+        storage.share_status = ShareStatus::Off;
+        Ok(())
+    }
+
+    /// Current sharing state.
+    pub fn sharing_status_sync(&self) -> Result<ShareStatus, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+        Ok(storage.share_status.clone())
+    }
+
+    /// Async wrapper around [`Self::start_sharing_sync`].
+    pub async fn start_sharing(&self) -> Result<ShareInfo, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.start_sharing_sync())
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Async wrapper around [`Self::stop_sharing_sync`].
+    pub async fn stop_sharing(&self) -> Result<(), StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.stop_sharing_sync())
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Async wrapper around [`Self::sharing_status_sync`].
+    pub async fn sharing_status(&self) -> Result<ShareStatus, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.sharing_status_sync())
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
 
     /// One-time migration: populate `flights` table from existing positions using
@@ -3101,6 +3204,7 @@ mod tests {
             db_path: None,
             source_id: "test".to_string(),
             gap_threshold_ms: 3_600_000,
+            share: None,
         }
     }
 
@@ -3591,6 +3695,7 @@ mod tests {
             db_path: None,
             source_id: "my-receiver".to_string(),
             gap_threshold_ms: 3_600_000,
+            share: None,
         };
         let handle = StorageHandle::open(config).unwrap();
 
@@ -4694,6 +4799,7 @@ mod tests {
             db_path: Some(db_path),
             source_id: "test".to_string(),
             gap_threshold_ms: 3_600_000,
+            share: None,
         };
         let handle = StorageHandle::open(config).unwrap();
         let positions = vec![sample_position(
@@ -5279,6 +5385,7 @@ mod tests {
             db_path: None,
             source_id: "test".to_string(),
             gap_threshold_ms: 900_000, // 15 minutes
+            share: None,
         };
         let handle = StorageHandle::open(config).unwrap();
         // 3 positions: gap between 2nd and 3rd is 30 minutes
@@ -6713,5 +6820,184 @@ mod tests {
 
         handle.delete_scenario(scenario.id.clone()).await.unwrap();
         assert!(handle.list_scenarios().await.unwrap().is_empty());
+    }
+
+    // ---- Quack sharing ----------------------------------------------------
+    //
+    // The `quack` extension is not statically linked into the bundled DuckDB
+    // build; it is fetched from extensions.duckdb.org on first use. Rather
+    // than skip when that is impossible (a silent skip hides breakage), each
+    // test below asserts the *degradation* contract instead when the
+    // extension cannot be loaded. Both branches assert something real.
+    fn quack_available() -> bool {
+        let probe = Connection::open_in_memory().expect("probe conn");
+        crate::share::load_extension(&probe).is_ok()
+    }
+
+    fn share_config_on(port: u16) -> StorageConfig {
+        StorageConfig {
+            share: Some(ShareConfig {
+                uri: format!("quack:localhost:{port}"),
+                ..ShareConfig::default()
+            }),
+            ..test_config()
+        }
+    }
+
+    #[test]
+    fn test_sharing_is_off_by_default() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        assert_eq!(handle.sharing_status_sync().unwrap(), ShareStatus::Off);
+    }
+
+    #[test]
+    fn test_start_sharing_reports_unavailable_when_extension_missing() {
+        if quack_available() {
+            return; // covered by the activation test instead
+        }
+        let handle = StorageHandle::open(test_config()).unwrap();
+        assert!(handle.start_sharing_sync().is_err());
+        // The contract that matters: storage still works, and the reason is kept.
+        assert!(matches!(
+            handle.sharing_status_sync().unwrap(),
+            ShareStatus::Unavailable { .. }
+        ));
+        assert!(handle.get_stats_sync().is_ok());
+    }
+
+    #[test]
+    fn test_start_sharing_activates_and_is_idempotent() {
+        if !quack_available() {
+            return;
+        }
+        let handle = StorageHandle::open(share_config_on(19801)).unwrap();
+        let first = handle.start_sharing_sync().unwrap();
+        assert!(!first.token.is_empty(), "a token must be issued");
+        assert!(first.listen_url.starts_with("http://"));
+
+        // Starting again must not spin up a second server.
+        let second = handle.start_sharing_sync().unwrap();
+        assert_eq!(first, second);
+        assert_eq!(
+            handle.sharing_status_sync().unwrap(),
+            ShareStatus::Active(first)
+        );
+        handle.stop_sharing_sync().unwrap();
+    }
+
+    #[test]
+    fn test_stop_sharing_returns_to_off_and_is_a_noop_when_off() {
+        if !quack_available() {
+            return;
+        }
+        let handle = StorageHandle::open(share_config_on(19802)).unwrap();
+        // No-op before anything is started.
+        handle.stop_sharing_sync().unwrap();
+        assert_eq!(handle.sharing_status_sync().unwrap(), ShareStatus::Off);
+
+        handle.start_sharing_sync().unwrap();
+        handle.stop_sharing_sync().unwrap();
+        assert_eq!(handle.sharing_status_sync().unwrap(), ShareStatus::Off);
+    }
+
+    #[test]
+    fn test_auto_start_shares_when_storage_opens() {
+        if !quack_available() {
+            return;
+        }
+        let mut config = share_config_on(19803);
+        config.share.as_mut().unwrap().auto_start = true;
+        let handle = StorageHandle::open(config).unwrap();
+        assert!(matches!(
+            handle.sharing_status_sync().unwrap(),
+            ShareStatus::Active(_)
+        ));
+        handle.stop_sharing_sync().unwrap();
+    }
+
+    #[test]
+    fn test_shared_database_is_readable_by_another_client() {
+        if !quack_available() {
+            return;
+        }
+        let handle = StorageHandle::open(share_config_on(19804)).unwrap();
+        handle
+            .insert_batch_sync(
+                &[
+                    sample_position("ABC123", Some(48.85), Some(2.35), "2026/08/25,12:00:00.000"),
+                    sample_position("DEF456", Some(48.86), Some(2.36), "2026/08/25,12:00:01.000"),
+                ],
+                "UTC",
+            )
+            .unwrap();
+
+        let info = handle.start_sharing_sync().unwrap();
+
+        // A wholly separate connection, as an external tool would be.
+        let client = Connection::open_in_memory().unwrap();
+        crate::share::load_extension(&client).unwrap();
+        client
+            .execute_batch(&format!(
+                "ATTACH '{}' AS adsb (TOKEN '{}')",
+                info.listen_uri, info.token
+            ))
+            .unwrap();
+
+        let count: i64 = client
+            .query_row("SELECT count(*) FROM adsb.positions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2, "external client must see the live rows");
+
+        handle.stop_sharing_sync().unwrap();
+    }
+
+    #[test]
+    fn test_wrong_token_is_rejected() {
+        if !quack_available() {
+            return;
+        }
+        let handle = StorageHandle::open(share_config_on(19805)).unwrap();
+        let info = handle.start_sharing_sync().unwrap();
+
+        let client = Connection::open_in_memory().unwrap();
+        crate::share::load_extension(&client).unwrap();
+        let attached = client.execute_batch(&format!(
+            "ATTACH '{}' AS adsb (TOKEN 'not-the-token')",
+            info.listen_uri
+        ));
+        assert!(attached.is_err(), "a bad token must not be admitted");
+
+        handle.stop_sharing_sync().unwrap();
+    }
+
+    #[test]
+    fn test_share_status_serializes_with_a_state_tag() {
+        let off = serde_json::to_value(ShareStatus::Off).unwrap();
+        assert_eq!(off, serde_json::json!({ "state": "off" }));
+
+        let unavailable = serde_json::to_value(ShareStatus::Unavailable {
+            reason: "offline".to_string(),
+        })
+        .unwrap();
+        assert_eq!(
+            unavailable,
+            serde_json::json!({ "state": "unavailable", "reason": "offline" })
+        );
+
+        let active = serde_json::to_value(ShareStatus::Active(ShareInfo {
+            listen_uri: "quack:localhost:9494".to_string(),
+            listen_url: "http://localhost:9494".to_string(),
+            token: "TOK".to_string(),
+        }))
+        .unwrap();
+        assert_eq!(
+            active,
+            serde_json::json!({
+                "state": "active",
+                "listen_uri": "quack:localhost:9494",
+                "listen_url": "http://localhost:9494",
+                "token": "TOK"
+            })
+        );
     }
 }
