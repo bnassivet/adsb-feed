@@ -74,7 +74,10 @@ SELECT count(*) FROM adsb.positions;
 ```
 
 See [`docs/quack_client_example.ipynb`](docs/quack_client_example.ipynb) for a worked
-Python example that plots aircraft-per-day and flights-per-day off the live tables.
+Python example that plots aircraft-per-day and flights-per-day off the live tables. It
+resolves the token at run time — from `ADSB_SHARE_TOKEN`, or by prompting, accepting
+either a bare token or the whole `ATTACH` statement the Share DB button copies — so no
+token is ever stored in the notebook.
 
 #### Getting the token
 
