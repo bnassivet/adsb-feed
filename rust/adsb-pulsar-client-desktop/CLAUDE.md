@@ -50,8 +50,12 @@ src/
 - **Sharing the DB over Quack**: `StorageHandle::start_sharing()` calls `quack_serve()` on the
   instance the engine already owns, so other DuckDB clients (`webapp`, spark, a `duckdb` CLI)
   can `ATTACH` while the app keeps recording — the alternative to releasing the file lock.
-  Opt-in via `StorageConfig.share` (`auto_start`) or the metrics-bar toggle; `share_status` on
-  the engine is the single authority for live state. Three things to know:
+  Opt-in via the metrics-bar toggle (token generated on the spot, shown and copied as a
+  ready-to-paste `ATTACH`), or via environment variables read in `init_storage`:
+  `ADSB_SHARE_AUTO_START`, `ADSB_SHARE_URI`, `ADSB_SHARE_TOKEN`,
+  `ADSB_SHARE_ALLOW_OTHER_HOSTNAME`. Setting only `ADSB_SHARE_TOKEN` pre-seeds the token so
+  it can be known in advance while still requiring a deliberate click. `share_status` on the
+  engine is the single authority for live state. Three things to know:
   1. The `quack` extension is **not statically linked** — it is autoinstalled from
      `extensions.duckdb.org` on first use, so enabling it offline yields
      `ShareStatus::Unavailable { reason }` and storage keeps working (never fatal).

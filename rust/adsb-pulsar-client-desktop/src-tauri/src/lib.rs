@@ -16,7 +16,7 @@ mod tool_service;
 const DEFAULT_TOOL_SERVER_PORT: u16 = 8787;
 
 use adsb_data_engine::{
-    StatusEvent, StatusEventStatus, StatusEventType, StorageConfig, StorageHandle,
+    ShareConfig, StatusEvent, StatusEventStatus, StatusEventType, StorageConfig, StorageHandle,
 };
 use adsb_pulsar_client::Config;
 use state::AppState;
@@ -163,6 +163,62 @@ pub fn persist_config(app: &tauri::AppHandle, config: &Config) -> Result<(), Str
 ///
 /// Returns `(handle, config)`. The config is kept for reopening after release.
 /// Returns `(None, None)` if initialization fails (app continues without history).
+/// Builds the Quack sharing config from environment lookups.
+///
+/// Split from the environment read so it can be tested without mutating
+/// process-global state (env vars are shared across parallel test threads).
+///
+/// Returns `None` — sharing off, the default — unless at least one variable is
+/// set. Setting a URI or token without `ADSB_SHARE_AUTO_START` is meaningful:
+/// it pre-seeds what the UI toggle will use, so the token can be known in
+/// advance rather than generated on the first click.
+fn build_share_config(
+    auto_start: Option<&str>,
+    uri: Option<&str>,
+    token: Option<&str>,
+    allow_other_hostname: Option<&str>,
+) -> Option<ShareConfig> {
+    fn truthy(value: Option<&str>) -> bool {
+        matches!(
+            value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+            Some("1" | "true" | "yes" | "on")
+        )
+    }
+
+    if auto_start.is_none() && uri.is_none() && token.is_none() && allow_other_hostname.is_none() {
+        return None;
+    }
+
+    let defaults = ShareConfig::default();
+    Some(ShareConfig {
+        uri: uri
+            .map(str::to_string)
+            .filter(|u| !u.trim().is_empty())
+            .unwrap_or(defaults.uri),
+        token: token.map(str::to_string).filter(|t| !t.trim().is_empty()),
+        allow_other_hostname: truthy(allow_other_hostname),
+        auto_start: truthy(auto_start),
+    })
+}
+
+/// Reads the sharing config from the environment.
+///
+/// | Variable | Effect |
+/// |---|---|
+/// | `ADSB_SHARE_AUTO_START` | Start sharing as soon as storage opens |
+/// | `ADSB_SHARE_URI` | Bind URI (default `quack:localhost`, port 9494) |
+/// | `ADSB_SHARE_TOKEN` | Use this token instead of a generated one |
+/// | `ADSB_SHARE_ALLOW_OTHER_HOSTNAME` | Permit a non-local bind |
+fn share_config_from_env() -> Option<ShareConfig> {
+    let get = |k: &str| std::env::var(k).ok();
+    build_share_config(
+        get("ADSB_SHARE_AUTO_START").as_deref(),
+        get("ADSB_SHARE_URI").as_deref(),
+        get("ADSB_SHARE_TOKEN").as_deref(),
+        get("ADSB_SHARE_ALLOW_OTHER_HOSTNAME").as_deref(),
+    )
+}
+
 fn init_storage(app: &tauri::App) -> (Option<StorageHandle>, Option<StorageConfig>) {
     let app_data_dir = match app.path().app_data_dir() {
         Ok(dir) => dir,
@@ -174,7 +230,7 @@ fn init_storage(app: &tauri::App) -> (Option<StorageHandle>, Option<StorageConfi
         db_path: Some(db_path.clone()),
         source_id: "desktop".to_string(),
         gap_threshold_ms: 3_600_000,
-        share: None,
+        share: share_config_from_env(),
     };
 
     match StorageHandle::open(config.clone()) {
@@ -190,5 +246,56 @@ fn init_storage(app: &tauri::App) -> (Option<StorageHandle>, Option<StorageConfi
             warn!("Storage init failed (continuing without history): {e}");
             (None, Some(config))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_share_config;
+
+    #[test]
+    fn share_is_off_when_nothing_is_configured() {
+        assert!(build_share_config(None, None, None, None).is_none());
+    }
+
+    #[test]
+    fn auto_start_accepts_the_usual_spellings_of_yes() {
+        for value in ["1", "true", "TRUE", "yes", "on", " true "] {
+            let cfg = build_share_config(Some(value), None, None, None).expect("configured");
+            assert!(cfg.auto_start, "{value:?} should enable auto_start");
+        }
+        for value in ["0", "false", "no", "off", ""] {
+            let cfg = build_share_config(Some(value), None, None, None).expect("configured");
+            assert!(!cfg.auto_start, "{value:?} should not enable auto_start");
+        }
+    }
+
+    #[test]
+    fn a_token_alone_pre_seeds_sharing_without_starting_it() {
+        // The point of setting only a token: know it in advance, but still
+        // require a deliberate click to expose the database.
+        let cfg = build_share_config(None, None, Some("PRESET"), None).expect("configured");
+        assert_eq!(cfg.token.as_deref(), Some("PRESET"));
+        assert!(!cfg.auto_start);
+        assert_eq!(cfg.uri, "quack:localhost");
+    }
+
+    #[test]
+    fn blank_values_fall_back_to_defaults_rather_than_binding_nothing() {
+        let cfg = build_share_config(Some("1"), Some("  "), Some(""), None).expect("configured");
+        assert_eq!(cfg.uri, "quack:localhost");
+        assert_eq!(
+            cfg.token, None,
+            "a blank token must generate one, not be used"
+        );
+    }
+
+    #[test]
+    fn uri_and_allow_other_hostname_are_carried_through() {
+        let cfg = build_share_config(Some("1"), Some("quack:0.0.0.0:9500"), None, Some("true"))
+            .expect("configured");
+        assert_eq!(cfg.uri, "quack:0.0.0.0:9500");
+        assert!(cfg.allow_other_hostname);
+        assert!(cfg.auto_start);
     }
 }
