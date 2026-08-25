@@ -1,6 +1,6 @@
 "use client";
 import type { MetricsWithRates } from "@/hooks/useMetrics";
-import type { StorageAvailability } from "@/lib/types";
+import type { ShareStatus, StorageAvailability } from "@/lib/types";
 import { formatBytes } from "@/lib/format";
 
 interface Props {
@@ -18,12 +18,16 @@ interface Props {
   isExporting?: boolean;
   onImportDatabase?: () => void;
   isImporting?: boolean;
+  shareStatus?: ShareStatus;
+  onStartSharing?: () => void;
+  onStopSharing?: () => void;
 }
 
 export function MetricsBar({
   metrics, recordPositions, recordRaw, onToggleRecordPositions, onToggleRecordRaw,
   storageStatus, onReleaseStorage, onReclaimStorage, onSwapDatabase, isSwapping, onExportDatabase, isExporting,
   onImportDatabase, isImporting,
+  shareStatus, onStartSharing, onStopSharing,
 }: Props) {
   return (
     <div className="flex items-center gap-6 px-4 py-2 bg-slate-900 border-t border-slate-700 text-xs text-slate-400">
@@ -127,6 +131,36 @@ export function MetricsBar({
             <path d="M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2zm3 6V3a3 3 0 0 0-6 0v4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z" />
           </svg>
           <span className="font-mono text-amber-400">DB Released</span>
+        </button>
+      )}
+      {storageStatus === "available" && shareStatus?.state !== "active" && (
+        <button
+          onClick={onStartSharing}
+          className="flex items-center gap-1 hover:text-slate-200 transition cursor-pointer"
+          title={
+            shareStatus?.state === "unavailable"
+              ? `Sharing unavailable: ${shareStatus.reason}`
+              : "Share the DB over Quack so other DuckDB clients can ATTACH to it"
+          }
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M11 3a2 2 0 1 1 .7 1.52L6.9 6.9a2 2 0 0 1 0 2.2l4.8 2.38a2 2 0 1 1-.45.9L6.46 9.99a2 2 0 1 1 0-3.98l4.79-2.39A2 2 0 0 1 11 3z" />
+          </svg>
+          <span
+            className={`font-mono ${shareStatus?.state === "unavailable" ? "text-slate-600" : "text-slate-400"}`}
+          >
+            {shareStatus?.state === "unavailable" ? "Share N/A" : "Share DB"}
+          </span>
+        </button>
+      )}
+      {shareStatus?.state === "active" && (
+        <button
+          onClick={onStopSharing}
+          className="flex items-center gap-1 hover:text-red-200 transition cursor-pointer"
+          title={`Shared at ${shareStatus.listen_uri} — click to stop. Anyone with the token has full read/write access.`}
+        >
+          <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
+          <span className="font-mono text-green-400">Shared</span>
         </button>
       )}
       {storageStatus === "available" && (
