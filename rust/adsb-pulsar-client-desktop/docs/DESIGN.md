@@ -100,7 +100,7 @@ flowchart TB
     subgraph tracker["ADS-B Aircraft Tracker — one Tauri binary"]
         frontend["<b>Frontend UI</b><br/><i>[Container: Next.js 16, React 19, Leaflet]</i><br/>Map, panels, five track categories, chat.<br/>Static export served from the webview"]
         backend["<b>Tauri Backend</b><br/><i>[Container: Rust, Tokio, Tauri v2]</i><br/>Ingest lifecycle, IPC commands, throttling,<br/>batch persistence, loopback tool server"]
-        duckdb[("<b>History Store</b><br/><i>[Container: DuckDB 1.2 embedded]</i><br/>positions, raw_messages, status_events,<br/>scenarios, scenario_tracks")]
+        duckdb[("<b>History Store</b><br/><i>[Container: DuckDB 1.5.5 embedded]</i><br/>positions, raw_messages, status_events,<br/>scenarios, scenario_tracks")]
     end
 
     subgraph agents["Optional Local AI Services — separate processes"]
@@ -181,7 +181,7 @@ flowchart TB
         types["<b>types.rs, error.rs</b><br/><i>[Component: Rust, serde]</i><br/>Wire types shared with<br/>TypeScript, StorageError"]
     end
 
-    duckdb[("<b>adsb_history.db</b><br/><i>[DuckDB 1.2]</i>")]
+    duckdb[("<b>adsb_history.db</b><br/><i>[DuckDB 1.5.5]</i>")]
 
     frontend -->|"invoke<br/><i>[Tauri IPC]</i>"| commands
     bridge -->|"adsb:message, adsb:status<br/><i>[Tauri events]</i>"| frontend

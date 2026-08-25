@@ -1,8 +1,31 @@
 # Redesign: `adsb-data-engine` as a DuckDB-native client/server (Quack)
 
-> **Status: DEFERRED — reevaluated 2026-08-23** against DuckDB 1.5.5 / `duckdb-rs` 1.10505.0.
+> **Status: PARTIALLY IMPLEMENTED 2026-08-25 — the rest remains DEFERRED.**
+> The **embedded self-host mode** of this design has been built and shipped: `adsb-data-engine`
+> now calls `quack_serve()` on the database it already owns, so other DuckDB clients can
+> `ATTACH` to it. See `share.rs`, `StorageHandle::{start,stop}_sharing` / `sharing_status`,
+> and the metrics-bar toggle.
+>
+> What was built is *only* that. The **client/server re-architecture in this document — the
+> Tauri app becoming a remote client, a standalone daemon, `Backend::Remote`, the multi-token
+> ACL scheme — is NOT built and stays deferred.** The engine remains the sole owner and sole
+> writer, which is why the shipped slice needed none of it: constraints 1–3 are satisfied by
+> construction rather than by re-architecture.
+>
+> Two findings from building it, corrected against this document:
+> - **We were never on DuckDB 1.2.** `duckdb = "1.2"` was a caret requirement resolving to
+>   **1.4.4**. Now pinned exactly at `=1.10505.0` (DuckDB v1.5.5).
+> - **`arrow` is coupled to duckdb's major** (56 → 58 was required). Not anticipated here.
+>
+> Verified empirically rather than from the docs, which do not specify it: `quack_serve`
+> returns exactly `(listen_uri, listen_url, auth_token)`, and `INSTALL quack` succeeds from
+> the bundled build (autoinstalled, so it needs network on first use).
+
+> **Reevaluated 2026-08-23** against DuckDB 1.5.5 / `duckdb-rs` 1.10505.0.
 > Quack is still beta; the gate remains DuckDB 2.0, **now scheduled September 2026**.
-> Design-only blueprint. Do not implement until DuckDB 2.0 / Quack GA.
+> Design-only blueprint **for the remaining, still-deferred scope** — do not build the
+> client/server split until DuckDB 2.0 / Quack GA. (The self-host slice above was shipped
+> knowingly on beta because it is small, opt-in, and nothing depends on it.)
 > Originally authored June 2026 against DuckDB v1.5.3 (Quack beta).
 
 ## Context

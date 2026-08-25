@@ -116,7 +116,15 @@ Update Design documentation (DESIGN.md, DOCUMENTATION.md) before proposing to co
 - Tauri crate uses `default-features = false` to exclude clap
 - `[profile.release]` settings must be in this workspace root `Cargo.toml`, not member crates
 - `protoc` required at build time (Pulsar crate dependency)
-- `adsb-data-engine` uses `duckdb` crate (DuckDB 1.2) via C FFI — no extra system packages needed beyond Rust toolchain; DuckDB is statically linked
+- `adsb-data-engine` uses the `duckdb` crate via C FFI — no extra system packages needed beyond the Rust toolchain; DuckDB is statically linked
+- **The `duckdb` version is pinned exactly** (`=1.10505.0`, DuckDB v1.5.5). Not hygiene: the
+  `quack` extension is *not* statically linked into the bundled build and is autoinstalled from
+  `extensions.duckdb.org` at runtime, and extension binaries are keyed to the exact DuckDB build,
+  so version drift invalidates the cached extension. The previous `"1.2"` was a caret requirement
+  that had silently resolved to 1.4.4 and would have accepted the 1.105xx line on any `cargo update`.
+- **`arrow` must track the major that `duckdb` depends on** (currently 58). `Statement::query_arrow`
+  returns duckdb's own `RecordBatch`; a skew resolves *both* arrow versions into the lockfile and
+  the types fail to unify — the giveaway is `expected RecordBatch, but it yields RecordBatch`.
 
 ## Continous improvement
 

@@ -47,6 +47,19 @@ src/
 - **Tauri bridge** throttles ~50k msg/s down to ~2 updates/sec via HashMap buffer flushed every 500ms; tracks per-aircraft message counts pre-throttle
 - **DuckDB writes on every flush**: each 500ms batch is persisted to `adsb_history.db` via `StorageHandle::insert_batch()` — non-fatal if storage is unavailable
 - **Graceful DuckDB degradation**: `AppState.storage: SharedStorage` (`Arc<RwLock<Option<StorageHandle>>>`) — `None` if DuckDB init fails or connection is released; app runs in real-time-only mode; all historical query commands return `"Storage not available"`
+- **Sharing the DB over Quack**: `StorageHandle::start_sharing()` calls `quack_serve()` on the
+  instance the engine already owns, so other DuckDB clients (`webapp`, spark, a `duckdb` CLI)
+  can `ATTACH` while the app keeps recording — the alternative to releasing the file lock.
+  Opt-in via `StorageConfig.share` (`auto_start`) or the metrics-bar toggle; `share_status` on
+  the engine is the single authority for live state. Three things to know:
+  1. The `quack` extension is **not statically linked** — it is autoinstalled from
+     `extensions.duckdb.org` on first use, so enabling it offline yields
+     `ShareStatus::Unavailable { reason }` and storage keeps working (never fatal).
+  2. **A token grants full read AND write on every table.** Quack's authorization hook is a SQL
+     macro and macros cannot execute DML, so table-level rules are impossible without shipping a
+     custom DuckDB extension. Bind stays localhost unless `allow_other_hostname`; no TLS.
+  3. `ShareStatus` is serde-tagged with **`state`**, not `type` — the TS union must match or
+     every status silently renders as "off".
 - **Storage management**: Release/reclaim DuckDB connection at runtime (for external tool access); live export via DuckDB `ATTACH`+`CREATE TABLE AS` without stopping recording; import/merge from external `.db` files with deduplication; `StorageConfig` retained in AppState for reopening after release
 - `broadcast::channel` as message tap — fire-and-forget (`let _ = tx.send()`)
 - `watch::channel` for shutdown signal
