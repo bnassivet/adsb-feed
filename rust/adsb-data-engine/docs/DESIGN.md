@@ -20,8 +20,17 @@ adsb-data-engine/src/
 ├── types.rs       Domain types — queries and results
 ├── sbs_parser.rs  SBS-1 CSV parser
 ├── geo.rs         Geodesic math (haversine, bearing, sectors)
+├── share.rs       Quack server — expose the DB to other DuckDB clients
 └── storage.rs     DuckDB backend — schema, inserts, queries
 ```
+
+> **Sharing the live database.** Embedded DuckDB holds an exclusive file lock, so
+> nothing else can read the database while the engine owns it. `share.rs` wraps
+> `quack_serve()` so other DuckDB clients can `ATTACH` over HTTP *while recording
+> continues* — the engine stays the sole owner and sole writer.
+> [`quack_client_example.ipynb`](quack_client_example.ipynb) is a worked example:
+> it attaches from a plain Python DuckDB session and plots aircraft-per-day and
+> flights-per-day histograms straight off the live tables.
 
 ---
 
