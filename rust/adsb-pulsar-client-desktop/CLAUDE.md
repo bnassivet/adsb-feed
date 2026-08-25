@@ -459,6 +459,11 @@ Requires `adsb-agent` (:8000) and `adsb-simulation-agent` (:8300) running; witho
 
 ## Gotchas
 
+- Editing docs under `adsb-data-engine/` used to restart the dev app: it is a path
+  dependency, so `tauri dev` watches its whole directory. `adsb-data-engine/.taurignore`
+  excludes `docs/`, notebooks and markdown. **That file is read once, at `tauri dev`
+  startup** — changing it does nothing until you restart the dev session.
+
 - Root `.gitignore` has `lib/` which silently ignores `src/lib/`. Negated with `!**/src/lib/`
 - Tauri v2 commands silently fail without proper permissions in `capabilities/default.json`
 - `create-next-app` fails if `src-tauri/` exists — scaffold manually or use temp dir
