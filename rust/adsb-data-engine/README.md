@@ -104,6 +104,13 @@ Environment variables read by the desktop app at startup:
 | `ADSB_SHARE_TOKEN` | generated | Use this token instead of a generated one. Blank generates one |
 | `ADSB_SHARE_ALLOW_OTHER_HOSTNAME` | off | Permit a non-local bind |
 
+A generated token is **rotated on every restart**, which drops any attached client.
+Since `tauri dev` restarts the app on each code change, set `ADSB_SHARE_TOKEN` during
+development to keep it stable and avoid re-pasting. (Editing docs no longer triggers a
+restart — `.taurignore` in this crate excludes `docs/`, notebooks and markdown from the
+Tauri dev watcher, which would otherwise rebuild the app because this crate is a path
+dependency of it.)
+
 Sharing stays **off** unless at least one variable is set or the UI toggle is used.
 Embedding this crate directly? Set `StorageConfig.share` to a `ShareConfig`; the
 environment variables above are the desktop app's way of populating it.
