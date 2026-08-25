@@ -41,14 +41,14 @@ import { useEventsOfInterest } from "@/hooks/useEventsOfInterest";
 import { useCopilotTools } from "@/hooks/useCopilotTools";
 import { useCopilotContext } from "@/hooks/useCopilotContext";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
-import { startFeed, stopFeed, getConfig, getStorageStatus, releaseStorage, reclaimStorage, exportDatabase, previewImportDatabase, importDatabase, swapDatabase, getStorageStats } from "@/lib/commands";
+import { startFeed, stopFeed, getConfig, getStorageStatus, releaseStorage, reclaimStorage, exportDatabase, previewImportDatabase, importDatabase, swapDatabase, getStorageStats, startSharing, stopSharing, sharingStatus } from "@/lib/commands";
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
 import { listen } from "@tauri-apps/api/event";
 import { ask, message, save, open } from "@tauri-apps/plugin-dialog";
 import { sortTracks, type SortKey } from "@/lib/sort-tracks";
 import { filterHistoryByTimeRange } from "@/lib/history-time-filter";
 import { DEFAULT_FILTERS, trackKey } from "@/lib/types";
-import type { AircraftTrack, ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, TrackSection, StorageAvailability, CreateEventOfInterest, UpdateEventOfInterest, EventOfInterest, EventFilterMode, MapPickResult } from "@/lib/types";
+import type { AircraftTrack, ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, TrackSection, StorageAvailability, ShareStatus, CreateEventOfInterest, UpdateEventOfInterest, EventOfInterest, EventFilterMode, MapPickResult } from "@/lib/types";
 import type { SelectEvent } from "@/components/AircraftTable";
 import { ModeTabs } from "@/components/ModeTabs";
 import Link from "next/link";
@@ -479,12 +479,23 @@ export default function Dashboard() {
   const [isExporting, setIsExporting] = useState(false);
   const [isSwapping, setIsSwapping] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [shareStatus, setShareStatus] = useState<ShareStatus>({ state: "off" });
 
   // Fetch initial storage status and listen for changes
   useEffect(() => {
     getStorageStatus().then(setStorageStatus).catch(() => {});
     const unlisten = listen<StorageAvailability>("adsb:storage-status", (event) => {
       setStorageStatus(event.payload);
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  // Sharing can also be started by config at startup (auto_start), so the
+  // initial state has to be fetched rather than assumed to be "off".
+  useEffect(() => {
+    sharingStatus().then(setShareStatus).catch(() => {});
+    const unlisten = listen<ShareStatus>("adsb:share-status", (event) => {
+      setShareStatus(event.payload);
     });
     return () => { unlisten.then(fn => fn()); };
   }, []);
@@ -520,6 +531,49 @@ export default function Dashboard() {
     try {
       setError(null);
       await reclaimStorage();
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  const handleStartSharing = useCallback(async () => {
+    const confirmed = await ask(
+      "Share the database over Quack?\n\nOther DuckDB clients will be able to ATTACH to it. Anyone with the access token gets full read AND write access to every table, so only share on a trusted network.",
+      { title: "Share Database", kind: "warning" },
+    );
+    if (!confirmed) return;
+    try {
+      setError(null);
+      const info = await startSharing();
+      setShareStatus({ state: "active", ...info });
+
+      // The token is generated fresh and is the only way in, so it has to be
+      // put somewhere the user can actually use. Copying is best-effort —
+      // navigator.clipboard throws in a non-secure context — so the statement
+      // is shown in the dialog either way rather than only in the clipboard.
+      const attach = `ATTACH '${info.listen_uri}' AS adsb (TOKEN '${info.token}');`;
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(attach);
+        copied = true;
+      } catch {
+        // fall through — the dialog below still shows the statement
+      }
+      await message(
+        `${attach}\n\n${copied ? "Copied to your clipboard." : "Copy this to connect a client."}`,
+        { title: "Database Shared", kind: "info" },
+      );
+    } catch (e) {
+      setError(String(e));
+      setShareStatus({ state: "unavailable", reason: String(e) });
+    }
+  }, []);
+
+  const handleStopSharing = useCallback(async () => {
+    try {
+      setError(null);
+      await stopSharing();
+      setShareStatus({ state: "off" });
     } catch (e) {
       setError(String(e));
     }
@@ -1354,6 +1408,9 @@ export default function Dashboard() {
         onToggleRecordPositions={handleToggleRecordPositions}
         onToggleRecordRaw={handleToggleRecordRaw}
         storageStatus={storageStatus}
+        shareStatus={shareStatus}
+        onStartSharing={handleStartSharing}
+        onStopSharing={handleStopSharing}
         onReleaseStorage={handleReleaseStorage}
         onReclaimStorage={handleReclaimStorage}
         onSwapDatabase={handleSwapDatabase}

@@ -14,6 +14,9 @@ import {
   setRecordingState,
   getStorageStatus,
   releaseStorage,
+  startSharing,
+  stopSharing,
+  sharingStatus,
   reclaimStorage,
   exportDatabase,
   previewImportDatabase,
@@ -307,6 +310,62 @@ describe("Historical query commands", () => {
     it("sends reclaim command to backend", async () => {
       mockInvokeResponse("reclaim_storage", undefined);
       await expect(reclaimStorage()).resolves.toBeUndefined();
+    });
+  });
+
+  describe("startSharing", () => {
+    it("returns the coordinates a client needs to ATTACH", async () => {
+      mockInvokeResponse("start_sharing", {
+        listen_uri: "quack:localhost:9494",
+        listen_url: "http://localhost:9494",
+        token: "ABC123",
+      });
+      const info = await startSharing();
+      expect(info.listen_uri).toBe("quack:localhost:9494");
+      expect(info.token).toBe("ABC123");
+    });
+  });
+
+  describe("stopSharing", () => {
+    it("sends stop command to backend", async () => {
+      mockInvokeResponse("stop_sharing", undefined);
+      await expect(stopSharing()).resolves.toBeUndefined();
+    });
+  });
+
+  describe("sharingStatus", () => {
+    it("reports off", async () => {
+      mockInvokeResponse("sharing_status", { state: "off" });
+      expect(await sharingStatus()).toEqual({ state: "off" });
+    });
+
+    // The discriminant is `state`, not `type` — serde tags it that way, and
+    // getting this wrong silently renders every status as "off".
+    it("reports active with the connection details flattened alongside the tag", async () => {
+      mockInvokeResponse("sharing_status", {
+        state: "active",
+        listen_uri: "quack:localhost:9494",
+        listen_url: "http://localhost:9494",
+        token: "ABC123",
+      });
+      const status = await sharingStatus();
+      expect(status.state).toBe("active");
+      if (status.state === "active") {
+        expect(status.listen_url).toBe("http://localhost:9494");
+      }
+    });
+
+    it("reports unavailable with the reason", async () => {
+      mockInvokeResponse("sharing_status", {
+        state: "unavailable",
+        reason: "no network",
+      });
+      const status = await sharingStatus();
+      if (status.state === "unavailable") {
+        expect(status.reason).toBe("no network");
+      } else {
+        throw new Error("expected unavailable");
+      }
     });
   });
 

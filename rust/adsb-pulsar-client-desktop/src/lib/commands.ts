@@ -28,6 +28,8 @@ import type {
   StatusEvent,
   StatusEventQuery,
   StatusResponse,
+  ShareInfo,
+  ShareStatus,
   StorageAvailability,
   StorageStats,
   TimeDistributionBucket,
@@ -196,6 +198,28 @@ export async function reclaimStorage(): Promise<void> {
 
 export async function exportDatabase(targetPath: string): Promise<void> {
   return invoke("export_database", { targetPath });
+}
+
+// --- Quack sharing commands ---
+
+/**
+ * Expose the DuckDB database over Quack so other DuckDB clients can ATTACH.
+ *
+ * Idempotent — calling it while already sharing returns the running server's
+ * details rather than starting a second one.
+ */
+export async function startSharing(): Promise<ShareInfo> {
+  return invoke("start_sharing");
+}
+
+/** Stop exposing the database. No-op when sharing is not active. */
+export async function stopSharing(): Promise<void> {
+  return invoke("stop_sharing");
+}
+
+/** Current sharing state. Reports `off` when storage itself is unavailable. */
+export async function sharingStatus(): Promise<ShareStatus> {
+  return invoke("sharing_status");
 }
 
 export async function previewImportDatabase(path: string): Promise<ImportPreview> {
