@@ -560,7 +560,7 @@ export default function Dashboard() {
         // fall through — the dialog below still shows the statement
       }
       await message(
-        `${attach}\n\n${copied ? "Copied to your clipboard." : "Copy this to connect a client."}`,
+        `${attach}\n\nServing at ${info.listen_url}\n\n${copied ? "The ATTACH statement is on your clipboard." : "Copy the ATTACH statement to connect a client."}`,
         { title: "Database Shared", kind: "info" },
       );
     } catch (e) {

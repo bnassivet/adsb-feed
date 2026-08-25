@@ -46,6 +46,40 @@ pub(crate) fn load_extension(conn: &Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
+/// Extracts the port from an HTTP URL, e.g. `http://localhost:9494` -> `9494`.
+fn port_of(url: &str) -> Option<&str> {
+    let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let host_port = after_scheme.split('/').next().unwrap_or(after_scheme);
+    let (_, port) = host_port.rsplit_once(':')?;
+    (!port.is_empty() && port.chars().all(|c| c.is_ascii_digit())).then_some(port)
+}
+
+/// Whether a `quack:` URI already names a port.
+///
+/// IPv6 literals are bracketed (`quack:[::1]:1234`), so a bare `:` is not
+/// enough to decide — the colons inside the brackets are part of the address.
+fn has_port(uri: &str) -> bool {
+    let rest = uri.strip_prefix("quack:").unwrap_or(uri);
+    let rest = rest.strip_prefix("//").unwrap_or(rest);
+    match rest.rfind(']') {
+        Some(close) => rest[close + 1..].starts_with(':'),
+        None => rest.contains(':'),
+    }
+}
+
+/// Returns `listen_uri` with the port made explicit, taking it from
+/// `listen_url` when the URI omits it. Falls back to the URI unchanged if the
+/// port cannot be determined — a portless URI still connects on the default.
+fn qualify_uri(listen_uri: &str, listen_url: &str) -> String {
+    if has_port(listen_uri) {
+        return listen_uri.to_string();
+    }
+    match port_of(listen_url) {
+        Some(port) => format!("{listen_uri}:{port}"),
+        None => listen_uri.to_string(),
+    }
+}
+
 /// Start a Quack server on `conn`'s database instance.
 ///
 /// Returns the coordinates clients need: the listen URI, the HTTP URL, and
@@ -62,13 +96,21 @@ pub(crate) fn start(conn: &Connection, cfg: &ShareConfig) -> Result<ShareInfo, S
     }
 
     // `quack_serve` returns exactly one row: (listen_uri, listen_url, auth_token).
-    let info = conn.query_row(&format!("CALL quack_serve({args})"), [], |row| {
-        Ok(ShareInfo {
-            listen_uri: row.get(0)?,
-            listen_url: row.get(1)?,
-            token: row.get(2)?,
-        })
-    })?;
+    let raw: (String, String, String) =
+        conn.query_row(&format!("CALL quack_serve({args})"), [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+
+    // When no port was requested, `listen_uri` comes back without one
+    // ("quack:localhost") and the resolved port appears only in `listen_url`.
+    // Both forms connect, but callers display `listen_uri`, so a reader would
+    // never learn which port is actually in use. Normalise it here so every
+    // consumer gets a URI that names the port.
+    let info = ShareInfo {
+        listen_uri: qualify_uri(&raw.0, &raw.1),
+        listen_url: raw.1,
+        token: raw.2,
+    };
 
     info!("Database shared over Quack at {}", info.listen_uri);
     Ok(info)
@@ -87,6 +129,59 @@ pub(crate) fn stop(conn: &Connection, listen_uri: &str) -> Result<(), StorageErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qualify_uri_adds_the_resolved_port_when_the_uri_omits_it() {
+        // The default case: ShareConfig::default() asks for "quack:localhost",
+        // and the port comes back only in the URL.
+        assert_eq!(
+            qualify_uri("quack:localhost", "http://localhost:9494"),
+            "quack:localhost:9494"
+        );
+    }
+
+    #[test]
+    fn qualify_uri_leaves_an_explicit_port_alone() {
+        assert_eq!(
+            qualify_uri("quack:localhost:9999", "http://localhost:9999"),
+            "quack:localhost:9999"
+        );
+        assert_eq!(
+            qualify_uri("quack:0.0.0.0:9500", "http://0.0.0.0:9500"),
+            "quack:0.0.0.0:9500"
+        );
+    }
+
+    #[test]
+    fn qualify_uri_handles_ipv6_literals() {
+        // Colons inside the brackets are the address, not a port.
+        assert_eq!(
+            qualify_uri("quack:[::1]", "http://[::1]:9494"),
+            "quack:[::1]:9494"
+        );
+        assert_eq!(
+            qualify_uri("quack:[::1]:1234", "http://[::1]:1234"),
+            "quack:[::1]:1234"
+        );
+    }
+
+    #[test]
+    fn qualify_uri_falls_back_when_the_port_cannot_be_read() {
+        // Never fabricate a port: a portless URI still connects on the default.
+        assert_eq!(
+            qualify_uri("quack:localhost", "http://localhost"),
+            "quack:localhost"
+        );
+        assert_eq!(qualify_uri("quack:localhost", ""), "quack:localhost");
+    }
+
+    #[test]
+    fn qualify_uri_accepts_the_double_slash_form() {
+        assert_eq!(
+            qualify_uri("quack://localhost", "http://localhost:9494"),
+            "quack://localhost:9494"
+        );
+    }
 
     #[test]
     fn sql_quote_escapes_embedded_single_quotes() {

@@ -73,6 +73,11 @@ ATTACH 'quack:localhost:9494' AS adsb (TOKEN '<token>');
 SELECT count(*) FROM adsb.positions;
 ```
 
+`ShareInfo.listen_uri` always names the port. DuckDB omits it when none was
+requested (returning `quack:localhost`, with the resolved port only in
+`listen_url`), which would leave a reader unable to tell which port is in use, so
+the engine normalises it before returning.
+
 See [`docs/quack_client_example.ipynb`](docs/quack_client_example.ipynb) for a worked
 Python example that plots aircraft-per-day and flights-per-day off the live tables. It
 resolves the token at run time — from `ADSB_SHARE_TOKEN`, or by prompting, accepting
