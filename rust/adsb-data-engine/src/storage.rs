@@ -21,6 +21,7 @@ use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
 use duckdb::{Connection, params};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
@@ -3159,6 +3160,21 @@ pub fn move_database_to_snapshot(
 ///   falls back to local with a warning if unrecognised
 ///
 /// The returned `i64` is always a true UTC epoch millisecond value.
+/// Running count of timestamps that could not be parsed, used to throttle the
+/// warning below.
+static UNPARSEABLE_TIMESTAMPS: AtomicU64 = AtomicU64::new(0);
+
+/// Whether the `n`th unparseable timestamp should be logged.
+///
+/// A malformed timestamp is nearly always a *systematic* trait of the source
+/// rather than a one-off, so every message in the feed would trigger it. Since
+/// `parse_timestamp_to_ms` is called once per position inside the 500 ms batch
+/// loop, logging each one would emit hundreds of lines a second and bury the
+/// signal it is meant to raise. First occurrence, then every 1000th.
+fn should_warn_at(n: u64) -> bool {
+    n == 1 || n.is_multiple_of(1000)
+}
+
 fn parse_timestamp_to_ms(timestamp: &str, tz: &str) -> i64 {
     use std::str::FromStr;
 
@@ -3167,7 +3183,22 @@ fn parse_timestamp_to_ms(timestamp: &str, tz: &str) -> i64 {
 
     let naive = match naive {
         Ok(dt) => dt,
-        Err(_) => return chrono::Utc::now().timestamp_millis(),
+        Err(_) => {
+            // Deliberately non-fatal: one malformed line must not stop ingestion.
+            // But substituting "now" makes bad input indistinguishable from good
+            // input downstream, so say so rather than failing silently.
+            let n = UNPARSEABLE_TIMESTAMPS.fetch_add(1, Ordering::Relaxed) + 1;
+            if should_warn_at(n) {
+                tracing::warn!(
+                    "Unparseable timestamp {:?} — storing the current time instead. \
+                     Expected 'YYYY/MM/DD HH:MM:SS.mmm' (note the space, not a comma). \
+                     {} occurrence(s) so far.",
+                    timestamp,
+                    n
+                );
+            }
+            return chrono::Utc::now().timestamp_millis();
+        }
     };
 
     match tz {
@@ -6848,6 +6879,41 @@ mod tests {
             }),
             ..test_config()
         }
+    }
+
+    #[test]
+    fn test_should_warn_at_throttles_after_the_first() {
+        // The first one always speaks up — a single bad timestamp in an
+        // otherwise healthy feed must not be swallowed.
+        assert!(should_warn_at(1));
+        // Then it goes quiet, because a malformed source repeats every message.
+        for n in [2, 3, 17, 999, 1001, 1999] {
+            assert!(!should_warn_at(n), "{n} should be throttled");
+        }
+        // Periodic reminders so a persistent problem stays visible.
+        for n in [1000, 2000, 10_000] {
+            assert!(should_warn_at(n), "{n} should warn");
+        }
+    }
+
+    #[test]
+    fn test_unparseable_timestamp_falls_back_to_now_not_zero() {
+        // The fallback is deliberate (one bad line must not stop ingestion),
+        // so pin it: a comma instead of a space is the realistic typo, and it
+        // must yield a plausible "now", never 0 or a panic.
+        let before = chrono::Utc::now().timestamp_millis();
+        let ms = parse_timestamp_to_ms("2024/01/15,10:00:00.000", "UTC");
+        let after = chrono::Utc::now().timestamp_millis();
+        assert!(
+            ms >= before && ms <= after,
+            "expected a current timestamp, got {ms}"
+        );
+
+        // ...and the space form parses to the real instant instead.
+        assert_eq!(
+            parse_timestamp_to_ms("2024/01/15 10:00:00.000", "UTC"),
+            1_705_312_800_000
+        );
     }
 
     #[test]
