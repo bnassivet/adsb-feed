@@ -6924,8 +6924,8 @@ mod tests {
         handle
             .insert_batch_sync(
                 &[
-                    sample_position("ABC123", Some(48.85), Some(2.35), "2026/08/25,12:00:00.000"),
-                    sample_position("DEF456", Some(48.86), Some(2.36), "2026/08/25,12:00:01.000"),
+                    sample_position("ABC123", Some(48.85), Some(2.35), "2026/08/25 12:00:00.000"),
+                    sample_position("DEF456", Some(48.86), Some(2.36), "2026/08/25 12:00:01.000"),
                 ],
                 "UTC",
             )
