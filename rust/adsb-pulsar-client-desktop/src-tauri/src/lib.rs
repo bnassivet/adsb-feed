@@ -171,6 +171,7 @@ fn init_storage(app: &tauri::App) -> (Option<StorageHandle>, Option<StorageConfi
         db_path: Some(db_path.clone()),
         source_id: "desktop".to_string(),
         gap_threshold_ms: 3_600_000,
+        share: None,
     };
 
     match StorageHandle::open(config.clone()) {
