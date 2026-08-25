@@ -1,0 +1,16 @@
+# Keep `tauri dev` from restarting the app on documentation edits.
+#
+# This crate is a path dependency of the desktop app, so the Tauri dev watcher
+# watches the whole directory — including `docs/`. Saving the Quack notebook
+# therefore rebuilt and restarted the app, which also rotates the generated
+# Quack token and drops any client attached to it. None of these files are
+# build inputs.
+#
+# Patterns are intentionally written without a leading slash so they match at
+# any depth: the watcher roots its matcher at the common ancestor of all
+# watched folders, not necessarily at this directory.
+
+*.ipynb
+.ipynb_checkpoints/
+docs/
+*.md
