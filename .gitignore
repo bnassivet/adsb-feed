@@ -402,13 +402,9 @@ graphify-out/graph.html
 graphify-out/GRAPH_TREE.html
 graphify-out/GRAPH_REPORT.md
 
-# Run skills are shared project tooling, not personal config, so they must be
-# committed despite the blanket `.claude/` rule above. Git will not descend
-# into an excluded directory, so the parent has to be re-included first before
-# a nested negation can take effect.
-!rust/adsb-pulsar-client-desktop/.claude/
-rust/adsb-pulsar-client-desktop/.claude/*
-!rust/adsb-pulsar-client-desktop/.claude/skills/
+# Local run state: rendered configs, PID files, logs, the dev database.
+# Everything here is derived from adsb-stack.toml and safe to delete.
+.run/
 
 # Edge build output (Docker-based aarch64/armv7 builds use separate target dirs
 # so they never collide with the host's macOS artifacts)

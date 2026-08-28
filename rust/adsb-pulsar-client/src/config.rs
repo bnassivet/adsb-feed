@@ -815,6 +815,29 @@ impl Config {
             |v: &toml::Value| v.as_integer().map(|i| i as u64)
         );
 
+        // Receiver location is `arg(skip)`: file-only, with no flag or env
+        // fallback, so the file is the ONLY way to set it.
+        //
+        // These deliberately do NOT consult `is_defaulted`. clap's
+        // `ArgMatches::value_source` *panics* on an id it does not know --
+        // `"receiver_latitude" is not an id of an argument or a group` -- and a
+        // skipped field is not in `ArgMatches` at all. Asking the question
+        // crashes the process on any config file that sets a receiver location.
+        // There is nothing to ask anyway: no flag could have set them.
+        //
+        // Accept an integer as well as a float: TOML distinguishes 20 from
+        // 20.0, and a hand-written config may reasonably use either.
+        let as_f64 = |v: &toml::Value| v.as_float().or_else(|| v.as_integer().map(|i| i as f64));
+        if let Some(v) = file.get("receiver_latitude").and_then(as_f64) {
+            self.receiver_latitude = Some(v);
+        }
+        if let Some(v) = file.get("receiver_longitude").and_then(as_f64) {
+            self.receiver_longitude = Some(v);
+        }
+        if let Some(v) = file.get("receiver_altitude").and_then(as_f64) {
+            self.receiver_altitude = Some(v);
+        }
+
         // `forwarders` decides whether this node is a no-Pulsar deployment, so
         // it has to survive coming from the file. Unparseable entries are
         // dropped rather than defaulting the whole list, and an entirely
@@ -1409,6 +1432,63 @@ mod layering_tests {
         let mut cfg = defaults();
         cfg.overlay_file(&file("socket_port = 'not-a-number'"), &all_defaulted);
         assert_eq!(cfg.socket_port, 30003);
+    }
+
+    #[test]
+    fn receiver_location_layers_from_the_file() {
+        // These are `arg(skip)` -- file-only, unreachable from any flag or env
+        // var -- so if overlay_file ignores them there is no other way to set
+        // them, and the omission is silent: the client starts happily with no
+        // receiver location at all.
+        let mut cfg = defaults();
+        assert_eq!(cfg.receiver_latitude, None);
+        cfg.overlay_file(
+            &file("receiver_latitude = 46.717915\nreceiver_longitude = -2.33716964\nreceiver_altitude = 20.0"),
+            &all_defaulted,
+        );
+        assert_eq!(cfg.receiver_latitude, Some(46.717915));
+        assert_eq!(cfg.receiver_longitude, Some(-2.33716964));
+        assert_eq!(cfg.receiver_altitude, Some(20.0));
+    }
+
+    /// Every `arg(skip)` field: present in `Config`, absent from `ArgMatches`.
+    const SKIPPED: [&str; 3] = [
+        "receiver_latitude",
+        "receiver_longitude",
+        "receiver_altitude",
+    ];
+
+    /// Mimics clap: `ArgMatches::value_source` panics for an id that is not a
+    /// real argument, which is exactly what a skipped field is.
+    fn clap_like(id: &str) -> bool {
+        assert!(
+            !SKIPPED.contains(&id),
+            "`{id}` is not an id of an argument or a group -- clap would panic here"
+        );
+        true
+    }
+
+    #[test]
+    fn skipped_fields_are_never_asked_about() {
+        // Regression: consulting is_defaulted for an arg(skip) field crashed
+        // the client (exit 101) on any config carrying a receiver location.
+        // The bug survived a unit test because the test double answered every
+        // id happily, where the real clap predicate panics.
+        let mut cfg = defaults();
+        cfg.overlay_file(
+            &file("receiver_latitude = 46.7\nsource_id = 'x'"),
+            &clap_like,
+        );
+        assert_eq!(cfg.receiver_latitude, Some(46.7));
+        assert_eq!(cfg.source_id, "x");
+    }
+
+    #[test]
+    fn an_integer_receiver_coordinate_is_accepted() {
+        // TOML distinguishes 20 from 20.0; a hand-written config may use either.
+        let mut cfg = defaults();
+        cfg.overlay_file(&file("receiver_altitude = 20"), &all_defaulted);
+        assert_eq!(cfg.receiver_altitude, Some(20.0));
     }
 
     #[test]

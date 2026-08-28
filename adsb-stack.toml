@@ -1,0 +1,74 @@
+# ADS-B stack configuration -- the ONE file to edit.
+#
+# `make render` turns this into .run/feed.toml and .run/data-server.toml, which
+# the binaries read via --config. Those are generated: edit this file, not them.
+#
+# It exists because source_id, mqtt broker/port/topic are needed by *both*
+# binaries. Kept in two hand-edited files they drift, and a feed publishing to
+# one topic while the recorder subscribes to another fails silently -- the feed
+# looks healthy and nothing is ever recorded.
+
+[receiver]
+# Stamped onto every stored record, and the MQTT client id derives from it.
+# Must be unique per node: duplicates make data unattributable, and brokers
+# evict a session when a second client connects with the same id.
+id = "dev-laptop"
+latitude = 46.717915
+longitude = -2.33716964
+altitude_ft = 20.0
+# Timezone of the dump1090 timestamps: "Local" or an IANA name.
+timezone = "Local"
+
+[dump1090]
+host = "127.0.0.1"
+port = 30003
+# true: `make up` starts the bundled mock feed (6 aircraft orbiting the receiver)
+# instead of expecting a real dump1090. Useful with no receiver attached.
+mock = true
+
+[mqtt]
+host = "localhost"
+port = 1883
+topic = "adsb/sbs/raw"
+# 0 = at most once. Right for a live feed: a subscriber that was not connected
+# has missed nothing it can still use, and durability is the recorder's job.
+qos = 0
+
+[storage]
+# Dev-local. The deployed Pi uses /var/lib/adsb/adsb.db via /etc/adsb/*.toml.
+db_path = ".run/adsb.db"
+# Read-only JSON query API. 0 disables.
+http_port = 8787
+# Expose the database over Quack so the desktop app (and duckdb CLI, webapp,
+# spark) can ATTACH while the recorder keeps writing.
+#
+# The token grants full read AND write on every table and the server terminates
+# no TLS. Fine on a trusted LAN; never port-forward it.
+share = true
+share_uri = "quack:localhost:9494"
+share_token = "dev-token"
+checkpoint_secs = 300
+# 0 keeps everything.
+retention_hours = 0
+
+[pulsar]
+# Off by default -- the whole point of the MQTT path. Enable to also feed the
+# Spark/Delta analytics pipeline, which needs infrastructure/docker-compose.yml.
+enabled = false
+broker = "pulsar://localhost:6650"
+topic = "persistent://kradsb/adsb/sbs-topic"
+
+[agents]
+# `make up-agents` starts these. They need an LLM endpoint (see llm_base_url);
+# `make doctor` reports if it is unreachable.
+enabled = false
+agent_port = 8000
+sim_agent_port = 8300
+llm_base_url = "http://localhost:1234/v1"
+
+[remote]
+# For `make remote`: run the desktop app against a data server on another host
+# (typically a Raspberry Pi) instead of recording locally. Leave uri empty for
+# the all-local topology.
+uri = ""
+token = ""
