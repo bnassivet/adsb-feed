@@ -156,6 +156,16 @@ export interface Config {
   receiver_altitude: number | null;
 }
 
+/**
+ * Where historical data lives (mirrors Rust `StorageMode`).
+ *
+ * Serde-tagged with **`mode`** — the union must match or every status renders
+ * as the wrong variant, the same trap `ShareStatus` has with `state`.
+ */
+export type StorageMode =
+  | { mode: "embedded" }
+  | { mode: "remote"; uri: string; token?: string | null; disable_ssl?: boolean | null };
+
 /** Filter state for the UI. */
 export interface Filters {
   /** Raw input string; may contain comma-separated tokens for multi-ID filtering. */

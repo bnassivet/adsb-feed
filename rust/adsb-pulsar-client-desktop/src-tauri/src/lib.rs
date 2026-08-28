@@ -7,6 +7,7 @@
 mod bridge;
 mod commands;
 mod state;
+mod storage_mode;
 
 /// Default loopback port for the agent tool server. Override with
 /// `ADSB_AGENT_TOOL_SERVER_PORT`. The Python agent must point
@@ -23,8 +24,11 @@ use tauri_plugin_store::StoreExt;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-const CONFIG_STORE_FILE: &str = "config.json";
+pub const CONFIG_STORE_FILE: &str = "config.json";
 const CONFIG_STORE_KEY: &str = "config";
+/// Store key for the persisted storage mode. Separate from the feed `config`
+/// key: this is about where history lives, not about the feed.
+pub const STORAGE_MODE_STORE_KEY: &str = "storage_mode";
 
 /// Main entry point for the Tauri application.
 pub fn run() {
@@ -44,11 +48,11 @@ pub fn run() {
         .setup(|app| {
             // Initialize DuckDB storage in the app data directory.
             // Failure is non-fatal — the app continues in real-time-only mode.
-            let (storage, storage_config) = init_storage(app);
+            let (storage, storage_config, storage_mode) = init_storage(app);
 
             // Load persisted config from Tauri store (falls back to defaults).
             let config = load_config(app);
-            let state = AppState::with_config(config, storage, storage_config);
+            let state = AppState::with_config(config, storage, storage_config, storage_mode);
 
             // Start the loopback tool server for the Python agent BEFORE the
             // state is moved into Tauri's managed store — it shares the same
@@ -116,6 +120,8 @@ pub fn run() {
             commands::update_scenario_track,
             commands::delete_scenario_track,
             commands::reorder_scenario_tracks,
+            commands::get_storage_mode,
+            commands::set_storage_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -217,6 +223,28 @@ fn truthy(value: Option<&str>) -> bool {
     )
 }
 
+/// Reads the persisted storage mode, if one has been saved.
+fn load_storage_mode(app: &tauri::App) -> Option<storage_mode::StorageMode> {
+    let store = app.store(CONFIG_STORE_FILE).ok()?;
+    let value = store.get(STORAGE_MODE_STORE_KEY)?;
+    match serde_json::from_value(value.clone()) {
+        Ok(mode) => Some(mode),
+        Err(e) => {
+            warn!("Ignoring unreadable stored storage mode: {e}");
+            None
+        }
+    }
+}
+
+/// Builds a storage mode from the environment, if remote mode is requested.
+fn storage_mode_from_env() -> Option<storage_mode::StorageMode> {
+    remote_config_from_env().map(|r| storage_mode::StorageMode::Remote {
+        uri: r.uri,
+        token: r.token,
+        disable_ssl: r.disable_ssl,
+    })
+}
+
 /// Builds a [`RemoteConfig`] from the environment, if remote mode is requested.
 ///
 /// Mode is explicit configuration, never a runtime fallback: a client that
@@ -253,30 +281,23 @@ fn build_remote_config(
 ///
 /// Returns `(handle, config)`. The config is kept for reopening after release.
 /// Returns `(None, None)` if initialization fails (app continues without history).
-fn init_storage(app: &tauri::App) -> (Option<StorageHandle>, Option<StorageConfig>) {
+fn init_storage(
+    app: &tauri::App,
+) -> (
+    Option<StorageHandle>,
+    Option<StorageConfig>,
+    storage_mode::StorageMode,
+) {
     let app_data_dir = match app.path().app_data_dir() {
         Ok(dir) => dir,
-        Err(_) => return (None, None),
+        Err(_) => return (None, None, storage_mode::StorageMode::default()),
     };
-    let remote = remote_config_from_env();
+    // A stored choice wins; the environment only seeds the mode the first time.
+    let mode = storage_mode::resolve_mode(load_storage_mode(app), storage_mode_from_env());
+    info!("Storage mode: {}", mode.label());
 
-    // Remote mode uses a SEPARATE local file. The embedded database holds real
-    // observed history, and in remote mode those table names become views over
-    // the daemon's catalog -- pointing both modes at one file would mean
-    // dropping the user's local tables to make room for the views.
-    let db_path = if remote.is_some() {
-        app_data_dir.join("adsb_local.db")
-    } else {
-        app_data_dir.join("adsb_history.db")
-    };
-
-    let config = StorageConfig {
-        db_path: Some(db_path.clone()),
-        source_id: "desktop".to_string(),
-        gap_threshold_ms: 3_600_000,
-        share: share_config_from_env(),
-        remote,
-    };
+    let config = mode.to_storage_config(&app_data_dir, share_config_from_env());
+    let db_path = config.db_path.clone().unwrap_or_default();
 
     match StorageHandle::open(config.clone()) {
         Ok(handle) => {
@@ -285,11 +306,11 @@ fn init_storage(app: &tauri::App) -> (Option<StorageHandle>, Option<StorageConfi
                 StatusEventType::Feed,
                 StatusEventStatus::AppStart,
             ));
-            (Some(handle), Some(config))
+            (Some(handle), Some(config), mode)
         }
         Err(e) => {
             warn!("Storage init failed (continuing without history): {e}");
-            (None, Some(config))
+            (None, Some(config), mode)
         }
     }
 }

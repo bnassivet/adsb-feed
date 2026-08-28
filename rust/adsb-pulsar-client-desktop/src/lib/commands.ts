@@ -31,6 +31,7 @@ import type {
   ShareInfo,
   ShareStatus,
   StorageAvailability,
+  StorageMode,
   StorageStats,
   TimeDistributionBucket,
   TimeDistributionQuery,
@@ -183,6 +184,23 @@ export async function setRecordingState(
 }
 
 // --- Storage management commands ---
+
+/** Storage mode currently in effect. */
+export async function getStorageMode(): Promise<StorageMode> {
+  return invoke<StorageMode>("get_storage_mode");
+}
+
+/**
+ * Switch between embedded and remote storage.
+ *
+ * Applies immediately — the two modes open different database files, so the
+ * history views change as soon as this resolves. Rejects with a readable
+ * message if the daemon cannot be reached; storage is left unavailable rather
+ * than silently reverted, because mode is explicit configuration.
+ */
+export async function setStorageMode(mode: StorageMode): Promise<StorageAvailability> {
+  return invoke<StorageAvailability>("set_storage_mode", { mode });
+}
 
 export async function getStorageStatus(): Promise<StorageAvailability> {
   return invoke("get_storage_status");

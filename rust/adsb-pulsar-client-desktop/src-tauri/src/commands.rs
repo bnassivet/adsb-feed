@@ -6,6 +6,7 @@ use crate::bridge;
 use crate::state::{
     AppState, ConnectionStatus, RecordingState, StatusResponse, StorageAvailability,
 };
+use crate::storage_mode::StorageMode;
 use adsb_data_engine::{
     AircraftSummary, BboxQuery, CreateEventOfInterest, CreateScenario, CreateScenarioTrack,
     DetectionRangeQuery, DetectionRangeSector, EventOfInterest, EventOfInterestQuery,
@@ -16,11 +17,12 @@ use adsb_data_engine::{
     TrajectoryQuery, UpdateEventOfInterest, UpdateScenario, UpdateScenarioTrack,
 };
 use adsb_pulsar_client::Config;
+use tauri_plugin_store::StoreExt;
 
 use crate::bridge::DesktopMetrics;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use tauri::{Emitter, State, ipc::Response};
+use tauri::{Emitter, Manager, State, ipc::Response};
 use tracing::info;
 
 /// Starts the ADS-B feed client with the current configuration.
@@ -469,7 +471,7 @@ pub async fn get_storage_status(state: State<'_, AppState>) -> Result<StorageAva
     let guard = state.storage.read().await;
     if guard.is_some() {
         Ok(StorageAvailability::Available)
-    } else if state.storage_config.is_some() {
+    } else if state.storage_config.lock().unwrap().is_some() {
         // Config exists but handle is None → was released
         Ok(StorageAvailability::Released)
     } else {
@@ -520,9 +522,10 @@ pub async fn reclaim_storage(
 ) -> Result<(), String> {
     let config = state
         .storage_config
-        .as_ref()
-        .ok_or_else(|| "No storage config available — storage was never initialized".to_string())?
-        .clone();
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| "No storage config available — storage was never initialized".to_string())?;
 
     let handle =
         StorageHandle::open(config).map_err(|e| format!("Failed to reopen storage: {e}"))?;
@@ -560,13 +563,14 @@ pub async fn swap_database(
     // 1. Read db_path from storage_config
     let config = state
         .storage_config
-        .as_ref()
+        .lock()
+        .unwrap()
+        .clone()
         .ok_or_else(|| "No storage config — storage was never initialized".to_string())?;
     let db_path = config
         .db_path
-        .as_ref()
-        .ok_or_else(|| "Cannot swap an in-memory database".to_string())?
-        .clone();
+        .clone()
+        .ok_or_else(|| "Cannot swap an in-memory database".to_string())?;
 
     let db_parent = db_path
         .parent()
@@ -937,4 +941,90 @@ pub async fn sharing_status(state: State<'_, AppState>) -> Result<ShareStatus, S
         return Ok(ShareStatus::Off);
     };
     storage.sharing_status().await.map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Storage mode
+// ---------------------------------------------------------------------------
+
+/// Returns the storage mode currently in effect.
+#[tauri::command]
+pub async fn get_storage_mode(state: State<'_, AppState>) -> Result<StorageMode, String> {
+    Ok(state.storage_mode.lock().unwrap().clone())
+}
+
+/// Switches between embedded and remote storage, reopening the database.
+///
+/// The switch is applied immediately rather than on next launch, because the
+/// two modes open *different files* and a user who flips the toggle expects the
+/// history panel to change now.
+///
+/// On failure the previous storage is left released rather than silently
+/// reopened in the old mode: mode is explicit configuration, and quietly
+/// reverting would hide from the user that their daemon is unreachable.
+#[tauri::command]
+pub async fn set_storage_mode(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    mode: StorageMode,
+) -> Result<StorageAvailability, String> {
+    mode.validate()?;
+
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("No app data directory: {e}"))?;
+
+    let share = state
+        .storage_config
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|c| c.share.clone());
+    let config = mode.to_storage_config(&app_data_dir, share);
+
+    // Drop the old connection first: DuckDB takes an exclusive file lock, and
+    // in embedded->embedded reopens the target could be the very file we hold.
+    {
+        let mut guard = state.storage.write().await;
+        if let Some(old) = guard.take() {
+            let _ = old.checkpoint().await;
+        }
+    }
+
+    let handle = StorageHandle::open(config.clone()).map_err(|e| {
+        let _ = app.emit("adsb:storage-status", &StorageAvailability::Unavailable);
+        format!("Failed to open storage in {} mode: {e}", mode.label())
+    })?;
+
+    let _ = handle
+        .insert_status_event(StatusEvent::now(
+            StatusEventType::Storage,
+            StatusEventStatus::Reclaimed,
+        ))
+        .await;
+
+    *state.storage.write().await = Some(handle);
+    *state.storage_config.lock().unwrap() = Some(config);
+    *state.storage_mode.lock().unwrap() = mode.clone();
+
+    persist_storage_mode(&app, &mode)?;
+    info!("Storage mode changed to {}", mode.label());
+
+    let status = StorageAvailability::Available;
+    let _ = app.emit("adsb:storage-status", &status);
+    Ok(status)
+}
+
+/// Persists the storage mode so it survives a restart.
+fn persist_storage_mode(app: &tauri::AppHandle, mode: &StorageMode) -> Result<(), String> {
+    let store = app
+        .store(crate::CONFIG_STORE_FILE)
+        .map_err(|e| format!("Failed to open config store: {e}"))?;
+    let value =
+        serde_json::to_value(mode).map_err(|e| format!("Failed to serialize storage mode: {e}"))?;
+    store.set(crate::STORAGE_MODE_STORE_KEY.to_string(), value);
+    store
+        .save()
+        .map_err(|e| format!("Failed to save config store: {e}"))
 }

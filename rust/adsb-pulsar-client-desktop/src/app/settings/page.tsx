@@ -1,7 +1,14 @@
 "use client";
 import { useEffect, useState } from "react";
-import { getConfig, getStatus, saveConfig, validateConfig } from "@/lib/commands";
-import type { SourceKind } from "@/lib/types";
+import {
+  getConfig,
+  getStatus,
+  saveConfig,
+  validateConfig,
+  getStorageMode,
+  setStorageMode,
+} from "@/lib/commands";
+import type { SourceKind, StorageMode } from "@/lib/types";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
 import { TRACK_HISTORY_HOURS_KEY, DEFAULT_TRACK_HISTORY_HOURS } from "@/contexts/AircraftTrackingContext";
@@ -15,6 +22,11 @@ export default function SettingsPage() {
     text: string;
   } | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [storageMode, setStorageModeState] = useState<StorageMode | null>(null);
+  const [storageBusy, setStorageBusy] = useState(false);
+  const [storageError, setStorageError] = useState<string | null>(null);
+  const [remoteUri, setRemoteUri] = useState("");
+  const [remoteToken, setRemoteToken] = useState("");
   const [trajectoryStyle, setTrajectoryStyle] = useLocalStorage<"line" | "dots">("adsb-trajectory-style", "line");
   const { tzMode, setTzMode } = useDisplayTz();
   const [metricsWindowSecs, setMetricsWindowSecs] = useLocalStorage<number>("adsb-metrics-window-secs", 5);
@@ -28,12 +40,51 @@ export default function SettingsPage() {
       );
   }, []);
 
+  useEffect(() => {
+    getStorageMode()
+      .then((m) => {
+        setStorageModeState(m);
+        if (m.mode === "remote") {
+          setRemoteUri(m.uri);
+          setRemoteToken(m.token ?? "");
+        }
+      })
+      .catch((e) => setStorageError(`Failed to read storage mode: ${e}`));
+  }, []);
+
   if (!config) {
     return (
       <div className="h-screen flex items-center justify-center bg-slate-950 text-slate-400">
         Loading configuration...
       </div>
     );
+  }
+
+  /**
+   * Applies a storage-mode change immediately.
+   *
+   * On failure the error is surfaced and the toggle stays where the user put
+   * it: the backend deliberately leaves storage unavailable rather than
+   * silently reverting, so hiding the failure would misrepresent the state.
+   */
+  async function applyStorageMode(next: StorageMode) {
+    setStorageBusy(true);
+    setStorageError(null);
+    try {
+      await setStorageMode(next);
+      setStorageModeState(next);
+      setMessage({
+        type: "success",
+        text:
+          next.mode === "remote"
+            ? `Connected to ${next.uri}`
+            : "Using this computer's own database",
+      });
+    } catch (e) {
+      setStorageError(String(e));
+    } finally {
+      setStorageBusy(false);
+    }
   }
 
   function update(partial: Partial<Config>) {
@@ -173,6 +224,103 @@ export default function SettingsPage() {
             <div className="grid grid-cols-1 gap-4">
               <Field label="Broker URL" value={config.pulsar_broker} onChange={(v) => update({ pulsar_broker: v })} />
               <Field label="Topic" value={config.pulsar_topic} onChange={(v) => update({ pulsar_topic: v })} />
+            </div>
+          </section>
+
+          <section className="bg-slate-900 rounded-lg p-4 border border-slate-800">
+            <h2 className="text-sm font-semibold text-slate-300 mb-4">
+              History Storage
+            </h2>
+            <p className="text-xs text-slate-500 mb-4">
+              Where recorded aircraft history comes from. Scenarios and events of
+              interest always stay on this computer.
+            </p>
+
+            <div className="flex flex-col gap-3">
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="storage_mode"
+                  className="mt-1"
+                  checked={storageMode?.mode === "embedded"}
+                  disabled={storageBusy || storageMode === null}
+                  onChange={() => applyStorageMode({ mode: "embedded" })}
+                />
+                <span>
+                  <span className="text-slate-200">This computer</span>
+                  <span className="block text-xs text-slate-500">
+                    Record and read history locally (adsb_history.db).
+                  </span>
+                </span>
+              </label>
+
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="storage_mode"
+                  className="mt-1"
+                  checked={storageMode?.mode === "remote"}
+                  disabled={storageBusy || storageMode === null || !remoteUri.trim()}
+                  onChange={() =>
+                    applyStorageMode({
+                      mode: "remote",
+                      uri: remoteUri.trim(),
+                      token: remoteToken.trim() || null,
+                    })
+                  }
+                />
+                <span>
+                  <span className="text-slate-200">A data server</span>
+                  <span className="block text-xs text-slate-500">
+                    Read history from an adsb-data-server (e.g. a Raspberry Pi).
+                    This computer stops recording its own.
+                  </span>
+                </span>
+              </label>
+
+              <div className="grid grid-cols-1 gap-4 pl-6">
+                <Field
+                  label="Server URI"
+                  value={remoteUri}
+                  onChange={setRemoteUri}
+                  placeholder="quack:raspberrypi.local:9494"
+                />
+                <Field
+                  label="Token"
+                  type="password"
+                  value={remoteToken}
+                  onChange={setRemoteToken}
+                />
+              </div>
+
+              {storageMode?.mode === "remote" && (
+                <button
+                  type="button"
+                  disabled={storageBusy || !remoteUri.trim()}
+                  className="self-start rounded bg-slate-800 px-3 py-1 text-xs text-slate-200 disabled:opacity-50"
+                  onClick={() =>
+                    applyStorageMode({
+                      mode: "remote",
+                      uri: remoteUri.trim(),
+                      token: remoteToken.trim() || null,
+                    })
+                  }
+                >
+                  {storageBusy ? "Reconnecting…" : "Reconnect"}
+                </button>
+              )}
+
+              {storageError && (
+                <p className="text-xs text-red-400" role="alert">
+                  {storageError}
+                </p>
+              )}
+
+              <p className="text-xs text-slate-500">
+                The token grants full read and write access to the server&apos;s
+                database, and the connection is not encrypted. Use it only on a
+                network you trust, and never expose the server to the internet.
+              </p>
             </div>
           </section>
 
@@ -346,11 +494,13 @@ function Field({
   value,
   onChange,
   type = "text",
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   type?: string;
+  placeholder?: string;
 }) {
   return (
     <div>
@@ -358,6 +508,7 @@ function Field({
       <input
         type={type}
         value={value}
+        placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
         className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-sm text-slate-200 focus:border-blue-500 focus:outline-none"
       />
