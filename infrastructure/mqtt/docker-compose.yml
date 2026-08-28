@@ -1,0 +1,28 @@
+# Mosquitto broker for the no-Pulsar ADS-B deployment.
+#
+# This is the whole message bus for an edge-only setup: adsb-pulsar-client
+# publishes raw SBS-1 lines, adsb-data-server records them, and the desktop app
+# subscribes for live aircraft. Apache Pulsar is only needed for the
+# Spark/Delta analytics path -- see ../docker-compose.yml for that stack.
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: adsb-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - adsb_mosquitto_data:/mosquitto/data
+      - adsb_mosquitto_log:/mosquitto/log
+    healthcheck:
+      # mosquitto_sub exits non-zero if the broker is not accepting connections.
+      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/#' -C 1 -W 3 -q 1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  adsb_mosquitto_data:
+  adsb_mosquitto_log:

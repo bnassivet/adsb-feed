@@ -95,6 +95,31 @@ impl std::str::FromStr for ForwarderKind {
     )
 )]
 pub struct Config {
+    /// Path to a TOML config file. Not itself settable from the file.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long,
+            default_value = "/etc/adsb/feed.toml",
+            env = "ADSB_FEED_CONFIG",
+            help = "Path to a TOML config file"
+        )
+    )]
+    #[serde(skip, default = "default_config_path")]
+    pub config: std::path::PathBuf,
+
+    /// Print the effective configuration as TOML and exit.
+    ///
+    /// With four layers in play (defaults, file, environment, flags), "what did
+    /// this node actually load?" is otherwise unanswerable on a running edge
+    /// device.
+    #[cfg_attr(
+        feature = "cli",
+        arg(long, help = "Print the effective configuration and exit")
+    )]
+    #[serde(skip)]
+    pub print_config: bool,
+
     /// Unique identifier for this data source
     #[cfg_attr(
         feature = "cli",
@@ -465,6 +490,9 @@ pub struct Config {
 }
 
 // Default value functions for serde
+fn default_config_path() -> std::path::PathBuf {
+    std::path::PathBuf::from("/etc/adsb/feed.toml")
+}
 fn default_source_id() -> String {
     "kraspberryPi".to_string()
 }
@@ -547,6 +575,8 @@ fn default_file_path() -> String {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            config: default_config_path(),
+            print_config: false,
             source_id: default_source_id(),
             socket_host: default_socket_host(),
             socket_port: default_socket_port(),
@@ -644,6 +674,110 @@ impl Config {
         }
 
         Ok(())
+    }
+
+    /// Loads configuration with full layering: defaults < TOML < env < flags.
+    ///
+    /// The subtlety this exists to handle: clap cannot distinguish "the user
+    /// passed `--socket-port 30003`" from "the default is 30003". Applying the
+    /// file first and letting clap overwrite everything would mean a clap
+    /// *default* silently clobbering a value the operator wrote in the file, so
+    /// the file is applied only to fields whose value came from a default.
+    /// `ArgMatches::value_source` is the only way to know which those are.
+    #[cfg(feature = "cli")]
+    pub fn load() -> Result<Self> {
+        use clap::parser::ValueSource;
+        use clap::{CommandFactory, Parser};
+
+        let matches = <Self as CommandFactory>::command().get_matches();
+        let mut cfg = Self::parse();
+
+        let path = cfg.config.clone();
+        if !path.exists() {
+            return Ok(cfg);
+        }
+
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| ClientError::Config(format!("reading {}: {e}", path.display())))?;
+        let from_file: toml::Value = toml::from_str(&text)
+            .map_err(|e| ClientError::Config(format!("parsing {}: {e}", path.display())))?;
+
+        cfg.overlay_file(&from_file, &|id| {
+            matches.value_source(id) == Some(ValueSource::DefaultValue)
+        });
+        Ok(cfg)
+    }
+
+    /// Applies file values to fields the caller reports as still-defaulted.
+    ///
+    /// Split out from [`Self::load`] so precedence is testable without a real
+    /// `argv`. A file value of the wrong type is ignored rather than fatal: a
+    /// typo in one key must not stop an edge node from booting.
+    #[cfg(feature = "cli")]
+    pub fn overlay_file(&mut self, file: &toml::Value, is_defaulted: &dyn Fn(&str) -> bool) {
+        macro_rules! overlay {
+            ($id:literal, $field:ident, $conv:expr) => {
+                if is_defaulted($id)
+                    && let Some(v) = file.get($id)
+                    && let Some(parsed) = $conv(v)
+                {
+                    self.$field = parsed;
+                }
+            };
+        }
+
+        let as_string = |v: &toml::Value| v.as_str().map(String::from);
+
+        overlay!("source_id", source_id, as_string);
+        overlay!("socket_host", socket_host, as_string);
+        overlay!("socket_port", socket_port, |v: &toml::Value| v
+            .as_integer()
+            .map(|i| i as u16));
+        overlay!("connection_mode", connection_mode, as_string);
+        overlay!("pulsar_broker", pulsar_broker, as_string);
+        overlay!("pulsar_topic", pulsar_topic, as_string);
+        overlay!("mqtt_broker", mqtt_broker, as_string);
+        overlay!("mqtt_port", mqtt_port, |v: &toml::Value| v
+            .as_integer()
+            .map(|i| i as u16));
+        overlay!("mqtt_topic", mqtt_topic, as_string);
+        overlay!("mqtt_client_id", mqtt_client_id, as_string);
+        overlay!("mqtt_qos", mqtt_qos, |v: &toml::Value| v
+            .as_integer()
+            .map(|i| i as u8));
+        overlay!("file_path", file_path, as_string);
+        overlay!("dump1090_tz", dump1090_tz, as_string);
+        overlay!("log_level", log_level, as_string);
+        overlay!("log_sample_rate", log_sample_rate, |v: &toml::Value| v
+            .as_integer()
+            .map(|i| i as u64));
+        overlay!(
+            "socket_read_timeout_secs",
+            socket_read_timeout_secs,
+            |v: &toml::Value| v.as_integer().map(|i| i as u64)
+        );
+        overlay!(
+            "heartbeat_timeout_secs",
+            heartbeat_timeout_secs,
+            |v: &toml::Value| v.as_integer().map(|i| i as u64)
+        );
+
+        // `forwarders` decides whether this node is a no-Pulsar deployment, so
+        // it has to survive coming from the file. Unparseable entries are
+        // dropped rather than defaulting the whole list, and an entirely
+        // unusable list leaves the existing value alone.
+        if is_defaulted("forwarders")
+            && let Some(list) = file.get("forwarders").and_then(|v| v.as_array())
+        {
+            let parsed: Vec<ForwarderKind> = list
+                .iter()
+                .filter_map(|v| v.as_str())
+                .filter_map(|s| s.parse().ok())
+                .collect();
+            if !parsed.is_empty() {
+                self.forwarders = parsed;
+            }
+        }
     }
 
     /// Effective MQTT client id, falling back to `source_id` when unset.
@@ -1125,5 +1259,95 @@ mod tests {
         };
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("mqtt_qos"), "got: {}", err);
+    }
+}
+
+#[cfg(all(test, feature = "cli"))]
+mod layering_tests {
+    use super::*;
+    use clap::Parser;
+
+    fn defaults() -> Config {
+        Config::parse_from(["adsb-pulsar-client"])
+    }
+
+    fn file(text: &str) -> toml::Value {
+        toml::from_str(text).unwrap()
+    }
+
+    fn all_defaulted(_: &str) -> bool {
+        true
+    }
+
+    fn explicit(names: &'static [&'static str]) -> impl Fn(&str) -> bool {
+        move |id: &str| !names.contains(&id)
+    }
+
+    #[test]
+    fn file_overrides_defaults() {
+        let mut cfg = defaults();
+        assert_eq!(cfg.socket_port, 30003);
+        cfg.overlay_file(&file("socket_port = 30005"), &all_defaulted);
+        assert_eq!(cfg.socket_port, 30005);
+    }
+
+    #[test]
+    fn explicit_flag_beats_the_file() {
+        let mut cfg = Config::parse_from(["adsb-pulsar-client", "--socket-port", "30009"]);
+        cfg.overlay_file(&file("socket_port = 30005"), &explicit(&["socket_port"]));
+        assert_eq!(cfg.socket_port, 30009);
+    }
+
+    #[test]
+    fn a_clap_default_does_not_clobber_a_file_value() {
+        let mut cfg = defaults();
+        cfg.overlay_file(
+            &file("source_id = 'pi-roof'\nmqtt_broker = 'broker.lan'"),
+            &all_defaulted,
+        );
+        assert_eq!(cfg.source_id, "pi-roof");
+        assert_eq!(cfg.mqtt_broker, "broker.lan");
+    }
+
+    #[test]
+    fn forwarders_list_layers_from_the_file() {
+        // The setting that decides whether a node is a no-Pulsar deployment,
+        // so it must survive coming from the config file.
+        let mut cfg = defaults();
+        assert_eq!(cfg.forwarders, vec![ForwarderKind::Pulsar]);
+        cfg.overlay_file(&file("forwarders = ['mqtt']"), &all_defaulted);
+        assert_eq!(cfg.forwarders, vec![ForwarderKind::Mqtt]);
+    }
+
+    #[test]
+    fn multiple_forwarders_layer_from_the_file() {
+        let mut cfg = defaults();
+        cfg.overlay_file(&file("forwarders = ['pulsar', 'mqtt']"), &all_defaulted);
+        assert_eq!(
+            cfg.forwarders,
+            vec![ForwarderKind::Pulsar, ForwarderKind::Mqtt]
+        );
+    }
+
+    #[test]
+    fn an_unknown_forwarder_in_the_file_is_ignored_not_fatal() {
+        let mut cfg = defaults();
+        cfg.overlay_file(&file("forwarders = ['carrier-pigeon']"), &all_defaulted);
+        assert_eq!(cfg.forwarders, vec![ForwarderKind::Pulsar]);
+    }
+
+    #[test]
+    fn wrong_typed_file_value_is_ignored_not_fatal() {
+        let mut cfg = defaults();
+        cfg.overlay_file(&file("socket_port = 'not-a-number'"), &all_defaulted);
+        assert_eq!(cfg.socket_port, 30003);
+    }
+
+    #[test]
+    fn absent_file_keys_leave_defaults_intact() {
+        let mut cfg = defaults();
+        cfg.overlay_file(&file("socket_port = 30005"), &all_defaulted);
+        assert_eq!(cfg.source_id, "kraspberryPi");
+        assert_eq!(cfg.mqtt_topic, "adsb/sbs/raw");
     }
 }

@@ -6,15 +6,31 @@
 use adsb_pulsar_client::forwarder::file::FileForwarder;
 use adsb_pulsar_client::forwarder::{MessageForwarder, NoopForwarder};
 use adsb_pulsar_client::{ADSBFeedClient, ClientError, Config, ForwarderKind};
-use clap::Parser;
 use std::path::PathBuf;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
-    // Parse command-line arguments
-    let config = Config::parse();
+    // Layered load: defaults < TOML file < environment < CLI flags.
+    let config = match Config::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Configuration error: {e}");
+            std::process::exit(2);
+        }
+    };
+
+    if config.print_config {
+        match toml::to_string_pretty(&config) {
+            Ok(t) => println!("{t}"),
+            Err(e) => {
+                eprintln!("Could not serialise config: {e}");
+                std::process::exit(2);
+            }
+        }
+        std::process::exit(0);
+    }
 
     // Initialize logging
     let log_level = config.log_level.clone();

@@ -25,6 +25,14 @@ pub struct ServerConfig {
     #[serde(skip)]
     pub config: PathBuf,
 
+    /// Print the effective configuration as TOML and exit.
+    ///
+    /// With four layers in play (defaults, file, environment, flags), "what did
+    /// this node actually load?" is otherwise unanswerable on a running daemon.
+    #[arg(long, help = "Print the effective configuration and exit")]
+    #[serde(skip)]
+    pub print_config: bool,
+
     /// Identifier for this receiver, stamped onto every stored record.
     #[arg(long, env = "ADSB_SOURCE_ID", default_value = "adsb-edge")]
     #[serde(default = "default_source_id")]

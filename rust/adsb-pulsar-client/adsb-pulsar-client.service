@@ -1,53 +1,45 @@
 [Unit]
-Description=ADS-B Pulsar Feed Client (Rust)
-Documentation=https://github.com/your-org/ads-b-project
+Description=ADS-B Feed Client (dump1090 -> MQTT/Pulsar)
+Documentation=file:///usr/local/share/doc/adsb/README.md
 After=network-online.target
 Wants=network-online.target
+# dump1090 is the data source; start after it when co-located.
+After=dump1090-fa.service
 
 [Service]
 Type=simple
-User=pi
-Group=pi
-WorkingDirectory=/home/pi
+User=adsb
+Group=adsb
+DynamicUser=no
 
-# Main service command
-ExecStart=/usr/local/bin/adsb-pulsar-client \
-  --source-id raspberry-pi-01 \
-  --socket-host localhost \
-  --socket-port 30003 \
-  --pulsar-broker pulsar://your-pulsar-server.com:6650 \
-  --pulsar-topic persistent://kradsb/adsb/sbs-topic \
-  --log-level info \
-  --log-sample-rate 100
+# All settings come from the config file. Every flag also has an env var
+# (ADSB_SOURCE_ID, ADSB_MQTT_BROKER, ...), so EnvironmentFile can override
+# individual values without editing the TOML.
+EnvironmentFile=-/etc/adsb/feed.env
+ExecStart=/usr/local/bin/adsb-pulsar-client --config /etc/adsb/feed.toml
 
-# Restart policy
 Restart=always
 RestartSec=10
 
-# Resource limits (optional, adjust as needed)
-# Limit to 100MB memory
+# This process only parses lines and forwards bytes -- it holds no database and
+# no large buffers, so 100M is generous. Do NOT copy this limit to
+# adsb-data-server: DuckDB wants >=125 MB per thread and will be OOM-killed.
 MemoryMax=100M
-# Limit CPU to 50%
 CPUQuota=50%
 
-# Security hardening (optional)
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# Needed only by the file forwarder; harmless otherwise.
+ReadWritePaths=/var/lib/adsb
 
-# Environment variables (alternative to command-line args)
-#Environment="ADSB_SOURCE_ID=raspberry-pi-01"
-#Environment="ADSB_SOCKET_HOST=localhost"
-#Environment="ADSB_SOCKET_PORT=30003"
-#Environment="PULSAR_BROKER=pulsar://your-pulsar-server.com:6650"
-#Environment="PULSAR_TOPIC=persistent://kradsb/adsb/sbs-topic"
-#Environment="RUST_LOG=info"
-
-# Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=adsb-pulsar-client
+SyslogIdentifier=adsb-feed
 
 [Install]
 WantedBy=multi-user.target

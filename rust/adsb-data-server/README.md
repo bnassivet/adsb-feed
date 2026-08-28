@@ -34,6 +34,17 @@ Configuration layers, lowest to highest: struct defaults < TOML file <
 environment variable < CLI flag. A file value is **not** overridden by a flag's
 default — only by a flag the operator actually passes.
 
+
+### What did this node actually load?
+
+With four layers in play, `--print-config` answers it — it dumps the effective
+configuration as TOML and exits, so a running edge device can be interrogated
+without guessing:
+
+```bash
+adsb-data-server --config /etc/adsb/data-server.toml --print-config
+```
+
 ## Serving surfaces
 
 | Surface | Access | Notes |

@@ -25,6 +25,9 @@ rumqttc = { version = "0.25", default-features = false, optional = true }
 # CLI argument parsing (optional, for CLI binary)
 clap = { version = "4.5", features = ["derive", "env"], optional = true }
 
+# TOML config files, layered under env and CLI flags (part of the `cli` feature)
+toml = { version = "0.8", optional = true }
+
 # Logging and tracing
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -53,7 +56,7 @@ tempfile = "3"
 
 [features]
 default = ["cli", "pulsar", "mqtt"]
-cli = ["clap"]
+cli = ["clap", "dep:toml"]
 pulsar = ["dep:pulsar"]
 mqtt = ["dep:rumqttc"]
 metrics = ["prometheus"]

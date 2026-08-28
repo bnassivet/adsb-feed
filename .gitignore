@@ -409,3 +409,8 @@ graphify-out/GRAPH_REPORT.md
 !rust/adsb-pulsar-client-desktop/.claude/
 rust/adsb-pulsar-client-desktop/.claude/*
 !rust/adsb-pulsar-client-desktop/.claude/skills/
+
+# Edge build output (Docker-based aarch64/armv7 builds use separate target dirs
+# so they never collide with the host's macOS artifacts)
+rust/target-linux-arm64/
+rust/target-linux-armv7/

@@ -224,6 +224,30 @@ forwarder in turn, so a wedged MQTT broker must never stall the socket read loop
 or the Pulsar leg; a full outbound queue is reported as a send error rather than
 awaited.
 
+### Configuration file
+
+All settings can live in a TOML file, layered under environment variables and
+CLI flags: **defaults < TOML < env < flag**. A file value is *not* overridden by
+a flag's default — only by a flag actually passed.
+
+```bash
+adsb-pulsar-client --config /etc/adsb/feed.toml
+```
+
+See `feed.example.toml`. `--config` defaults to `/etc/adsb/feed.toml`; a missing
+file is not an error.
+
+### What did this node actually load?
+
+With four layers in play, `--print-config` answers it — it dumps the effective
+configuration as TOML and exits, so a running edge device can be interrogated
+without guessing:
+
+```bash
+adsb-pulsar-client --config /etc/adsb/feed.toml --print-config
+```
+
+
 ### Buffer and Reliability
 
 | Option | Default | Description |

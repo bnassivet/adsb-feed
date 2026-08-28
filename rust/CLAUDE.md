@@ -112,6 +112,21 @@ cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt -
 Save new feature development plan in adsb-pulsar-client-desktop/docs/plans before starting implementation.
 Update Design documentation (DESIGN.md, DOCUMENTATION.md) before proposing to commit a new feature implementation.
 
+## Edge builds (Raspberry Pi)
+
+See `docs/DEPLOYMENT.md`. The short version:
+
+- On **Apple Silicon this is not a cross-compile** — host `arm64` and Pi
+  `aarch64` are the same architecture, so `--platform linux/arm64` builds
+  natively under Docker's VM. `make feed-arm64` / `make server-arm64`.
+- **`cross` does not work here**: its images are x86_64 and `rust-toolchain.toml`
+  pins 1.92, so it tries to install a non-host toolchain and rustup refuses.
+- **Cap build parallelism** (`-j 4`, the Makefile default). `codegen-units = 1`
+  means each parallel rustc holds a whole crate's codegen; a 16-CPU / 8 GB
+  Docker VM OOM-kills `arrow-cast` at default `-j`.
+- **`MemoryMax` is not copyable between the two units**: 100M for the feed
+  client, 512M for `adsb-data-server` (DuckDB wants >=125 MB per thread).
+
 ## Build Notes
 
 - `cli` feature (default-enabled on `adsb-pulsar-client`) gates `clap` dependency

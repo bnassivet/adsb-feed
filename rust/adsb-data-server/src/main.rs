@@ -20,6 +20,17 @@ async fn main() {
         }
     };
 
+    if cfg.print_config {
+        match toml::to_string_pretty(&cfg) {
+            Ok(t) => println!("{t}"),
+            Err(e) => {
+                eprintln!("Could not serialise config: {e}");
+                std::process::exit(2);
+            }
+        }
+        std::process::exit(0);
+    }
+
     init_tracing(&cfg.log_level);
     info!("ADS-B data server starting (source_id={})", cfg.source_id);
 
