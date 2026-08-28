@@ -12,7 +12,10 @@ use adsb_data_engine::{
     StatusEventType,
 };
 use adsb_pulsar_client::forwarder::NoopForwarder;
-use adsb_pulsar_client::{ADSBFeedClient, Config, Metrics};
+use adsb_pulsar_client::source::mqtt_source::MqttSource;
+use adsb_pulsar_client::source::socket_source::SocketSource;
+use adsb_pulsar_client::source::{Liveness, LivenessPolicy, MessageSource, SourceStatus};
+use adsb_pulsar_client::{Config, Metrics, SourceKind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter};
@@ -59,17 +62,30 @@ pub fn start_feed(
     connection_status: SharedConnectionStatus,
 ) -> Result<FeedHandle, String> {
     let test_mode = config.test_mode;
-    let socket_read_timeout_secs = config.socket_read_timeout_secs;
     let dump1090_tz = config.dump1090_tz.clone();
     let source_id = config.source_id.clone();
-    let mut client =
-        ADSBFeedClient::new(config, vec![Box::new(NoopForwarder)]).map_err(|e| e.to_string())?;
+    let source_kind = config.source_kind;
+    // Thresholds must follow the source: a broker subscription has no TCP read
+    // timeout, so reusing the socket numbers would make the status light lie.
+    let liveness = config.liveness_policy();
 
-    // Attach message tap (buffer 4096 messages)
-    let message_rx = client.with_message_tap(4096);
+    // The desktop consumes the feed rather than republishing it, so a socket
+    // source carries a NoopForwarder; an MQTT source has no forwarders at all.
+    // A socket source owns the feed client and therefore its counters, which
+    // the metrics bar reads. An MQTT subscriber has no socket of its own to
+    // report on, so it gets a fresh (zeroed) handle rather than a wrong one.
+    let (mut source, metrics): (Box<dyn MessageSource>, Metrics) = match source_kind {
+        SourceKind::Socket => {
+            let s = SocketSource::with_forwarders(config, vec![Box::new(NoopForwarder)])
+                .map_err(|e| e.to_string())?;
+            let m = s.metrics();
+            (Box::new(s), m)
+        }
+        SourceKind::Mqtt => (Box::new(MqttSource::new(&config)), Metrics::new()),
+    };
 
-    // Get metrics handle before moving client
-    let metrics = client.metrics();
+    let message_rx = source.subscribe(4096);
+    let transport_status = source.status();
     let metrics_for_relay = metrics.clone();
 
     // Shared counter for total raw SBS-1 messages parsed (pre-throttle)
@@ -132,7 +148,7 @@ pub fn start_feed(
 
         // Run client with shutdown signal
         tokio::select! {
-            result = client.run() => {
+            result = source.run() => {
                 match result {
                     Ok(()) => {
                         info!("Feed client stopped normally");
@@ -162,7 +178,7 @@ pub fn start_feed(
             }
             _ = &mut stop_rx => {
                 info!("Feed client received stop signal");
-                client.shutdown();
+                source.shutdown();
                 // Give the client a moment to clean up
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
@@ -221,7 +237,8 @@ pub fn start_feed(
             last_message_time_watchdog,
             test_mode,
             connection_status_watchdog,
-            socket_read_timeout_secs,
+            liveness,
+            transport_status,
             alive_rx_watchdog,
             recorder_watchdog,
         )
@@ -346,22 +363,21 @@ async fn relay_metrics(
 /// switches back to Connected automatically.
 ///
 /// Exits cleanly when the client task stops (alive_rx sender dropped).
+#[allow(clippy::too_many_arguments)]
 async fn socket_watchdog(
     app: AppHandle,
     last_message_time: Arc<RwLock<Instant>>,
     test_mode: bool,
     connection_status: SharedConnectionStatus,
-    socket_read_timeout_secs: u64,
+    liveness: LivenessPolicy,
+    transport_status: tokio::sync::watch::Receiver<SourceStatus>,
     mut alive_rx: tokio::sync::watch::Receiver<bool>,
     recorder: StatusEventRecorder,
 ) {
-    let degraded_threshold = Duration::from_secs(socket_read_timeout_secs + 10);
-    let lost_threshold = Duration::from_secs(socket_read_timeout_secs + 30);
-
     info!(
-        "Socket watchdog started: degraded after {}s, connection lost after {}s",
-        degraded_threshold.as_secs(),
-        lost_threshold.as_secs(),
+        "Feed watchdog started: degraded after {}s, connection lost after {}s",
+        liveness.degraded_after.as_secs(),
+        liveness.lost_after.as_secs(),
     );
 
     let mut check_tick = interval(Duration::from_secs(5));
@@ -382,13 +398,13 @@ async fn socket_watchdog(
             // Check status every 5 seconds
             _ = check_tick.tick() => {
                 let elapsed = last_message_time.read().await.elapsed();
+                let transport = *transport_status.borrow();
 
-                let new_status = if elapsed >= lost_threshold {
-                    ConnectionStatus::ConnectionLost
-                } else if elapsed >= degraded_threshold {
-                    ConnectionStatus::Degraded
-                } else {
-                    ConnectionStatus::Connected
+                let new_status = match liveness.resolve(transport, elapsed) {
+                    Liveness::Connecting => ConnectionStatus::Connecting,
+                    Liveness::Healthy => ConnectionStatus::Connected,
+                    Liveness::Degraded => ConnectionStatus::Degraded,
+                    Liveness::Lost => ConnectionStatus::ConnectionLost,
                 };
 
                 // Emit only on transition

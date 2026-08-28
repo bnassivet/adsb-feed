@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { getConfig, getStatus, saveConfig, validateConfig } from "@/lib/commands";
+import type { SourceKind } from "@/lib/types";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
 import { TRACK_HISTORY_HOURS_KEY, DEFAULT_TRACK_HISTORY_HOURS } from "@/contexts/AircraftTrackingContext";
@@ -96,6 +97,17 @@ export default function SettingsPage() {
             </h2>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Source ID" value={config.source_id} onChange={(v) => update({ source_id: v })} />
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-neutral-400">Feed Source</span>
+                <select
+                  className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1"
+                  value={config.source_kind ?? 'socket'}
+                  onChange={(e) => update({ source_kind: e.target.value as SourceKind })}
+                >
+                  <option value="socket">Direct socket (dump1090)</option>
+                  <option value="mqtt">MQTT subscription</option>
+                </select>
+              </label>
               <Field label="Socket Host" value={config.socket_host} onChange={(v) => update({ socket_host: v })} />
               <Field label="Socket Port" type="number" value={String(config.socket_port)} onChange={(v) => update({ socket_port: Number(v) })} />
               <Field label="Connection Mode" value={config.connection_mode} onChange={(v) => update({ connection_mode: v })} />
@@ -161,6 +173,21 @@ export default function SettingsPage() {
             <div className="grid grid-cols-1 gap-4">
               <Field label="Broker URL" value={config.pulsar_broker} onChange={(v) => update({ pulsar_broker: v })} />
               <Field label="Topic" value={config.pulsar_topic} onChange={(v) => update({ pulsar_topic: v })} />
+            </div>
+          </section>
+
+          <section className="bg-slate-900 rounded-lg p-4 border border-slate-800">
+            <h2 className="text-sm font-semibold text-slate-300 mb-4">
+              MQTT
+            </h2>
+            <p className="text-xs text-slate-500 mb-4">
+              Used when Feed Source is set to MQTT. Subscribes to raw SBS-1 lines
+              published by adsb-pulsar-client, so no Pulsar broker is required.
+            </p>
+            <div className="grid grid-cols-1 gap-4">
+              <Field label="Broker Host" value={config.mqtt_broker ?? ""} onChange={(v) => update({ mqtt_broker: v })} />
+              <Field label="Broker Port" type="number" value={String(config.mqtt_port ?? 1883)} onChange={(v) => update({ mqtt_port: Number(v) })} />
+              <Field label="Topic" value={config.mqtt_topic ?? ""} onChange={(v) => update({ mqtt_topic: v })} />
             </div>
             <div className="mt-4 flex items-center gap-2">
               <input

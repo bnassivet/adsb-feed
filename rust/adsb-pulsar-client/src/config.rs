@@ -26,6 +26,44 @@ pub enum ConnectionMode {
     Server,
 }
 
+/// Where the live SBS-1 feed comes from.
+///
+/// A consumer either connects straight to dump1090, or subscribes to a feed
+/// another process is publishing. The latter is what lets the desktop app run
+/// against a Raspberry Pi with no Apache Pulsar in the picture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceKind {
+    /// Connect directly to a dump1090 TCP socket (default).
+    #[default]
+    Socket,
+    /// Subscribe to raw SBS-1 lines on an MQTT topic.
+    Mqtt,
+}
+
+impl std::fmt::Display for SourceKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SourceKind::Socket => write!(f, "socket"),
+            SourceKind::Mqtt => write!(f, "mqtt"),
+        }
+    }
+}
+
+impl std::str::FromStr for SourceKind {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "socket" => Ok(SourceKind::Socket),
+            "mqtt" => Ok(SourceKind::Mqtt),
+            other => Err(format!(
+                "Unknown source kind: '{}'. Expected: socket, mqtt",
+                other
+            )),
+        }
+    }
+}
+
 /// Kind of message forwarder backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -119,6 +157,20 @@ pub struct Config {
     )]
     #[serde(skip)]
     pub print_config: bool,
+
+    /// Where the live feed comes from: a direct dump1090 socket, or an MQTT
+    /// subscription to a feed another process publishes.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "source-kind",
+            default_value = "socket",
+            env = "ADSB_SOURCE_KIND",
+            help = "Live feed source: socket, mqtt"
+        )
+    )]
+    #[serde(default)]
+    pub source_kind: SourceKind,
 
     /// Unique identifier for this data source
     #[cfg_attr(
@@ -577,6 +629,7 @@ impl Default for Config {
         Self {
             config: default_config_path(),
             print_config: false,
+            source_kind: SourceKind::Socket,
             source_id: default_source_id(),
             socket_host: default_socket_host(),
             socket_port: default_socket_port(),
@@ -776,6 +829,21 @@ impl Config {
                 .collect();
             if !parsed.is_empty() {
                 self.forwarders = parsed;
+            }
+        }
+    }
+
+    /// Liveness thresholds appropriate to the configured source.
+    ///
+    /// The two sources have no comparable timeout, so this must follow
+    /// `source_kind` rather than always deriving from the socket read timeout.
+    pub fn liveness_policy(&self) -> crate::source::LivenessPolicy {
+        match self.source_kind {
+            SourceKind::Socket => {
+                crate::source::LivenessPolicy::for_socket(self.socket_read_timeout_secs)
+            }
+            SourceKind::Mqtt => {
+                crate::source::LivenessPolicy::for_mqtt(self.heartbeat_timeout_secs)
             }
         }
     }
@@ -1349,5 +1417,61 @@ mod layering_tests {
         cfg.overlay_file(&file("socket_port = 30005"), &all_defaulted);
         assert_eq!(cfg.source_id, "kraspberryPi");
         assert_eq!(cfg.mqtt_topic, "adsb/sbs/raw");
+    }
+}
+
+#[cfg(test)]
+mod source_kind_tests {
+    use super::*;
+
+    #[test]
+    fn source_kind_parses_both_spellings() {
+        assert_eq!("socket".parse::<SourceKind>().unwrap(), SourceKind::Socket);
+        assert_eq!("MQTT".parse::<SourceKind>().unwrap(), SourceKind::Mqtt);
+    }
+
+    #[test]
+    fn source_kind_display_roundtrips() {
+        for k in [SourceKind::Socket, SourceKind::Mqtt] {
+            assert_eq!(k.to_string().parse::<SourceKind>().unwrap(), k);
+        }
+    }
+
+    #[test]
+    fn unknown_source_kind_is_an_error_that_lists_the_options() {
+        let e = "carrier-pigeon".parse::<SourceKind>().unwrap_err();
+        assert!(e.contains("socket") && e.contains("mqtt"), "got: {e}");
+    }
+
+    #[test]
+    fn default_source_is_the_direct_socket() {
+        // Existing installs must keep connecting straight to dump1090.
+        assert_eq!(Config::default().source_kind, SourceKind::Socket);
+    }
+
+    #[test]
+    fn source_kind_deserializes_default_when_missing() {
+        // Configs written before MQTT input existed must still load.
+        let json = serde_json::json!({ "source_id": "test" });
+        let cfg: Config = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg.source_kind, SourceKind::Socket);
+    }
+
+    #[test]
+    fn liveness_policy_follows_the_selected_source() {
+        let socket = Config::default();
+        let mqtt = Config {
+            source_kind: SourceKind::Mqtt,
+            ..Config::default()
+        };
+        assert_ne!(socket.liveness_policy(), mqtt.liveness_policy());
+        assert_eq!(
+            socket.liveness_policy(),
+            crate::source::LivenessPolicy::for_socket(socket.socket_read_timeout_secs)
+        );
+        assert_eq!(
+            mqtt.liveness_policy(),
+            crate::source::LivenessPolicy::for_mqtt(mqtt.heartbeat_timeout_secs)
+        );
     }
 }

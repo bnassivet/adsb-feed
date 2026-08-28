@@ -426,6 +426,21 @@ MQTT topic ─────►│ MqttSource                   │──┘
 | `MessageSource` | `subscribe(capacity)`, `status()`, `run()`, `shutdown()`, `name()` |
 | `SourceStatus` | `Disconnected` / `Connecting` / `Connected` — transport state only |
 | `split_lines(payload)` | Splits a received payload into individual lines, normalising CRLF and dropping blanks |
+| `LivenessPolicy` | Degraded/lost thresholds appropriate to the source, plus `resolve()` |
+| `Liveness` | `Connecting` / `Healthy` / `Degraded` / `Lost` — the consumer-facing verdict |
+
+### Why liveness is a policy, not a constant
+
+The two sources have **no comparable timeout**. `SocketSource` has a TCP read
+timeout, and the desktop watchdog has always derived `read_timeout + 10s / +30s`
+from it. `MqttSource` has no such thing — reusing those numbers produces a
+connection indicator that is confidently wrong. What an MQTT subscriber *does*
+have is dump1090's 60s heartbeat relayed through the feed client, so silence is
+measured against that: `heartbeat x 1.5` to degrade, `x 3` to declare lost.
+
+`resolve()` also lets transport state win over the timers: a broker that has
+dropped us is `Lost` even if a message arrived a moment ago, because the timers
+describe the *feed* while the transport describes the *connection*.
 
 ### Why `MqttSource` matters
 

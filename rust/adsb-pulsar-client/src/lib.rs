@@ -63,6 +63,6 @@ pub mod source;
 
 // Re-export main types for convenience
 pub use client::ADSBFeedClient;
-pub use config::{Config, ConnectionMode, ForwarderKind};
+pub use config::{Config, ConnectionMode, ForwarderKind, SourceKind};
 pub use error::{ClientError, Result};
 pub use metrics::{Metrics, MetricsSnapshot};
