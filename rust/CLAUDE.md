@@ -121,9 +121,11 @@ See `docs/DEPLOYMENT.md`. The short version:
   natively under Docker's VM. `make feed-arm64` / `make server-arm64`.
 - **`cross` does not work here**: its images are x86_64 and `rust-toolchain.toml`
   pins 1.92, so it tries to install a non-host toolchain and rustup refuses.
-- **Cap build parallelism** (`-j 4`, the Makefile default). `codegen-units = 1`
-  means each parallel rustc holds a whole crate's codegen; a 16-CPU / 8 GB
-  Docker VM OOM-kills `arrow-cast` at default `-j`.
+- **Cap build parallelism, twice over.** `codegen-units = 1` means each parallel
+  rustc holds a whole crate's codegen. `JOBS = 4` for the feed client; the data
+  server needs `SERVER_JOBS = 2` because DuckDB's unity-build C++ units each take
+  GBs in cc1plus, and cc-rs reports the OOM kill as a bare `exit status: 1` that
+  reads like a compile error. Measured: 2.1 MB / 19s (feed), 38 MB / 9m44s (server)
 - **`MemoryMax` is not copyable between the two units**: 100M for the feed
   client, 512M for `adsb-data-server` (DuckDB wants >=125 MB per thread).
 

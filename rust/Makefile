@@ -26,6 +26,11 @@ PI_HOST     ?= pi@raspberrypi.local
 # jobs rather than weakening the profile -- the profile is what keeps the
 # shipped binary small.
 JOBS ?= 4
+# The data server needs a lower cap than the feed client. DuckDB's unity-build
+# translation units (ub_src_*.cpp) each take GBs in cc1plus at -O3, so four in
+# parallel exceed an 8 GB Docker VM and the build dies in cc-rs with a bare
+# "exit status: 1". Measured good at 2: peak ~1.1 GiB, 9m44s.
+SERVER_JOBS ?= 2
 
 # Named volumes for the registry and rustup dir. Without them every build
 # re-downloads the crate index AND the toolchain: rust-toolchain.toml pins
@@ -70,7 +75,7 @@ feed-arm64-pulsar:
 # aarch64 only: DuckDB has no 32-bit ARM support.
 .PHONY: server-arm64
 server-arm64:
-	$(DOCKER_RUN) cargo build --release -p adsb-data-server -j $(JOBS)
+	$(DOCKER_RUN) cargo build --release -p adsb-data-server -j $(SERVER_JOBS)
 	@ls -la $(OUT)/adsb-data-server
 
 .PHONY: edge-arm64

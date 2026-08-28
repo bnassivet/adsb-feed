@@ -21,10 +21,18 @@ own gcc.
 
 ```bash
 cd rust
-make feed-arm64      # ~19s, ~2.1 MB
-make server-arm64    # slow: bundled DuckDB C++ amalgamation
+make feed-arm64      # ~19s,    2.1 MB
+make server-arm64    # ~10 min, 38 MB (bundled DuckDB, statically linked)
 make edge-arm64      # both
 ```
+
+Measured on an M-series Mac, 16 CPUs / 7.7 GB Docker VM. Both artifacts were
+verified as `ELF 64-bit LSB pie executable, ARM aarch64` and smoke-tested in an
+`aarch64` Debian container: `adsb-data-server` opens DuckDB, creates the
+database file and starts its MQTT source.
+
+The 38 MB is DuckDB statically linked — budget for it on a small SD card. The
+feed client, which a 32-bit node runs alone, stays at 2.1 MB.
 
 ### What does not work, and why
 
@@ -33,12 +41,18 @@ make edge-arm64      # both
   1.92-x86_64-unknown-linux-gnu` and rustup refuses a non-host toolchain.
 - **Do not compile `adsb-data-server` on the Pi.** The bundled DuckDB build is
   heavy in both time and RAM; a Pi will thrash or OOM.
-- **A 16-CPU / 8 GB Docker VM OOMs at default parallelism.** The workspace's
-  release profile sets `codegen-units = 1` (right for a small, fast edge
-  binary), so every parallel `rustc` holds a whole crate's codegen in one unit.
-  Building `arrow-cast` 16-wide gets SIGKILLed. The Makefile caps this with
-  `-j 4`. Cap parallelism rather than weakening the profile — the profile is
-  what keeps the shipped binary small.
+- **Parallelism must be capped, twice over, on an 8 GB Docker VM.** The release
+  profile sets `codegen-units = 1` (right for a small, fast edge binary), so
+  every parallel `rustc` holds a whole crate's codegen in one unit.
+  - At the default job count, `arrow-cast` is SIGKILLed by the OOM killer.
+  - At `-j 4`, the *C++* side fails instead: DuckDB's unity-build translation
+    units (`ub_src_*.cpp`) each take GBs in `cc1plus` at `-O3`, and cc-rs
+    reports the kill as a bare `exit status: 1` — no "Killed", no signal, which
+    makes it read like a compile error rather than memory exhaustion.
+
+  Hence `JOBS = 4` for the feed client and `SERVER_JOBS = 2` for the data
+  server. Measured good at 2: peak ~1.1 GiB, 9m44s. Cap parallelism rather than
+  weakening the profile — the profile is what keeps the shipped binary small.
 
 ### Feed client without Pulsar
 
