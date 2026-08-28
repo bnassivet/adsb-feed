@@ -62,10 +62,13 @@ pub fn run() {
                 .ok()
                 .and_then(|v| v.parse::<u16>().ok())
                 .unwrap_or(DEFAULT_TOOL_SERVER_PORT);
-            adsb_data_server::server::spawn(
+            // Tauri's runtime, not tokio::spawn: `setup` runs before any tokio
+            // runtime is in scope, and spawning there aborts the app at launch
+            // with "there is no reactor running".
+            tauri::async_runtime::spawn(adsb_data_server::server::serve(
                 std::sync::Arc::clone(&state.storage),
                 tool_server_port,
-            );
+            ));
 
             app.manage(state);
             Ok(())

@@ -1,0 +1,99 @@
+  rendered .run/feed.toml
+  rendered .run/data-server.toml
+Broker:
+   Container adsb-mosquitto Running 
+Recorder:
+  already running: data-server (pid 57958)
+Mock receiver:
+  already running: mock (pid 57968)
+Feed:
+  already running: feed (pid 57980)
+
+Up. 'make status' to check, 'make verify' to confirm data is flowing.
+Starting the desktop app (Ctrl-C to stop it; the stack keeps running)
+
+> adsb-pulsar-client-desktop@0.1.0 tauri
+> tauri dev
+
+     Running BeforeDevCommand (`npm run dev`)
+
+> adsb-pulsar-client-desktop@0.1.0 dev
+> next dev --port 3000
+
+▲ Next.js 16.2.9 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.1.10:3000
+✓ Ready in 188ms
+
+     Running DevCommand (`cargo  run --no-default-features --color always --`)
+        Info Watching /Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri for changes...
+        Info Watching /Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-engine for changes...
+        Info Watching /Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-server for changes...
+        Info Watching /Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client for changes...
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.23s
+[1m[92m     Running[0m `/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target/debug/adsb-pulsar-client-desktop`
+[2m2026-08-28T22:43:12.260173Z[0m [32m INFO[0m Storage mode: embedded
+[2m2026-08-28T22:43:12.302958Z[0m [32m INFO[0m Storage opened: /Users/brunonassivet/Library/Application Support/com.adsb.aircraft-tracker/adsb_history.db
+[2m2026-08-28T22:43:12.318172Z[0m [32m INFO[0m Storage initialized: /Users/brunonassivet/Library/Application Support/com.adsb.aircraft-tracker/adsb_history.db
+[2m2026-08-28T22:43:12.321469Z[0m [32m INFO[0m Config loaded from store
+
+thread 'main' (5020552) panicked at adsb-data-server/src/server.rs:155:5:
+there is no reactor running, must be called from the context of a Tokio 1.x runtime
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' (5020552) panicked at library/core/src/panicking.rs:230:5:
+panic in a function that cannot unwind
+stack backtrace:
+   0:        0x1085bfa10 - std::backtrace_rs::backtrace::libunwind::trace::h890246ace2f92943
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/../../backtrace/src/backtrace/libunwind.rs:117:9
+   1:        0x1085bfa10 - std::backtrace_rs::backtrace::trace_unsynchronized::h11f38ae193fb7a81
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/../../backtrace/src/backtrace/mod.rs:66:14
+   2:        0x1085bfa10 - std::sys::backtrace::_print_fmt::h4b60af7dd9328e8e
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/sys/backtrace.rs:66:9
+   3:        0x1085bfa10 - <std::sys::backtrace::BacktraceLock::print::DisplayBacktrace as core::fmt::Display>::fmt::h2808c764b780ef77
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/sys/backtrace.rs:39:26
+   4:        0x1085d0a94 - core::fmt::rt::Argument::fmt::hcb261d347bc11ae5
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/core/src/fmt/rt.rs:173:76
+   5:        0x1085d0a94 - core::fmt::write::h164e2e78980a3344
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/core/src/fmt/mod.rs:1469:25
+   6:        0x108597688 - std::io::default_write_fmt::ha9d9e8690d3c78f2
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/io/mod.rs:639:11
+   7:        0x108597688 - std::io::Write::write_fmt::hc5b2a4d160c11c86
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/io/mod.rs:1954:13
+   8:        0x1085a0fdc - std::sys::backtrace::BacktraceLock::print::h765d16e49e83c7b3
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/sys/backtrace.rs:42:9
+   9:        0x1085a5320 - std::panicking::default_hook::{{closure}}::hf5d7ef6cefa10586
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panicking.rs:301:27
+  10:        0x1085a51d4 - std::panicking::default_hook::h8781bd6c5c54e4cc
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panicking.rs:328:9
+  11:        0x1085a5a60 - std::panicking::panic_with_hook::h93c775fc227522dd
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panicking.rs:834:13
+  12:        0x1085a5720 - std::panicking::panic_handler::{{closure}}::h8561e58c9391724a
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panicking.rs:700:13
+  13:        0x1085a10e8 - std::sys::backtrace::__rust_end_short_backtrace::h55629ed76aaa9d26
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/sys/backtrace.rs:174:18
+  14:        0x10858f918 - __rustc[d9b87f19e823c0ef]::rust_begin_unwind
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panicking.rs:698:5
+  15:        0x10860bba4 - core::panicking::panic_nounwind_fmt::runtime::h6a11d01cfb577d49
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/core/src/panicking.rs:122:22
+  16:        0x10860bba4 - core::panicking::panic_nounwind_fmt::hbccf1478dcdd0d51
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/core/src/intrinsics/mod.rs:2435:9
+  17:        0x10860bb08 - core::panicking::panic_nounwind::h6b2e5f463f7678f3
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/core/src/panicking.rs:230:5
+  18:        0x10860bca8 - core::panicking::panic_cannot_unwind::hf78649432160e0db
+                               at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/core/src/panicking.rs:342:5
+  19:        0x1056a4308 - tao::platform_impl::platform::app_delegate::did_finish_launching::h492d673deecac219
+                               at /Users/brunonassivet/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tao-0.34.5/src/platform_impl/macos/app_delegate.rs:126:1
+  20:        0x18b3179bc - <unknown>
+  21:        0x18b3a408c - <unknown>
+  22:        0x18b3a3fd0 - <unknown>
+  23:        0x18b2e63d0 - <unknown>
+  24:        0x18cb1b4a4 - <unknown>
+  25:        0x18f7585e8 - <unknown>
+  26:        0x18f758380 - <unknown>
+  27:        0x18f7569c4 - <unknown>
+  28:        0x18f7565d8 - <unknown>
+  29:        0x18cb43fbc - <unknown>
+  30:        0x18cb43db4 - <unknown>
+thread caused non-unwinding panic. aborting.
+[?25h

@@ -55,7 +55,8 @@ logs:    ; @$(STACK) logs $(N)
 .PHONY: up-desktop
 up-desktop: up
 	@echo "Starting the desktop app (Ctrl-C to stop it; the stack keeps running)"
-	@cd rust/adsb-pulsar-client-desktop && npm run tauri dev
+	@port=$$(python3 -c "import tomllib;print(tomllib.load(open('adsb-stack.toml','rb'))['agents'].get('desktop_tool_port',8788))"); \
+	cd rust/adsb-pulsar-client-desktop && ADSB_AGENT_TOOL_SERVER_PORT=$$port npm run tauri dev
 
 # Desktop against a data server elsewhere -- no local feed or recorder.
 # ADSB_REMOTE_URI seeds the mode on FIRST launch only; afterwards the stored

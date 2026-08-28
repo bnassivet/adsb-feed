@@ -132,6 +132,13 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
 - **Grafana and the desktop both want :3000.** The Pulsar stack's Grafana
   collides with the Next dev server; they cannot both run. `make doctor` reports
   :3000 as busy.
+- **The desktop runs its own tool server, serving its own storage.** With the
+  stack up, the data server already holds `storage.http_port` (8787), so the
+  desktop uses `agents.desktop_tool_port` (8788) -- `make up-desktop` exports it.
+  Pointed at the same port, whichever starts second fails to bind and its agent
+  history tools are silently disabled, with only a WARN in the log. The two
+  serve *different* databases: 8787 is what the daemon recorded, 8788 is the
+  desktop's own history.
 - **The Quack token is printed at startup** when `share_token` is unset —
   DuckDB generates one and that log line is the only way to learn it. Grep
   `.run/logs/data-server.log` for `token:`.
@@ -155,6 +162,7 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
 | `MISSING adsb-data-server` from doctor | `make build` |
 | `error: adsb-stack.toml not found` | `make config` |
 | A setting works here but not on another machine | It was added to `adsb-stack.toml` but not to `adsb-stack-template.toml`. `diff` them. |
+| `failed to bind 127.0.0.1:8787 (agent history tools disabled)` in the desktop log | The data server owns that port. Launch via `make up-desktop`, which sets `ADSB_AGENT_TOOL_SERVER_PORT` from `agents.desktop_tool_port`. |
 | Quack sharing reports `Unavailable` | The `quack` extension is downloaded on first use; needs outbound network and a writable `HOME`. |
 | Port 1883 busy but no broker | A system mosquitto is running: `brew services stop mosquitto`, or point `mqtt.host` at it and skip the container. |
 

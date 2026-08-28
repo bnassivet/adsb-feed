@@ -131,7 +131,8 @@ doctor)
   echo "Ports:"
   # 3000 is listed because Grafana in infrastructure/docker-compose.yml wants
   # the same port as the desktop's Next dev server -- they cannot both run.
-  for p in 1883 "$(cfg dump1090 port 30003)" "$(cfg storage http_port 8787)" 3000 8000 8300; do
+  for p in 1883 "$(cfg dump1090 port 30003)" "$(cfg storage http_port 8787)" \
+           "$(cfg agents desktop_tool_port 8788)" 3000 8000 8300; do
     if port_busy "$p"; then echo "  BUSY    $p"; else echo "  free    $p"; fi
   done
 
