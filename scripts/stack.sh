@@ -13,6 +13,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN="$REPO/.run"
 LOGS="$RUN/logs"
 STACK="$REPO/adsb-stack.toml"
+TEMPLATE="$REPO/adsb-stack-template.toml"
 BIN="$REPO/rust/target/release"
 MOCK="$REPO/skills/run-adsb-desktop/mock_dump1090.py"
 COMPOSE="$REPO/infrastructure/mqtt/docker-compose.yml"
@@ -35,6 +36,21 @@ except FileNotFoundError:
     v = default
 print("true" if v is True else "false" if v is False else v)
 PY
+}
+
+# Every command that reads the config funnels through this, so a missing file
+# always produces the same one-line fix rather than a tomllib traceback.
+require_config() {
+  [ -f "$STACK" ] && return 0
+  cat >&2 <<MSG
+error: adsb-stack.toml not found.
+
+  It is gitignored -- your machine's copy, like a .env. Create it with:
+
+      make config
+
+MSG
+  exit 1
 }
 
 port_busy() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
@@ -77,10 +93,31 @@ render() { python3 "$REPO/scripts/render-config.py"; }
 
 case "${1:-help}" in
 
-render) render ;;
+config)
+  if [ -f "$STACK" ]; then
+    # Never clobber: this file holds a real receiver location and a token
+    # someone chose. Same rule as install-edge.sh on the Pi.
+    echo "adsb-stack.toml already exists -- leaving it alone."
+    echo "Compare against the template with:  diff adsb-stack-template.toml adsb-stack.toml"
+    exit 0
+  fi
+  cp "$TEMPLATE" "$STACK"
+  echo "Created adsb-stack.toml from the template."
+  echo "Edit [receiver] with your antenna's real position, then: make up"
+  ;;
+
+render) require_config; render ;;
 
 doctor)
   rc=0
+  echo "Config:"
+  if [ -f "$STACK" ]; then
+    echo "  ok      adsb-stack.toml"
+  else
+    echo "  MISSING adsb-stack.toml -- run: make config"
+    rc=1
+  fi
+
   echo "Binaries:"
   for b in adsb-pulsar-client adsb-data-server; do
     if [ -x "$BIN/$b" ]; then echo "  ok      $b"
@@ -114,6 +151,7 @@ doctor)
   ;;
 
 up)
+  require_config
   render
   echo "Broker:"
   docker compose -f "$COMPOSE" up -d 2>&1 | sed 's/^/  /'
@@ -157,6 +195,7 @@ down)
   ;;
 
 status)
+  require_config
   http="$(cfg storage http_port 8787)"
   for n in data-server feed mock agent sim-agent; do
     if running "$n"; then
@@ -178,6 +217,7 @@ logs)
   ;;
 
 verify)
+  require_config
   http="$(cfg storage http_port 8787)"
   echo "Sampling $http twice, 6s apart..."
   read_rows() {
@@ -201,6 +241,7 @@ verify)
   cat <<USAGE
 usage: stack.sh <command>
 
+  config    create adsb-stack.toml from the template (never overwrites)
   render    regenerate .run/*.toml from adsb-stack.toml
   doctor    preflight: binaries, docker, ports, skills, LLM
   up        broker -> recorder -> feed (add --agents for the AI agents)
@@ -209,7 +250,8 @@ usage: stack.sh <command>
   logs [n]  tail one process, or all
   verify    confirm rows are actually being recorded
 
-Config: adsb-stack.toml    State: .run/
+Config: adsb-stack.toml (gitignored; from adsb-stack-template.toml)
+State:  .run/
 USAGE
   ;;
 esac

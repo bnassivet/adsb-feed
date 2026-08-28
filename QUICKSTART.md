@@ -4,10 +4,21 @@ Everything is configured from **`adsb-stack.toml`** and driven from the
 **`Makefile`**. Run `make` on its own to list targets.
 
 ```bash
-make skills    # once per checkout: link skills/ into .claude/
+make config    # once: copy adsb-stack-template.toml -> adsb-stack.toml
+make skills    # once: link skills/ into .claude/
 make build     # cargo build --release
-make doctor    # check binaries, docker, ports before starting anything
+make doctor    # check config, binaries, docker, ports before starting anything
 ```
+
+`adsb-stack.toml` is **gitignored** — it is your machine's copy, like a `.env`.
+It holds your antenna's real position, local paths and a Quack token, none of
+which belong in someone else's checkout. `adsb-stack-template.toml` is the
+tracked version; edit that only when adding a setting everyone should get.
+`make config` never overwrites an existing file.
+
+Set your antenna's real position in `[receiver]` before anything else — it is
+the map centre, the origin for the mock feed, and the reference for
+detection-range analysis.
 
 ## 1. All-local development
 
@@ -52,7 +63,8 @@ independent of the local tooling here.
 
 | Path | What |
 |---|---|
-| `adsb-stack.toml` | The only file you edit |
+| `adsb-stack-template.toml` | Tracked template; `make config` copies it |
+| `adsb-stack.toml` | Your local config — the only file you edit. Gitignored |
 | `.run/` | Rendered configs, PID files, logs, dev database. Disposable, gitignored |
 | `.run/logs/*.log` | Per-process output (`make logs N=feed`) |
 | `skills/` | Agent skills, symlinked into `.claude/` by `make skills` |

@@ -1,18 +1,28 @@
-# ADS-B stack configuration -- the ONE file to edit.
+# TEMPLATE -- copy me, do not edit me.
 #
-# `make render` turns this into .run/feed.toml and .run/data-server.toml, which
-# the binaries read via --config. Those are generated: edit this file, not them.
+#     make config     # writes adsb-stack.toml (refuses to clobber an existing one)
 #
-# It exists because source_id, mqtt broker/port/topic are needed by *both*
-# binaries. Kept in two hand-edited files they drift, and a feed publishing to
-# one topic while the recorder subscribes to another fails silently -- the feed
-# looks healthy and nothing is ever recorded.
+# `adsb-stack.toml` is your machine's configuration and is gitignored, for the
+# same reasons a .env is: it holds host-specific paths, your receiver's real
+# location and a Quack token. This template is the tracked, shareable version --
+# change it only when adding a setting everyone should get.
+#
+# From adsb-stack.toml, `make render` generates .run/feed.toml and
+# .run/data-server.toml, which the binaries read via --config. Those are
+# derived: never edit them either.
+#
+# One file rather than two because source_id and the MQTT broker/port/topic are
+# needed by *both* binaries. Kept in two hand-edited files they drift, and the
+# failure is silent -- a feed publishing to one topic while the recorder
+# subscribes to another looks healthy from both sides and records nothing.
 
 [receiver]
 # Stamped onto every stored record, and the MQTT client id derives from it.
 # Must be unique per node: duplicates make data unattributable, and brokers
 # evict a session when a second client connects with the same id.
 id = "dev-laptop"
+# Your antenna's real position: used as the map centre, for distance and
+# detection-range calculations, and as the origin for the mock feed.
 latitude = 46.717915
 longitude = -2.33716964
 altitude_ft = 20.0
@@ -46,6 +56,8 @@ http_port = 8787
 # no TLS. Fine on a trusted LAN; never port-forward it.
 share = true
 share_uri = "quack:localhost:9494"
+# Change this. Anyone who can reach the port and knows it has full read AND
+# write on every table.
 share_token = "dev-token"
 checkpoint_secs = 300
 # 0 keeps everything.

@@ -17,8 +17,24 @@ the desktop app. Two optional Python agents add chat and simulated flights.
 make doctor
 ```
 
-Checks binaries, the Docker daemon, port availability, skill links, and — when
-agents are enabled — the LLM endpoint. Fix whatever it reports before `make up`.
+Checks the config file, binaries, the Docker daemon, port availability, skill
+links, and — when agents are enabled — the LLM endpoint. Fix whatever it reports
+before `make up`.
+
+**If it reports `MISSING adsb-stack.toml`**, this is a fresh checkout:
+
+```bash
+make config     # copies adsb-stack-template.toml -> adsb-stack.toml
+```
+
+`adsb-stack.toml` is gitignored — the machine's own copy, like a `.env`. It
+never exists in a fresh clone, and `make config` refuses to overwrite one that
+does, so it is always safe to run.
+
+**Then set `[receiver]` before starting anything.** The latitude/longitude are
+the map centre, the origin the mock feed orbits, and the reference for
+detection-range analysis; the template ships someone else's coordinates. Also
+change `storage.share_token` if the port will be reachable by anyone else.
 
 ## Run it
 
@@ -41,6 +57,14 @@ Add the desktop with `make up-desktop`, or the agents with `make up-agents`.
 **Edit `adsb-stack.toml`. Nothing else.** `make render` expands it into
 `.run/feed.toml` and `.run/data-server.toml`, which carry a DO-NOT-EDIT header
 because the next render overwrites them.
+
+Three files, one direction of flow:
+
+| File | Tracked? | Who edits it |
+|---|---|---|
+| `adsb-stack-template.toml` | yes | only when adding a setting everyone should get |
+| `adsb-stack.toml` | **no** | you, freely — it is this machine's config |
+| `.run/*.toml` | no | nobody; generated |
 
 The file exists because `source_id` and the MQTT broker/port/topic are needed by
 *both* binaries. Kept in two hand-edited files they drift, and the failure is
@@ -113,8 +137,11 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
   `.run/logs/data-server.log` for `token:`.
 - **`.run/` is disposable.** Rendered configs, PIDs, logs and the dev database.
   Delete it freely; `make up` rebuilds everything except the database.
-- **Skills need installing once per checkout**: `make skills`. They are tracked
-  in `skills/` and symlinked into `.claude/`, which is gitignored.
+- **Two things need doing once per checkout**: `make config` and `make skills`.
+  Both are safe to re-run — neither overwrites anything.
+- **A new setting must be added to the template too.** Adding it only to
+  `adsb-stack.toml` means it exists on one machine and nowhere else, and the
+  next person's `make config` will not produce it.
 - **The agents need an LLM** (LM Studio on :1234 by default). They start without
   one and fail on first use; `make doctor` reports it when agents are enabled.
 
@@ -126,6 +153,8 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
 | Feed running, recorder idle | Topic mismatch. Both files come from `adsb-stack.toml`, so this means `.run/` is stale: `make render`. |
 | `query api not responding` in status | The recorder died. `make logs N=data-server`. A DuckDB lock error means another process holds the database. |
 | `MISSING adsb-data-server` from doctor | `make build` |
+| `error: adsb-stack.toml not found` | `make config` |
+| A setting works here but not on another machine | It was added to `adsb-stack.toml` but not to `adsb-stack-template.toml`. `diff` them. |
 | Quack sharing reports `Unavailable` | The `quack` extension is downloaded on first use; needs outbound network and a writable `HOME`. |
 | Port 1883 busy but no broker | A system mosquitto is running: `brew services stop mosquitto`, or point `mqtt.host` at it and skip the container. |
 
@@ -133,7 +162,8 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
 
 | File | Role |
 |---|---|
-| `adsb-stack.toml` | The one file to edit |
+| `adsb-stack-template.toml` | Tracked template; `make config` copies it |
+| `adsb-stack.toml` | This machine's config — the one file to edit. Gitignored |
 | `scripts/render-config.py` | Expands it into `.run/*.toml` |
 | `scripts/stack.sh` | Process supervision (PID files in `.run/`) |
 | `Makefile` | Entry point; delegates build/deploy to `rust/Makefile` |

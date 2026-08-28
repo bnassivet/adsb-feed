@@ -406,6 +406,12 @@ graphify-out/GRAPH_REPORT.md
 # Everything here is derived from adsb-stack.toml and safe to delete.
 .run/
 
+# Your machine's stack configuration, copied from adsb-stack-template.toml by
+# `make config` and adapted locally. Untracked for the same reasons a .env is:
+# it holds host-specific paths, a receiver location and a Quack token, and one
+# person's settings should never land in someone else's checkout.
+adsb-stack.toml
+
 # Edge build output (Docker-based aarch64/armv7 builds use separate target dirs
 # so they never collide with the host's macOS artifacts)
 rust/target-linux-arm64/

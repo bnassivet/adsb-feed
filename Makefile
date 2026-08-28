@@ -31,10 +31,14 @@ help:
 	@echo "  make deploy       ship them to a Pi         (delegated to rust/)"
 	@echo "  make ci           the full local gate       (delegated to rust/)"
 	@echo ""
-	@echo "Setup:"
-	@echo "  make skills       symlink skills/ into .claude/ (once per checkout)"
+	@echo "Setup (once per checkout):"
+	@echo "  make config       create adsb-stack.toml from the template"
+	@echo "  make skills       symlink skills/ into .claude/"
 
 # --- running ---------------------------------------------------------------
+
+.PHONY: config
+config: ; @$(STACK) config
 
 .PHONY: doctor up up-agents down status logs verify render
 doctor:  ; @$(STACK) doctor
@@ -58,7 +62,8 @@ up-desktop: up
 # setting wins, so change it in Settings -> History Storage.
 .PHONY: remote
 remote:
-	@uri=$$(python3 -c "import tomllib;print(tomllib.load(open('adsb-stack.toml','rb'))['remote']['uri'])"); \
+	@test -f adsb-stack.toml || { echo "adsb-stack.toml not found -- run: make config" >&2; exit 1; }; \
+	uri=$$(python3 -c "import tomllib;print(tomllib.load(open('adsb-stack.toml','rb'))['remote']['uri'])"); \
 	tok=$$(python3 -c "import tomllib;print(tomllib.load(open('adsb-stack.toml','rb'))['remote']['token'])"); \
 	if [ -z "$$uri" ]; then echo "Set [remote].uri in adsb-stack.toml first." >&2; exit 1; fi; \
 	echo "Attaching the desktop to $$uri"; \

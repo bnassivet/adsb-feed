@@ -4,9 +4,11 @@
 no-Pulsar stack (broker → data server → feed), `make verify` proves rows are
 actually being recorded, `make down` stops it. `make doctor` is the preflight.
 
-Configuration is `adsb-stack.toml` — the single source of truth, expanded into
-`.run/*.toml` by `make render`. Never edit the rendered files. See
-QUICKSTART.md for the three supported topologies.
+Configuration is `adsb-stack.toml` — gitignored, like a `.env`. Create it with
+`make config` (copies `adsb-stack-template.toml`, never overwrites). It is
+expanded into `.run/*.toml` by `make render`; never edit the rendered files.
+A new setting belongs in the **template** as well, or it exists on one machine
+only. See QUICKSTART.md for the three supported topologies.
 
 Skills live in `skills/` and are symlinked into `.claude/` by `make skills`
 (once per checkout). The `run-adsb-stack` skill covers this for agents.
