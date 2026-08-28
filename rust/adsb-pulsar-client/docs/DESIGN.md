@@ -115,6 +115,10 @@ src/
 ├── connection_monitor.rs     ConnectionMonitor — heartbeat-aware idle detection
 ├── error.rs                  ClientError, Result
 ├── metrics.rs                Metrics (lock-free atomics), MetricsSnapshot
+├── source/
+│   ├── mod.rs                MessageSource trait + SourceStatus + split_lines
+│   ├── socket_source.rs      SocketSource (wraps ADSBFeedClient)
+│   └── mqtt_source.rs        MqttSource (cfg(feature = "mqtt"))
 └── forwarder/
     ├── mod.rs                MessageForwarder trait + NoopForwarder
     ├── file.rs               FileForwarder (BufWriter, append mode)
@@ -395,3 +399,51 @@ Stats tick (10s):
 | `pulsar` | yes | Enables `pulsar` crate dependency, `PulsarForwarder`, `ClientError::Pulsar` |
 
 Tauri crate: `default-features = false` → neither feature active; `NoopForwarder` + `FileForwarder` only.
+
+
+---
+
+## Message sources (input side)
+
+`MessageSource` is the mirror of `MessageForwarder`: a forwarder decides where raw SBS-1
+lines **go**, a source decides where they **come from**. Both ends of the crate trade in the
+same currency — a `broadcast::Receiver<Vec<u8>>` of raw SBS-1 lines, the shape
+`ADSBFeedClient::with_message_tap` already produces — so a consumer works unchanged
+regardless of which source feeds it.
+
+```
+                 ┌──────────────────────────────┐
+dump1090 TCP ───►│ SocketSource                 │──┐
+                 │  wraps ADSBFeedClient        │  │   broadcast::Receiver<Vec<u8>>
+                 └──────────────────────────────┘  ├──►  raw SBS-1 lines
+                 ┌──────────────────────────────┐  │     desktop app, adsb-data-server
+MQTT topic ─────►│ MqttSource                   │──┘
+                 └──────────────────────────────┘
+```
+
+| Item | Purpose |
+|------|---------|
+| `MessageSource` | `subscribe(capacity)`, `status()`, `run()`, `shutdown()`, `name()` |
+| `SourceStatus` | `Disconnected` / `Connecting` / `Connected` — transport state only |
+| `split_lines(payload)` | Splits a received payload into individual lines, normalising CRLF and dropping blanks |
+
+### Why `MqttSource` matters
+
+It lets a consumer read a live feed produced by a **different process** — typically the feed
+client on a Raspberry Pi — with no Apache Pulsar in the picture. This is the input half of
+the no-Pulsar deployment; `MqttForwarder` is the output half.
+
+### Design notes
+
+- **`SourceStatus` is deliberately coarse.** A source reports only what it can observe about
+  its transport. Activity-based degradation ("no messages for N seconds") is layered on top
+  by the consumer, because that threshold is a UI policy, not a transport fact — and it is
+  derived differently for a TCP socket than for a broker subscription.
+- **`MqttSource` subscribes on every `ConnAck`**, not once before the poll loop. `rumqttc`
+  reconnects transparently, but the broker has forgotten the subscription; subscribing only
+  at startup yields a source that silently stops delivering after the first reconnect.
+- **The subscriber client id is suffixed `-sub`.** A source and a forwarder built from the
+  same `Config` would otherwise collide, and brokers evict an existing session when a second
+  client connects with the same id.
+- **Delivery is fire-and-forget.** With no subscribers, or a lagging one, dropping is correct:
+  this is a live feed, not a queue. Durability is the recorder's job.

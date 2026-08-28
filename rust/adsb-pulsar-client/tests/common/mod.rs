@@ -17,6 +17,10 @@ pub const SBS_MSG4_SPEED: &str =
     "MSG,4,1,1,D4E5F6,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,,450.5,275.3,,,,,,,,,0";
 
 /// Sample SBS-1 heartbeat message (hex_ident 000000, sent every ~60s by dump1090).
+#[allow(
+    dead_code,
+    reason = "used by test_message_flow, not by test_source_flow"
+)]
 pub const SBS_HEARTBEAT: &str =
     "MSG,3,1,1,000000,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,0,,,0.0,0.0,,,,,,0";
 
@@ -55,13 +59,14 @@ impl MockDump1090 {
 
 /// Creates a test config pointing to localhost on the given port.
 pub fn test_config_for_port(port: u16) -> Config {
-    let mut config = Config::default();
-    config.socket_host = "127.0.0.1".to_string();
-    config.socket_port = port;
-    config.test_mode = true;
-    config.socket_timeout_secs = 5;
-    config.socket_read_timeout_secs = 2;
-    config.initial_retry_delay_secs = 1;
-    config.max_retry_delay_secs = 2;
-    config
+    Config {
+        socket_host: "127.0.0.1".to_string(),
+        socket_port: port,
+        test_mode: true,
+        socket_timeout_secs: 5,
+        socket_read_timeout_secs: 2,
+        initial_retry_delay_secs: 1,
+        max_retry_delay_secs: 2,
+        ..Config::default()
+    }
 }

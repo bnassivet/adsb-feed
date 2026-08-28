@@ -59,6 +59,7 @@ pub mod connection_monitor;
 pub mod error;
 pub mod forwarder;
 pub mod metrics;
+pub mod source;
 
 // Re-export main types for convenience
 pub use client::ADSBFeedClient;
