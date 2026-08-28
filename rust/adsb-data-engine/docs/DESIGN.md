@@ -473,3 +473,69 @@ test-covered function in the module.
   position is still recoverable from the archive.
 - **Every raw record carries `source_id`.** The desktop previously wrote an empty string,
   which makes receivers indistinguishable in a multi-node fleet.
+
+
+---
+
+## Remote mode (`StorageConfig::remote`)
+
+`StorageHandle::open` has two modes, chosen by explicit configuration:
+
+| Mode | `remote` | Observed tables | Authored tables |
+|---|---|---|---|
+| Embedded | `None` | local, owned by this process | local |
+| Remote | `Some(..)` | **views** over an attached daemon's catalog | local |
+
+*Observed* means `positions`, `raw_messages`, `flights`, `status_events` — data
+recorded from a live feed. *Authored* means `events_of_interest`, `scenarios`,
+`scenario_tracks` — written by whoever is using the app, so they stay local in
+both modes.
+
+### The view trick
+
+Remote mode runs:
+
+```sql
+ATTACH 'quack:pi.lan:9494' AS edge (TYPE quack, TOKEN '…', DISABLE_SSL true);
+CREATE OR REPLACE VIEW positions AS SELECT * FROM edge.positions;   -- and the rest
+```
+
+Because the views take the **same names** the queries already use, the entire
+read path works against a remote daemon **unmodified**. No query routing layer,
+no per-table dispatch, no changes to any of the existing query SQL.
+
+`SCHEMA_OBSERVED_SQL` is deliberately *not* executed in remote mode: if the real
+tables existed, the views could not take those names, and dropping them to make
+room would destroy a user's local history. For the same reason the desktop app
+uses a **separate file** (`adsb_local.db`) in remote mode and leaves
+`adsb_history.db` untouched.
+
+### Ingest bootstrap is skipped
+
+`bootstrap_flights_sync` INSERTs into `flights` by scanning `positions`. Against
+an attached catalog that is a write to tables the daemon owns — and Quack
+rejects it outright:
+
+```
+Not implemented Error: Multiple streaming scans or streaming scans + CTAS /
+insert in the same query are not currently supported
+```
+
+The flight tracker is likewise only consulted when assigning `flight_id` during
+`insert_batch`, which a remote client never performs. Both are skipped when
+`remote.is_some()`. This is the design doc's "server is the sole write
+authority" constraint showing up as a runtime error rather than a rule.
+
+### TLS posture
+
+The Quack server terminates no TLS, but the *client* defaults `DISABLE_SSL` to
+false for any non-local URI — i.e. it assumes HTTPS. `attach_sql` therefore sets
+`DISABLE_SSL true` for remote hosts. Needing that flag is the signal that a
+deployment is missing its reverse proxy. A token also grants full read **and**
+write on every table, so this is homelab-grade on a trusted LAN.
+
+### Verifying it
+
+`cargo run -p adsb-data-engine --example remote_probe -- quack:host:9494 TOKEN`
+opens storage in remote mode, reads through the views and confirms the local
+authored tables are still reachable.

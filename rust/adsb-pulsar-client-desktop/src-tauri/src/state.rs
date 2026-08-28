@@ -224,6 +224,7 @@ mod tests {
             source_id: "test".to_string(),
             gap_threshold_ms: 3_600_000,
             share: None,
+            remote: None,
         };
         let state = AppState::with_config(Config::default(), None, Some(config.clone()));
         assert!(state.storage_config.is_some());

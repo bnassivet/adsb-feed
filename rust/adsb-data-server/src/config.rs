@@ -240,6 +240,9 @@ impl ServerConfig {
                 allow_other_hostname: true,
                 auto_start: true,
             }),
+            // The daemon is always the owner of its database; only the desktop
+            // app attaches to someone else's.
+            remote: None,
         }
     }
 }

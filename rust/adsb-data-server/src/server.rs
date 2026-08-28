@@ -186,6 +186,7 @@ mod tests {
             source_id: "test".to_string(),
             gap_threshold_ms: 3_600_000,
             share: None,
+            remote: None,
         })
         .expect("open in-memory storage");
         Arc::new(RwLock::new(Some(handle)))

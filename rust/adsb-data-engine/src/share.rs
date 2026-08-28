@@ -24,7 +24,7 @@
 //! TLS-terminating reverse proxy — the Quack server does no TLS itself.
 
 use crate::error::StorageError;
-use crate::types::{ShareConfig, ShareInfo};
+use crate::types::{RemoteConfig, ShareConfig, ShareInfo};
 use duckdb::Connection;
 use tracing::info;
 
@@ -35,6 +35,66 @@ use tracing::info;
 /// interpolated raw.
 fn sql_quote(value: &str) -> String {
     value.replace('\'', "''")
+}
+
+/// Tables recorded by the daemon, which a remote client reads rather than owns.
+///
+/// The complement -- `events_of_interest`, `scenarios`, `scenario_tracks` --
+/// are *authored* by whoever is using the app, so they stay in the local
+/// database even in remote mode.
+pub const OBSERVED_TABLES: [&str; 4] = ["positions", "raw_messages", "flights", "status_events"];
+
+/// Whether a Quack URI names a local host.
+///
+/// DuckDB's client defaults `DISABLE_SSL` to true for `localhost`, `127.0.0.1`
+/// and `::1`, and false everywhere else -- i.e. a client attaching to a remote
+/// daemon assumes HTTPS. Since the Quack server terminates no TLS itself, a
+/// bare remote daemon needs the flag set explicitly.
+fn is_local_uri(uri: &str) -> bool {
+    let rest = uri.strip_prefix("quack:").unwrap_or(uri);
+    let host = if let Some(stripped) = rest.strip_prefix('[') {
+        stripped.split(']').next().unwrap_or("")
+    } else {
+        rest.split(':').next().unwrap_or("")
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
+}
+
+/// Builds the `ATTACH` statement for a remote daemon.
+///
+/// The token is escaped rather than interpolated raw: it reaches us from
+/// configuration and lands in SQL text.
+pub fn attach_sql(config: &RemoteConfig, alias: &str) -> String {
+    let mut opts: Vec<String> = vec!["TYPE quack".to_string()];
+
+    if let Some(token) = &config.token {
+        opts.push(format!("TOKEN '{}'", sql_quote(token)));
+    }
+
+    let disable_ssl = config.disable_ssl.unwrap_or(!is_local_uri(&config.uri));
+    if disable_ssl {
+        opts.push("DISABLE_SSL true".to_string());
+    }
+
+    format!(
+        "ATTACH '{}' AS {} ({})",
+        sql_quote(&config.uri),
+        alias,
+        opts.join(", ")
+    )
+}
+
+/// Builds views that point the observed table names at the attached catalog.
+///
+/// This is what keeps the change small: every existing query references bare
+/// `positions`, `flights` and so on, so pointing those names at `edge.*` makes
+/// the whole read path work in remote mode without touching any query SQL.
+pub fn remote_view_sql(alias: &str) -> String {
+    OBSERVED_TABLES
+        .iter()
+        .map(|t| format!("CREATE OR REPLACE VIEW {t} AS SELECT * FROM {alias}.{t};"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Install and load the `quack` extension.
@@ -192,5 +252,90 @@ mod tests {
             sql_quote("'); DROP TABLE positions; --"),
             "''); DROP TABLE positions; --"
         );
+    }
+}
+
+#[cfg(test)]
+mod attach_tests {
+    use super::*;
+
+    fn cfg(uri: &str, token: Option<&str>) -> RemoteConfig {
+        RemoteConfig {
+            uri: uri.to_string(),
+            token: token.map(String::from),
+            disable_ssl: None,
+        }
+    }
+
+    #[test]
+    fn attach_sql_names_the_catalog_and_carries_the_token() {
+        let sql = attach_sql(&cfg("quack:pi.lan:9494", Some("SECRET")), "edge");
+        assert!(sql.contains("ATTACH 'quack:pi.lan:9494'"), "{sql}");
+        assert!(sql.contains("AS edge"), "{sql}");
+        assert!(sql.contains("TOKEN 'SECRET'"), "{sql}");
+    }
+
+    #[test]
+    fn a_remote_host_disables_ssl_by_default() {
+        // The Quack server terminates no TLS, but the client assumes HTTPS for
+        // any non-local URI. Without this the attach fails against a bare
+        // daemon -- and needing it is the signal a proxy is missing.
+        let sql = attach_sql(&cfg("quack:pi.lan:9494", Some("S")), "edge");
+        assert!(sql.contains("DISABLE_SSL true"), "{sql}");
+    }
+
+    #[test]
+    fn a_local_host_does_not_need_the_flag() {
+        // DuckDB already defaults DISABLE_SSL true for localhost/127.0.0.1/::1.
+        for uri in [
+            "quack:localhost:9494",
+            "quack:127.0.0.1:9494",
+            "quack:[::1]:9494",
+        ] {
+            let sql = attach_sql(&cfg(uri, Some("S")), "edge");
+            assert!(!sql.contains("DISABLE_SSL"), "{uri} -> {sql}");
+        }
+    }
+
+    #[test]
+    fn an_explicit_disable_ssl_overrides_the_host_heuristic() {
+        let mut c = cfg("quack:pi.lan:9494", Some("S"));
+        c.disable_ssl = Some(false);
+        let sql = attach_sql(&c, "edge");
+        assert!(!sql.contains("DISABLE_SSL"), "{sql}");
+    }
+
+    #[test]
+    fn a_token_with_a_quote_is_escaped() {
+        // The token reaches us from configuration and is interpolated into SQL
+        // text, so it must be escaped rather than trusted.
+        let sql = attach_sql(&cfg("quack:pi.lan:9494", Some("a'b")), "edge");
+        assert!(sql.contains("TOKEN 'a''b'"), "{sql}");
+    }
+
+    #[test]
+    fn a_missing_token_omits_the_clause() {
+        let sql = attach_sql(&cfg("quack:localhost:9494", None), "edge");
+        assert!(!sql.contains("TOKEN"), "{sql}");
+    }
+
+    #[test]
+    fn observed_views_cover_exactly_the_recorded_tables() {
+        let sql = remote_view_sql("edge");
+        for t in ["positions", "raw_messages", "flights", "status_events"] {
+            assert!(
+                sql.contains(&format!(
+                    "CREATE OR REPLACE VIEW {t} AS SELECT * FROM edge.{t}"
+                )),
+                "missing view for {t}: {sql}"
+            );
+        }
+        // Authored tables stay local and must NOT be shadowed by a remote view.
+        for t in ["events_of_interest", "scenarios", "scenario_tracks"] {
+            assert!(
+                !sql.contains(&format!("VIEW {t} ")),
+                "{t} must stay local: {sql}"
+            );
+        }
     }
 }

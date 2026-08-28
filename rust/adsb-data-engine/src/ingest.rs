@@ -633,6 +633,7 @@ mod tests {
             source_id: "test-node".to_string(),
             gap_threshold_ms: 3_600_000,
             share: None,
+            remote: None,
         })
         .expect("in-memory storage");
         let shared: SharedStorage = Arc::new(RwLock::new(Some(storage.clone())));

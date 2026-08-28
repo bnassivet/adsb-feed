@@ -64,6 +64,7 @@ src/
      custom DuckDB extension. Bind stays localhost unless `allow_other_hostname`; no TLS.
   3. `ShareStatus` is serde-tagged with **`state`**, not `type` — the TS union must match or
      every status silently renders as "off".
+- **Remote mode**: set `ADSB_REMOTE_URI` (plus `ADSB_REMOTE_TOKEN`, `ADSB_REMOTE_DISABLE_SSL`) to read observed data from an `adsb-data-server` over Quack instead of recording it locally. Scenarios and events of interest stay in a **separate local file** (`adsb_local.db`); `adsb_history.db` is untouched, because remote mode replaces the observed table names with views and creating those over real tables would mean dropping them. Mode is explicit configuration, never a runtime fallback — a client that fell back to opening the shared file while a daemon held it would be a second exclusive-lock owner
 - **Storage management**: Release/reclaim DuckDB connection at runtime (for external tool access); live export via DuckDB `ATTACH`+`CREATE TABLE AS` without stopping recording; import/merge from external `.db` files with deduplication; `StorageConfig` retained in AppState for reopening after release
 - `broadcast::channel` as message tap — fire-and-forget (`let _ = tx.send()`)
 - `watch::channel` for shutdown signal

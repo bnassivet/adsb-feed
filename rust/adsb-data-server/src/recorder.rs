@@ -207,6 +207,7 @@ mod tests {
                 source_id: "test-edge".to_string(),
                 gap_threshold_ms: 3_600_000,
                 share: None,
+                remote: None,
             },
             dump1090_tz: "UTC".to_string(),
             checkpoint_interval: None,

@@ -160,10 +160,6 @@ pub fn persist_config(app: &tauri::AppHandle, config: &Config) -> Result<(), Str
     Ok(())
 }
 
-/// Initialize DuckDB storage in the Tauri app data directory.
-///
-/// Returns `(handle, config)`. The config is kept for reopening after release.
-/// Returns `(None, None)` if initialization fails (app continues without history).
 /// Builds the Quack sharing config from environment lookups.
 ///
 /// Split from the environment read so it can be tested without mutating
@@ -179,13 +175,6 @@ fn build_share_config(
     token: Option<&str>,
     allow_other_hostname: Option<&str>,
 ) -> Option<ShareConfig> {
-    fn truthy(value: Option<&str>) -> bool {
-        matches!(
-            value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
-            Some("1" | "true" | "yes" | "on")
-        )
-    }
-
     if auto_start.is_none() && uri.is_none() && token.is_none() && allow_other_hostname.is_none() {
         return None;
     }
@@ -220,18 +209,73 @@ fn share_config_from_env() -> Option<ShareConfig> {
     )
 }
 
+/// Whether an env-var string spells "yes".
+fn truthy(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
+/// Builds a [`RemoteConfig`] from the environment, if remote mode is requested.
+///
+/// Mode is explicit configuration, never a runtime fallback: a client that
+/// "fell back" to opening the shared database locally while a daemon still held
+/// it would be a second exclusive-lock owner, which is how the file gets
+/// corrupted. Absent `ADSB_REMOTE_URI`, the app is embedded.
+fn remote_config_from_env() -> Option<adsb_data_engine::types::RemoteConfig> {
+    build_remote_config(
+        std::env::var("ADSB_REMOTE_URI").ok().as_deref(),
+        std::env::var("ADSB_REMOTE_TOKEN").ok().as_deref(),
+        std::env::var("ADSB_REMOTE_DISABLE_SSL").ok().as_deref(),
+    )
+}
+
+/// Pure form of [`remote_config_from_env`], so the rules are testable without
+/// mutating process environment.
+fn build_remote_config(
+    uri: Option<&str>,
+    token: Option<&str>,
+    disable_ssl: Option<&str>,
+) -> Option<adsb_data_engine::types::RemoteConfig> {
+    let uri = uri.map(str::trim).filter(|u| !u.is_empty())?;
+    Some(adsb_data_engine::types::RemoteConfig {
+        uri: uri.to_string(),
+        token: token
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(String::from),
+        disable_ssl: disable_ssl.map(|v| truthy(Some(v))),
+    })
+}
+
+/// Initialize DuckDB storage in the Tauri app data directory.
+///
+/// Returns `(handle, config)`. The config is kept for reopening after release.
+/// Returns `(None, None)` if initialization fails (app continues without history).
 fn init_storage(app: &tauri::App) -> (Option<StorageHandle>, Option<StorageConfig>) {
     let app_data_dir = match app.path().app_data_dir() {
         Ok(dir) => dir,
         Err(_) => return (None, None),
     };
-    let db_path = app_data_dir.join("adsb_history.db");
+    let remote = remote_config_from_env();
+
+    // Remote mode uses a SEPARATE local file. The embedded database holds real
+    // observed history, and in remote mode those table names become views over
+    // the daemon's catalog -- pointing both modes at one file would mean
+    // dropping the user's local tables to make room for the views.
+    let db_path = if remote.is_some() {
+        app_data_dir.join("adsb_local.db")
+    } else {
+        app_data_dir.join("adsb_history.db")
+    };
 
     let config = StorageConfig {
         db_path: Some(db_path.clone()),
         source_id: "desktop".to_string(),
         gap_threshold_ms: 3_600_000,
         share: share_config_from_env(),
+        remote,
     };
 
     match StorageHandle::open(config.clone()) {
@@ -298,5 +342,53 @@ mod tests {
         assert_eq!(cfg.uri, "quack:0.0.0.0:9500");
         assert!(cfg.allow_other_hostname);
         assert!(cfg.auto_start);
+    }
+}
+
+#[cfg(test)]
+mod remote_mode_tests {
+    use super::build_remote_config;
+
+    #[test]
+    fn absent_uri_means_embedded_mode() {
+        // Mode is explicit configuration. Without a URI the app owns its own
+        // database, exactly as before this feature existed.
+        assert!(build_remote_config(None, Some("tok"), None).is_none());
+    }
+
+    #[test]
+    fn a_blank_uri_is_treated_as_absent() {
+        // An empty env var is a common accident (`export ADSB_REMOTE_URI=`);
+        // it must not produce a remote config with a nonsense URI.
+        assert!(build_remote_config(Some("   "), None, None).is_none());
+    }
+
+    #[test]
+    fn a_uri_selects_remote_mode() {
+        let c = build_remote_config(Some("quack:pi.lan:9494"), Some("tok"), None).unwrap();
+        assert_eq!(c.uri, "quack:pi.lan:9494");
+        assert_eq!(c.token.as_deref(), Some("tok"));
+        assert_eq!(c.disable_ssl, None, "left to the host heuristic");
+    }
+
+    #[test]
+    fn a_blank_token_is_none_rather_than_an_empty_string() {
+        let c = build_remote_config(Some("quack:pi.lan:9494"), Some(""), None).unwrap();
+        assert!(
+            c.token.is_none(),
+            "an empty token would be sent as TOKEN ''"
+        );
+    }
+
+    #[test]
+    fn disable_ssl_accepts_the_usual_spellings_of_yes() {
+        for v in ["1", "true", "TRUE", "yes", "on"] {
+            let c = build_remote_config(Some("quack:pi.lan:9494"), None, Some(v)).unwrap();
+            assert_eq!(c.disable_ssl, Some(true), "{v:?}");
+        }
+        for v in ["0", "false", "no", "off", ""] {
+            let c = build_remote_config(Some("quack:pi.lan:9494"), None, Some(v)).unwrap();
+            assert_eq!(c.disable_ssl, Some(false), "{v:?}");
+        }
     }
 }
