@@ -61,6 +61,21 @@ fn build_forwarders(config: &Config) -> Result<Vec<Box<dyn MessageForwarder>>, C
                     ));
                 }
             }
+            ForwarderKind::Mqtt => {
+                #[cfg(feature = "mqtt")]
+                {
+                    use adsb_pulsar_client::forwarder::mqtt_forwarder::MqttForwarder;
+                    forwarders.push(Box::new(MqttForwarder::new(config)));
+                }
+                #[cfg(not(feature = "mqtt"))]
+                {
+                    return Err(ClientError::Config(
+                        "MQTT forwarder requested but 'mqtt' feature is not enabled. \
+                         Recompile with --features mqtt or use --forwarder pulsar|file."
+                            .into(),
+                    ));
+                }
+            }
             ForwarderKind::File => {
                 forwarders.push(Box::new(FileForwarder::new(PathBuf::from(
                     &config.file_path,

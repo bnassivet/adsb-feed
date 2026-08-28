@@ -35,6 +35,8 @@ pub enum ForwarderKind {
     Pulsar,
     /// File output (one SBS-1 line per message)
     File,
+    /// MQTT publish (lightweight LAN transport; enables no-Pulsar deployments)
+    Mqtt,
     /// No-op (discard messages; used in test mode and Tauri app)
     Noop,
 }
@@ -44,6 +46,7 @@ impl std::fmt::Display for ForwarderKind {
         match self {
             ForwarderKind::Pulsar => write!(f, "pulsar"),
             ForwarderKind::File => write!(f, "file"),
+            ForwarderKind::Mqtt => write!(f, "mqtt"),
             ForwarderKind::Noop => write!(f, "noop"),
         }
     }
@@ -55,9 +58,10 @@ impl std::str::FromStr for ForwarderKind {
         match s.to_lowercase().as_str() {
             "pulsar" => Ok(ForwarderKind::Pulsar),
             "file" => Ok(ForwarderKind::File),
+            "mqtt" => Ok(ForwarderKind::Mqtt),
             "noop" => Ok(ForwarderKind::Noop),
             other => Err(format!(
-                "Unknown forwarder kind: '{}'. Expected: pulsar, file, noop",
+                "Unknown forwarder kind: '{}'. Expected: pulsar, mqtt, file, noop",
                 other
             )),
         }
@@ -316,7 +320,7 @@ pub struct Config {
         arg(
             long = "forwarder",
             default_value = "pulsar",
-            help = "Forwarder backend: pulsar, file, noop (can be repeated)"
+            help = "Forwarder backend: pulsar, mqtt, file, noop (can be repeated)"
         )
     )]
     #[serde(default = "default_forwarders")]
@@ -367,6 +371,83 @@ pub struct Config {
     #[serde(default = "default_heartbeat_pattern")]
     pub heartbeat_pattern: String,
 
+    /// MQTT broker hostname or IP.
+    ///
+    /// The MQTT hop is the lightweight LAN transport between this feed client
+    /// and local consumers (`adsb-data-server`, the desktop app). Selecting
+    /// only the `mqtt` forwarder yields a deployment with no Pulsar at all.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "mqtt-broker",
+            default_value = "localhost",
+            env = "ADSB_MQTT_BROKER",
+            help = "MQTT broker hostname or IP"
+        )
+    )]
+    #[serde(default = "default_mqtt_broker")]
+    pub mqtt_broker: String,
+
+    /// MQTT broker port
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "mqtt-port",
+            default_value = "1883",
+            env = "ADSB_MQTT_PORT",
+            help = "MQTT broker port"
+        )
+    )]
+    #[serde(default = "default_mqtt_port")]
+    pub mqtt_port: u16,
+
+    /// MQTT topic to publish raw SBS-1 lines on
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "mqtt-topic",
+            default_value = "adsb/sbs/raw",
+            env = "ADSB_MQTT_TOPIC",
+            help = "MQTT topic carrying raw SBS-1 lines"
+        )
+    )]
+    #[serde(default = "default_mqtt_topic")]
+    pub mqtt_topic: String,
+
+    /// MQTT client identifier. Empty derives it from `source_id`.
+    ///
+    /// Brokers disconnect an existing session when a second client connects
+    /// with the same id, so every node in a fleet needs a distinct value —
+    /// which `source_id` already guarantees.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "mqtt-client-id",
+            default_value = "",
+            env = "ADSB_MQTT_CLIENT_ID",
+            help = "MQTT client id (defaults to source_id)"
+        )
+    )]
+    #[serde(default)]
+    pub mqtt_client_id: String,
+
+    /// MQTT quality of service: 0, 1 or 2.
+    ///
+    /// Defaults to 0. This is a LAN hop feeding a recorder and a UI, and the
+    /// forwarder fan-out is fire-and-forget by design — a slow MQTT sink must
+    /// never backpressure the Pulsar leg or the socket read loop.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "mqtt-qos",
+            default_value = "0",
+            env = "ADSB_MQTT_QOS",
+            help = "MQTT QoS level: 0, 1 or 2"
+        )
+    )]
+    #[serde(default)]
+    pub mqtt_qos: u8,
+
     /// Receiver antenna latitude (decimal degrees)
     #[cfg_attr(feature = "cli", arg(skip))]
     #[serde(default)]
@@ -392,6 +473,15 @@ fn default_socket_host() -> String {
 }
 fn default_socket_port() -> u16 {
     30003
+}
+fn default_mqtt_broker() -> String {
+    "localhost".to_string()
+}
+fn default_mqtt_port() -> u16 {
+    1883
+}
+fn default_mqtt_topic() -> String {
+    "adsb/sbs/raw".to_string()
 }
 fn default_pulsar_broker() -> String {
     "pulsar://localhost:6650".to_string()
@@ -478,6 +568,11 @@ impl Default for Config {
             dump1090_tz: default_dump1090_tz(),
             forwarders: default_forwarders(),
             file_path: default_file_path(),
+            mqtt_broker: default_mqtt_broker(),
+            mqtt_port: default_mqtt_port(),
+            mqtt_topic: default_mqtt_topic(),
+            mqtt_client_id: String::new(),
+            mqtt_qos: 0,
             heartbeat_timeout_secs: default_heartbeat_timeout_secs(),
             heartbeat_pattern: default_heartbeat_pattern(),
             receiver_latitude: None,
@@ -511,6 +606,23 @@ impl Config {
             ));
         }
 
+        // Validate MQTT settings only when the MQTT forwarder is configured,
+        // mirroring the Pulsar rule above: an unused backend must never block
+        // startup of a deployment that does not use it.
+        if self.forwarders.contains(&ForwarderKind::Mqtt) {
+            if self.mqtt_broker.trim().is_empty() {
+                return Err(ClientError::Config("mqtt_broker cannot be empty".into()));
+            }
+
+            if self.mqtt_topic.trim().is_empty() {
+                return Err(ClientError::Config("mqtt_topic cannot be empty".into()));
+            }
+
+            if self.mqtt_qos > 2 {
+                return Err(ClientError::Config("mqtt_qos must be 0, 1 or 2".into()));
+            }
+        }
+
         // Validate connection mode
         if self.connection_mode != "client" && self.connection_mode != "server" {
             return Err(ClientError::Config(
@@ -532,6 +644,15 @@ impl Config {
         }
 
         Ok(())
+    }
+
+    /// Effective MQTT client id, falling back to `source_id` when unset.
+    pub fn mqtt_client_id(&self) -> &str {
+        if self.mqtt_client_id.trim().is_empty() {
+            &self.source_id
+        } else {
+            &self.mqtt_client_id
+        }
     }
 
     /// Converts connection mode string to enum.
@@ -882,5 +1003,127 @@ mod tests {
         let config = Config::default();
         assert!(config.file_path.starts_with("adsb_messages_"));
         assert!(config.file_path.ends_with(".sbs"));
+    }
+
+    // --- MQTT forwarder configuration (Phase 1) ---
+
+    #[test]
+    fn test_forwarder_kind_mqtt_from_str() {
+        assert_eq!(
+            "mqtt".parse::<ForwarderKind>().unwrap(),
+            ForwarderKind::Mqtt
+        );
+        assert_eq!(
+            "MQTT".parse::<ForwarderKind>().unwrap(),
+            ForwarderKind::Mqtt
+        );
+    }
+
+    #[test]
+    fn test_forwarder_kind_mqtt_display_roundtrip() {
+        let kind = ForwarderKind::Mqtt;
+        assert_eq!(kind.to_string(), "mqtt");
+        assert_eq!(kind.to_string().parse::<ForwarderKind>().unwrap(), kind);
+    }
+
+    #[test]
+    fn test_unknown_forwarder_error_lists_mqtt() {
+        let err = "carrier-pigeon".parse::<ForwarderKind>().unwrap_err();
+        assert!(err.contains("mqtt"), "error should list mqtt: {}", err);
+    }
+
+    #[test]
+    fn test_mqtt_defaults() {
+        let config = Config::default();
+        assert_eq!(config.mqtt_broker, "localhost");
+        assert_eq!(config.mqtt_port, 1883);
+        assert_eq!(config.mqtt_topic, "adsb/sbs/raw");
+        assert_eq!(config.mqtt_qos, 0);
+        // Client id defaults to empty, meaning "derive from source_id".
+        assert_eq!(config.mqtt_client_id, "");
+    }
+
+    #[test]
+    fn test_mqtt_client_id_falls_back_to_source_id() {
+        let config = Config {
+            source_id: "pi-roof".to_string(),
+            ..Config::default()
+        };
+        assert_eq!(config.mqtt_client_id(), "pi-roof");
+    }
+
+    #[test]
+    fn test_mqtt_client_id_explicit_wins() {
+        let config = Config {
+            source_id: "pi-roof".to_string(),
+            mqtt_client_id: "custom-id".to_string(),
+            ..Config::default()
+        };
+        assert_eq!(config.mqtt_client_id(), "custom-id");
+    }
+
+    #[test]
+    fn test_mqtt_deserializes_default_when_missing() {
+        // Configs written before MQTT existed must still load.
+        let json = serde_json::json!({ "source_id": "test" });
+        let config: Config = serde_json::from_value(json).unwrap();
+        assert_eq!(config.mqtt_broker, "localhost");
+        assert_eq!(config.mqtt_port, 1883);
+        assert_eq!(config.mqtt_topic, "adsb/sbs/raw");
+    }
+
+    #[test]
+    fn test_mqtt_only_config_is_valid() {
+        // A no-Pulsar deployment must validate even with a nonsense broker URL,
+        // because the Pulsar forwarder is not selected.
+        let config = Config {
+            forwarders: vec![ForwarderKind::Mqtt],
+            pulsar_broker: "not-a-pulsar-url".to_string(),
+            ..Config::default()
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_rejects_empty_mqtt_topic_when_selected() {
+        let config = Config {
+            forwarders: vec![ForwarderKind::Mqtt],
+            mqtt_topic: "  ".to_string(),
+            ..Config::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("mqtt_topic"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_validate_ignores_empty_mqtt_topic_when_not_selected() {
+        let config = Config {
+            forwarders: vec![ForwarderKind::Pulsar],
+            mqtt_topic: String::new(),
+            ..Config::default()
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_rejects_empty_mqtt_broker_when_selected() {
+        let config = Config {
+            forwarders: vec![ForwarderKind::Mqtt],
+            mqtt_broker: String::new(),
+            ..Config::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("mqtt_broker"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_validate_rejects_out_of_range_qos() {
+        let config = Config {
+            forwarders: vec![ForwarderKind::Mqtt],
+            mqtt_qos: 3,
+            ..Config::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("mqtt_qos"), "got: {}", err);
     }
 }

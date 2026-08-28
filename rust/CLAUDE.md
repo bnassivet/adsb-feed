@@ -115,7 +115,13 @@ Update Design documentation (DESIGN.md, DOCUMENTATION.md) before proposing to co
 - `cli` feature (default-enabled on `adsb-pulsar-client`) gates `clap` dependency
 - Tauri crate uses `default-features = false` to exclude clap
 - `[profile.release]` settings must be in this workspace root `Cargo.toml`, not member crates
-- `protoc` required at build time (Pulsar crate dependency)
+- `protoc` required at build time (Pulsar crate dependency). Building
+  `adsb-pulsar-client` with `--no-default-features --features cli,mqtt` drops the `pulsar`
+  crate and therefore the `protoc` requirement — the no-Pulsar edge deployment, and the
+  easiest path when cross-compiling for a Raspberry Pi
+- `mqtt` feature (default-enabled on `adsb-pulsar-client`) gates `rumqttc`, built with
+  `default-features = false` so it does not pull a rustls TLS stack for what is a
+  plain-text LAN hop
 - `adsb-data-engine` uses the `duckdb` crate via C FFI — no extra system packages needed beyond the Rust toolchain; DuckDB is statically linked
 - **The `duckdb` version is pinned exactly** (`=1.10505.0`, DuckDB v1.5.5). Not hygiene: the
   `quack` extension is *not* statically linked into the bundled build and is autoinstalled from

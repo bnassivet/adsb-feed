@@ -17,6 +17,11 @@ async-trait = "0.1"
 # Pulsar client
 pulsar = { version = "6.3", default-features = false, features = ["tokio-runtime", "compression"], optional = true }
 
+# MQTT client (optional). Default features are off: they pull a rustls TLS
+# stack, and the MQTT hop is a plain-text LAN transport between the feed client
+# and local consumers. Keeping it off also keeps the edge binary small.
+rumqttc = { version = "0.25", default-features = false, optional = true }
+
 # CLI argument parsing (optional, for CLI binary)
 clap = { version = "4.5", features = ["derive", "env"], optional = true }
 
@@ -47,9 +52,10 @@ serde_json = { workspace = true }
 tempfile = "3"
 
 [features]
-default = ["cli", "pulsar"]
+default = ["cli", "pulsar", "mqtt"]
 cli = ["clap"]
 pulsar = ["dep:pulsar"]
+mqtt = ["dep:rumqttc"]
 metrics = ["prometheus"]
 
 [lib]

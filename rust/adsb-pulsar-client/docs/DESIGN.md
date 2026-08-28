@@ -118,6 +118,7 @@ src/
 └── forwarder/
     ├── mod.rs                MessageForwarder trait + NoopForwarder
     ├── file.rs               FileForwarder (BufWriter, append mode)
+    ├── mqtt_forwarder.rs     MqttForwarder (cfg(feature = "mqtt"))
     └── pulsar_forwarder.rs   PulsarForwarder (cfg(feature = "pulsar"))
 ```
 
@@ -198,7 +199,7 @@ Key fields relevant to multi-forwarder operation:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `forwarders` | `Vec<ForwarderKind>` | `[Pulsar]` | Ordered list of active backends |
+| `forwarders` | `Vec<ForwarderKind>` | `[Pulsar]` | Ordered list of active backends (`Pulsar`, `Mqtt`, `File`, `Noop`) |
 | `file_path` | `String` | `adsb_messages_<timestamp>.sbs` | Output path for `FileForwarder` |
 | `pulsar_broker` | `String` | `pulsar://localhost:6650` | Pulsar broker URL |
 | `pulsar_topic` | `String` | `persistent://kradsb/adsb/sbs-topic` | Pulsar topic |
@@ -277,6 +278,32 @@ batched I/O; the buffer is flushed by the client's housekeeping tick every ~500 
 `disconnect()`.
 
 Configuration: set `--forwarder file --file-path <path>` or populate `Config { forwarders: vec![ForwarderKind::File], file_path: "...".into(), .. }`.
+
+### `MqttForwarder` (`feature = "mqtt"`)
+
+Publishes each raw SBS-1 line to an MQTT topic. This is the lightweight LAN transport that
+lets `adsb-data-server` and the desktop app consume the feed **without an Apache Pulsar
+broker** — selecting only `--forwarder mqtt` yields a no-Pulsar deployment. Pulsar remains
+available as an additional fan-out leg for the Spark/Delta analytics path.
+
+`rumqttc` only makes progress while its event loop is polled, and the loop is also the only
+place connection state is observable, so `connect()` spawns a task that owns the event loop
+for the life of the forwarder and reports transitions through an `AtomicBool` read by
+`is_connected()`. Reconnection and its backoff are handled by `rumqttc` itself, unlike
+`PulsarForwarder`, which hand-rolls a reconnect task.
+
+**Loss posture.** QoS defaults to 0 and `send()` uses `try_publish` (non-blocking). The
+client fans out to each forwarder in sequence, so a slow or wedged broker must never stall
+the socket read loop or the Pulsar leg; a full outbound queue surfaces as a send error —
+accounted for by the per-forwarder retry queue — rather than being awaited.
+
+Configuration: `--forwarder mqtt --mqtt-broker <host> --mqtt-topic <topic>`, or populate
+`Config { forwarders: vec![ForwarderKind::Mqtt], mqtt_broker: "...".into(), .. }`. The MQTT
+client id defaults to `source_id`; it must be unique per node, since brokers evict an
+existing session when a second client connects with the same id.
+
+Building with `--no-default-features --features cli,mqtt` drops the `pulsar` crate and with
+it the `protoc` build requirement — the main friction when cross-compiling for a Pi.
 
 ### `PulsarForwarder` (`feature = "pulsar"`)
 
