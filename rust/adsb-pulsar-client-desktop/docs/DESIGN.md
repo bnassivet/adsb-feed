@@ -226,7 +226,7 @@ flowchart TB
 | ├ `forwarder/pulsar_forwarder.rs` | same | Publishes to Pulsar; behind the `pulsar` cargo feature | Yes — feature-gated |
 | └ `forwarder/file.rs` | same | Writes raw messages to disk for later replay | Yes |
 | **adsb-data-engine** | `rust/adsb-data-engine/` | SBS-1 parser, DuckDB `StorageHandle`, geodesic math. Deliberately Tauri-free so it is testable standalone | Compiled in |
-| **Tauri backend** | `src-tauri/src/` | `lib.rs` builder, `commands.rs` IPC, `state.rs` shared state, `bridge.rs` throttle + persist, `tool_server.rs`/`tool_service.rs` agent data plane | Compiled in |
+| **Tauri backend** | `src-tauri/src/` | `lib.rs` builder, `commands.rs` IPC, `state.rs` shared state, `bridge.rs` Tauri emit sink + watchdog (ingest itself lives in `adsb-data-engine::ingest`), `tool_server.rs`/`tool_service.rs` agent data plane | Compiled in |
 | **DuckDB file** | `adsb_history.db` | Persistent positions, raw messages, status events, scenarios | Yes — real-time-only mode if init fails |
 | **Next.js frontend** | `src/` | React 19 UI: Leaflet map, panels, five track categories in `AircraftTrackingContext` | Compiled in |
 | **Apache Pulsar** | External broker | Fan-out to the wider `ads-b-project` pipeline (Spark, Delta Lake) | Yes |
@@ -1910,6 +1910,15 @@ pub struct AppState {
 
 **Purpose**: Bridge between `adsb-pulsar-client` library and Tauri frontend
 
+> **Note (Phase 2 refactor).** The parse → merge → throttle → persist path no longer lives
+> here. It moved to `adsb_data_engine::ingest::IngestPipeline` so the desktop app and the
+> headless `adsb-data-server` daemon share one implementation and cannot drift. `bridge.rs`
+> now supplies only the Tauri-specific half: an `EmitSink` implementing
+> `adsb_data_engine::BatchSink` that emits `adsb:message`, plus the caller-owned toggles and
+> counters. `merge_into_buffer`, `persist_batch` and `persist_raw_batch` are gone from this
+> file — see `adsb-data-engine/src/ingest.rs`. The watchdog, metrics relay and
+> `StatusEventRecorder` stay here, because they are UI-facing.
+
 **Key Function**: `start_feed(app: AppHandle, config: Config, storage: SharedStorage, ...) -> Result<FeedHandle, String>`
 
 **Responsibilities**:
@@ -2665,7 +2674,7 @@ npm run test:watch  # Watch mode (TDD)
 
 ### What Is NOT Tested (and Why)
 
-- **`commands.rs` / `bridge.rs`** — Tightly coupled to `tauri::AppHandle`; tested via Tauri integration testing
+- **`commands.rs` / `bridge.rs`** — Tightly coupled to `tauri::AppHandle`; tested via Tauri integration testing. Note the ingest path they used to own is now unit-tested in `adsb-data-engine::ingest` against a `RecordingSink`, with no `AppHandle` required
 - **`MapInner.tsx`** — Leaflet map internals require complex DOM mocking with minimal return on value
 - **Pulsar connectivity** — Use `Config::test_mode = true` to bypass in tests
 - **DuckDB live persistence** — `bridge.rs` DuckDB writes tested indirectly; storage unit tests use in-memory DuckDB (`db_path: None`) to avoid file system dependencies
@@ -2991,7 +3000,7 @@ Isolating parser + storage in a shared workspace crate lets the data engine be t
 - `adsb-data-engine/src/types.rs` — `PositionRecord`, `BboxQuery`, `TrajectoryQuery`, `AircraftSummary`, `FlightSummary`, `FlightSummaryQuery`, `StorageStats`, `RawSbsRecord`, `RawMessageQuery`, `TimeDistributionBucket`, `TimeDistributionQuery`, `DetectionRangeQuery`, `DetectionRangeSector`
 - `src-tauri/src/lib.rs` — `init_storage()` returns `(handle, config)`, storage wrapped in `Arc<RwLock<...>>`
 - `src-tauri/src/state.rs` — `SharedStorage` type alias, `StorageAvailability` enum, `storage_config` field
-- `src-tauri/src/bridge.rs` — `persist_batch()` + `persist_raw_batch()` read-lock `SharedStorage` on every 500ms flush
+- `adsb-data-engine/src/ingest.rs` — `persist_batch()` + `persist_raw_batch()` read-lock `SharedStorage` on every 500ms flush (moved out of `bridge.rs` in the Phase 2 refactor)
 - `src-tauri/src/commands.rs` — historical query commands + storage management: `get_storage_status`, `release_storage`, `reclaim_storage`, `export_database`, `swap_database`
 - `src/lib/commands.ts` — TypeScript wrappers: `queryBbox`, `queryBboxArrow`, `getTrajectory`, `getTrajectoryBatchArrow`, `getAircraftSummary`, `getFlightSummary`, `getFlightSummaryArrow`, `getStorageStats`, `getTimeDistribution`, `getRawMessages`, `getRawMessagesArrow`, `getStorageStatus`, `releaseStorage`, `reclaimStorage`, `exportDatabase`, `swapDatabase`
 - `src/lib/arrow-utils.ts` — Arrow IPC converters: `arrowToTracks`, `arrowToFlightSummaries`, `arrowToPositionRecords`, `arrowToRawSbsRecords`

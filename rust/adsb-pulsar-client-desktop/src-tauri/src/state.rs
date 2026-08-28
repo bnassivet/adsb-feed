@@ -75,7 +75,7 @@ pub enum StorageAvailability {
 /// The relay task and query commands read-lock on each access.
 /// Release takes a write-lock and sets to `None`.
 /// Reclaim reopens from the stored `StorageConfig`.
-pub type SharedStorage = Arc<RwLock<Option<StorageHandle>>>;
+pub use adsb_data_engine::SharedStorage;
 
 /// Shared connection status: `Arc<Mutex<StatusResponse>>`.
 ///

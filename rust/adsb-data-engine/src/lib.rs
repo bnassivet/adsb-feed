@@ -7,6 +7,7 @@
 
 pub mod error;
 pub mod geo;
+pub mod ingest;
 pub mod sbs_parser;
 pub mod share;
 pub mod storage;
@@ -14,6 +15,9 @@ pub mod types;
 
 // Re-export primary public API at crate root.
 pub use error::StorageError;
+pub use ingest::{
+    BatchSink, IngestConfig, IngestPipeline, NoopSink, SharedStorage, merge_into_buffer,
+};
 pub use sbs_parser::{
     AircraftPosition, extract_sbs_timestamp, parse_sbs_message, parse_sbs_raw_fields,
 };

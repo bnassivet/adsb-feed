@@ -419,3 +419,57 @@ dump1090 TCP stream (SBS-1 text)
           ▼
    Tauri commands → Frontend (React / Next.js)
 ```
+
+
+---
+
+## Ingest pipeline (`src/ingest.rs`)
+
+The parse → merge → throttle → persist path that turns a stream of raw SBS-1 lines into
+`AircraftPosition` batches.
+
+It lives in the data engine rather than in any one consumer because **two** processes need
+it and they must not drift: the Tauri desktop app and the headless `adsb-data-server` daemon
+on the Raspberry Pi. The only thing the two disagree about is what to do with a flushed
+batch — the desktop emits it to the webview, the daemon has already persisted it and
+discards it — so that single difference is abstracted behind `BatchSink`.
+
+```
+broadcast::Receiver<Vec<u8>>          IngestPipeline
+   raw SBS-1 lines          ─────►  parse ─► merge by hex_ident ─► flush every 500ms
+                                                                      │
+                                                    ┌─────────────────┴──────────────┐
+                                                    ▼                                ▼
+                                          DuckDB insert_batch                  BatchSink
+                                          + insert_raw_batch            EmitSink  |  NoopSink
+                                          (gated, non-fatal)            desktop   |  daemon
+```
+
+| Item | Purpose |
+|------|---------|
+| `IngestPipeline` | Owns the buffers and the flush loop; `run(rx, sink)` until the channel closes |
+| `IngestConfig` | `source_id`, `dump1090_tz`, `flush_interval` |
+| `BatchSink` | Receives each flushed batch. `NoopSink` provided for headless use |
+| `SharedStorage` | `Arc<RwLock<Option<StorageHandle>>>` — `None` means writes are silently skipped |
+| `merge_into_buffer` | Field-preserving merge across SBS-1 message subtypes |
+
+### Why the buffer merges rather than inserts
+
+SBS-1 splits one aircraft's state across message subtypes: MSG1 carries the callsign, MSG3
+the position, MSG4 the speed. A blind `HashMap::insert` would overwrite a MSG3's
+latitude/longitude with the `None`s of a MSG1 arriving later in the same flush window.
+`merge_into_buffer` keeps the best-known state per aircraft — which is why it is the most
+test-covered function in the module.
+
+### Design notes
+
+- **Persistence is non-fatal and gated.** `record_positions` / `record_raw` are
+  caller-owned `AtomicBool`s so a UI can toggle recording at runtime, and a `None` storage
+  handle (released or unavailable) silently drops the batch. The live feed must never stall
+  on the recorder.
+- **The sink is not gated by the recording toggles.** They gate DuckDB writes only; the
+  live UI feed continues regardless.
+- **Raw records are captured before position parsing**, so a line that fails to parse into a
+  position is still recoverable from the archive.
+- **Every raw record carries `source_id`.** The desktop previously wrote an empty string,
+  which makes receivers indistinguishable in a multi-node fleet.
