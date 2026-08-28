@@ -416,3 +416,7 @@ adsb-stack.toml
 # so they never collide with the host's macOS artifacts)
 rust/target-linux-arm64/
 rust/target-linux-armv7/
+
+# Ad-hoc logs captured while debugging a run
+desktop_log.txt
+*_log.txt
