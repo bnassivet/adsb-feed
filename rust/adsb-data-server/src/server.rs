@@ -16,8 +16,8 @@
 //! always `{ "ok": true, "data": <result> }` or
 //! `{ "ok": false, "error": "<message>" }`.
 
-use crate::state::SharedStorage;
 use crate::tool_service;
+use adsb_data_engine::SharedStorage;
 use adsb_data_engine::{
     EventOfInterestQuery, FlightSummaryQuery, HourlyHeatmapQuery, TimeDistributionQuery,
     TrajectoryQuery,
@@ -152,7 +152,7 @@ pub fn router(storage: SharedStorage) -> Router {
 /// non-fatal: the desktop app keeps running, the agent simply gets connection
 /// errors and reports tools as unavailable.
 pub fn spawn(storage: SharedStorage, port: u16) {
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         let addr = format!("127.0.0.1:{port}");
         let listener = match tokio::net::TcpListener::bind(&addr).await {
             Ok(l) => l,

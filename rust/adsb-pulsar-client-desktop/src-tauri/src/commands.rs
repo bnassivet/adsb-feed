@@ -240,7 +240,7 @@ pub async fn get_trajectory(
     query: TrajectoryQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<PositionRecord>, String> {
-    crate::tool_service::get_trajectory(&state.storage, query).await
+    adsb_data_server::tool_service::get_trajectory(&state.storage, query).await
 }
 
 /// Get trajectories for multiple flights in a single batch, returned as Arrow IPC.
@@ -294,7 +294,7 @@ pub async fn get_aircraft_summary(
     end_ms: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<Vec<AircraftSummary>, String> {
-    crate::tool_service::get_aircraft_summary(&state.storage, start_ms, end_ms).await
+    adsb_data_server::tool_service::get_aircraft_summary(&state.storage, start_ms, end_ms).await
 }
 
 /// Get flight-segmented summaries for a time window.
@@ -303,7 +303,7 @@ pub async fn get_flight_summary(
     query: FlightSummaryQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<FlightSummary>, String> {
-    crate::tool_service::get_flight_summary(&state.storage, query).await
+    adsb_data_server::tool_service::get_flight_summary(&state.storage, query).await
 }
 
 /// Get flight-segmented summaries as Arrow IPC bytes.
@@ -331,13 +331,13 @@ pub async fn get_time_distribution(
     query: TimeDistributionQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<TimeDistributionBucket>, String> {
-    crate::tool_service::get_time_distribution(&state.storage, query).await
+    adsb_data_server::tool_service::get_time_distribution(&state.storage, query).await
 }
 
 /// Get storage statistics (row count, time range, estimated size).
 #[tauri::command]
 pub async fn get_storage_stats(state: State<'_, AppState>) -> Result<StorageStats, String> {
-    crate::tool_service::get_storage_stats(&state.storage).await
+    adsb_data_server::tool_service::get_storage_stats(&state.storage).await
 }
 
 /// Get detection range by 10° azimuth sectors.
@@ -362,7 +362,7 @@ pub async fn get_hourly_heatmap(
     query: HourlyHeatmapQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<HourlyHeatmapCell>, String> {
-    crate::tool_service::get_hourly_heatmap(&state.storage, query).await
+    adsb_data_server::tool_service::get_hourly_heatmap(&state.storage, query).await
 }
 
 /// Count raw messages in an optional time range.
@@ -720,7 +720,7 @@ pub async fn get_events_of_interest(
     query: EventOfInterestQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<EventOfInterest>, String> {
-    crate::tool_service::get_events_of_interest(&state.storage, query).await
+    adsb_data_server::tool_service::get_events_of_interest(&state.storage, query).await
 }
 
 #[tauri::command]
@@ -770,12 +770,13 @@ pub async fn delete_event_of_interest(
 
 // --- Simulation scenario commands ---
 //
-// Reads go through `tool_service` so the agent tool server shares them; writes
+// Reads go through `adsb-data-server`'s `tool_service` so the desktop app, the
+// agent tool server and the headless daemon all answer queries identically; writes
 // take the lock here, mirroring the events-of-interest commands above.
 
 #[tauri::command]
 pub async fn list_scenarios(state: State<'_, AppState>) -> Result<Vec<Scenario>, String> {
-    crate::tool_service::list_scenarios(&state.storage).await
+    adsb_data_server::tool_service::list_scenarios(&state.storage).await
 }
 
 #[tauri::command]
@@ -783,7 +784,7 @@ pub async fn get_scenario(
     id: String,
     state: State<'_, AppState>,
 ) -> Result<ScenarioWithTracks, String> {
-    crate::tool_service::get_scenario(&state.storage, id).await
+    adsb_data_server::tool_service::get_scenario(&state.storage, id).await
 }
 
 #[tauri::command]

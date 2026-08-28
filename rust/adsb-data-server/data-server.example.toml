@@ -1,0 +1,59 @@
+# adsb-data-server configuration.
+#
+# Precedence, lowest to highest: these values < environment < CLI flags.
+# A value set here is NOT overridden by a flag's default -- only by a flag the
+# operator actually passes. Install to /etc/adsb/data-server.toml, or point
+# elsewhere with --config / ADSB_SERVER_CONFIG.
+
+# Identity of this receiver. Stamped onto every stored record, so it must be
+# unique across a fleet or the data cannot be attributed.
+source_id = "pi-roof"
+
+# DuckDB database. This process takes an exclusive lock on it: nothing else may
+# open the file while the daemon runs. Other processes read it over Quack.
+db_path = "/var/lib/adsb/adsb.db"
+
+# --- Input ------------------------------------------------------------------
+# The MQTT topic published by adsb-pulsar-client --forwarder mqtt.
+mqtt_broker = "localhost"
+mqtt_port = 1883
+mqtt_topic = "adsb/sbs/raw"
+
+# Timezone of the dump1090 timestamps ("Local", or an IANA name).
+dump1090_tz = "Local"
+
+# Silence, in ms, that separates one flight from the next for the same aircraft.
+gap_threshold_ms = 3600000
+
+# --- Maintenance ------------------------------------------------------------
+# Seconds between DuckDB checkpoints; 0 disables. Checkpointing matters on an
+# edge node, which can lose power without a clean shutdown: an unbounded WAL is
+# slow to replay and awkward for anything reading the file over Quack.
+checkpoint_secs = 300
+
+# Discard data older than this many hours. 0 keeps everything, which is usually
+# right for a recorder whose whole purpose is history -- but watch SD-card wear.
+retention_hours = 0
+
+# --- Serving ----------------------------------------------------------------
+# Read-only JSON query API (POST /tools/<name>). 0 disables.
+http_port = 8787
+
+# Expose the database over DuckDB's Quack protocol so other processes can
+# ATTACH and run SQL against the live data.
+#
+# Two things to know before enabling this off localhost:
+#   * The token grants full read AND write access to every table.
+#   * The Quack server terminates no TLS itself, so a client attaching to a
+#     remote daemon assumes HTTPS and needs DISABLE_SSL true without a proxy.
+# Treat it as homelab-grade on a trusted LAN; front it with a TLS-terminating
+# reverse proxy anywhere else, and never port-forward it.
+#
+# The `quack` extension is NOT statically linked into the bundled DuckDB build:
+# first use downloads it from extensions.duckdb.org, so the host needs outbound
+# network and a writable extension directory, or a pre-seeded extension.
+share = false
+share_uri = "quack:0.0.0.0:9494"
+# share_token = "change-me"   # unset lets DuckDB generate one at serve time
+
+log_level = "info"

@@ -26,6 +26,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "adsb-data-server"
+version = "0.1.0"
+dependencies = [
+ "adsb-data-engine",
+ "adsb-pulsar-client",
+ "anyhow",
+ "async-trait",
+ "axum",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 0.8.2",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "adsb-pulsar-client"
 version = "0.1.0"
 dependencies = [
@@ -52,6 +72,7 @@ name = "adsb-pulsar-client-desktop"
 version = "0.1.0"
 dependencies = [
  "adsb-data-engine",
+ "adsb-data-server",
  "adsb-pulsar-client",
  "axum",
  "chrono",

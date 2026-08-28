@@ -6,7 +6,7 @@
 //! `tool_server.rs`. This keeps a single source of truth for the query logic
 //! and the graceful "Storage not available" degradation string.
 
-use crate::state::SharedStorage;
+use adsb_data_engine::SharedStorage;
 use adsb_data_engine::{
     AircraftSummary, EventOfInterest, EventOfInterestQuery, FlightSummary, FlightSummaryQuery,
     HourlyHeatmapCell, HourlyHeatmapQuery, PositionRecord, Scenario, ScenarioWithTracks,

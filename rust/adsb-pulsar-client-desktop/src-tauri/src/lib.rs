@@ -7,8 +7,6 @@
 mod bridge;
 mod commands;
 mod state;
-mod tool_server;
-mod tool_service;
 
 /// Default loopback port for the agent tool server. Override with
 /// `ADSB_AGENT_TOOL_SERVER_PORT`. The Python agent must point
@@ -60,7 +58,10 @@ pub fn run() {
                 .ok()
                 .and_then(|v| v.parse::<u16>().ok())
                 .unwrap_or(DEFAULT_TOOL_SERVER_PORT);
-            tool_server::spawn(std::sync::Arc::clone(&state.storage), tool_server_port);
+            adsb_data_server::server::spawn(
+                std::sync::Arc::clone(&state.storage),
+                tool_server_port,
+            );
 
             app.manage(state);
             Ok(())

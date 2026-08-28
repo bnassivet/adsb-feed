@@ -8,7 +8,8 @@ Cargo workspace containing the ADS-B feed client library, adsd-data-engine and T
 |-------|------|---------|
 | `adsb-pulsar-client` | `adsb-pulsar-client/` | Library + CLI for dump1090 → Pulsar forwarding |
 | `adsb-pulsar-client-desktop-lib` | `adsb-pulsar-client-desktop/src-tauri/` | Tauri v2 desktop app backend |
-| `adsb-data-engine` | `adsb-data-engine/` | Shared SBS-1 parser + DuckDB persistent storage for historical queries |
+| `adsb-data-engine` | `adsb-data-engine/` | Shared SBS-1 parser, ingest pipeline, and DuckDB persistent storage for historical queries |
+| `adsb-data-server` | `adsb-data-server/` | Headless recorder: MQTT ingest → DuckDB, Quack sharing, read-only HTTP query API. Also the home of `tool_service`/`server` (moved out of the Tauri crate) so desktop, agent and daemon answer queries identically |
 
 ## Non-Cargo Component
 
@@ -88,7 +89,8 @@ cargo fmt --all --check             # Format check
 ```bash
 cargo test -p adsb-pulsar-client              # Library: ~65 tests (unit + integration + doc)
 cargo test -p adsb-pulsar-client-desktop-lib  # Tauri: ~19 tests (unit)
-cargo test -p adsb-data-engine               # Data engine: ~113 tests (SBS parser + storage + import)
+cargo test -p adsb-data-engine               # Data engine: ~126 tests (SBS parser + ingest + storage + import)
+cargo test -p adsb-data-server               # Data server: ~32 tests (recorder + config layering + tool API)
 ```
 
 ### Run Specific Tests
@@ -115,6 +117,8 @@ Update Design documentation (DESIGN.md, DOCUMENTATION.md) before proposing to co
 - `cli` feature (default-enabled on `adsb-pulsar-client`) gates `clap` dependency
 - Tauri crate uses `default-features = false` to exclude clap
 - `[profile.release]` settings must be in this workspace root `Cargo.toml`, not member crates
+- `adsb-data-server` is **aarch64/x86_64 only** (DuckDB has no 32-bit ARM support). `adsb-pulsar-client` has no such limit, which is why a mixed fleet runs the feed client everywhere and the recorder only on 64-bit nodes
+- The Tauri crate now depends on `adsb-data-server` (`default-features = false`) for the shared query surface. `clap` still stays out; `rumqttc` does arrive transitively, which Phase 6's MQTT live source needs anyway
 - `protoc` required at build time (Pulsar crate dependency). Building
   `adsb-pulsar-client` with `--no-default-features --features cli,mqtt` drops the `pulsar`
   crate and therefore the `protoc` requirement — the no-Pulsar edge deployment, and the
