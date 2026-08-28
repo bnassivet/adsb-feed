@@ -135,7 +135,7 @@ fn load_config(app: &tauri::App) -> Config {
                 match serde_json::from_value::<Config>(value.clone()) {
                     Ok(config) => {
                         info!("Config loaded from store");
-                        return config;
+                        return apply_env_overrides(config, &|k| std::env::var(k).ok());
                     }
                     Err(e) => {
                         warn!("Failed to deserialize stored config (using defaults): {e}");
@@ -149,7 +149,61 @@ fn load_config(app: &tauri::App) -> Config {
             warn!("Failed to open config store (using defaults): {e}");
         }
     }
-    Config::default()
+    apply_env_overrides(Config::default(), &|k| std::env::var(k).ok())
+}
+
+/// Applies `ADSB_*` environment overrides on top of a stored config.
+///
+/// The desktop loads its feed config from the Tauri store, never through
+/// clap, so until this existed every `ADSB_*` variable the CLI advertises in
+/// `--help` silently did nothing here. That was a trap for anyone scripting a
+/// launch -- and it is what `scripts/stack.sh` needs in order to point the app
+/// at a broker without writing into the app's own config store.
+///
+/// Precedence matches the CLI binaries: stored value beats the default,
+/// environment beats the stored value. A blank or unparseable value is ignored
+/// rather than fatal -- a typo in a launch script must not stop the app
+/// starting, and `export ADSB_MQTT_BROKER=` is a common accident.
+///
+/// Only the fields a launch script needs are covered. The rest stay
+/// UI-and-store only, deliberately: this is a scripting seam, not a second
+/// configuration system.
+fn apply_env_overrides(mut config: Config, get: &dyn Fn(&str) -> Option<String>) -> Config {
+    let var = |name: &str| {
+        get(name)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+
+    if let Some(v) = var("ADSB_SOURCE_KIND")
+        && let Ok(kind) = v.parse()
+    {
+        config.source_kind = kind;
+    }
+    if let Some(v) = var("ADSB_SOURCE_ID") {
+        config.source_id = v;
+    }
+    if let Some(v) = var("ADSB_SOCKET_HOST") {
+        config.socket_host = v;
+    }
+    if let Some(v) = var("ADSB_SOCKET_PORT")
+        && let Ok(p) = v.parse()
+    {
+        config.socket_port = p;
+    }
+    if let Some(v) = var("ADSB_MQTT_BROKER") {
+        config.mqtt_broker = v;
+    }
+    if let Some(v) = var("ADSB_MQTT_PORT")
+        && let Ok(p) = v.parse()
+    {
+        config.mqtt_port = p;
+    }
+    if let Some(v) = var("ADSB_MQTT_TOPIC") {
+        config.mqtt_topic = v;
+    }
+
+    config
 }
 
 /// Save config to the Tauri store for persistence across restarts.
@@ -411,5 +465,97 @@ mod remote_mode_tests {
             let c = build_remote_config(Some("quack:pi.lan:9494"), None, Some(v)).unwrap();
             assert_eq!(c.disable_ssl, Some(false), "{v:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod env_override_tests {
+    use super::apply_env_overrides;
+    use adsb_pulsar_client::{Config, SourceKind};
+
+    /// Stands in for the process environment.
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |k: &str| {
+            pairs
+                .iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    #[test]
+    fn nothing_set_leaves_the_stored_config_untouched() {
+        let stored = Config {
+            source_id: "from-store".into(),
+            mqtt_broker: "store.lan".into(),
+            ..Config::default()
+        };
+        let out = apply_env_overrides(stored.clone(), &env(&[]));
+        assert_eq!(out.source_id, "from-store");
+        assert_eq!(out.mqtt_broker, "store.lan");
+    }
+
+    #[test]
+    fn env_beats_the_stored_config() {
+        // Matches the precedence the CLI binaries already use. Without this the
+        // desktop silently ignores every ADSB_* var it advertises in --help.
+        let stored = Config {
+            mqtt_broker: "store.lan".into(),
+            ..Config::default()
+        };
+        let out = apply_env_overrides(stored, &env(&[("ADSB_MQTT_BROKER", "env.lan")]));
+        assert_eq!(out.mqtt_broker, "env.lan");
+    }
+
+    #[test]
+    fn source_kind_can_be_switched_from_the_environment() {
+        let stored = Config::default();
+        assert_eq!(stored.source_kind, SourceKind::Socket);
+        let out = apply_env_overrides(stored, &env(&[("ADSB_SOURCE_KIND", "mqtt")]));
+        assert_eq!(out.source_kind, SourceKind::Mqtt);
+    }
+
+    #[test]
+    fn an_unparseable_value_is_ignored_rather_than_fatal() {
+        // A typo in a launch script must not stop the app from starting.
+        let stored = Config::default();
+        let out = apply_env_overrides(
+            stored,
+            &env(&[
+                ("ADSB_SOURCE_KIND", "carrier-pigeon"),
+                ("ADSB_MQTT_PORT", "not-a-number"),
+            ]),
+        );
+        assert_eq!(out.source_kind, SourceKind::Socket);
+        assert_eq!(out.mqtt_port, 1883);
+    }
+
+    #[test]
+    fn a_blank_value_is_treated_as_unset() {
+        // `export ADSB_MQTT_BROKER=` is a common accident and must not blank
+        // out a working stored value.
+        let stored = Config {
+            mqtt_broker: "store.lan".into(),
+            ..Config::default()
+        };
+        let out = apply_env_overrides(stored, &env(&[("ADSB_MQTT_BROKER", "  ")]));
+        assert_eq!(out.mqtt_broker, "store.lan");
+    }
+
+    #[test]
+    fn socket_and_mqtt_endpoints_all_layer() {
+        let out = apply_env_overrides(
+            Config::default(),
+            &env(&[
+                ("ADSB_SOCKET_HOST", "10.0.0.9"),
+                ("ADSB_SOCKET_PORT", "30005"),
+                ("ADSB_MQTT_PORT", "1884"),
+                ("ADSB_MQTT_TOPIC", "adsb/other"),
+            ]),
+        );
+        assert_eq!(out.socket_host, "10.0.0.9");
+        assert_eq!(out.socket_port, 30005);
+        assert_eq!(out.mqtt_port, 1884);
+        assert_eq!(out.mqtt_topic, "adsb/other");
     }
 }

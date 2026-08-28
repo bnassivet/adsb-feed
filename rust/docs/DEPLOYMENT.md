@@ -1,5 +1,10 @@
 # Deploying the ADS-B edge stack to a Raspberry Pi
 
+> **This document is about a deployed Raspberry Pi.** For running the stack on a
+> development machine, use `make up` from the repo root — see `QUICKSTART.md` and
+> the `run-adsb-stack` skill. The two are independent: the Pi path uses
+> `/etc/adsb/*.toml` and systemd, the dev path uses `adsb-stack.toml` and `.run/`.
+
 Two binaries, deployed independently:
 
 | Binary | Role | Architecture |

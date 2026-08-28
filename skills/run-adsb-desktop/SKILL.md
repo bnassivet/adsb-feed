@@ -11,6 +11,10 @@ SBS-1 from a dump1090 TCP socket, merges positions in
 
 **Paths below are relative to `rust/adsb-pulsar-client-desktop/`.**
 
+> Verifying the **desktop app** is what this skill is for. To bring up the whole
+> stack (broker, feed client, data server, agents) use the **`run-adsb-stack`**
+> skill, or `make up` from the repo root.
+
 ## The GUI is not drivable on macOS — verify through the side doors
 
 Two hard blocks, both confirmed:

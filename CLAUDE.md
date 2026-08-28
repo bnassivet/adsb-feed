@@ -1,3 +1,16 @@
+## Running the stack
+
+`make` from this directory lists every target. `make up` starts the local
+no-Pulsar stack (broker → data server → feed), `make verify` proves rows are
+actually being recorded, `make down` stops it. `make doctor` is the preflight.
+
+Configuration is `adsb-stack.toml` — the single source of truth, expanded into
+`.run/*.toml` by `make render`. Never edit the rendered files. See
+QUICKSTART.md for the three supported topologies.
+
+Skills live in `skills/` and are symlinked into `.claude/` by `make skills`
+(once per checkout). The `run-adsb-stack` skill covers this for agents.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
