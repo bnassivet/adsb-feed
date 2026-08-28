@@ -169,6 +169,22 @@ doctor)
     if port_busy "$p"; then echo "  BUSY    $p"; else echo "  free    $p"; fi
   done
 
+  # Duplicate feeds share one MQTT client id and evict each other in a loop.
+  # That storm produced 567k reconnects and a 144 MB log before it was noticed,
+  # so it is worth naming rather than leaving to be discovered.
+  echo "Duplicates:"
+  for proc in adsb-pulsar-client adsb-data-server; do
+    # macOS pgrep has no -c; count lines instead.
+    n=$(pgrep -f "target/release/$proc " 2>/dev/null | wc -l | tr -d " ")
+    if [ "$n" -gt 1 ]; then
+      echo "  DUPLICATE $n x $proc running -- they share an MQTT client id and will"
+      echo "            evict each other in a reconnect loop. Fix: make reap"
+      rc=1
+    else
+      echo "  ok        $proc x$n"
+    fi
+  done
+
   echo "Skills:"
   "$REPO/scripts/install-skills.sh" status 2>&1 | sed 's/^/  /'
 

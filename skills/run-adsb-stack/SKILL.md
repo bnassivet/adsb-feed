@@ -159,6 +159,10 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
   history tools are silently disabled, with only a WARN in the log. The two
   serve *different* databases: 8787 is what the daemon recorded, 8788 is the
   desktop's own history.
+- **Duplicate processes are silently destructive.** Two `adsb-pulsar-client`s
+  share one MQTT client id (derived from `source_id`), and brokers evict an
+  existing session when a second client arrives with the same id — so they kick
+  each other in a loop. `make doctor` counts them; `make reap` clears them.
 - **The Quack token is printed at startup** when `share_token` is unset —
   DuckDB generates one and that log line is the only way to learn it. Grep
   `.run/logs/data-server.log` for `token:`.
@@ -186,6 +190,7 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
 | Quack sharing reports `Unavailable` | The `quack` extension is downloaded on first use; needs outbound network and a writable `HOME`. |
 | `EADDRINUSE :::3000` from `make up-desktop` | A previous desktop tree was orphaned. `make reap`, then retry. |
 | `make down` says stopped but a port is still held | Something outside the stack owns it — `down` lists what. `make reap` if you want it gone. |
+| `MQTT connection ... lost: Connection closed by peer abruptly`, repeatedly | Two clients sharing an MQTT id are evicting each other. After a few short-lived connections the log says so outright and names the id. Almost always a leftover process: `make doctor` (it counts duplicates), then `make reap`. |
 | Port 1883 busy but no broker | A system mosquitto is running: `brew services stop mosquitto`, or point `mqtt.host` at it and skip the container. |
 
 ## Files

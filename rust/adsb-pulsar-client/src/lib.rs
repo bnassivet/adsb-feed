@@ -53,6 +53,7 @@
 //! - **Memory**: ~15 MB
 //! - **CPU**: 10-15% utilization
 
+pub mod backoff;
 pub mod client;
 pub mod config;
 pub mod connection_monitor;

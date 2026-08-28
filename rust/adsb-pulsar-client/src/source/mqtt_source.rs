@@ -6,11 +6,12 @@
 //! consumer — the desktop app, or `adsb-data-server` — read a live feed
 //! produced by a *different* process with no Apache Pulsar involved.
 
+use crate::backoff::{Backoff, looks_like_id_collision, should_log, should_reset, was_short_lived};
 use crate::config::Config;
 use crate::error::{ClientError, Result};
 use crate::source::{MessageSource, SourceStatus, split_lines};
 use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, watch};
 use tracing::{debug, info, warn};
 
@@ -98,6 +99,10 @@ impl MessageSource for MqttSource {
 
         let broker = format!("{}:{}", self.broker, self.port);
         let mut shutdown_rx = self.shutdown_rx.clone();
+        let backoff = Backoff::default();
+        let mut attempt: u32 = 0;
+        let mut connected_at: Option<Instant> = None;
+        let mut short_lived: u32 = 0;
 
         loop {
             tokio::select! {
@@ -118,6 +123,7 @@ impl MessageSource for MqttSource {
                                 warn!("MQTT subscribe to '{}' failed: {}", self.topic, e);
                             } else {
                                 info!("Subscribed to MQTT topic '{}' at {}", self.topic, broker);
+                                connected_at = Some(Instant::now());
                                 let _ = self.status_tx.send(SourceStatus::Connected);
                             }
                         }
@@ -131,13 +137,45 @@ impl MessageSource for MqttSource {
                         }
                         Ok(_) => {}
                         Err(e) => {
-                            if *self.status_tx.borrow() == SourceStatus::Connected {
-                                warn!("MQTT connection to {} lost: {}", broker, e);
-                            } else {
-                                debug!("MQTT connection to {} pending: {}", broker, e);
+                            let was_connected =
+                                *self.status_tx.borrow() == SourceStatus::Connected;
+
+                            // Only a connection that held counts as recovery.
+                            if let Some(t) = connected_at {
+                                if should_reset(t.elapsed()) {
+                                    attempt = 0;
+                                    short_lived = 0;
+                                } else if was_short_lived(t.elapsed()) {
+                                    short_lived = short_lived.saturating_add(1);
+                                }
                             }
+                            connected_at = None;
+
+
+                            if should_log(attempt) {
+                                if looks_like_id_collision(short_lived) {
+                                    warn!(
+                                        "MQTT subscription to {broker} keeps dropping ({attempt} \
+                                         times). Another client is probably connected with the \
+                                         same id ('{}') and evicting this one. Last error: {e}",
+                                        self.client_id
+                                    );
+                                } else if was_connected || attempt > 0 {
+                                    warn!(
+                                        "MQTT connection to {} lost: {} (retry {})",
+                                        broker, e, attempt
+                                    );
+                                } else {
+                                    debug!("MQTT connection to {} pending: {}", broker, e);
+                                }
+                            }
+
                             let _ = self.status_tx.send(SourceStatus::Connecting);
-                            // rumqttc applies its own backoff before retrying.
+
+                            // rumqttc does NOT pace this: poll() returns the
+                            // error immediately, so without a sleep this spins.
+                            tokio::time::sleep(backoff.delay(attempt)).await;
+                            attempt = attempt.saturating_add(1);
                         }
                     }
                 }

@@ -14,13 +14,14 @@
 //! outbound queue is therefore reported as an error (which the caller's retry
 //! queue accounts for) rather than awaited.
 
+use crate::backoff::{Backoff, looks_like_id_collision, should_log, should_reset, was_short_lived};
 use crate::config::Config;
 use crate::error::{ClientError, Result};
 use crate::forwarder::MessageForwarder;
 use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 /// Maps the configured `u8` QoS onto rumqttc's enum.
@@ -89,22 +90,69 @@ impl MessageForwarder for MqttForwarder {
         // forwarder and reports transitions through `connected`.
         let connected = Arc::clone(&self.connected);
         let broker = format!("{}:{}", self.broker, self.port);
+        let client_id = self.client_id.clone();
         tokio::spawn(async move {
+            let backoff = Backoff::default();
+            let mut attempt: u32 = 0;
+            let mut connected_at: Option<Instant> = None;
+            let mut short_lived: u32 = 0;
+
             loop {
                 match eventloop.poll().await {
                     Ok(Event::Incoming(Incoming::ConnAck(_))) => {
-                        info!("Connected to MQTT broker at {}", broker);
+                        if attempt > 0 {
+                            if should_log(attempt) {
+                                info!("Reconnected to MQTT broker at {}", broker);
+                            }
+                        } else {
+                            info!("Connected to MQTT broker at {}", broker);
+                        }
+                        // Deliberately NOT resetting `attempt` here: see below.
+                        connected_at = Some(Instant::now());
                         connected.store(true, Ordering::Relaxed);
                     }
                     Ok(_) => {}
                     Err(e) => {
-                        if connected.swap(false, Ordering::Relaxed) {
-                            warn!("MQTT connection to {} lost: {}", broker, e);
-                        } else {
-                            debug!("MQTT connection to {} pending: {}", broker, e);
+                        let was_connected = connected.swap(false, Ordering::Relaxed);
+
+                        // Reset only if the connection actually held. An
+                        // eviction storm connects successfully and is kicked
+                        // milliseconds later; resetting on connect would pin
+                        // the backoff at its minimum forever.
+                        if let Some(t) = connected_at {
+                            if should_reset(t.elapsed()) {
+                                attempt = 0;
+                                short_lived = 0;
+                            } else if was_short_lived(t.elapsed()) {
+                                short_lived = short_lived.saturating_add(1);
+                            }
                         }
-                        // rumqttc applies its own backoff before the next
-                        // reconnect attempt, so this is not a busy loop.
+                        connected_at = None;
+
+                        if should_log(attempt) {
+                            if looks_like_id_collision(short_lived) {
+                                warn!(
+                                    "MQTT connection to {broker} keeps dropping ({attempt} times). \
+                                     Another client is probably connected with the same id \
+                                     ('{client_id}') and evicting this one -- check for a second \
+                                     adsb-pulsar-client, or set a distinct mqtt_client_id. Last \
+                                     error: {e}"
+                                );
+                            } else if was_connected || attempt > 0 {
+                                warn!(
+                                    "MQTT connection to {} lost: {} (retry {})",
+                                    broker, e, attempt
+                                );
+                            } else {
+                                debug!("MQTT connection to {} pending: {}", broker, e);
+                            }
+                        }
+
+                        // rumqttc does NOT pace this for us: poll() returns the
+                        // error immediately, so without a sleep this is a hot
+                        // spin loop. Measured at ~2500 reconnects/second.
+                        tokio::time::sleep(backoff.delay(attempt)).await;
+                        attempt = attempt.saturating_add(1);
                     }
                 }
             }
