@@ -43,8 +43,15 @@ make up          # broker -> recorder -> feed
 make status      # what is running
 make verify      # PROVES data is being recorded, not just that processes exist
 make logs N=feed # tail one process; omit N for all
-make down
+make down        # stops EVERYTHING it started, including the desktop
 ```
+
+| Also | |
+|---|---|
+| `make up-desktop` | stack + the desktop app, backgrounded (`make logs N=desktop`) |
+| `make down-desktop` | stop just the desktop |
+| `make up-agents` | stack + adsb-agent and adsb-simulation-agent |
+| `make reap` | kill whatever still holds the stack's ports (orphans) |
 
 `make verify` samples `row_count` twice six seconds apart and fails if it has
 not moved. That distinction matters: every process can be "running" while
@@ -128,7 +135,20 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
   warns if it does not appear. Never start the feed first.
 - **`make down` only kills what the stack started** (PID files in `.run/`). Your
   own hand-started processes survive — and conversely, `down` will not clean up
-  something you launched yourself.
+  something you launched yourself. It *reports* anything still holding a stack
+  port so you are not left guessing why the next `up` fails; `make reap` clears
+  those deliberately.
+- **Everything is started as a process-group leader, and stopped by group.**
+  `uv run python -m adsb_agent` forks python, and `npm run tauri dev` is a tree
+  of next dev, cargo and the app binary. Signalling only the recorded pid
+  orphans the children, still holding their ports — which is how a stale dev
+  server ends up squatting on :3000 and failing the next launch with
+  `EADDRINUSE`. If you add a process to `stack.sh`, start it through `start()`;
+  do not background it yourself.
+- **The desktop is backgrounded, not foreground.** `make up-desktop` returns
+  immediately; watch it with `make logs N=desktop` and stop it with `make down`
+  or `make down-desktop`. It used to run in the foreground, which left Ctrl-C as
+  the only way to stop it and orphaned the tree on any other exit.
 - **Grafana and the desktop both want :3000.** The Pulsar stack's Grafana
   collides with the Next dev server; they cannot both run. `make doctor` reports
   :3000 as busy.
@@ -164,6 +184,8 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
 | A setting works here but not on another machine | It was added to `adsb-stack.toml` but not to `adsb-stack-template.toml`. `diff` them. |
 | `failed to bind 127.0.0.1:8787 (agent history tools disabled)` in the desktop log | The data server owns that port. Launch via `make up-desktop`, which sets `ADSB_AGENT_TOOL_SERVER_PORT` from `agents.desktop_tool_port`. |
 | Quack sharing reports `Unavailable` | The `quack` extension is downloaded on first use; needs outbound network and a writable `HOME`. |
+| `EADDRINUSE :::3000` from `make up-desktop` | A previous desktop tree was orphaned. `make reap`, then retry. |
+| `make down` says stopped but a port is still held | Something outside the stack owns it — `down` lists what. `make reap` if you want it gone. |
 | Port 1883 busy but no broker | A system mosquitto is running: `brew services stop mosquitto`, or point `mqtt.host` at it and skip the container. |
 
 ## Files

@@ -28,9 +28,12 @@ starts six simulated aircraft orbiting the coordinates in `[receiver]`.
 ```bash
 make up          # broker -> data server -> feed
 make verify      # confirms rows are actually being recorded
-make up-desktop  # ... and the desktop app
-make down
+make up-desktop  # ... and the desktop app (backgrounded)
+make logs N=desktop
+make down        # stops everything, desktop included
 ```
+
+`make reap` clears orphans if a previous run left something holding a port.
 
 With a real receiver, set `dump1090.mock = false` and point `[dump1090]` at it.
 

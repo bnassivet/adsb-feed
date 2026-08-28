@@ -61,30 +61,63 @@ running() { # running <name>
   [ -f "$f" ] && kill -0 "$(cat "$f")" 2>/dev/null
 }
 
+# Start a command as its own process-group LEADER, so stopping it later takes
+# its children with it.
+#
+# Why this matters: `uv run python -m adsb_agent` forks python, and
+# `npm run tauri dev` is a whole tree (next dev, cargo, the app binary).
+# Signalling only the pid we recorded orphans the children, still holding their
+# ports -- which is how a stale dev server ends up squatting on :3000 and
+# failing the next launch with EADDRINUSE.
+#
+# perl is invoked DIRECTLY, never through a shell function. Wrapped in a
+# function, `f cmd &` makes $! a bash subshell sitting in *our* process group,
+# so the recorded pid is not the leader and `kill -- -$pid` would signal the
+# caller's own group. As a simple command, bash execs perl in the background
+# child, so $! is perl's pid, setpgrp makes it the leader, and the exec'd tree
+# inherits it. macOS has no setsid(1); perl is the portable stand-in.
 start() { # start <name> <command...>
   local name="$1"; shift
   if running "$name"; then
     echo "  already running: $name (pid $(cat "$(pidfile "$name")"))"
     return 0
   fi
-  "$@" > "$LOGS/$name.log" 2>&1 &
-  echo $! > "$(pidfile "$name")"
-  echo "  started $name (pid $!) -> .run/logs/$name.log"
+  perl -e 'setpgrp(0,0); exec @ARGV or die "exec: $!"' "$@" \
+    > "$LOGS/$name.log" 2>&1 &
+  local pid=$!
+  echo "$pid" > "$(pidfile "$name")"
+  echo "  started $name (pid $pid) -> .run/logs/$name.log"
 }
 
 stop() { # stop <name>
   local f; f="$(pidfile "$1")"
   [ -f "$f" ] || return 0
   local pid; pid="$(cat "$f")"
+
   if kill -0 "$pid" 2>/dev/null; then
-    # SIGTERM, not SIGKILL: the data server checkpoints its WAL on the way out,
-    # and an unclean stop leaves one that is slow to replay next boot.
-    kill "$pid" 2>/dev/null
-    for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
-    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+    # Only signal the group when the pid really is its leader. If start() ever
+    # failed to make one, `kill -- -$pid` would hit whatever group it landed in
+    # -- possibly ours -- so fall back to the single process instead.
+    local pgid; pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')"
+    local target="$pid"
+    [ "$pgid" = "$pid" ] && target="-$pid"
+
+    # SIGTERM first, not SIGKILL: the data server checkpoints its WAL on the
+    # way out, and an unclean stop leaves one that is slow to replay next boot.
+    kill -TERM "$target" 2>/dev/null
+    for _ in $(seq 1 60); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+    kill -0 "$pid" 2>/dev/null && kill -KILL "$target" 2>/dev/null
     echo "  stopped $1"
   fi
   rm -f "$f"
+}
+
+# Ports the stack is expected to own, for orphan reporting.
+stack_ports() {
+  echo "1883 $(cfg dump1090 port 30003) $(cfg storage http_port 8787)"
+  echo "$(cfg agents desktop_tool_port 8788) 3000"
+  [ "$(cfg agents enabled false)" = "true" ] && \
+    echo "$(cfg agents agent_port 8000) $(cfg agents sim_agent_port 8300)"
 }
 
 render() { python3 "$REPO/scripts/render-config.py"; }
@@ -180,25 +213,74 @@ up)
 
   if [ "${2-}" = "--agents" ] || [ "$(cfg agents enabled false)" = "true" ]; then
     echo "Agents:"
-    start sim-agent sh -c "cd '$REPO/rust/adsb-simulation-agent' && uv run python -m adsb_simulation_agent"
-    start agent     sh -c "cd '$REPO/rust/adsb-agent' && uv run python -m adsb_agent"
+    start sim-agent sh -c "cd '$REPO/rust/adsb-simulation-agent' && exec uv run python -m adsb_simulation_agent"
+    start agent     sh -c "cd '$REPO/rust/adsb-agent' && exec uv run python -m adsb_agent"
   fi
 
   echo
   echo "Up. 'make status' to check, 'make verify' to confirm data is flowing."
   ;;
 
+desktop)
+  require_config
+  port="$(cfg agents desktop_tool_port 8788)"
+  echo "Desktop:"
+  # Backgrounded with a PID file like everything else, so `down` can stop it.
+  # `npm run tauri dev` is a process tree -- next dev, cargo, the app binary --
+  # which is why start/stop work on process groups.
+  start desktop env "ADSB_AGENT_TOOL_SERVER_PORT=$port" \
+    sh -c "cd '$REPO/rust/adsb-pulsar-client-desktop' && exec npm run tauri dev"
+  echo "  watch it with: make logs N=desktop"
+  ;;
+
+stop-desktop)
+  echo "Desktop:"
+  stop desktop
+  ;;
+
 down)
   # Reverse of start order: producers first, so the recorder sees the tail.
-  for n in agent sim-agent feed mock data-server; do stop "$n"; done
+  for n in desktop agent sim-agent feed mock data-server; do stop "$n"; done
   echo "Broker:"
   docker compose -f "$COMPOSE" down 2>&1 | sed 's/^/  /'
+
+  # Report anything still holding a stack port that we did not start. Killing
+  # it is deliberately NOT automatic -- it may be the developer's own process --
+  # but leaving them guessing why the next `up` fails is worse.
+  orphans=""
+  for p in $(stack_ports); do
+    port_busy "$p" && orphans="$orphans $p"
+  done
+  if [ -n "$orphans" ]; then
+    echo "Still in use (not started by this stack):"
+    for p in $orphans; do
+      printf "  :%-6s %s\n" "$p" "$(lsof -nP -iTCP:"$p" -sTCP:LISTEN 2>/dev/null | awk 'NR==2{print $1" pid "$2}')"
+    done
+    echo "  Clear them with: make reap"
+  fi
+  ;;
+
+reap)
+  # Last resort for orphans a previous run left behind -- typically a `tauri
+  # dev` tree killed with Ctrl-C, whose next dev server keeps :3000 and makes
+  # the next `make up-desktop` fail with EADDRINUSE.
+  require_config
+  found=0
+  for p in $(stack_ports); do
+    pids="$(lsof -nP -tiTCP:"$p" -sTCP:LISTEN 2>/dev/null)"
+    for pid in $pids; do
+      echo "  killing $(ps -p "$pid" -o comm= 2>/dev/null) (pid $pid) on :$p"
+      kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+      found=1
+    done
+  done
+  [ "$found" = 1 ] || echo "  nothing listening on the stack's ports"
   ;;
 
 status)
   require_config
   http="$(cfg storage http_port 8787)"
-  for n in data-server feed mock agent sim-agent; do
+  for n in data-server feed mock desktop agent sim-agent; do
     if running "$n"; then
       printf "  %-12s running (pid %s)\n" "$n" "$(cat "$(pidfile "$n")")"
     else
@@ -246,7 +328,10 @@ usage: stack.sh <command>
   render    regenerate .run/*.toml from adsb-stack.toml
   doctor    preflight: binaries, docker, ports, skills, LLM
   up        broker -> recorder -> feed (add --agents for the AI agents)
+  desktop      start the desktop app (backgrounded; make logs N=desktop)
+  stop-desktop stop just the desktop app
   down      stop everything this script started
+  reap      kill whatever still holds the stack's ports (orphans)
   status    what is running
   logs [n]  tail one process, or all
   verify    confirm rows are actually being recorded

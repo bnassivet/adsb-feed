@@ -17,9 +17,11 @@ help:
 	@echo "  make doctor       preflight: binaries, docker, ports, skills"
 	@echo "  make up           broker -> recorder -> feed"
 	@echo "  make up-agents    ... plus the AI agents (:8000, :8300)"
-	@echo "  make up-desktop   ... plus the desktop app"
+	@echo "  make up-desktop   ... plus the desktop app (backgrounded)"
 	@echo "  make remote       desktop only, attached to [remote] in adsb-stack.toml"
 	@echo "  make down         stop everything the stack started"
+	@echo "  make down-desktop stop just the desktop app"
+	@echo "  make reap         kill orphans still holding the stack's ports"
 	@echo "  make status       what is running"
 	@echo "  make logs         tail all logs (make logs N=feed for one)"
 	@echo "  make verify       confirm rows are actually being recorded"
@@ -50,13 +52,21 @@ verify:  ; @$(STACK) verify
 render:  ; @$(STACK) render
 logs:    ; @$(STACK) logs $(N)
 
-# The desktop is a foreground app with its own dev server, so it is deliberately
-# NOT backgrounded into .run/ -- you want its output in front of you.
+# Backgrounded with a PID file like every other process, so `make down` can
+# actually stop it. It used to run in the foreground for its output, but that
+# left `tauri dev` -- a tree of next dev, cargo and the app binary -- with no
+# way to be stopped except Ctrl-C, and any other exit orphaned a dev server
+# squatting on :3000 that failed the next launch with EADDRINUSE.
 .PHONY: up-desktop
 up-desktop: up
-	@echo "Starting the desktop app (Ctrl-C to stop it; the stack keeps running)"
-	@port=$$(python3 -c "import tomllib;print(tomllib.load(open('adsb-stack.toml','rb'))['agents'].get('desktop_tool_port',8788))"); \
-	cd rust/adsb-pulsar-client-desktop && ADSB_AGENT_TOOL_SERVER_PORT=$$port npm run tauri dev
+	@$(STACK) desktop
+
+.PHONY: down-desktop
+down-desktop:
+	@$(STACK) stop-desktop
+
+.PHONY: reap
+reap: ; @$(STACK) reap
 
 # Desktop against a data server elsewhere -- no local feed or recorder.
 # ADSB_REMOTE_URI seeds the mode on FIRST launch only; afterwards the stored
