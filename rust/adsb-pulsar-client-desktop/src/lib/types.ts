@@ -360,6 +360,28 @@ export interface ImportResult {
 /** Storage availability status (mirrors Rust StorageAvailability). */
 export type StorageAvailability = "available" | "released" | "unavailable";
 
+/** Connection details of a running Quack server (mirrors Rust ShareInfo). */
+export interface ShareInfo {
+  listen_uri: string;
+  listen_url: string;
+  /**
+   * Anyone holding this token has full read AND write access to every table —
+   * the Quack server runs with permissive authorization. Treat it as a
+   * credential, and never render it somewhere it could be shoulder-surfed.
+   */
+  token: string;
+}
+
+/**
+ * Whether the database is exposed over Quack (mirrors Rust ShareStatus).
+ *
+ * Serde tags this with `state`, so the discriminant is `state`, not `type`.
+ */
+export type ShareStatus =
+  | { state: "off" }
+  | ({ state: "active" } & ShareInfo)
+  | { state: "unavailable"; reason: string };
+
 /** Recording state for independent DuckDB stream control (mirrors Rust RecordingState). */
 export interface RecordingState {
   record_positions: boolean;

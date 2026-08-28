@@ -11,9 +11,9 @@ use adsb_data_engine::{
     DetectionRangeQuery, DetectionRangeSector, EventOfInterest, EventOfInterestQuery,
     FlightSummary, FlightSummaryQuery, HourlyHeatmapCell, HourlyHeatmapQuery, ImportPreview,
     ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord, Scenario, ScenarioTrack,
-    ScenarioWithTracks, StatusEvent, StatusEventQuery, StatusEventStatus, StatusEventType,
-    StorageHandle, StorageStats, TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
-    UpdateEventOfInterest, UpdateScenario, UpdateScenarioTrack,
+    ScenarioWithTracks, ShareInfo, ShareStatus, StatusEvent, StatusEventQuery, StatusEventStatus,
+    StatusEventType, StorageHandle, StorageStats, TimeDistributionBucket, TimeDistributionQuery,
+    TrajectoryQuery, UpdateEventOfInterest, UpdateScenario, UpdateScenarioTrack,
 };
 use adsb_pulsar_client::Config;
 
@@ -584,6 +584,7 @@ pub async fn swap_database(
         db_path: Some(staging_path.clone()),
         source_id: config.source_id.clone(),
         gap_threshold_ms: config.gap_threshold_ms,
+        share: None,
     };
     let new_handle = StorageHandle::open(staging_config)
         .map_err(|e| format!("Failed to create staging database: {e}"))?;
@@ -880,4 +881,58 @@ pub async fn reorder_scenario_tracks(
         .reorder_scenario_tracks(scenario_id, track_ids)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Expose the DuckDB database over the Quack protocol.
+///
+/// Returns the coordinates an external DuckDB client needs to `ATTACH`.
+/// **The token grants full read and write access to every table** — the
+/// server runs with Quack's default permissive authorization — so treat it
+/// as a credential.
+///
+/// Idempotent: calling this while already sharing returns the running
+/// server's details rather than starting a second one.
+#[tauri::command]
+pub async fn start_sharing(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ShareInfo, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+
+    let info = storage.start_sharing().await.map_err(|e| e.to_string())?;
+    info!("Database shared over Quack at {}", info.listen_uri);
+
+    let status = ShareStatus::Active(info.clone());
+    let _ = app.emit("adsb:share-status", &status);
+    Ok(info)
+}
+
+/// Stop exposing the database. No-op when sharing is not active.
+#[tauri::command]
+pub async fn stop_sharing(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+
+    storage.stop_sharing().await.map_err(|e| e.to_string())?;
+    let _ = app.emit("adsb:share-status", &ShareStatus::Off);
+    Ok(())
+}
+
+/// Current sharing state.
+///
+/// Reports `Off` when storage itself is unavailable — from the caller's point
+/// of view the database is equally not shared, and this keeps the command
+/// usable for rendering rather than making the UI handle a second error path.
+#[tauri::command]
+pub async fn sharing_status(state: State<'_, AppState>) -> Result<ShareStatus, String> {
+    let guard = state.storage.read().await;
+    let Some(storage) = guard.as_ref() else {
+        return Ok(ShareStatus::Off);
+    };
+    storage.sharing_status().await.map_err(|e| e.to_string())
 }
