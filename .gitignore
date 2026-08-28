@@ -401,3 +401,11 @@ graphify-out/memory/
 graphify-out/graph.html
 graphify-out/GRAPH_TREE.html
 graphify-out/GRAPH_REPORT.md
+
+# Run skills are shared project tooling, not personal config, so they must be
+# committed despite the blanket `.claude/` rule above. Git will not descend
+# into an excluded directory, so the parent has to be re-included first before
+# a nested negation can take effect.
+!rust/adsb-pulsar-client-desktop/.claude/
+rust/adsb-pulsar-client-desktop/.claude/*
+!rust/adsb-pulsar-client-desktop/.claude/skills/

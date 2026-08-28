@@ -1,0 +1,25 @@
+{
+ "ok": true,
+ "data": [
+  {
+   "hex_ident": "TST001",
+   "callsign": "CLAUDE1",
+   "latitude": null,
+   "longitude": null,
+   "altitude": 35000.0,
+   "ground_speed": 450.0,
+   "track": 90.0,
+   "message_count": null
+  },
+  {
+   "hex_ident": "TST001",
+   "callsign": "CLAUDE1",
+   "latitude": null,
+   "longitude": null,
+   "altitude": 35000.0,
+   "ground_speed": 450.0,
+   "track": 92.0,
+   "message_count": null
+  }
+ ]
+}

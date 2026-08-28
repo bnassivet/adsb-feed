@@ -1,0 +1,7 @@
+{"ok":true,"data":[
+{"hex_ident":"TST001","callsign":"CLAUDE1","max_altitude":35000.0,"min_altitude":35000.0,"position_count":61,"first_seen_ms":1787917208841,"last_seen_ms":1787917268841},
+{"hex_ident":"TST002","callsign":"CLAUDE2","max_altitude":28000.0,"min_altitude":28000.0,"position_count":61,"first_seen_ms":1787917208841,"last_seen_ms":1787917268841},
+{"hex_ident":"TST003","callsign":"CLAUDE3","max_altitude":12000.0,"min_altitude":12000.0,"position_count":61,"first_seen_ms":1787917208841,"last_seen_ms":1787917268841},
+{"hex_ident":"TST004","callsign":"CLAUDE4","max_altitude":39000.0,"min_altitude":39000.0,"position_count":61,"first_seen_ms":1787917208841,"last_seen_ms":1787917268841},
+{"hex_ident":"TST005","callsign":"CLAUDE5","max_altitude":22000.0,"min_altitude":22000.0,"position_count":61,"first_seen_ms":1787917208841,"last_seen_ms":1787917268841},
+{"hex_ident":"TST006","callsign":"CLAUDE6","max_altitude":8000.0,"min_altitude":8000.0,"position_count":61,"first_seen_ms":1787917208841,"last_seen_ms":1787917268841}]}
