@@ -12,6 +12,7 @@ Desktop aircraft tracker built with Tauri v2 (Rust backend) + Next.js 16 + React
 
 - **Backend**: Tauri v2 Rust (`src-tauri/src/`)
 - **Shared library**: `adsb-data-engine` (workspace crate) — SBS-1 parser + DuckDB persistent storage
+- **Message source**: dump1090 TCP, or MQTT (`source_kind`) — `MessageSource` in `adsb-pulsar-client`
 - **Frontend**: Next.js 16 App Router + React 19 (`src/`)
 - **Styling**: Tailwind CSS v4
 - **Map**: Leaflet via react-leaflet (dynamic import, SSR disabled)
@@ -466,6 +467,13 @@ Requires `adsb-agent` (:8000) and `adsb-simulation-agent` (:8300) running; witho
   excludes `docs/`, notebooks and markdown. **That file is read once, at `tauri dev`
   startup** — changing it does nothing until you restart the dev session.
 
+- `bridge.rs` names `MqttSource` with no `#[cfg]`, so `src-tauri/Cargo.toml` must keep
+  `features = ["mqtt"]` on the `adsb-pulsar-client` dep. It compiled without it only via
+  feature unification through `adsb-data-server` — a build that worked by accident.
+- MQTT reconnects are paced by `adsb-pulsar-client/src/backoff.rs`, not by `rumqttc`:
+  `EventLoop::poll` returns its error immediately and applies no backoff of its own.
+  The attempt counter resets after **30 s connected**, never on `ConnAck` — duplicate
+  client ids evict each other while connecting successfully every time.
 - Root `.gitignore` has `lib/` which silently ignores `src/lib/`. Negated with `!**/src/lib/`
 - Tauri v2 commands silently fail without proper permissions in `capabilities/default.json`
 - `create-next-app` fails if `src-tauri/` exists — scaffold manually or use temp dir

@@ -27,6 +27,7 @@
 24. [Section-Aware Track Visibility](#section-aware-track-visibility)
 25. [Arrow IPC Query Pipeline](#arrow-ipc-query-pipeline)
 26. [AI Agent & AG-UI Integration](#ai-agent--ag-ui-integration)
+27. [Message Sources & the MQTT Broker](#message-sources--the-mqtt-broker)
 
 ---
 
@@ -69,12 +70,15 @@ flowchart TB
     tracker["<b>ADS-B Aircraft Tracker</b><br/><i>[Software System]</i><br/>Tauri desktop app. Ingests SBS-1, renders live<br/>and historical traffic, persists to an embedded<br/>OLAP store, hosts an optional AI assistant"]
 
     dump["<b>dump1090 Receiver</b><br/><i>[External System]</i><br/>SDR decoder exposing SBS-1 on TCP 30003"]
+    mqtt["<b>MQTT Broker</b><br/><i>[External System]</i><br/>Mosquitto on TCP 1883. LAN bus carrying raw<br/>SBS-1 from a remote feed client"]
     pulsar["<b>Apache Pulsar</b><br/><i>[External System]</i><br/>Optional broker feeding the wider<br/>ads-b-project pipeline: Spark, Delta Lake"]
     llm["<b>Local LLM Endpoint</b><br/><i>[External System]</i><br/>OpenAI-compatible server on :1234<br/>LM Studio or Ollama"]
     mlflow["<b>MLflow</b><br/><i>[External System]</i><br/>Optional tracing backend on :5010"]
 
     operator -->|"Tracks aircraft, queries history,<br/>speaks or types requests"| tracker
     tracker -->|"Reads SBS-1 stream<br/><i>[TCP 30003]</i>"| dump
+    tracker -.->|"Subscribes to the raw topic<br/><i>[MQTT 1883]</i>"| mqtt
+    dump -.->|"Relayed by a remote feed client<br/><i>[MQTT publish]</i>"| mqtt
     tracker -.->|"Publishes raw messages<br/><i>[Pulsar protocol]</i>"| pulsar
     tracker -.->|"Reasoning, hint classification<br/><i>[HTTP / OpenAI API]</i>"| llm
     tracker -.->|"Emits linked traces<br/><i>[HTTP]</i>"| mlflow
@@ -84,8 +88,12 @@ flowchart TB
     classDef external fill:#999999,stroke:#6B6B6B,color:#fff
     class operator person
     class tracker system
-    class dump,pulsar,llm,mlflow external
+    class dump,mqtt,pulsar,llm,mlflow external
 ```
+
+The two edges into the tracker are **alternatives, not layers**: `source_kind` selects
+either the direct TCP read or the MQTT subscription. See
+[Message Sources & the MQTT Broker](#message-sources--the-mqtt-broker).
 
 #### Level 2 — Container
 
@@ -109,7 +117,13 @@ flowchart TB
         voice["<b>llama-liquid-audio</b><br/><i>[Container: llama.cpp — :2026]</i><br/>LFM2.5-Audio speech-to-text,<br/>auto-spawned on first voice request"]
     end
 
+    subgraph edge["Optional Edge Node — typically a Raspberry Pi"]
+        feed["<b>adsb-pulsar-client</b><br/><i>[Container: Rust CLI]</i><br/>Reads dump1090, fans the raw lines out<br/>to MQTT and optionally Pulsar"]
+        server["<b>adsb-data-server</b><br/><i>[Container: Rust daemon]</i><br/>Subscribes to MQTT, records to its own<br/>DuckDB, serves it over Quack :9494"]
+    end
+
     dump["<b>dump1090</b><br/><i>[External System]</i><br/>SBS-1 over TCP 30003"]
+    mqtt["<b>MQTT Broker</b><br/><i>[External System: Mosquitto — :1883]</i><br/>LAN bus for raw SBS-1.<br/>QoS 0, persistence off"]
     pulsar["<b>Apache Pulsar</b><br/><i>[External System]</i><br/>Optional downstream broker"]
     llm["<b>Local LLM</b><br/><i>[External System]</i><br/>OpenAI-compatible, :1234"]
     mlflow["<b>MLflow</b><br/><i>[External System]</i><br/>Optional tracing, :5010"]
@@ -117,8 +131,15 @@ flowchart TB
     operator -->|"Uses<br/><i>[Tauri webview]</i>"| frontend
     frontend -->|"invoke commands<br/><i>[Tauri IPC]</i>"| backend
     backend -->|"adsb:message, adsb:status<br/><i>[Tauri events]</i>"| frontend
-    backend -->|"Reads message stream<br/><i>[TCP]</i>"| dump
+    backend -->|"source_kind = socket:<br/>reads message stream<br/><i>[TCP]</i>"| dump
+    backend -.->|"source_kind = mqtt:<br/>subscribes to the raw topic<br/><i>[MQTT 1883]</i>"| mqtt
     backend -.->|"Forwards raw messages<br/><i>[Pulsar protocol]</i>"| pulsar
+    backend -.->|"storage_mode = remote:<br/>ATTACH, then views over the catalog<br/><i>[Quack over HTTP 9494]</i>"| server
+
+    feed -->|"Reads SBS-1<br/><i>[TCP 30003]</i>"| dump
+    feed -->|"Publishes raw lines<br/><i>[MQTT publish, QoS 0]</i>"| mqtt
+    feed -.->|"Optional second leg<br/><i>[Pulsar protocol]</i>"| pulsar
+    mqtt -->|"Delivers raw lines<br/><i>[MQTT subscribe]</i>"| server
     backend -->|"Batch insert every 500ms, queries<br/><i>[duckdb-rs on spawn_blocking]</i>"| duckdb
 
     frontend -.->|"Chat, context, client-tool results;<br/>direct simulate and describe calls<br/><i>[AG-UI SSE + HTTP]</i>"| agent
@@ -136,11 +157,18 @@ flowchart TB
     classDef external fill:#999999,stroke:#6B6B6B,color:#fff
     classDef boundary fill:none,stroke:#666,stroke-dasharray: 6 4,color:#333
     class operator person
-    class frontend,backend,agent,simagent,voice container
+    class frontend,backend,agent,simagent,voice,feed,server container
     class duckdb db
-    class dump,pulsar,llm,mlflow external
-    class tracker,agents boundary
+    class dump,mqtt,pulsar,llm,mlflow external
+    class tracker,agents,edge boundary
 ```
+
+The edge node is the reason the broker exists. When the receiver is not on the same
+machine as the desktop, `adsb-pulsar-client` runs beside dump1090 and the desktop reads
+the feed **from the broker instead of from the socket** — same raw SBS-1 lines, same
+downstream code, one configuration flag apart. `adsb-data-server` is an *independent*
+subscriber on the same topic: it records continuously whether or not the desktop is
+running, which is what makes the Pi useful unattended.
 
 Note the asymmetry between the two arrows into the backend: the frontend calls it over
 Tauri IPC with full read/write access, while `adsb-agent` reaches it only over the
@@ -148,9 +176,9 @@ Tauri IPC with full read/write access, while `adsb-agent` reaches it only over t
 
 #### Level 3 — Component
 
-Inside the Tauri backend and the two Rust workspace crates it builds on. The dump1090 and
-Pulsar edges are omitted here — they belong to Level 2; `client.rs` is the component that
-owns them.
+Inside the Tauri backend and the two Rust workspace crates it builds on. The dump1090,
+MQTT and Pulsar edges are omitted here — they belong to Level 2; `source/` and
+`forwarder/` are the components that own them.
 
 ```mermaid
 flowchart TB
@@ -171,7 +199,9 @@ flowchart TB
         config["<b>config.rs</b><br/><i>[Component: Rust]</i><br/>Config with dual clap<br/>and serde derives"]
         monitor["<b>connection_monitor.rs</b><br/><i>[Component: Rust]</i><br/>Heartbeat watchdog<br/>and reconnection policy"]
         metrics["<b>metrics.rs</b><br/><i>[Component: Rust]</i><br/>Thread-safe throughput counters"]
-        forwarder["<b>forwarder/</b><br/><i>[Component: Rust trait]</i><br/>MessageForwarder fan-out:<br/>pulsar_forwarder.rs, file.rs"]
+        forwarder["<b>forwarder/</b><br/><i>[Component: Rust trait]</i><br/>MessageForwarder fan-out:<br/>pulsar_forwarder.rs, mqtt_forwarder.rs, file.rs"]
+        source["<b>source/</b><br/><i>[Component: Rust trait]</i><br/>MessageSource input side:<br/>socket_source.rs, mqtt_source.rs"]
+        backoff["<b>backoff.rs</b><br/><i>[Component: Rust]</i><br/>Reconnect pacing and the<br/>duplicate-client-id heuristic"]
     end
 
     subgraph engine["adsb-data-engine — parser and storage"]
@@ -196,7 +226,10 @@ flowchart TB
     toolserver -->|"Dispatches by name"| toolservice
     toolservice -->|"Read-only queries"| storage
 
-    bridge -->|"Spawns, taps"| client
+    bridge -->|"Resolves per source_kind,<br/>subscribes to the tap"| source
+    source -->|"socket: wraps"| client
+    source -->|"mqtt: paces reconnects"| backoff
+    forwarder -->|"mqtt: paces reconnects"| backoff
     bridge -->|"Parses each line"| parser
     bridge -->|"persist_batch every 500ms"| storage
     client --> forwarder
@@ -212,7 +245,7 @@ flowchart TB
     classDef component fill:#85BBF0,stroke:#5D82A8,color:#000
     classDef boundary fill:none,stroke:#666,stroke-dasharray: 6 4,color:#333
     class frontend,agent container
-    class lib,commands,state,bridge,toolserver,toolservice,client,config,monitor,metrics,forwarder,parser,storage,geo,types component
+    class lib,commands,state,bridge,toolserver,toolservice,client,config,monitor,metrics,forwarder,source,backoff,parser,storage,geo,types component
     class duckdb container
     class backend,core,engine boundary
 ```
@@ -224,11 +257,18 @@ flowchart TB
 | **dump1090** | External, TCP `:30003` | SBS-1 message source | Required for live data |
 | **adsb-pulsar-client** | `rust/adsb-pulsar-client/` | Core ingest library + standalone CLI. Owns the TCP loop, heartbeat watchdog, metrics, and the `MessageForwarder` fan-out | Compiled in |
 | ├ `forwarder/pulsar_forwarder.rs` | same | Publishes to Pulsar; behind the `pulsar` cargo feature | Yes — feature-gated |
+| ├ `forwarder/mqtt_forwarder.rs` | same | Publishes raw lines to MQTT; behind the `mqtt` cargo feature. The producer half of the no-Pulsar path | Yes — feature-gated |
+| ├ `source/socket_source.rs` | same | `MessageSource` over a direct dump1090 TCP connection — wraps `ADSBFeedClient` | Compiled in |
+| ├ `source/mqtt_source.rs` | same | `MessageSource` subscribing to the MQTT topic. What the desktop uses when `source_kind = mqtt` | Yes — feature-gated |
+| ├ `backoff.rs` | same | Shared reconnect pacing for both MQTT ends, plus the duplicate-client-id diagnostic | Compiled in |
 | └ `forwarder/file.rs` | same | Writes raw messages to disk for later replay | Yes |
 | **adsb-data-engine** | `rust/adsb-data-engine/` | SBS-1 parser, DuckDB `StorageHandle`, geodesic math. Deliberately Tauri-free so it is testable standalone | Compiled in |
 | **Tauri backend** | `src-tauri/src/` | `lib.rs` builder, `commands.rs` IPC, `state.rs` shared state, `bridge.rs` Tauri emit sink + watchdog (ingest itself lives in `adsb-data-engine::ingest`), `tool_server.rs`/`tool_service.rs` agent data plane | Compiled in |
 | **DuckDB file** | `adsb_history.db` | Persistent positions, raw messages, status events, scenarios | Yes — real-time-only mode if init fails |
 | **Next.js frontend** | `src/` | React 19 UI: Leaflet map, panels, five track categories in `AircraftTrackingContext` | Compiled in |
+| **MQTT broker** | External, TCP `:1883` (Mosquitto; `infrastructure/mqtt/`) | LAN bus carrying raw SBS-1 from a remote feed client to the desktop and to `adsb-data-server`. Required only when `source_kind = mqtt` | Yes |
+| **adsb-pulsar-client (CLI)** | `rust/adsb-pulsar-client/` | Standalone edge process: reads dump1090, publishes to MQTT and optionally Pulsar. Runs on the Pi, not in the app | Yes |
+| **adsb-data-server** | `rust/adsb-data-server/` | Headless recorder: MQTT → DuckDB, served back over Quack on `:9494`. What the desktop attaches to in remote storage mode | Yes |
 | **Apache Pulsar** | External broker | Fan-out to the wider `ads-b-project` pipeline (Spark, Delta Lake) | Yes |
 | **adsb-agent** | `rust/adsb-agent/` (Python) | LangGraph ReAct chat agent on `:8000`; AG-UI SSE to the frontend, loopback HTTP to `:8787`, voice endpoints, `/simulate/trajectory` and `/scenario/describe` | Yes |
 | **adsb-simulation-agent** | `rust/adsb-simulation-agent/` (Python) | A2A service on `:8300` turning route hints into kinematically plausible waypoints | Yes |
@@ -456,6 +496,8 @@ agreement. Session-only — nothing is persisted, everything is visible again on
 | **Core Library** | adsb-pulsar-client | (workspace) | Shared ADSB client logic |
 | **Data Engine** | adsb-data-engine | (workspace) | SBS-1 parser + DuckDB persistent storage |
 | **Embedded Database** | DuckDB | 1.2 | OLAP embedded DB for historical aircraft queries |
+| **MQTT Client** | rumqttc | 0.25 | Broker transport for `source_kind = mqtt`; `default-features = false` (no rustls) |
+| **MQTT Broker** | Eclipse Mosquitto | 2.x | External LAN bus; `infrastructure/mqtt/docker-compose.yml` |
 
 ### Application Window Configuration
 
@@ -4064,7 +4106,9 @@ stop click → POST /voice/stop ─┘   → { transcript }
 |---------|---------|---------|
 | Agent (FastAPI) | `:8000` | AG-UI SSE chat + voice endpoints |
 | Simulation agent (A2A) | `:8300` | Trajectory generation, called by `adsb-agent` |
-| Tauri tool server | `127.0.0.1:8787` | Read-only DuckDB data tools (loopback only) |
+| Tauri tool server | `127.0.0.1:8787` | Read-only DuckDB data tools (loopback only). `scripts/stack.sh` moves it to `:8788` via `ADSB_AGENT_TOOL_SERVER_PORT`, because `adsb-data-server` also wants `:8787` |
+| MQTT broker | `:1883` | Raw SBS-1 bus (Mosquitto), when `source_kind = mqtt` |
+| adsb-data-server (Quack) | `:9494` | Remote DuckDB catalog the desktop can `ATTACH` |
 | LLM endpoint | `:1234` | OpenAI-compatible model (LM Studio / Ollama), external |
 | llama-liquid-audio | `127.0.0.1:2026` | LFM2.5-Audio inference (auto-spawned on first voice request) |
 | MLflow (optional) | `:5010` | Agent tracing backend |
@@ -4094,6 +4138,193 @@ discovery), plus the `/voice/*` routes above. See `adsb-agent/src/adsb_agent/mai
 See [`adsb-agent/README.md`](../../adsb-agent/README.md) for backend setup, environment variables, the
 model-capability requirement (a reliable tool-calling model such as Qwen2.5-7B-Instruct),
 and voice-model installation.
+
+---
+
+## Message Sources & the MQTT Broker
+
+### Overview
+
+The app has always read SBS-1 straight off dump1090's TCP socket. That works only when the
+receiver is reachable from the machine running the UI, and it makes the desktop a
+*mandatory* participant: close the app and nothing is recorded.
+
+The MQTT broker breaks both constraints. A feed client next to the receiver publishes raw
+SBS-1 lines to a topic; anything that wants the feed subscribes. The desktop becomes one
+subscriber among several, and `adsb-data-server` keeps recording whether the desktop is
+running or not.
+
+MQTT was chosen over reusing Apache Pulsar for the edge hop because Pulsar is a JVM
+cluster: too heavy for a Raspberry Pi, and it needs a `protoc`-built C++ client. Mosquitto
+is a single ~200 KB binary. Pulsar remains available as an *additional* fan-out leg for the
+Spark/Delta analytics path — the two are not alternatives.
+
+### The `MessageSource` / `MessageForwarder` symmetry
+
+`MessageForwarder` already answered "where do raw lines *go*". `MessageSource` is its
+mirror: "where do they *come from*". Both ends of `adsb-pulsar-client` trade in the same
+currency — a `broadcast::Receiver<Vec<u8>>` of raw SBS-1 lines, exactly the shape
+`ADSBFeedClient::with_message_tap` already produced.
+
+```mermaid
+flowchart LR
+    dump["dump1090<br/><i>TCP 30003</i>"]
+
+    subgraph pi["Edge — adsb-pulsar-client"]
+        sock1["SocketSource"]
+        fwd["MessageForwarder fan-out"]
+    end
+
+    broker[("Mosquitto<br/><i>adsb/sbs/raw, QoS 0</i>")]
+
+    subgraph consumers["Consumers — MqttSource"]
+        desktop["Tauri backend<br/><i>bridge.rs</i>"]
+        server["adsb-data-server"]
+    end
+
+    pulsar["Apache Pulsar<br/><i>optional</i>"]
+
+    dump --> sock1 --> fwd
+    fwd -->|"MqttForwarder"| broker
+    fwd -.->|"PulsarForwarder"| pulsar
+    broker --> desktop
+    broker --> server
+```
+
+That symmetry is what kept the change small. Because a source hands back the same
+broadcast receiver the socket path did, **every downstream consumer works unchanged**:
+the parser, the 500 ms throttle, batch persistence, the status events, the UI. Only the
+few lines that *construct* the stream had to learn about the second option.
+
+### Configuration
+
+One flag selects the input; everything else is transport detail.
+
+| Field | Env override | Default | Meaning |
+|-------|--------------|---------|---------|
+| `source_kind` | `ADSB_SOURCE_KIND` | `socket` | `socket` or `mqtt` |
+| `mqtt_broker` | `ADSB_MQTT_BROKER` | `localhost` | Broker host |
+| `mqtt_port` | `ADSB_MQTT_PORT` | `1883` | Broker port |
+| `mqtt_topic` | `ADSB_MQTT_TOPIC` | `adsb/sbs/raw` | Topic, shared by publisher and subscriber |
+| `mqtt_client_id` | — | derived from `source_id` | **Must be unique per connection** — see below |
+| `mqtt_qos` | — | `0` | 0, 1 or 2; validated by `Config::validate` |
+
+The desktop loads its config from the Tauri store, never through clap, so
+`apply_env_overrides` in `lib.rs` re-implements the precedence the CLI binaries get for
+free: **default < stored < environment**. Only the fields a launch script needs are
+covered — deliberately a scripting seam, not a second configuration system. Before it
+existed, every `ADSB_*` variable the CLI advertises in `--help` silently did nothing in
+the desktop app.
+
+Blank and unparseable values are ignored rather than fatal: `export ADSB_MQTT_BROKER=` is
+a common accident and must not stop the app starting.
+
+### Broker configuration and its consequences
+
+`infrastructure/mqtt/mosquitto.conf` makes three choices that the rest of the design has
+to respect:
+
+- **`persistence false`.** A live ADS-B stream has no value in replay to a subscriber that
+  was not connected — a position from ten minutes ago is history, not news. Durability is
+  `adsb-data-server`'s job, in DuckDB. On a Pi this also avoids constant SD-card writes.
+- **QoS 0 by default.** Combined with the above, this makes **start order a correctness
+  requirement**: a recorder that is not yet subscribed does not receive a backlog, it
+  loses those messages outright. `scripts/stack.sh` therefore starts broker → recorder →
+  feed, in that order.
+- **`allow_anonymous true`.** This is a LAN-local bus. Port 1883 must not be exposed beyond
+  the LAN; the alternative is `allow_anonymous false` plus a `mosquitto_passwd` file and
+  `mqtt_username`/`mqtt_password` on both ends.
+
+Publishing is non-blocking (`try_publish`). The forwarder fan-out runs in sequence, so a
+wedged broker must never stall the socket read loop or the Pulsar leg — a full outbound
+queue is reported as an error and accounted for by the caller's retry queue, not awaited.
+
+### Liveness: a broker hop is not a socket
+
+The connection indicator cannot reuse the socket thresholds. A subscription has no TCP
+read timeout, and it has an extra hop that can retry without the consumer noticing. What
+it does have is dump1090's 60 s heartbeat, relayed through the feed client.
+
+| Policy | Degraded after | Lost after | Derived from |
+|--------|----------------|------------|--------------|
+| `LivenessPolicy::for_socket(75)` | 85 s | 105 s | read timeout + 10 / + 30 |
+| `LivenessPolicy::for_mqtt(60)` | 90 s | 180 s | 1.5 heartbeats / 3 heartbeats |
+
+`resolve()` lets **transport state win over the timers**: a broker that has dropped us is
+`Lost` even if a message arrived a moment ago, because the timers describe the *feed*
+while the transport describes the *connection*.
+
+### Reconnect pacing (`backoff.rs`)
+
+Both MQTT ends share one module, because they failed the same way. `rumqttc`'s
+`EventLoop::poll` returns its error **immediately** and applies no backoff of its own — a
+naive `loop { poll().await }` spins. Measured before the fix: ~2500 reconnects/second,
+**567,698 reconnects and a 144 MB log file**.
+
+| Rule | Value | Why |
+|------|-------|-----|
+| Delay | 100 ms doubling to 30 s | Saturating, capped |
+| Reset the attempt counter | after **30 s connected** | *Not* on connect — see below |
+| Log an attempt | first 3, then every 10th | Keeps a long outage to a readable log |
+| Suspect a duplicate id | 3 connections shorter than 5 s | See below |
+
+The reset rule is the subtle one. Resetting on `ConnAck` looks obviously right and is wrong
+for the failure that motivated this: two clients sharing an id evict each other, so the
+storm **connects successfully every time** — 59 successful connections in 12 seconds. A
+reset on connect would pin the backoff at its minimum forever. Only a connection that has
+*held* proves the transport is healthy.
+
+The same distinction produces the diagnostic. Retry count cannot separate "broker down"
+from "duplicate id", because a down broker never `ConnAck`s at all. Counting *short-lived
+established* connections can:
+
+```
+MQTT connection to localhost:1883 keeps dropping (2 times). Another client is
+probably connected with the same id ('dev-laptop') and evicting this one --
+check for a second adsb-pulsar-client, or set a distinct mqtt_client_id.
+```
+
+`MqttSource` also **re-subscribes on every `ConnAck`**, not once at startup. A broker
+restart otherwise leaves a connected client that receives nothing — the worst kind of
+failure, because every indicator reads healthy.
+
+### Message framing
+
+`MqttForwarder` publishes one SBS-1 line per message, but nothing in MQTT guarantees a
+producer will not batch several into one payload, and a payload arrives as an opaque blob
+with no framing of its own. `source::split_lines` splits on `\n`, normalises CRLF and drops
+blanks, preserving the invariant every consumer relies on: **one broadcast message is
+exactly one SBS-1 line**.
+
+### Cargo feature wiring
+
+Both MQTT halves are behind the `mqtt` feature of `adsb-pulsar-client` (`rumqttc` with
+`default-features = false`, so no rustls comes along). The desktop crate takes
+`default-features = false` to keep `clap` out of the app, which means it must ask for
+`mqtt` **explicitly**: `bridge.rs` names `MqttSource` unconditionally, with no `#[cfg]`
+fallback.
+
+It compiled for a while without asking, because `adsb-data-server` depends on the same
+crate with `features = ["mqtt"]` and Cargo unifies features within a build. That is a
+build that works by accident — removing an unrelated dependency would have broken the
+desktop app from a distance. The dependency line now declares what it actually uses.
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `adsb-pulsar-client/src/source/mod.rs` | `MessageSource` trait, `SourceStatus`, `LivenessPolicy`, `split_lines` |
+| `adsb-pulsar-client/src/source/mqtt_source.rs` | Subscriber; re-subscribes per `ConnAck` |
+| `adsb-pulsar-client/src/source/socket_source.rs` | Direct dump1090 TCP source |
+| `adsb-pulsar-client/src/forwarder/mqtt_forwarder.rs` | Publisher; non-blocking `try_publish` |
+| `adsb-pulsar-client/src/backoff.rs` | Reconnect pacing shared by both ends |
+| `src-tauri/src/lib.rs` | `apply_env_overrides` — `ADSB_*` precedence for the desktop |
+| `infrastructure/mqtt/mosquitto.conf` | Broker settings and their rationale |
+| `infrastructure/mqtt/docker-compose.yml` | `make up` starts the broker from here |
+| `src-tauri/Cargo.toml` | Must request `features = ["mqtt"]` explicitly |
+
+See [`QUICKSTART.md`](../../../QUICKSTART.md) for the three supported topologies and the
+`run-adsb-stack` skill for launching them.
 
 ---
 

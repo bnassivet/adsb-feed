@@ -18,7 +18,10 @@ axum = "0.8"
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 chrono = { workspace = true }
-adsb-pulsar-client = { path = "../../adsb-pulsar-client", default-features = false }
+# `mqtt` is a direct requirement: bridge.rs constructs MqttSource unconditionally.
+# It used to arrive only by feature unification through adsb-data-server, so
+# dropping that crate's dependency would have broken this build from a distance.
+adsb-pulsar-client = { path = "../../adsb-pulsar-client", default-features = false, features = ["mqtt"] }
 adsb-data-engine = { path = "../../adsb-data-engine" }
 # Query surface shared with the headless daemon: same answers from the desktop
 # app, the agent tool server and adsb-data-server. No clap, no MQTT here.

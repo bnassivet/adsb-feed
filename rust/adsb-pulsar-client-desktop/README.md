@@ -2,7 +2,7 @@
 
 A desktop application for real-time aircraft tracking and historical analysis, built with **Tauri v2**, **Next.js 16**, and **DuckDB**.
 
-Connects to a [dump1090](https://github.com/flightaware/dump1090) receiver (directly or via [Apache Pulsar](https://pulsar.apache.org/)), displays live aircraft positions on an interactive map, and persists every data point to a local DuckDB database for later exploration.
+Connects to a [dump1090](https://github.com/flightaware/dump1090) receiver — directly over TCP, or over an [MQTT](https://mosquitto.org/) broker when the receiver lives on another machine — displays live aircraft positions on an interactive map, and persists every data point to a local DuckDB database for later exploration.
 
 ## Overview
 
@@ -95,7 +95,7 @@ which is what makes a freshly generated scenario inspectable before you press St
 │  │     Rust Backend      │    │    Next.js 16 Frontend     │ │
 │  │                       │    │                            │ │
 │  │  dump1090 TCP ──────────── Tauri Events ──► Leaflet Map │ │
-│  │  (or Pulsar)  bridge  │    │              ──► Data Table │ │
+│  │   or MQTT     bridge  │    │              ──► Data Table │ │
 │  │       │               │    │              ──► Charts     │ │
 │  │       ▼               │    │                            │ │
 │  │  DuckDB  ◄──────────────── Tauri Commands (IPC)        │ │
@@ -108,6 +108,28 @@ which is what makes a freshly generated scenario inspectable before you press St
 - The **frontend** renders tracks on the map and queries historical data via Tauri IPC commands
 - **Arrow IPC** wire format for large query results (~4x smaller, ~5x faster than JSON)
 - **Graceful degradation**: app runs in real-time-only mode if DuckDB is unavailable
+
+### Message source: socket or MQTT
+
+```
+[Raspberry Pi]                          [Desktop]
+dump1090 --> adsb-pulsar-client --MQTT--> this app          (source_kind = mqtt)
+                    |                     :1883
+                    +--MQTT--> adsb-data-server --Quack :9494--> this app
+                                (records continuously)      (storage_mode = remote)
+```
+
+`source_kind` selects between a direct TCP read (`socket`, the default) and an MQTT
+subscription (`mqtt`). The broker exists so the receiver does not have to be on the same
+machine as the UI, and so `adsb-data-server` can keep recording when the app is closed.
+Apache Pulsar remains available as an *additional* fan-out leg for the Spark/Delta
+pipeline — it is not an alternative to MQTT.
+
+Set it from the Settings panel, or via `ADSB_SOURCE_KIND` / `ADSB_MQTT_BROKER` /
+`ADSB_MQTT_PORT` / `ADSB_MQTT_TOPIC` (environment beats the stored config). The simplest
+path is `make up-desktop` from `adsb-feed/`, which starts the broker, feed and recorder in
+the right order. See [docs/DESIGN.md §27](docs/DESIGN.md#message-sources--the-mqtt-broker)
+and [`QUICKSTART.md`](../../QUICKSTART.md).
 
 ### Optional AI Assistant
 
