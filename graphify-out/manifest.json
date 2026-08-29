@@ -5,8 +5,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/tests/common/mod.rs": {
-    "mtime": 1781463151.1731708,
-    "ast_hash": "7e7c14dbee7405d70f5e6f8fc4acc8e9",
+    "mtime": 1787910901.178615,
+    "ast_hash": "7bbdab728687e0ced87addd4d2fbe43e",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/.claude/settings.local.json": {
@@ -30,14 +30,14 @@
     "semantic_hash": "90dd71381d3650d89e087bdb6291f13e"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/src/config.rs": {
-    "mtime": 1779018324.4630919,
-    "ast_hash": "e9498ac9d59658b3b476caf6752f2b43",
-    "semantic_hash": "e9498ac9d59658b3b476caf6752f2b43"
+    "mtime": 1787938632.2597876,
+    "ast_hash": "04f20ea9fcd826ce24dbe3b4f61e2ec7",
+    "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/src/lib.rs": {
-    "mtime": 1779018324.463816,
-    "ast_hash": "2547598494f3caeac28d64892bd17d76",
-    "semantic_hash": "2547598494f3caeac28d64892bd17d76"
+    "mtime": 1787958593.0766292,
+    "ast_hash": "c3dd88714b59202519594d7ad295ed96",
+    "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/src/metrics.rs": {
     "mtime": 1781463151.172892,
@@ -45,9 +45,9 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/src/main.rs": {
-    "mtime": 1779018324.4639645,
-    "ast_hash": "561f5c2d22944b8d2111909a4b8a39e4",
-    "semantic_hash": "561f5c2d22944b8d2111909a4b8a39e4"
+    "mtime": 1787930746.5289516,
+    "ast_hash": "12b4af96309611975d4031135003a628",
+    "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/src/forwarder/pulsar_forwarder.rs": {
     "mtime": 1781463151.1723304,
@@ -55,9 +55,9 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/src/forwarder/mod.rs": {
-    "mtime": 1779018324.4635892,
-    "ast_hash": "ab755f8823689e7757bf86e8d8f2e6cd",
-    "semantic_hash": "ab755f8823689e7757bf86e8d8f2e6cd"
+    "mtime": 1787910878.1896436,
+    "ast_hash": "102f008b71175e9a68557e68199a3547",
+    "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/src/forwarder/file.rs": {
     "mtime": 1779018324.4635398,
@@ -75,8 +75,8 @@
     "semantic_hash": "4ae674cb9a5e6dc8c6afe2598c150776"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/next-env.d.ts": {
-    "mtime": 1787405679.002803,
-    "ast_hash": "2a74d3909800ca5467fa83b0ab4a4890",
+    "mtime": 1787677903.616391,
+    "ast_hash": "d0f8375ae1199dc7acd3977fc33b78b8",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/package.json": {
@@ -135,23 +135,23 @@
     "semantic_hash": "da0a2e649e05e21d5a061a3b035c6076"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/bridge.rs": {
-    "mtime": 1781463151.1659117,
-    "ast_hash": "723bcac4a038c97ae4467b417b352a2d",
+    "mtime": 1787932532.9937346,
+    "ast_hash": "66bc7794e8a6b45f6ba8c91e25cde9f2",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/lib.rs": {
-    "mtime": 1787675598.1770241,
-    "ast_hash": "50acb5b5d09a8f7526ff5a99497d0896",
+    "mtime": 1787957129.113579,
+    "ast_hash": "91c74ca0ac38a1e5a39a9bd6075aabbc",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/commands.rs": {
-    "mtime": 1787675598.4178805,
-    "ast_hash": "ca494b56abb6ddab4ea358eb71414e89",
+    "mtime": 1787934216.8036587,
+    "ast_hash": "9e13abc53deeccad0a1c81a6bdf71e88",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/state.rs": {
-    "mtime": 1787675274.5611422,
-    "ast_hash": "1675f8de1384d976408bb77e0613bcfd",
+    "mtime": 1787934013.1289086,
+    "ast_hash": "126408d6d2c2c7008fbd07cb89639a88",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/main.rs": {
@@ -190,14 +190,14 @@
     "semantic_hash": "7be5aa3cf0104bf1d223624473c2fff8"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/app/page.tsx": {
-    "mtime": 1787675767.3630328,
-    "ast_hash": "1f560d48945b5dbc59da2f4766e3ba72",
+    "mtime": 1787904581.225969,
+    "ast_hash": "10f3e46abf76bb7da3693156ef91f698",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/app/settings/page.tsx": {
-    "mtime": 1779018324.4513793,
-    "ast_hash": "f01573b2dda4e9d21e597d2125019a54",
-    "semantic_hash": "f01573b2dda4e9d21e597d2125019a54"
+    "mtime": 1787934098.0204265,
+    "ast_hash": "ec02ca65d2caa072368c2c18d5c27e0b",
+    "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/test/setup.ts": {
     "mtime": 1779018324.4615264,
@@ -300,8 +300,8 @@
     "semantic_hash": "ec5881d5bf50b17a2047cdcb596f3a4a"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/MetricsBar.tsx": {
-    "mtime": 1787675724.4749126,
-    "ast_hash": "92fe20b33635ebf5e76cc9d9586bac59",
+    "mtime": 1787904581.2261522,
+    "ast_hash": "5c00be36f83d1bef19262a476a172a38",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/DetectionRadar.tsx": {
@@ -510,8 +510,8 @@
     "semantic_hash": "6304db3375c75a0808ce01f590fad34c"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/commands.ts": {
-    "mtime": 1787675689.2807481,
-    "ast_hash": "c98fb154d7a6ea79b8bf86ce3cab37ce",
+    "mtime": 1787934031.5174124,
+    "ast_hash": "42a75065eb1c37d94545872e9ce3fcb6",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/geojson.ts": {
@@ -545,8 +545,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/types.ts": {
-    "mtime": 1787675689.2809792,
-    "ast_hash": "bfab61adbd88a5dab5705369b7cd25a1",
+    "mtime": 1787934031.5171635,
+    "ast_hash": "49b638435f95e7d3f6dde71a94758c5c",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/format.ts": {
@@ -615,7 +615,7 @@
     "semantic_hash": "21496fb264379d31c16749778c3efd0b"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/commands.test.ts": {
-    "mtime": 1787675705.1758683,
+    "mtime": 1787904581.226299,
     "ast_hash": "91aea4b3c9744293fd532ddc541cfbff",
     "semantic_hash": ""
   },
@@ -700,8 +700,8 @@
     "semantic_hash": "96442d6b075e9674f52c98673f446b65"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-engine/src/types.rs": {
-    "mtime": 1787675242.1371899,
-    "ast_hash": "8f18bf099da556fba2aca6cae72b5343",
+    "mtime": 1787932845.2757492,
+    "ast_hash": "61d926fb5139efc3a2230b89b008cf06",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-engine/src/error.rs": {
@@ -710,8 +710,8 @@
     "semantic_hash": "5227c4f3d8c3f0bc29a309c331183e64"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-engine/src/lib.rs": {
-    "mtime": 1787675478.229475,
-    "ast_hash": "3a3049934875bc9cfb274b651f027572",
+    "mtime": 1787912045.138484,
+    "ast_hash": "6e301d3924b8ef34b8078f869399a261",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-engine/src/geo.rs": {
@@ -720,8 +720,8 @@
     "semantic_hash": "a5630a8e20e5af72a08066f12538f337"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-engine/src/storage.rs": {
-    "mtime": 1787675478.2545705,
-    "ast_hash": "305992e1a8e1583f147aaa6d531416d6",
+    "mtime": 1787933142.2188642,
+    "ast_hash": "c6a9124b2c2e38f2a0e2f05cf90f5f8f",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-engine/src/sbs_parser.rs": {
@@ -745,8 +745,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/CLAUDE.md": {
-    "mtime": 1787675865.4418638,
-    "ast_hash": "a7c38a1d9e74c7a21e5293a0c2648e76",
+    "mtime": 1787932053.1994584,
+    "ast_hash": "e393eb758298549d13e76ace1aaa82c6",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/QUICKSTART.md": {
@@ -755,9 +755,9 @@
     "semantic_hash": "3569c8b575a1a7eb99fff8748f7bc3d0"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/README.md": {
-    "mtime": 1779018324.4627223,
-    "ast_hash": "b294445d47e8ff6e6a0b4956ca42fd3b",
-    "semantic_hash": "b294445d47e8ff6e6a0b4956ca42fd3b"
+    "mtime": 1787930855.8026526,
+    "ast_hash": "a0d0c8205cb490c9d45e2ee83689b3e1",
+    "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/DOCUMENTATION.md": {
     "mtime": 1779018324.46238,
@@ -775,9 +775,9 @@
     "semantic_hash": "04961e57784ea886fca06253f4eedb28"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/docs/DESIGN.md": {
-    "mtime": 1779018324.4629004,
-    "ast_hash": "0958f5b53a2cbaa1fa0db424eeb67c17",
-    "semantic_hash": "0958f5b53a2cbaa1fa0db424eeb67c17"
+    "mtime": 1787932579.3040035,
+    "ast_hash": "9125e1c801fce0becec50b88c32f6dbb",
+    "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/QUICKSTART.md": {
     "mtime": 1787409041.4146929,
@@ -785,13 +785,13 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/README.md": {
-    "mtime": 1787409041.4149935,
-    "ast_hash": "e9a104c96963c33902de3de7508fe000",
+    "mtime": 1787961777.4998572,
+    "ast_hash": "0fd6e28cb634a170ac1ab789ecc31996",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/CLAUDE.md": {
-    "mtime": 1787675891.6188822,
-    "ast_hash": "aa1e316fb893db2f433acb2f091ebb46",
+    "mtime": 1787961777.5000746,
+    "ast_hash": "a201b12760f92894f80836be2495d00e",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/architecture-ipc-animated.html": {
@@ -805,8 +805,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/DESIGN.md": {
-    "mtime": 1787675865.4428902,
-    "ast_hash": "a7c2e289538fc7bc6047a9aad4491416",
+    "mtime": 1787961739.4327805,
+    "ast_hash": "dd7c95528ee615154fa18ce1240ba357",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/2026-02-22-imported-tracks-selection-design.md": {
@@ -920,14 +920,14 @@
     "semantic_hash": "26b7b7fb43062bec1066acfe6d6c804c"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-engine/README.md": {
-    "mtime": 1779018324.4125807,
-    "ast_hash": "407686fed9a5298f247533b79f16d48e",
-    "semantic_hash": "407686fed9a5298f247533b79f16d48e"
+    "mtime": 1787904581.2199404,
+    "ast_hash": "69184566bea344d267ade51dc76e1de7",
+    "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-engine/docs/DESIGN.md": {
-    "mtime": 1779018324.4127245,
-    "ast_hash": "629d8ba64901ecbe0d40ad2688e4e987",
-    "semantic_hash": "629d8ba64901ecbe0d40ad2688e4e987"
+    "mtime": 1787933452.8842168,
+    "ast_hash": "d5a367f789d49f70ba6fe29aa8858a83",
+    "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-flight-details-short-history.png": {
     "mtime": 1779018324.4307811,
@@ -1314,16 +1314,6 @@
     "ast_hash": "ff717a949354a725474747dfe9b37b63",
     "semantic_hash": ""
   },
-  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/tool_service.rs": {
-    "mtime": 1787675274.559067,
-    "ast_hash": "134f43c3bcf1893df73ddae780fec2c9",
-    "semantic_hash": ""
-  },
-  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/tool_server.rs": {
-    "mtime": 1787675274.5604196,
-    "ast_hash": "e4268961ca02dc2aa83054f681cc6f14",
-    "semantic_hash": ""
-  },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/AIChatContent.tsx": {
     "mtime": 1780965860.7906587,
     "ast_hash": "e3d27adf74917b49d58e316b54f28300",
@@ -1700,9 +1690,9 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/CLAUDE.md": {
-    "mtime": 1781445141.0969536,
-    "ast_hash": "82efb97a359f5c7290bf2513d14686be",
-    "semantic_hash": "82efb97a359f5c7290bf2513d14686be"
+    "mtime": 1787995342.787669,
+    "ast_hash": "2f8c50beef5cbd985c68a2446698f28d",
+    "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/experimentation/TEST_MODE.md": {
     "mtime": 1780965860.7660105,
@@ -1835,8 +1825,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/.github/workflows/ci.yml": {
-    "mtime": 1781463151.1581688,
-    "ast_hash": "4741f2ec0e006cf094b63b11157b968b",
+    "mtime": 1787930476.054369,
+    "ast_hash": "a78d94a4f80b45c3cd8af19ae1fff53d",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/README.md": {
@@ -1875,8 +1865,8 @@
     "semantic_hash": "7e12c73327a2e35037d8097db0991019"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/deferred/duckdb-quack-client-server-redesign.md": {
-    "mtime": 1787675891.6057894,
-    "ast_hash": "5b1c33bff7a75c2f51a725a679c288c5",
+    "mtime": 1787933495.8688638,
+    "ast_hash": "a0dda19f3525e08b0dfd89d2558ac58a",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/eslint.config.mjs": {
@@ -2245,8 +2235,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-engine/src/share.rs": {
-    "mtime": 1787675319.903783,
-    "ast_hash": "9dd951ddd4ebe9eb663a319b7dd557fc",
+    "mtime": 1787933393.1337814,
+    "ast_hash": "618662fe76a4ae26f84b477d15c40acf",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-simulation-agent/README.md": {
@@ -2337,6 +2327,1706 @@
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/kubernetes/base/k8_manifest.yaml": {
     "mtime": 1786889081.0159037,
     "ast_hash": "329e0b4b16bfa86a1fdb1db70fd7b52b",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/tests/test_source_flow.rs": {
+    "mtime": 1787910901.1799567,
+    "ast_hash": "b750097bc25b7c0bc358c007298dc973",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/src/backoff.rs": {
+    "mtime": 1787959027.487,
+    "ast_hash": "9be0fea9cb41b6e77846057a292b4eab",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/src/forwarder/mqtt_forwarder.rs": {
+    "mtime": 1787958978.594993,
+    "ast_hash": "605f034e5ab5912ec9e62c0bc846888f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/src/source/mod.rs": {
+    "mtime": 1787932532.9947307,
+    "ast_hash": "308e81aca0a3973ba20d1fdbd2cb3cdf",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/src/source/mqtt_source.rs": {
+    "mtime": 1787958933.2682414,
+    "ast_hash": "997f03b8f37a78f7ff22a456ec7f5e1b",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/src/source/socket_source.rs": {
+    "mtime": 1787910901.1774485,
+    "ast_hash": "8ef371fab4097601692ee7eb438eb14d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/.rustc_info.json": {
+    "mtime": 1787931981.745625,
+    "ast_hash": "6ffac19ccb0ea2add0f1ca8f60f6e658",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/thiserror-d2dd2fc965720053/build-script-build-script-build.json": {
+    "mtime": 1787928960.8114505,
+    "ast_hash": "5452d8bf90ddb1982d73d9c796174eb8",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/flatbuffers-55f7d31f43c3c97b/lib-flatbuffers.json": {
+    "mtime": 1787929050.1637611,
+    "ast_hash": "4886ce7cde10cee348b6752f50491584",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/httparse-1888a10c6f1c7d6b/build-script-build-script-build.json": {
+    "mtime": 1787929048.3213608,
+    "ast_hash": "5534fc1f81e69701cc5e0f5b73de9dcd",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tracing-attributes-0f82b26bc028936d/lib-tracing_attributes.json": {
+    "mtime": 1787928963.2272227,
+    "ast_hash": "57ddb0c5b77ad00e82df01ea446faa9a",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/adler2-e0e239cbe7a75858/lib-adler2.json": {
+    "mtime": 1787929048.2735717,
+    "ast_hash": "1f4300d07d1c670d5b0b77e596a38396",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/matchers-a049f3a4f08224f8/lib-matchers.json": {
+    "mtime": 1787929050.8203237,
+    "ast_hash": "a17464d28d8a5cf43935b63239e021fe",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/adsb-pulsar-client-5d44479b709957bc/lib-adsb_pulsar_client.json": {
+    "mtime": 1787931440.056642,
+    "ast_hash": "c068e4399253b341a7127790e83c44ff",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/chrono-360100ba291fd731/lib-chrono.json": {
+    "mtime": 1787929049.7632718,
+    "ast_hash": "4a4c52f091cab2fdc527c9a6f0a309b0",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/form_urlencoded-8b34a53f5efc3f32/lib-form_urlencoded.json": {
+    "mtime": 1787929050.9016242,
+    "ast_hash": "c39ed04854a66c31c3bf9b507a2cc5c5",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/futures-channel-5c120154689f1427/lib-futures_channel.json": {
+    "mtime": 1787929050.5738204,
+    "ast_hash": "c0ca3d4bdf66c3ab031e918d788a58e8",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/num-complex-7e723a6a0802ace4/lib-num_complex.json": {
+    "mtime": 1787929048.8689508,
+    "ast_hash": "e45cf2ca6b8f1963b61b49bb8e982019",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/fallible-iterator-fc16834570bdbfdf/lib-fallible_iterator.json": {
+    "mtime": 1787929051.229902,
+    "ast_hash": "7d8c98817b3822a21e1553a07c2dc0d5",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/regex-automata-b00c619ad0dd1560/lib-regex_automata.json": {
+    "mtime": 1787928963.5293734,
+    "ast_hash": "6b10153c9de215b147c6a5a3149c5180",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/num-bigint-4847b61f27bc662b/lib-num_bigint.json": {
+    "mtime": 1787929049.6601644,
+    "ast_hash": "2f0e3180a16b7d15a3f4c006081b6b0f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/futures-core-dca99945a76c136c/lib-futures_core.json": {
+    "mtime": 1787928960.4118705,
+    "ast_hash": "0e1004af02fa9c199132220d05e8086d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/thiserror-8b600af0f14a57bc/run-build-script-build-script-build.json": {
+    "mtime": 1787928960.926367,
+    "ast_hash": "69f275dc1282bce341929c08da3f80f3",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/webpki-roots-cf8d4ae1efd1b7f7/lib-webpki_roots.json": {
+    "mtime": 1787929049.3459864,
+    "ast_hash": "0c651651ad3f89eb697a7c54b3398ff1",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rustversion-72318aaf7f25e23f/build-script-build-script-build.json": {
+    "mtime": 1787929048.6268468,
+    "ast_hash": "6aef45fdb4cc0f65df76e5e3df0435ae",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde-2a936b5b337620c9/run-build-script-build-script-build.json": {
+    "mtime": 1787929049.4295824,
+    "ast_hash": "11d5679cff2ecffec754ab520caa2c1b",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tokio-util-f76ccc74c8bd0cd3/lib-tokio_util.json": {
+    "mtime": 1787928964.9554696,
+    "ast_hash": "17cc7ce37a67706724e40d81dab5127f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/comfy-table-dc0d362b37f246e2/lib-comfy_table.json": {
+    "mtime": 1787929052.640823,
+    "ast_hash": "cdc282c68b92a6a8314e53a96a83a15b",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/subtle-ed309ac2a699b7e7/lib-subtle.json": {
+    "mtime": 1787929048.9952757,
+    "ast_hash": "69cf411b69bdb526e709dff874a2979e",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/axum-core-188d0a8eb3bd23a4/lib-axum_core.json": {
+    "mtime": 1787929052.007028,
+    "ast_hash": "f8072c5956d2f860e3ae74297a9565ee",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_derive-aa3b097af62537fe/lib-serde_derive.json": {
+    "mtime": 1787928963.7285545,
+    "ast_hash": "2e3ec6a656b1fa44505cf486914dffbb",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/memchr-d488a6d24a5644a8/lib-memchr.json": {
+    "mtime": 1787929048.8669393,
+    "ast_hash": "1dff8f84019b57b93f3bf99b1c59db11",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/num-traits-a119026750d00a80/build-script-build-script-build.json": {
+    "mtime": 1787929047.9410436,
+    "ast_hash": "5190e1391afa664c23181a05005bd687",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/chrono-88705bbe7bf6e4aa/lib-chrono.json": {
+    "mtime": 1787928962.3508158,
+    "ast_hash": "fb900c8402863d5ba1ecc6ce8380b2e1",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/anstyle-query-90563f163e186812/lib-anstyle_query.json": {
+    "mtime": 1787928960.4871905,
+    "ast_hash": "c031bc05c85d2eb3d63d4fe963cadbdc",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde-f849a0628314f954/lib-serde.json": {
+    "mtime": 1787928963.940055,
+    "ast_hash": "9d33ef0fcf3f3509a8fe082ad8de1665",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/is_terminal_polyfill-c56b62ad9112c4f7/lib-is_terminal_polyfill.json": {
+    "mtime": 1787928960.5350728,
+    "ast_hash": "b109f4e2c697f32076b83dcab2eae606",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/zmij-ab353fd204a6cc97/lib-zmij.json": {
+    "mtime": 1787928960.926034,
+    "ast_hash": "f128f64f3a3eac4b20016d79601b5617",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/base64-c54e39d71db32089/lib-base64.json": {
+    "mtime": 1787929050.2712462,
+    "ast_hash": "946f603d2a9d127817caeef195859013",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/lock_api-d9fbe8774d820ee0/lib-lock_api.json": {
+    "mtime": 1787928960.5030494,
+    "ast_hash": "06930cde72a2b55f29aa089dd46c596e",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/phf-7da688f27024e02e/lib-phf.json": {
+    "mtime": 1787929050.8115146,
+    "ast_hash": "b52557e28fcfc4fbb98875e0198dc1eb",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/cfg-if-f0655915de319c8e/lib-cfg_if.json": {
+    "mtime": 1787928960.3913426,
+    "ast_hash": "8664dfc0d25d3f6b50e375fc702be14c",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/flatbuffers-373c18f53a38241a/run-build-script-build-script-build.json": {
+    "mtime": 1787929049.620371,
+    "ast_hash": "7f374c9979bd8f91a4b8ed146b180e1f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/futures-util-432eea38e981a01a/lib-futures_util.json": {
+    "mtime": 1787928961.7497642,
+    "ast_hash": "a8c285b8116d4a16cc8467dac0a00bb2",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/hashlink-7e1666e89bfb4d08/lib-hashlink.json": {
+    "mtime": 1787929050.8673797,
+    "ast_hash": "599235f1e628c4a88e78746e5acb1cae",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/indexmap-b07c7785dcf9c435/lib-indexmap.json": {
+    "mtime": 1787929049.2781343,
+    "ast_hash": "a3faf170e4f610e8f4e446e0b3e2cc05",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/mime-7dd7c49b904759ed/lib-mime.json": {
+    "mtime": 1787929051.2197914,
+    "ast_hash": "51226cf6ea89305d00ce7ea8ba426dfa",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/clap_builder-86ebdc6284f962eb/lib-clap_builder.json": {
+    "mtime": 1787928963.8221776,
+    "ast_hash": "4f2aa2f94908dff15f22ba65322b6cec",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/pkg-config-1683a16870f8f71b/lib-pkg_config.json": {
+    "mtime": 1787929050.182168,
+    "ast_hash": "54715b4b3e9f7108ef703beb0bd801c8",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_json-fbac6ee3faf94895/run-build-script-build-script-build.json": {
+    "mtime": 1787929049.7610722,
+    "ast_hash": "0fe4102dd4bf47bd5322e26c8d3d32ef",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/crc32fast-ae893904758b3d9e/build-script-build-script-build.json": {
+    "mtime": 1787929047.8932364,
+    "ast_hash": "a8158277a74a018916acd632b18cdbfc",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tracing-log-9149b090f87f2d65/lib-tracing_log.json": {
+    "mtime": 1787928960.874591,
+    "ast_hash": "d1ff126e30404fd07e357f903d94d0f5",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/anstyle-parse-f59f2b49b18f3279/lib-anstyle_parse.json": {
+    "mtime": 1787928960.537008,
+    "ast_hash": "9119e1b04e3c87100efb170f894bdd62",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/lexical-parse-float-f6f59834a472a1a4/lib-lexical_parse_float.json": {
+    "mtime": 1787929049.92062,
+    "ast_hash": "3490f5a976615569d49a23438e3defab",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/num-traits-12482c4200c116ee/lib-num_traits.json": {
+    "mtime": 1787929048.6047895,
+    "ast_hash": "8a941ae721fb5ede3c18fdd05d3505fa",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/equivalent-042a2e3770f73503/lib-equivalent.json": {
+    "mtime": 1787929048.5190785,
+    "ast_hash": "75641336e19d892154c58940ed2f48e4",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde-669a22408795954a/run-build-script-build-script-build.json": {
+    "mtime": 1787928960.7225008,
+    "ast_hash": "6c38c10a7ec9c6cd41209e46ed4071ed",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/thiserror-7e8142dadee70f90/lib-thiserror.json": {
+    "mtime": 1787928963.298217,
+    "ast_hash": "f485ab78ab0aae57ed8d0b94e9974ca2",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/hashbrown-e2fd2e76e3b87f35/lib-hashbrown.json": {
+    "mtime": 1787929050.936124,
+    "ast_hash": "25184ca85a5758dd1d73c15c9f24bb2e",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/num-traits-a16544289b4e7073/run-build-script-build-script-build.json": {
+    "mtime": 1787928961.0963957,
+    "ast_hash": "62937994dc880150ddd8afb34408c95f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/chrono-tz-a9f014746b9d746b/run-build-script-build-script-build.json": {
+    "mtime": 1787929050.806161,
+    "ast_hash": "d1c2d77df0ec88945020f52123ba440a",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rustls-4e815e00a931e7b1/run-build-script-build-script-build.json": {
+    "mtime": 1787929052.3321307,
+    "ast_hash": "96767360e372e999f33a1b8732faea1f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_core-85397f206c4777fa/lib-serde_core.json": {
+    "mtime": 1787929049.2621162,
+    "ast_hash": "e151a9d618c030c87d8ff42e1f77bfd9",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/bytes-5df098d48afcd3e8/lib-bytes.json": {
+    "mtime": 1787928960.5938697,
+    "ast_hash": "c3610be906f56cf5557d3666def005cc",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/libc-faaf5757fe92a284/lib-libc.json": {
+    "mtime": 1787928961.1984031,
+    "ast_hash": "ab7adef5f0c6ff8a049bef63e0d4811b",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/hashbrown-289fc7b40bdf12c1/lib-hashbrown.json": {
+    "mtime": 1787929047.8800693,
+    "ast_hash": "0bb52c53fc9bd168280177972d298ace",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/unicode-width-870198bf8ece8815/lib-unicode_width.json": {
+    "mtime": 1787929049.8447387,
+    "ast_hash": "1ff129c8e4bcf83f036b5012551e2666",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/http-c93987924cba7f49/lib-http.json": {
+    "mtime": 1787929050.0380635,
+    "ast_hash": "14da6fc2e44c0f28be49d0fd050d83f3",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/memchr-acc1e938fbf204f4/lib-memchr.json": {
+    "mtime": 1787928961.010394,
+    "ast_hash": "ad4082ecd2b80746a53610dad9c6262f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/clap_derive-009528c5deb4b675/lib-clap_derive.json": {
+    "mtime": 1787928963.4193063,
+    "ast_hash": "732b2c2a1d885468f515a7488367667f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/ring-576fb8643fe700e0/lib-ring.json": {
+    "mtime": 1787929052.851526,
+    "ast_hash": "6b7ad9adc5549053a58b43675587e275",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/semver-c1137a73b7b9738f/lib-semver.json": {
+    "mtime": 1787929048.2503712,
+    "ast_hash": "5007074178322bef41c2223127d176aa",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/ahash-fab4167a17a84e48/lib-ahash.json": {
+    "mtime": 1787929051.7180161,
+    "ast_hash": "2599b0b1123fe409c89b02cec35257c2",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/percent-encoding-0db4dddef7443dab/lib-percent_encoding.json": {
+    "mtime": 1787929050.78649,
+    "ast_hash": "07dc0e1de2d03421b4cc5e2390ecf2fa",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/cfg-if-3ee43fd78ba185a2/lib-cfg_if.json": {
+    "mtime": 1787929047.5885985,
+    "ast_hash": "b2bb9a91436a394b351d65d261f3b208",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/vcpkg-09736806f63943f2/lib-vcpkg.json": {
+    "mtime": 1787929050.3938482,
+    "ast_hash": "c65cd70ff1e3e34e8e27d8517bc29c4d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_spanned-7f3e409609054daa/lib-serde_spanned.json": {
+    "mtime": 1787929051.07387,
+    "ast_hash": "682e4b7a1a755029fa469d06ead700de",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/linux-raw-sys-78f7729b3ee92aca/lib-linux_raw_sys.json": {
+    "mtime": 1787929048.9519126,
+    "ast_hash": "30a63b3be0ee8deb1f1c16491bb9db70",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/adsb-data-server-9c65f01b863f4dbe/lib-adsb_data_server.json": {
+    "mtime": 1787931964.8768127,
+    "ast_hash": "5c3d05dfa5b6155752f759cb652012b9",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/strum-d944d9d79a6fb78d/lib-strum.json": {
+    "mtime": 1787929052.2696974,
+    "ast_hash": "2658e9206a92f86dd6183a1804b855a3",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rustix-78497f22db20d153/lib-rustix.json": {
+    "mtime": 1787929049.6171227,
+    "ast_hash": "acf141c4a251cffbf8a0b091a31fa4a5",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/lexical-parse-integer-3de680dce0c78942/lib-lexical_parse_integer.json": {
+    "mtime": 1787929049.4009693,
+    "ast_hash": "c56eeb5b81592877389e7db88b5d542e",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/jobserver-ceda8d1508cbd772/lib-jobserver.json": {
+    "mtime": 1787929048.2177682,
+    "ast_hash": "3f00592f2a2be836aaa93c365d8af742",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/ureq-adaa36fed1b4b712/lib-ureq.json": {
+    "mtime": 1787930188.6215928,
+    "ast_hash": "a097229fca6b05ff237e26f44b584023",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/toml-4d887ceae8c0edf3/lib-toml.json": {
+    "mtime": 1787930187.3412793,
+    "ast_hash": "15d7c216400588feb81d66dc92a7a884",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/clap-ae19a0c299649dbd/lib-clap.json": {
+    "mtime": 1787928963.4433715,
+    "ast_hash": "079b4be56c5fe0434ec711d358ec4c0d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/flatbuffers-fb2ad4fae7082fa7/build-script-build-script-build.json": {
+    "mtime": 1787929049.5848057,
+    "ast_hash": "9244bc383b76eb530ae40fe533c207f1",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/xattr-b19970907a1b012b/lib-xattr.json": {
+    "mtime": 1787929049.1427422,
+    "ast_hash": "5339e092979c0f8d71fb94c589de8299",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/toml_datetime-ddbbb04c0bc3e006/lib-toml_datetime.json": {
+    "mtime": 1787929051.0822194,
+    "ast_hash": "4706cdf2132ef630ee7ced0618288aad",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/regex-syntax-b4128cdaa68f8de3/lib-regex_syntax.json": {
+    "mtime": 1787929050.0260723,
+    "ast_hash": "e9a9fc7f98a13e3e026bbe6dd4dfe429",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/http-body-ef0e65d01ebf6c0c/lib-http_body.json": {
+    "mtime": 1787929049.9050405,
+    "ast_hash": "9a099b4c932b27750808bd372e50029c",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/anyhow-a38ee2d8fae85328/build-script-build-script-build.json": {
+    "mtime": 1787928961.1457167,
+    "ast_hash": "86c2bcae8f95dcf5bcd1f1c7f82edde4",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/arrow-row-846dd62d8fdaae3e/lib-arrow_row.json": {
+    "mtime": 1787930190.9502819,
+    "ast_hash": "800ffdebee890dca2a0b0b8eeea84956",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/itoa-cc9d15e7b1a00be6/lib-itoa.json": {
+    "mtime": 1787928960.7209108,
+    "ast_hash": "82f481d1a1d738537aac0eafc1a07e60",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/httparse-f8b7672791e65c40/run-build-script-build-script-build.json": {
+    "mtime": 1787929050.7027006,
+    "ast_hash": "bb61c7d23516856e377e704fd954c1c6",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/arrow-select-9aa9b7a2a5c30b12/lib-arrow_select.json": {
+    "mtime": 1787930456.7184248,
+    "ast_hash": "e33d5519a61165c5d9fe2cc515f6b62f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/shlex-4315d36140729026/lib-shlex.json": {
+    "mtime": 1787929047.6736634,
+    "ast_hash": "29c6979e389aa346e2476c0bec45ae2d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rustls-9b1252e982024b2e/build-script-build-script-build.json": {
+    "mtime": 1787929048.418344,
+    "ast_hash": "e45f91f1f4d6381cfeb8aa3dcd0a8572",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/phf_shared-f572cfe8f8729fc4/lib-phf_shared.json": {
+    "mtime": 1787929050.405081,
+    "ast_hash": "6ae6b5161fbec0898b6e5b28bfcddc71",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/arrow-arith-75223c9833203adb/lib-arrow_arith.json": {
+    "mtime": 1787930455.9151077,
+    "ast_hash": "510e455eba016564f28827a0f0412afa",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/arrow-ord-f7af48ea9accbde6/lib-arrow_ord.json": {
+    "mtime": 1787930694.422099,
+    "ast_hash": "526c17bd67d63859ff5e35f59676f838",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/adsb-pulsar-client-f0cd692971dd210f/bin-adsb-pulsar-client.json": {
+    "mtime": 1787928970.42409,
+    "ast_hash": "74198b9cd5c68fb041858a05928b585c",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/adsb-data-engine-50255d90f38399c6/lib-adsb_data_engine.json": {
+    "mtime": 1787931963.3666797,
+    "ast_hash": "3d5a81ff39979c09287daf3b3dd7cddb",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/chrono-tz-8cde948da18d265c/build-script-build-script-build.json": {
+    "mtime": 1787929050.7724767,
+    "ast_hash": "f7d409265dc054ed00a982a9fde606ae",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/arrow-cast-190445dc447e3d35/lib-arrow_cast.json": {
+    "mtime": 1787930700.598605,
+    "ast_hash": "b8ec1f24672abfe2bf48dc001209df1e",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_json-403ec5b1ef4736cb/lib-serde_json.json": {
+    "mtime": 1787929050.2978215,
+    "ast_hash": "5d718b4c1e4d77c04747dbc69ac07ed4",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/bitflags-ca0c554f99092dc4/lib-bitflags.json": {
+    "mtime": 1787929047.733986,
+    "ast_hash": "1a2039323e3fd6d354e72d511d825ad1",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/arrow-ipc-e451f1fa037402a2/lib-arrow_ipc.json": {
+    "mtime": 1787930190.7691712,
+    "ast_hash": "fb513447b6d5e1eaad6dc0b48027f223",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/colorchoice-24861218243b0ba3/lib-colorchoice.json": {
+    "mtime": 1787928960.5881405,
+    "ast_hash": "71f606cc1814c7f16254c763eb08be29",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/atomic-waker-c51659067029ef4f/lib-atomic_waker.json": {
+    "mtime": 1787929050.546819,
+    "ast_hash": "ddc9b558e0c90a6ac0a540c1d295e948",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/ring-3dacd9dbc5ec4471/run-build-script-build-script-build.json": {
+    "mtime": 1787929052.324071,
+    "ast_hash": "783380709bd1fc1455178705a4a1179a",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/arrow-string-a20df2143bf8c653/lib-arrow_string.json": {
+    "mtime": 1787930455.0451128,
+    "ast_hash": "989210b1781f7e2deeb87040a205d0f0",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/axum-5359fedd66674df6/lib-axum.json": {
+    "mtime": 1787929053.82801,
+    "ast_hash": "88a0a6402c8793eac087a4c44a6a4649",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/zmij-81d345454b75475d/run-build-script-build-script-build.json": {
+    "mtime": 1787929048.4818559,
+    "ast_hash": "3b0f5f336d1acb43fc767bfcd7c368fa",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/pin-project-lite-42e2ff5977ae53dc/lib-pin_project_lite.json": {
+    "mtime": 1787928960.3960836,
+    "ast_hash": "ae16b9e8a7b63f2549a33c8880446e22",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/zopfli-5a68ac493bcae60d/lib-zopfli.json": {
+    "mtime": 1787929049.3023934,
+    "ast_hash": "c58048f75a302e09b2c9c00e522c53fd",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/find-msvc-tools-97378185dded9315/lib-find_msvc_tools.json": {
+    "mtime": 1787929047.698366,
+    "ast_hash": "ead96d1650938548c5350cdc8a707e77",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/parking_lot_core-49360e7bc503f291/build-script-build-script-build.json": {
+    "mtime": 1787928960.6071835,
+    "ast_hash": "dbf6692b403d71e94bb077f903168bb5",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rustix-7b6e5edb24230a05/build-script-build-script-build.json": {
+    "mtime": 1787929048.4971032,
+    "ast_hash": "bdb42252d322be0b29256ccf11f03def",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/once_cell-a98e1f220e8016f4/lib-once_cell.json": {
+    "mtime": 1787929048.9724588,
+    "ast_hash": "2dd2875355d7209a2c82c5782c3b8c43",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/signal-hook-registry-2e5a643ad5eb2e60/lib-signal_hook_registry.json": {
+    "mtime": 1787928961.3686354,
+    "ast_hash": "764126f03a141ad9d2bf205a0c8e27c8",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/proc-macro2-60cf681017ae3996/run-build-script-build-script-build.json": {
+    "mtime": 1787928960.826964,
+    "ast_hash": "319430b044261b862950ffd94cb884f0",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/pin-utils-b81a3b037649a2b4/lib-pin_utils.json": {
+    "mtime": 1787928960.785613,
+    "ast_hash": "4b8977f43011aaf62903063de0dc879f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/anstyle-e48aead50b29c8df/lib-anstyle.json": {
+    "mtime": 1787928960.6288278,
+    "ast_hash": "b85da319c67e4b5c29ef5c942d50e687",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/parking_lot-6662a52d34028a5f/lib-parking_lot.json": {
+    "mtime": 1787928961.5193868,
+    "ast_hash": "b75a3e55a20147140b32232f09648bc3",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/unicode-ident-4e4e09312351b1dc/lib-unicode_ident.json": {
+    "mtime": 1787928960.3844247,
+    "ast_hash": "36be81e75a4064546c2728d13217e149",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/errno-9f48700bdc0bb482/lib-errno.json": {
+    "mtime": 1787928961.2230067,
+    "ast_hash": "66b20227f4c7d5858b7790a024e04ea4",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/libc-f71b0bd6ffd55209/build-script-build-script-build.json": {
+    "mtime": 1787928960.732016,
+    "ast_hash": "315c642cd1eba40592671f1654132f21",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/syn-41d9ec5a89c5ffc4/lib-syn.json": {
+    "mtime": 1787928962.513716,
+    "ast_hash": "1a4d987d8d41a08541ecd9443b0d9aa7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tower-layer-f2d8d0716e31c7af/lib-tower_layer.json": {
+    "mtime": 1787929050.7008784,
+    "ast_hash": "15b158eb6358826dfaa797cb7e8c8cb5",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/untrusted-2326db8fdbbda207/lib-untrusted.json": {
+    "mtime": 1787929048.042366,
+    "ast_hash": "b10c85e7fffd6bf5d50418b5e0e06298",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/httparse-bce524bae2a59598/lib-httparse.json": {
+    "mtime": 1787929048.4582517,
+    "ast_hash": "e9fd4ab67870f5dccc9bcb0f9b180637",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/zlib-rs-6f88f4ae86a9ae18/lib-zlib_rs.json": {
+    "mtime": 1787929050.6768076,
+    "ast_hash": "7931741e98bb6c1317421e2f11aed330",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tar-4cc0252f261a1be6/lib-tar.json": {
+    "mtime": 1787929050.0989408,
+    "ast_hash": "55741ff0286bb76a5fa76b03a13eaef4",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/lexical-write-integer-224049e8a74a665a/lib-lexical_write_integer.json": {
+    "mtime": 1787929049.4733362,
+    "ast_hash": "a28e9405dd064c2f4a7a39ed4a79f3a3",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_core-fa6fabd7607d6b4f/lib-serde_core.json": {
+    "mtime": 1787928961.6163292,
+    "ast_hash": "54bb28c5a078f3d03fb963b8ad28ee78",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/crc32fast-79a4d14ec7b2005d/run-build-script-build-script-build.json": {
+    "mtime": 1787929047.9216044,
+    "ast_hash": "2520a6816652cb1b7d23afc8e1ceff57",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tracing-4aacc04e84f37a3b/lib-tracing.json": {
+    "mtime": 1787929049.3752437,
+    "ast_hash": "69c7801f73bcdd96599eccf18730c178",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/itoa-3f5fbdba0250807c/lib-itoa.json": {
+    "mtime": 1787929048.1343722,
+    "ast_hash": "d1093a40c34fb5d865a12cabc940ac64",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tracing-serde-09cab0dbe6d34191/lib-tracing_serde.json": {
+    "mtime": 1787929051.0443654,
+    "ast_hash": "f1bad7b87e0388eaaefd8f6ed2c5b1e7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_urlencoded-f2740b73a4a78223/lib-serde_urlencoded.json": {
+    "mtime": 1787929051.3408859,
+    "ast_hash": "3247db97d6fdf5fedd332dc93f881d77",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/hyper-util-bd84c042d56ac331/lib-hyper_util.json": {
+    "mtime": 1787929051.6162467,
+    "ast_hash": "7539e4e7d47507033d1cbfecfbdf692c",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/fallible-streaming-iterator-ab55427c486b895d/lib-fallible_streaming_iterator.json": {
+    "mtime": 1787929051.1470432,
+    "ast_hash": "97db6286beb54fae38200a97220cc0b5",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/libduckdb-sys-82f520b5556222ee/build-script-build-script-build.json": {
+    "mtime": 1787930189.1193097,
+    "ast_hash": "4234db8dfebfa43be83fc92e7efa94f9",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/httparse-e32f52c2a5f4b792/lib-httparse.json": {
+    "mtime": 1787929050.8958733,
+    "ast_hash": "a1a3306cdb8e4da555529e83dd171397",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/flate2-f8f6ca8f5ce50ed3/lib-flate2.json": {
+    "mtime": 1787929050.6582608,
+    "ast_hash": "d51252a5cb10bcad407025e839e96fb7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/nu-ansi-term-e79350747186377a/lib-nu_ansi_term.json": {
+    "mtime": 1787928961.0879164,
+    "ast_hash": "69a6cb2fb15421e6ede0723f30dd5355",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/iana-time-zone-a31ead42b06fc71e/lib-iana_time_zone.json": {
+    "mtime": 1787928961.1064405,
+    "ast_hash": "655126aedc1838a0b787514aaf54efe1",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/http-body-util-d5aaf6477ac2d7f3/lib-http_body_util.json": {
+    "mtime": 1787929051.058279,
+    "ast_hash": "375fe362f330f79336b31146d79ab08f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/parking_lot_core-49124df8eeae97d3/lib-parking_lot_core.json": {
+    "mtime": 1787929047.8368132,
+    "ast_hash": "9c514c3a45b8083beb9e811e17ab6d0e",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/matchers-cfeaeb190653b9a2/lib-matchers.json": {
+    "mtime": 1787928962.012105,
+    "ast_hash": "b4f13f8591531728ece8f6b9625e555e",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/toml_edit-1f1fc19baf26488a/lib-toml_edit.json": {
+    "mtime": 1787929054.3867636,
+    "ast_hash": "ffeef250cea94bafd5104129e2200e13",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/strsim-7a1dc34c6c6b93e0/lib-strsim.json": {
+    "mtime": 1787928960.9993787,
+    "ast_hash": "d150e898a10d222141dde48b3134368f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tower-service-a73a4e5d7b3a83b4/lib-tower_service.json": {
+    "mtime": 1787929050.2513556,
+    "ast_hash": "fe548ade70da6bbfb280088f379b0296",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/anstream-86cbcbeb169f7f7f/lib-anstream.json": {
+    "mtime": 1787928960.798197,
+    "ast_hash": "e515602076d170520841a45bff7b848d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/lexical-core-25469bac390ac8ee/lib-lexical_core.json": {
+    "mtime": 1787929050.0023284,
+    "ast_hash": "a79834defb2513180080142eaf39a7a3",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/simd-adler32-fa905374d875e211/lib-simd_adler32.json": {
+    "mtime": 1787929047.95934,
+    "ast_hash": "e47bf3d990971440d257181b0a38bbff",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/strum-323453ce63622e8f/lib-strum.json": {
+    "mtime": 1787929049.8399656,
+    "ast_hash": "9115dd97e95603304f9b5507ee987ebd",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/equivalent-9b776b73436268ef/lib-equivalent.json": {
+    "mtime": 1787929050.5922947,
+    "ast_hash": "d693375f724b9f3bf51a3b0882d52399",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/httparse-789a1d234fdf246e/run-build-script-build-script-build.json": {
+    "mtime": 1787929048.3473868,
+    "ast_hash": "752676e103008a18001d35f7bc72cdf1",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_core-b41bcc1533b582f1/lib-serde_core.json": {
+    "mtime": 1787929048.909082,
+    "ast_hash": "43cd3c13763a61cd3cbc9758bd64461d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/regex-87087a76da077c25/lib-regex.json": {
+    "mtime": 1787929051.0390177,
+    "ast_hash": "9187b516593ca6a4411990a87ffd6fa4",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/getrandom-d4507a95eb862fb8/run-build-script-build-script-build.json": {
+    "mtime": 1787929047.915743,
+    "ast_hash": "ac150fd73cf9dcd4634e214860144ca4",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rumqttc-907310e5775a5535/lib-rumqttc.json": {
+    "mtime": 1787929053.3666506,
+    "ast_hash": "626bd5ad7a2bb089e42de271f3a861ea",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tracing-core-079fffc9d4d7989b/lib-tracing_core.json": {
+    "mtime": 1787928960.786394,
+    "ast_hash": "b895983e07ce49d3b4412e8bdcce92e7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tokio-efc7f0b3ea257624/lib-tokio.json": {
+    "mtime": 1787929051.9737213,
+    "ast_hash": "47f099d66dc13f6d9663631c1487ca84",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_json-3d0c622e973b3a45/run-build-script-build-script-build.json": {
+    "mtime": 1787929049.0490766,
+    "ast_hash": "cdd55577616e7724ca849cccc52a0177",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/zerocopy-9da94e28fcd051bf/build-script-build-script-build.json": {
+    "mtime": 1787929047.9311907,
+    "ast_hash": "81df7b74329eec54c0d13914208dda23",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/spin-f287244aced8999a/lib-spin.json": {
+    "mtime": 1787928960.6205091,
+    "ast_hash": "cd01d2e17d52c1d89ad1cfb16c27a469",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/miniz_oxide-afab5e73f5979066/lib-miniz_oxide.json": {
+    "mtime": 1787929048.6964176,
+    "ast_hash": "9c4b61a9147d46e85379ac2a24d62c0e",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/chrono-tz-237d29731be99c8e/lib-chrono_tz.json": {
+    "mtime": 1787929053.2265098,
+    "ast_hash": "53306c47bf99c057aec95f8827ea6bc1",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/regex-automata-20c8cf2589414287/lib-regex_automata.json": {
+    "mtime": 1787929053.362006,
+    "ast_hash": "1ea5fa9f210ddfcdeeef96f573986aa0",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/percent-encoding-8f8f59d80a1596d7/lib-percent_encoding.json": {
+    "mtime": 1787929049.542826,
+    "ast_hash": "aa691c16f52e3773156a8628639ed855",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/indexmap-4726315dd801d1c0/lib-indexmap.json": {
+    "mtime": 1787929051.2958353,
+    "ast_hash": "6ff96f557711d3e3d63b6698fe7982d8",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/libduckdb-sys-d1a355c9de07d427/lib-libduckdb_sys.json": {
+    "mtime": 1787931961.2520063,
+    "ast_hash": "96bf1a612e25f0d79a7aaedef161933d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/ahash-a835023cbf7c623f/build-script-build-script-build.json": {
+    "mtime": 1787929048.077906,
+    "ast_hash": "cdeb727a9a16632662a19eff0b6a5f2c",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/ahash-23c607d282c2e972/run-build-script-build-script-build.json": {
+    "mtime": 1787929048.1056707,
+    "ast_hash": "26052c62a929294dccdcd07cd0dcf04b",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/fixedbitset-79735b7b0eaa0a2f/lib-fixedbitset.json": {
+    "mtime": 1787928961.1168077,
+    "ast_hash": "f394d30567c64bf9dbbcda80065a5f05",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/quote-df4e6d764e099c2c/run-build-script-build-script-build.json": {
+    "mtime": 1787928960.6961448,
+    "ast_hash": "19226b60527839c2849846f360148a60",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tracing-4ebaa0d1a2ea9578/lib-tracing.json": {
+    "mtime": 1787928963.3428164,
+    "ast_hash": "2bc1bb683eb9eea9d10cef837d6a1ff7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/anyhow-4c4fbb47ff3b0994/lib-anyhow.json": {
+    "mtime": 1787928961.4014919,
+    "ast_hash": "b4b20f67a0f912d74421bb4c4f4567bf",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tokio-stream-3b0e553d0d4fab1e/lib-tokio_stream.json": {
+    "mtime": 1787928964.8752978,
+    "ast_hash": "fff9fcef492b99d9a550243cf5373973",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/lexical-util-352d1da76501ae04/lib-lexical_util.json": {
+    "mtime": 1787929047.917648,
+    "ast_hash": "0488e986f66b78ee6021eb12d5b71232",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/smallvec-1b32d6ff8f9bbad8/lib-smallvec.json": {
+    "mtime": 1787929047.672811,
+    "ast_hash": "6aa8183015055e0b3234273db5be9212",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tokio-stream-eaed6572b637e18f/lib-tokio_stream.json": {
+    "mtime": 1787929051.1131814,
+    "ast_hash": "4e63cf0ad1f44b0aa050840625c89b0d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/libc-493651a2a2bbf469/run-build-script-build-script-build.json": {
+    "mtime": 1787929047.593938,
+    "ast_hash": "c3e4b0102ea39d8a4bd2b4859eac237f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/scopeguard-46ab6eb22ba08c2d/lib-scopeguard.json": {
+    "mtime": 1787928960.4045901,
+    "ast_hash": "80c350105a0372b0abd80cbb137dad82",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/zmij-1a793731a8c2b8fa/run-build-script-build-script-build.json": {
+    "mtime": 1787928960.7365804,
+    "ast_hash": "faf083360da0e2e532b87dda79340fdc",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/quote-3f792bd387249df0/lib-quote.json": {
+    "mtime": 1787928961.1440914,
+    "ast_hash": "26fcb4cf582279dffc4ceb5a3abc9b5d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/siphasher-2eb287d939af2b14/lib-siphasher.json": {
+    "mtime": 1787929050.1825972,
+    "ast_hash": "d4877b8afaf2a9c16be2479b041a97fe",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_core-cd0671a06e1cd3aa/build-script-build-script-build.json": {
+    "mtime": 1787929047.9314256,
+    "ast_hash": "7853ee6f8571b0ace44fcbf5b5340899",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/cc-96b8552543512eb4/lib-cc.json": {
+    "mtime": 1787929048.915037,
+    "ast_hash": "cb625c4f18726ad5b92ca0ecd0a5e919",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/base64-0251e1727fc5b84e/lib-base64.json": {
+    "mtime": 1787929048.7086828,
+    "ast_hash": "731bc76c13cd39e4ac59a607168b3d00",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/async-trait-1f3d90652db62953/lib-async_trait.json": {
+    "mtime": 1787928963.1244762,
+    "ast_hash": "4139e0c73947e71e88e6b139fe8c0941",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_core-d74ad9b6f10d84c2/run-build-script-build-script-build.json": {
+    "mtime": 1787928960.7128654,
+    "ast_hash": "b107024559294eb99a8858de55ec3d0b",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/arrow-schema-a798a7aec837cd6b/lib-arrow_schema.json": {
+    "mtime": 1787929048.8420215,
+    "ast_hash": "1d1124c038747609f191a44f5ba6d03f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tracing-serde-db4c2f9dadc78e06/lib-tracing_serde.json": {
+    "mtime": 1787928963.9604874,
+    "ast_hash": "5672595e765733f56bd5772d87f93655",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/adsb-data-server-24d9b1f22dd43701/bin-adsb-data-server.json": {
+    "mtime": 1787931981.693283,
+    "ast_hash": "8ac40641d93042e50074bf76dcaeeda7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/socket2-4d654c21912f834c/lib-socket2.json": {
+    "mtime": 1787928961.413868,
+    "ast_hash": "4b15ac13795410f0cf0b321feae4fd0a",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/bytes-9cf3903be8cba67b/lib-bytes.json": {
+    "mtime": 1787929048.4465778,
+    "ast_hash": "565b3afe5896414fdf9702580ab28d37",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/clap_lex-3e5eb9f97bc05aa8/lib-clap_lex.json": {
+    "mtime": 1787928960.8338733,
+    "ast_hash": "22d1b1a766e279fc27760ca16bd8eac7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/libc-d36495ce8f7de1f2/lib-libc.json": {
+    "mtime": 1787929048.0466692,
+    "ast_hash": "5f84cfe7f4f4e84bf647664da7cbc998",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/libduckdb-sys-3fd2eca84e2e9afe/run-build-script-build-script-build.json": {
+    "mtime": 1787931961.0316074,
+    "ast_hash": "e4c3e4d5ad4d31c28dd93b7fc2b63cf8",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_core-9fec37ef92d916be/run-build-script-build-script-build.json": {
+    "mtime": 1787929047.9647336,
+    "ast_hash": "49628f00cd9a2ea97bb2fde8e298e9fe",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/matchit-6f648ffa1086012f/lib-matchit.json": {
+    "mtime": 1787929051.8542848,
+    "ast_hash": "0321bf13f2a36a6c7836dc914b309c96",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/ring-7b954540d4539d7a/build-script-build-script-build.json": {
+    "mtime": 1787929050.258002,
+    "ast_hash": "2b2ae905864d30f4081e9c7f41199177",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/crossterm-3bb9bdaea0581776/lib-crossterm.json": {
+    "mtime": 1787929049.8944848,
+    "ast_hash": "893b478b7165d9d18e6a36130b9e5db5",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/thiserror-impl-172b7f12845c30b7/lib-thiserror_impl.json": {
+    "mtime": 1787928963.2584949,
+    "ast_hash": "807f8e462643ff07e39ccc70c5f85b00",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/log-e4f776dd04e4ea87/lib-log.json": {
+    "mtime": 1787928960.528371,
+    "ast_hash": "9a160b67474c419a3d360b4132b32f75",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/ureq-proto-d31ad7d97977439e/lib-ureq_proto.json": {
+    "mtime": 1787929049.447676,
+    "ast_hash": "dab3bc08371adefa8f281f19a814da85",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_json-e540e93aab8845b8/build-script-build-script-build.json": {
+    "mtime": 1787929049.70076,
+    "ast_hash": "08ac50b09fd90be204339ccc433c4cc5",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/log-b3cbe46ab8688574/lib-log.json": {
+    "mtime": 1787929047.743162,
+    "ast_hash": "0e209c631227a555c285d933bef21532",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/lazy_static-fe05154eca533b1a/lib-lazy_static.json": {
+    "mtime": 1787928960.636085,
+    "ast_hash": "870b8a27ead834bb313d1c75406a4707",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/parking_lot_core-4d8f1c4320c787a2/run-build-script-build-script-build.json": {
+    "mtime": 1787928960.6299415,
+    "ast_hash": "a0163a6f6abe1b27a34b3a7cf7f2863d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/cast-b9b79dd313f1c685/lib-cast.json": {
+    "mtime": 1787929051.181155,
+    "ast_hash": "2026d31ef420e92784e07a34642a1d72",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/num-traits-e6f5afe1d823c506/lib-num_traits.json": {
+    "mtime": 1787928961.3931031,
+    "ast_hash": "7f0f4bba5243efbeea2aa292725d3d53",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/arrow-data-b1c92485c3bfbcde/lib-arrow_data.json": {
+    "mtime": 1787929053.6624541,
+    "ast_hash": "80f69ede444ae559af71e5b2af81fe46",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/proc-macro2-d92c2ffa47e738ce/lib-proc_macro2.json": {
+    "mtime": 1787928961.0978646,
+    "ast_hash": "afd9625dc2d39489f6bd8b6e66a9de91",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/linux-raw-sys-39da6320af7e24b5/lib-linux_raw_sys.json": {
+    "mtime": 1787929048.4552002,
+    "ast_hash": "4b39b20613870b57b630fe70a539228e",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/parking_lot_core-c3ca6ce6fb175d02/lib-parking_lot_core.json": {
+    "mtime": 1787928961.2889295,
+    "ast_hash": "07809c5f423c0957ffa83ae5430ce6e8",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/httpdate-7704bdecb3b77688/lib-httpdate.json": {
+    "mtime": 1787929050.5925548,
+    "ast_hash": "bce7a6222ee261ef60ca9b150b67cfec",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rumqttc-ae38a51de8b9546f/lib-rumqttc.json": {
+    "mtime": 1787928966.887303,
+    "ast_hash": "d8b4ad5d681ee85a0e9ddeab43a5c5d3",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_core-5d918d9bfa185259/build-script-build-script-build.json": {
+    "mtime": 1787928960.672774,
+    "ast_hash": "7d2138e3de13add4553acdadc9287dca",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/memchr-77b6b542aaac026a/lib-memchr.json": {
+    "mtime": 1787929047.8445315,
+    "ast_hash": "713161403b39ddde923193ca8c72fc2d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/once_cell-be0fdd4a7960cca6/lib-once_cell.json": {
+    "mtime": 1787928960.4803522,
+    "ast_hash": "93641cf8e1a3941d00f02586751a0f53",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rustix-62be073deb5995ab/build-script-build-script-build.json": {
+    "mtime": 1787929048.1131787,
+    "ast_hash": "af1708dbba4c11d2817dc9b2506bf8f1",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/flume-cdcd74ed9d2600a9/lib-flume.json": {
+    "mtime": 1787928960.9633071,
+    "ast_hash": "bb8fb995a9148fa045e37738f6d0dee2",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/version_check-96cf74f8186b438d/lib-version_check.json": {
+    "mtime": 1787929047.739785,
+    "ast_hash": "e76318f4189e7335cad82e84c88608a7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde-9b73f6a5a16c143e/build-script-build-script-build.json": {
+    "mtime": 1787928960.677349,
+    "ast_hash": "b6a94cd8fab687a3318d90cdf6e5cfd9",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/libm-65ea1af74eaea4a7/build-script-build-script-build.json": {
+    "mtime": 1787929047.8883083,
+    "ast_hash": "21f50d0104f2c2ce30847b403de84821",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/thread_local-bb1b9fa5af04917e/lib-thread_local.json": {
+    "mtime": 1787928960.9907749,
+    "ast_hash": "abbc69ea2d59cdee252fc04672f5847e",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/parking_lot-6a8f1818594abc89/lib-parking_lot.json": {
+    "mtime": 1787929048.0714252,
+    "ast_hash": "6b6cdff551de04023d37e1151d58a0da",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/hashbrown-5123a2e9ff593b9e/lib-hashbrown.json": {
+    "mtime": 1787929049.0245917,
+    "ast_hash": "788bedf9882ae9139212eedff2044ceb",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tracing-subscriber-003e060acb51d512/lib-tracing_subscriber.json": {
+    "mtime": 1787929053.1051984,
+    "ast_hash": "279c365f673f84e39b5d1e8d5fae3c26",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/futures-task-699326b7592f6d99/lib-futures_task.json": {
+    "mtime": 1787928960.709664,
+    "ast_hash": "15529b51c5c388e9c7000e401e34dc69",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tower-57753d95e8b770a0/lib-tower.json": {
+    "mtime": 1787929051.5627713,
+    "ast_hash": "c97eeed6666f21af0c9e538828b8370d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/utf8parse-56514a0cd510aeda/lib-utf8parse.json": {
+    "mtime": 1787928960.384436,
+    "ast_hash": "97a3772d45e16f00a5b344e339e484fc",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rustls-pki-types-347fd82fc424a88a/lib-rustls_pki_types.json": {
+    "mtime": 1787929048.0559132,
+    "ast_hash": "46def8e304beedb7687a37bac3c57d04",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rustls-webpki-a6bd4b71363b839d/lib-webpki.json": {
+    "mtime": 1787930187.0979438,
+    "ast_hash": "363f7a62ec8085573849cfa5b8848f5b",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/uuid-01df6936da2aa665/lib-uuid.json": {
+    "mtime": 1787929051.6337285,
+    "ast_hash": "c1d4877c09c84cc75cecbfe7f8df1dfe",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/hashbrown-be8302e833ad9309/lib-hashbrown.json": {
+    "mtime": 1787929050.6976027,
+    "ast_hash": "6cdc1400fbc0f88dc0719f7382baed6d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rustversion-9558b7401d0c444a/run-build-script-build-script-build.json": {
+    "mtime": 1787929048.7524831,
+    "ast_hash": "d38e59b088d028bbc7582e775d06f987",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/proc-macro2-4d5c1885865cfd16/build-script-build-script-build.json": {
+    "mtime": 1787928960.6726534,
+    "ast_hash": "dad51259f04a10bdef3a60da2ed3d154",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/zmij-44fb34c4f69079e5/lib-zmij.json": {
+    "mtime": 1787929049.267589,
+    "ast_hash": "f9f81eb082dcd6c3d74a286c1e9f7abe",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_json-701c5906c066e348/run-build-script-build-script-build.json": {
+    "mtime": 1787928960.773186,
+    "ast_hash": "a9911a673a23888b7484d21d695da0f0",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/libc-44985bfe0c2b8950/run-build-script-build-script-build.json": {
+    "mtime": 1787928960.7754953,
+    "ast_hash": "3a517ae6f4015ab48db968f2100febea",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/http-9fb25bdd5782480b/lib-http.json": {
+    "mtime": 1787929048.840668,
+    "ast_hash": "b47bb17c0fec5c688001d9c2216ef9ea",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/zerocopy-c14a70fcbea28b2d/lib-zerocopy.json": {
+    "mtime": 1787929051.6733856,
+    "ast_hash": "41688c67cd015d9171c1634c0919c9b7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/zerocopy-derive-6a7a4e494ee42026/lib-zerocopy_derive.json": {
+    "mtime": 1787929049.6060855,
+    "ast_hash": "61f13b0a5c8d6efdfbc550af89550cd4",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/aho-corasick-480ee0dbb5c56652/lib-aho_corasick.json": {
+    "mtime": 1787929049.0177145,
+    "ast_hash": "edc83f12f1fb43ae14cf211a06c1ca37",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/zip-16326f3f611219c0/lib-zip.json": {
+    "mtime": 1787929051.1314576,
+    "ast_hash": "7f964736466d5029908b16566e4d4480",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/filetime-9bb8a07ea04dbfb7/lib-filetime.json": {
+    "mtime": 1787929049.4295597,
+    "ast_hash": "66076221c7e8e88ce1ecad1b418831b3",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/lexical-write-float-9961c428156bc31e/lib-lexical_write_float.json": {
+    "mtime": 1787929049.6416905,
+    "ast_hash": "50f0816b6d3f7e98f399fd565ead46c9",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rustix-f05ce18c23b89104/run-build-script-build-script-build.json": {
+    "mtime": 1787929048.5434546,
+    "ast_hash": "5480e5fa980c3091a9123abec0b39fe4",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/bitflags-2026d9659a8e8bff/lib-bitflags.json": {
+    "mtime": 1787929048.1785913,
+    "ast_hash": "f5b83f7450be7dd7cadcee7dc0b4ffae",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/arrow-buffer-ab17910d21321a11/lib-arrow_buffer.json": {
+    "mtime": 1787929053.05991,
+    "ast_hash": "45cfa7c42043d5112d059488d43b3e16",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/adsb-pulsar-client-101a8957725dc772/lib-adsb_pulsar_client.json": {
+    "mtime": 1787928967.2201388,
+    "ast_hash": "25a8fe8a82de6a4da25f4d90066eec5a",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/libm-e32b6f687e965870/lib-libm.json": {
+    "mtime": 1787929048.406795,
+    "ast_hash": "a3df62fd1eb26ecb76137f6e98c9024d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rustls-5ef3d829f0732cb2/lib-rustls.json": {
+    "mtime": 1787930188.3955986,
+    "ast_hash": "d21cf2395ed4d6f16ed0c0cd8e032f13",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/regex-syntax-5c9762d4ad193ad9/lib-regex_syntax.json": {
+    "mtime": 1787928962.1116612,
+    "ast_hash": "5c096a7665630a8d392bd2e1b91ec850",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tokio-cd62b13fa8be740f/lib-tokio.json": {
+    "mtime": 1787928966.2995155,
+    "ast_hash": "37f7189f61608ab3691138537797c0f7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/num-integer-46149f0193fde7a4/lib-num_integer.json": {
+    "mtime": 1787929048.7594101,
+    "ast_hash": "a2305754e5335ad897672dbcae2c8f95",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/anyhow-ae6aaf8983f8b99d/run-build-script-build-script-build.json": {
+    "mtime": 1787928961.190232,
+    "ast_hash": "caa4b0625e8e78833284a7c46a40bf8d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/crc32fast-5027865278179096/lib-crc32fast.json": {
+    "mtime": 1787929048.1361833,
+    "ast_hash": "3621a42a7cfe5b4329a2db11eaf48124",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/duckdb-cc55d539e2103d9e/lib-duckdb.json": {
+    "mtime": 1787931962.0123703,
+    "ast_hash": "ca92b4140e664a8f614d21dd954a9975",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/autocfg-dfffc2c7f1987d24/lib-autocfg.json": {
+    "mtime": 1787928960.5664196,
+    "ast_hash": "d35b1ec2d3406408aa87dfa060f6d1d2",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tokio-util-73b78b2a1cafe822/lib-tokio_util.json": {
+    "mtime": 1787929051.1956391,
+    "ast_hash": "301086b3b6800102cf18b0fd07331375",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/foldhash-6a7e0736092dd7fd/lib-foldhash.json": {
+    "mtime": 1787929050.270354,
+    "ast_hash": "4cd283248c650f10503bd72b9e311ada",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/sync_wrapper-e9aeae1e3ae8fa18/lib-sync_wrapper.json": {
+    "mtime": 1787929050.6585307,
+    "ast_hash": "a4c09627497889f88096efd88fa83dd8",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/futures-sink-5b06bf42b47fc723/lib-futures_sink.json": {
+    "mtime": 1787928960.401446,
+    "ast_hash": "84c7ff3ea4481d16c24ee1e34cc65f24",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rustc_version-2173a2678c0e85cc/lib-rustc_version.json": {
+    "mtime": 1787929048.383517,
+    "ast_hash": "906c17999589ac2578e3988c9bf8a580",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/httparse-bac67e5fdb4329a9/build-script-build-script-build.json": {
+    "mtime": 1787929050.601253,
+    "ast_hash": "7fe4a1a0d30681feb514b74f98e36067",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde-8433a65e25ce7b79/lib-serde.json": {
+    "mtime": 1787929049.8156345,
+    "ast_hash": "c8a938b7232975b95947d6031a4b197e",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tokio-macros-bf38ca50b8aff231/lib-tokio_macros.json": {
+    "mtime": 1787928963.0710714,
+    "ast_hash": "e23e7a27457840f96e488d1cccdc32fa",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_json-c9dd81ed265a98c6/lib-serde_json.json": {
+    "mtime": 1787928962.221193,
+    "ast_hash": "15c95a2c0550a3a9f7621671971cac25",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/atoi-e1de7c429f042324/lib-atoi.json": {
+    "mtime": 1787929050.1063898,
+    "ast_hash": "754dbb0b9414cae30121c1e6323c8674",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_core-2ffae1c34a4ef9a1/run-build-script-build-script-build.json": {
+    "mtime": 1787929048.1036322,
+    "ast_hash": "1577c18803b6dcc054a8571da3220719",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/half-b7a69573d642a149/lib-half.json": {
+    "mtime": 1787929051.808836,
+    "ast_hash": "b1d18cd2e59efe135fb12ce807bd7d6a",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/hyper-ada0b83ffcd82925/lib-hyper.json": {
+    "mtime": 1787929051.7913375,
+    "ast_hash": "d9f9041c8dfeb17755f9fb91ac149773",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/zmij-bd7e9b6b17780cae/build-script-build-script-build.json": {
+    "mtime": 1787928960.7008808,
+    "ast_hash": "165dfa7a0a620b37af90ea4acd26639e",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/quote-2a6ed5310969ad45/build-script-build-script-build.json": {
+    "mtime": 1787928960.6620994,
+    "ast_hash": "f93fb998ddc50c70a33be990a01229e3",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rustix-dad91b3a776a84b2/run-build-script-build-script-build.json": {
+    "mtime": 1787929048.2158535,
+    "ast_hash": "887bc5218ce3f92c05684f4ae827a3a5",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/getrandom-bb047141a5d2b174/build-script-build-script-build.json": {
+    "mtime": 1787929047.901698,
+    "ast_hash": "720eb0ba0cfde0f1328d8f3955bf26e4",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/arrow-7c32ea80f73bc599/lib-arrow.json": {
+    "mtime": 1787930684.564415,
+    "ast_hash": "09ca6620dfde733b119398b162e63203",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rustversion-b1f0716b9d25cce7/lib-rustversion.json": {
+    "mtime": 1787929049.5649254,
+    "ast_hash": "2211f592d15e7e7bd9f7779a845a6ae0",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_json-92292d9365d9d535/lib-serde_json.json": {
+    "mtime": 1787929050.9148338,
+    "ast_hash": "8207903110bbda374bba6ca77ae2feea",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/heck-8ad464558d593018/lib-heck.json": {
+    "mtime": 1787928960.6901119,
+    "ast_hash": "5f873e9bc4551d1458d6e252a6182ba9",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/strum_macros-dcfe7f047158c034/lib-strum_macros.json": {
+    "mtime": 1787929052.2277524,
+    "ast_hash": "1ea4620b59e0397d94348c5a8fd9e4bf",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/getrandom-390b346e4dedc6c0/lib-getrandom.json": {
+    "mtime": 1787929048.051058,
+    "ast_hash": "d9aaf953d44b96280c9fae1785fd350c",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/mio-a1053313c395ab7e/lib-mio.json": {
+    "mtime": 1787928961.3780031,
+    "ast_hash": "3c9ef703cdcdfd4a7f83a990693c892e",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/zeroize-1cd44711697c1638/lib-zeroize.json": {
+    "mtime": 1787929047.7979684,
+    "ast_hash": "f27a6c87157b04a44e8e0a827d7ce7d7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/slab-f53549bfedaeed63/lib-slab.json": {
+    "mtime": 1787928960.7224896,
+    "ast_hash": "57e642a4b983214e3de6e72a1cde0e54",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_path_to_error-c115a5886f6be4a3/lib-serde_path_to_error.json": {
+    "mtime": 1787929051.5160723,
+    "ast_hash": "aa59989c3b7a0a47e11513e7ed8aeb68",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/libm-f848f9419f46aea8/run-build-script-build-script-build.json": {
+    "mtime": 1787929047.90528,
+    "ast_hash": "842055f68e16281d8fff1057eaba5b78",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/arrow-array-33433d46a7d18ec5/lib-arrow_array.json": {
+    "mtime": 1787930191.1293025,
+    "ast_hash": "34808c24bc5c512dd8d0759ee20f2ec3",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/strum_macros-90a2a36034f6a9c3/lib-strum_macros.json": {
+    "mtime": 1787929052.0867567,
+    "ast_hash": "290b4717a809ef0f2f6d32ede7fe2df7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/winnow-5f5dd4cfd2d34fac/lib-winnow.json": {
+    "mtime": 1787929051.9628615,
+    "ast_hash": "de48debec8d7e782023398fea56feb8f",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde-50987673384874ec/lib-serde.json": {
+    "mtime": 1787929049.136172,
+    "ast_hash": "343fc4b5693497da3263e6585ec30b06",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/num-traits-b26a8540a6f2d6a9/run-build-script-build-script-build.json": {
+    "mtime": 1787929048.0713277,
+    "ast_hash": "0e32854c21a1b84e8f11ce86e1beabac",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/num-traits-626ba26b40c34aa3/build-script-build-script-build.json": {
+    "mtime": 1787928960.9989862,
+    "ast_hash": "226b2425633e6bbb20b25e63b59e4598",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/serde_json-f4f03694f14d0eec/build-script-build-script-build.json": {
+    "mtime": 1787928960.749661,
+    "ast_hash": "61c2b343dbc5331169f4e1ba9c83b6ae",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/smallvec-a6bdc2fe11873c33/lib-smallvec.json": {
+    "mtime": 1787928960.4845564,
+    "ast_hash": "e6ed06c90c3d1c418711a936fb724d67",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/rustix-c4c0dc0505b218b6/lib-rustix.json": {
+    "mtime": 1787929049.2091298,
+    "ast_hash": "d59a9b1f151c69cc102caa1fe70ee158",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/sharded-slab-5a5f5a77e18fefd2/lib-sharded_slab.json": {
+    "mtime": 1787928961.1120164,
+    "ast_hash": "16f75cd823fc206d609a03ea5dbb358a",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/utf8-zero-cccccee7eb3987a5/lib-utf8_zero.json": {
+    "mtime": 1787929049.5006487,
+    "ast_hash": "6cecb62674c6c5e48ef87a469113ab50",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/getrandom-38160ffc6cedaffd/lib-getrandom.json": {
+    "mtime": 1787929048.1404817,
+    "ast_hash": "e26ab630567576a37e3a10aafed73b25",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/bumpalo-1ec6a569f9687b69/lib-bumpalo.json": {
+    "mtime": 1787929048.9894223,
+    "ast_hash": "f7bd534c6b742272f158b68195eb1116",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/ryu-affb9f61a8e2d2fd/lib-ryu.json": {
+    "mtime": 1787929049.5466044,
+    "ast_hash": "6aa8b5a743e19ecce4f066e7bfdf83e1",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/zerocopy-2ea1f394a8febe25/run-build-script-build-script-build.json": {
+    "mtime": 1787929047.966663,
+    "ast_hash": "c8eee7b45555bac4864f87e8edb5cee7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/target-linux-arm64/release/.fingerprint/tracing-subscriber-5464dd0694b6469b/lib-tracing_subscriber.json": {
+    "mtime": 1787928965.5643377,
+    "ast_hash": "1d3e90a62a28d4b33ad6d0797fc8d1e6",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-server/src/recorder.rs": {
+    "mtime": 1787932895.9880059,
+    "ast_hash": "d41c89efbcb1a044202a9a07186ab104",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-server/src/config.rs": {
+    "mtime": 1787932916.4115472,
+    "ast_hash": "ed6bac3dda4e877a14c7c058aec38df1",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-server/src/lib.rs": {
+    "mtime": 1787926855.588518,
+    "ast_hash": "ea742780d4c39f12480924adf03b5475",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-server/src/server.rs": {
+    "mtime": 1787957116.6228256,
+    "ast_hash": "2fe1230b03679219bf136e21934f9700",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-server/src/tool_service.rs": {
+    "mtime": 1787932895.9886744,
+    "ast_hash": "c08586a7fe5c46478f8ff6b7b8bff281",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-server/src/main.rs": {
+    "mtime": 1787930768.4215908,
+    "ast_hash": "7c0191fb96a4742cba958029356822b8",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/storage_mode.rs": {
+    "mtime": 1787934216.8058279,
+    "ast_hash": "5d6b7ada84398f3d5fbe82ae5fee94ca",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/storage-mode.test.ts": {
+    "mtime": 1787934186.3159323,
+    "ast_hash": "2cbe6cc7256aaccdc0e322531135b466",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/source-kind.test.ts": {
+    "mtime": 1787932565.9329686,
+    "ast_hash": "dac499a369bba0d08928c13b6b6996c7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/scripts/install-edge.sh": {
+    "mtime": 1787930175.3559208,
+    "ast_hash": "07176780509cb562ce97b4da349a9491",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-engine/examples/remote_probe.rs": {
+    "mtime": 1787933393.1239076,
+    "ast_hash": "20c1be36487a49d8674f526c45ab9f06",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-engine/src/ingest.rs": {
+    "mtime": 1787932895.9902644,
+    "ast_hash": "918347037ef5c821ab2574d8ca2c9784",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/scripts/install-skills.sh": {
+    "mtime": 1787938319.8168504,
+    "ast_hash": "5ca7b9ea2ff1631fea654b9584d9eec3",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/scripts/render-config.py": {
+    "mtime": 1787938398.7679725,
+    "ast_hash": "e796de78f0c7b724b26f0b683578ea4c",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/scripts/stack.sh": {
+    "mtime": 1787958706.0845106,
+    "ast_hash": "c662ecb295a6469c9a3639f9af679340",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/skills/run-adsb-desktop/driver.sh": {
+    "mtime": 1787926744.6734428,
+    "ast_hash": "701148411a14da27ba7ac9374d861fe0",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/skills/run-adsb-desktop/purge_test_rows.rs": {
+    "mtime": 1787926213.0893397,
+    "ast_hash": "1e7c2ca04b083523460f49a966baebcb",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/skills/run-adsb-desktop/summarize.py": {
+    "mtime": 1787926252.6496623,
+    "ast_hash": "0c1a1a5830c53f7e8594c502c646c81d",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/skills/run-adsb-desktop/verify_merge.py": {
+    "mtime": 1787926213.0866916,
+    "ast_hash": "f8ac2f7d966c35a1ec5c829e69a25f58",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/skills/run-adsb-desktop/mock_dump1090.py": {
+    "mtime": 1787926159.16795,
+    "ast_hash": "f611bcbea03cadbac4c9ed0ccc6a7394",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/skills/run-adsb-desktop/fixtures/trajectory_ok.json": {
+    "mtime": 1787926718.3134837,
+    "ast_hash": "288a71d4b388f0b34b71b4ef751a6c75",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/skills/run-adsb-desktop/fixtures/trajectory_broken_merge.json": {
+    "mtime": 1787926718.3332715,
+    "ast_hash": "349befee8d730bd98628d6d7af28eeca",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/skills/run-adsb-desktop/fixtures/summary_ok.json": {
+    "mtime": 1787926730.178634,
+    "ast_hash": "0feed70a34bffdd633ad0c8c5a91fccd",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/QUICKSTART.md": {
+    "mtime": 1787962283.7460806,
+    "ast_hash": "5406e2e50689f041357c659e545206c5",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/desktop_log.txt": {
+    "mtime": 1787958179.1130862,
+    "ast_hash": "7e65fd8d88d0aca3da68ea5f10dd2dcc",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-server/README.md": {
+    "mtime": 1787930855.8030005,
+    "ast_hash": "93240273edca3c8ec910db0811f16e43",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/docs/DEPLOYMENT.md": {
+    "mtime": 1787995399.7588751,
+    "ast_hash": "9b9842acec0c82970f93e9a3e6712e82",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/skills/run-adsb-stack/SKILL.md": {
+    "mtime": 1787962324.8005836,
+    "ast_hash": "7524719e5a823487d7741cb9444459d6",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/skills/run-adsb-desktop/SKILL.md": {
+    "mtime": 1787938924.7847774,
+    "ast_hash": "7e4392c51d80b78486d297e9c79d0824",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/mqtt/docker-compose.yml": {
+    "mtime": 1787930122.538114,
+    "ast_hash": "41bdab86c2cd7bb00a001b2c046e9a35",
     "semantic_hash": ""
   }
 }
