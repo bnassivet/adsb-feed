@@ -94,20 +94,38 @@ feed-armv7:
 
 # Ships whichever binaries have been built: a feed-only node never builds the
 # data server, and install-edge.sh skips it when absent.
+#
+# CONFIG_DIR selects which configs travel with them. Unset, the node gets the
+# generic *.example.toml and you edit /etc/adsb by hand on the Pi. Point it at a
+# rendered fleet directory to ship that node's real config instead:
+#
+#   make deploy PI_HOST=pi@pi3.lan CONFIG_DIR=../deploy/.rendered/pi3
+#
+# install-edge.sh still never overwrites an existing /etc/adsb file -- a new one
+# lands as *.toml.new -- so this configures a NEW node and stages an upgrade for
+# an existing one. See deploy/README.md.
+CONFIG_DIR ?=
+FEED_CFG   = $(if $(CONFIG_DIR),$(CONFIG_DIR)/feed.toml,adsb-pulsar-client/feed.example.toml)
+SERVER_CFG = $(if $(CONFIG_DIR),$(CONFIG_DIR)/data-server.toml,adsb-data-server/data-server.example.toml)
+
 .PHONY: deploy
 deploy:
 	@test -f $(OUT)/adsb-pulsar-client || { \
 		echo "No feed binary. Run 'make feed-arm64' first." >&2; exit 1; }
+	@test -f $(FEED_CFG) || { \
+		echo "No config at $(FEED_CFG) -- run 'make render-fleet' first." >&2; exit 1; }
 	scp $(OUT)/adsb-pulsar-client $(PI_HOST):/tmp/
 	@if [ -f $(OUT)/adsb-data-server ]; then \
-		scp $(OUT)/adsb-data-server adsb-data-server/adsb-data-server.service \
-		    adsb-data-server/data-server.example.toml $(PI_HOST):/tmp/; \
+		test -f $(SERVER_CFG) || { \
+			echo "No config at $(SERVER_CFG)" >&2; exit 1; }; \
+		scp $(OUT)/adsb-data-server adsb-data-server/adsb-data-server.service $(PI_HOST):/tmp/; \
+		scp $(SERVER_CFG) $(PI_HOST):/tmp/data-server.example.toml; \
 	else \
 		echo "(no data server built -- deploying feed client only)"; \
 	fi
-	scp adsb-pulsar-client/adsb-pulsar-client.service \
-	    adsb-pulsar-client/feed.example.toml \
-	    scripts/install-edge.sh $(PI_HOST):/tmp/
+	scp adsb-pulsar-client/adsb-pulsar-client.service scripts/install-edge.sh $(PI_HOST):/tmp/
+	scp $(FEED_CFG) $(PI_HOST):/tmp/feed.example.toml
+	@echo "Config shipped: $(if $(CONFIG_DIR),$(CONFIG_DIR) (rendered),generic examples -- edit /etc/adsb on the Pi)"
 	@echo "Now on the Pi:  sudo bash /tmp/install-edge.sh"
 
 .PHONY: ci

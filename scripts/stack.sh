@@ -151,6 +151,44 @@ doctor)
     rc=1
   fi
 
+  # Identity hygiene. All warnings, never failures: a single-node experiment
+  # has no reason to carry a stage, and this must not block `make up`.
+  #
+  # The collision these guard against is silent and looks like a network fault.
+  # Subscribers take the MQTT client id `<source_id>-sub`, so a desktop reusing
+  # the recorder's source_id evicts it in a loop -- killing recording and the
+  # live map together. See deploy/README.md.
+  if [ -f "$STACK" ]; then
+    echo "Identity:"
+    id="$(cfg receiver id "")"
+    topic="$(cfg mqtt topic "")"
+    remote_uri="$(cfg remote uri "")"
+    stage="${id##*-}"
+    case "$stage" in
+      dev|prod|staging|test)
+        if [ "${topic#*/}" = "$topic" ] || [ "${topic#*"$stage"}" = "$topic" ]; then
+          echo "  WARN    receiver.id is '$id' but mqtt.topic is '$topic' --"
+          echo "          the stage should appear in both: adsb/$stage/sbs/raw"
+        else
+          echo "  ok      $id on $topic"
+        fi
+        ;;
+      *)
+        echo "  WARN    receiver.id '$id' has no stage suffix (-dev / -prod)."
+        echo "          Two stacks on one LAN will evict each other. See deploy/README.md"
+        ;;
+    esac
+    if [ -n "$remote_uri" ]; then
+      # quack:host:port -> host -> short name. A desktop whose id matches the
+      # remote node's is the exact case above.
+      rhost="$(printf %s "$remote_uri" | cut -d: -f2)"
+      if [ "${id%%-*}" = "${rhost%%.*}" ]; then
+        echo "  WARN    receiver.id '$id' looks like the remote node '$rhost'."
+        echo "          Give this client its own id or it will evict the recorder."
+      fi
+    fi
+  fi
+
   echo "Binaries:"
   for b in adsb-pulsar-client adsb-data-server; do
     if [ -x "$BIN/$b" ]; then echo "  ok      $b"
@@ -249,6 +287,47 @@ desktop)
   echo "  watch it with: make logs N=desktop"
   ;;
 
+client)
+  # Pure client: the desktop attached to a data server elsewhere, plus the
+  # agents. No broker, no feed, no recorder -- `up --agents` starts all three
+  # unconditionally, and `make remote` starts no agents, so neither fits.
+  require_config
+  uri="$(cfg remote uri "")"
+  [ -n "$uri" ] || { echo "Set [remote].uri in adsb-stack.toml first." >&2; exit 1; }
+  tok="$(cfg remote token "")"
+  mh="$(cfg mqtt host localhost)"
+  mp="$(cfg mqtt port 1883)"
+  mt="$(cfg mqtt topic adsb/sbs/raw)"
+  port="$(cfg agents desktop_tool_port 8788)"
+
+  case "$mh" in
+    localhost|127.0.0.1)
+      echo "Note: mqtt.host is $mh, so the live feed will be read locally." >&2
+      echo "      Point it at the remote node for live aircraft over the LAN." >&2;;
+  esac
+
+  echo "Desktop (remote: $uri, live: mqtt://$mh:$mp/$mt):"
+  # Both planes, explicitly. History is seeded on FIRST launch only; the live
+  # source is applied every launch. See QUICKSTART.md topology 4.
+  start desktop env \
+    "ADSB_REMOTE_URI=$uri" "ADSB_REMOTE_TOKEN=$tok" \
+    "ADSB_SOURCE_KIND=mqtt" "ADSB_MQTT_BROKER=$mh" \
+    "ADSB_MQTT_PORT=$mp" "ADSB_MQTT_TOPIC=$mt" \
+    "ADSB_AGENT_TOOL_SERVER_PORT=$port" \
+    sh -c "cd '$REPO/rust/adsb-pulsar-client-desktop' && exec npm run tauri dev"
+
+  echo "Agents:"
+  # The agent defaults its tool server to :8787, which in the all-local stack
+  # resolves to the data server. There is no data server on this machine, so
+  # without this every one of its data tools fails with connection-refused.
+  start sim-agent sh -c "cd '$REPO/rust/adsb-simulation-agent' && exec uv run python -m adsb_simulation_agent"
+  start agent env "ADSB_AGENT_TOOL_SERVER_URL=http://127.0.0.1:$port" \
+    sh -c "cd '$REPO/rust/adsb-agent' && exec uv run python -m adsb_agent"
+
+  echo
+  echo "Client up. 'make logs N=desktop' to watch it, 'make down' to stop."
+  ;;
+
 stop-desktop)
   echo "Desktop:"
   stop desktop
@@ -345,6 +424,7 @@ usage: stack.sh <command>
   doctor    preflight: binaries, docker, ports, skills, LLM
   up        broker -> recorder -> feed (add --agents for the AI agents)
   desktop      start the desktop app (backgrounded; make logs N=desktop)
+  client       desktop + agents ONLY, attached to [remote] -- no local stack
   stop-desktop stop just the desktop app
   down      stop everything this script started
   reap      kill whatever still holds the stack's ports (orphans)

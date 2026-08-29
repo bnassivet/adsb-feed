@@ -83,10 +83,51 @@ nodes. It is idempotent, and it **never overwrites an existing config** — a ne
 one lands as `*.toml.new` so an upgrade cannot silently change a running node's
 settings.
 
-Edit `/etc/adsb/feed.toml` (and `data-server.toml`) before starting. **Set a
-unique `source_id` per node**: it is stamped onto every stored record, and the
-MQTT client id derives from it, so duplicates both make the data unattributable
-and cause brokers to evict each other's sessions.
+Edit `/etc/adsb/feed.toml` (and `data-server.toml`) before starting — unless you
+shipped rendered configs, below.
+
+### Identities, and the stage convention
+
+**`source_id` is an identity on a shared bus.** It is stamped onto every stored
+record, and the MQTT client id derives from it: publishers use it verbatim,
+subscribers append `-sub`. Two rules follow, and they pull in opposite
+directions:
+
+- A feed node and the recorder that stores its data **must share `source_id`**.
+  The recorder stamps *its own* value onto every record, so a mismatch makes the
+  data claim the wrong receiver. They do not collide on the broker because only
+  one of them subscribes.
+- Any *additional* subscriber — a desktop app, a second recorder — **must not**
+  reuse it, or it takes an id already in use and the two evict each other in a
+  reconnect loop.
+
+Ids also carry the deployment **stage**, and the topic is scoped to match:
+
+```
+source_id  =  <site>-<stage>          e.g. pi-roof-prod
+mqtt_topic =  adsb/<stage>/sbs/raw    e.g. adsb/prod/sbs/raw
+```
+
+The topic is the stronger guard of the two: distinct ids stop clients evicting
+each other, but only a distinct topic stops a development feed writing into this
+recorder's database. It is a convention, not enforcement — the clients have no
+MQTT credentials, so nothing stops a misconfigured publisher.
+
+### Shipping configs instead of editing on the Pi
+
+`make deploy` sends the generic `*.example.toml` by default. For a fleet, author
+one file per stage in `deploy/` and render it per node — the shared values
+(`source_id`, topic, Quack token) are then written once and cannot drift:
+
+```bash
+cp deploy/fleet-template.toml deploy/prod.toml    # gitignored: hostnames + token
+make render-fleet F=deploy/prod.toml
+cd rust && make deploy PI_HOST=pi@pi4.lan CONFIG_DIR=../deploy/.rendered/pi4
+```
+
+`install_config` still refuses to overwrite a live `/etc/adsb/*.toml` — a new one
+lands as `*.toml.new` — so this configures a *new* node and stages an upgrade for
+an existing one. See `deploy/README.md`.
 
 ## The broker
 

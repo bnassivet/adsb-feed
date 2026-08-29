@@ -59,6 +59,8 @@ make down        # stops EVERYTHING it started, including the desktop
 | `make up-agents` | stack + adsb-agent and adsb-simulation-agent |
 | `make reap` | kill whatever still holds the stack's ports (orphans) |
 | `make remote` | desktop only, pointed at a data server elsewhere |
+| `make client` | desktop **+ agents** only, no local broker/feed/recorder |
+| `make render-fleet F=deploy/prod.toml` | render per-node configs for deployed Pis |
 
 `make verify` samples `row_count` twice six seconds apart and fails if it has
 not moved. That distinction matters: every process can be "running" while
@@ -124,6 +126,45 @@ To confirm a change actually reached a binary:
 ```bash
 ./rust/target/release/adsb-pulsar-client --config .run/feed.toml --print-config
 ```
+
+## Identity: the one config mistake that looks like a network fault
+
+A subscriber's MQTT client id is `<source_id>-sub`; a publisher's is `<source_id>`.
+Brokers evict an existing session when a second client arrives with the same id,
+so two processes sharing one identity knock each other off in a loop.
+
+| Process | `source_id` | Client id |
+|---|---|---|
+| feed (publisher) | `pi-roof-prod` | `pi-roof-prod` |
+| recorder (subscriber) | `pi-roof-prod` — **same, deliberately** | `pi-roof-prod-sub` |
+| desktop (subscriber) | `mac-desktop-prod` — **must differ** | `mac-desktop-prod-sub` |
+
+The feed and recorder *must* match: the recorder stamps its own `source_id` onto
+every stored record, so a mismatch misattributes the data. A desktop must *not*
+match, because it would collide with the recorder.
+
+Ids also carry a **stage** (`-dev` / `-prod`) and the topic is
+`adsb/<stage>/sbs/raw`, so a dev stack and a deployed fleet can share a LAN. The
+topic is the stronger guard: distinct ids stop eviction, but only a distinct
+topic stops a dev feed writing into the prod recorder's database. `make doctor`
+warns when an id has no stage, when the topic disagrees with it, or when this
+machine's id looks like the remote node's.
+
+## Fleet config for deployed nodes
+
+Deployed Pis do **not** use `adsb-stack.toml` — they use `/etc/adsb/*.toml` and
+systemd. Those are authored in `deploy/`, one file per stage, rendered per node:
+
+```bash
+cp deploy/fleet-template.toml deploy/prod.toml   # gitignored
+make render-fleet F=deploy/prod.toml             # -> deploy/.rendered/<node>/
+cd rust && make deploy PI_HOST=pi@pi3.lan CONFIG_DIR=../deploy/.rendered/pi3
+```
+
+One file renders both nodes because `source_id`, the topic and the Quack token
+have to agree across hosts and every mismatch is silent. Without `CONFIG_DIR`,
+`make deploy` ships the generic `*.example.toml` and you edit `/etc/adsb` by
+hand on the Pi. See `deploy/README.md`.
 
 ## Desktop against a real Raspberry Pi
 
@@ -207,7 +248,12 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
   each other in a loop. `make doctor` counts them; `make reap` clears them.
 - **A remote data server does not imply a remote live feed.** They are separate
   settings with different precedence rules (see the table above). `make remote`
-  now sets both; anything launched by hand sets neither.
+  and `make client` set both; anything launched by hand sets neither.
+- **The agent's tool server defaults to :8787**, which in the all-local stack
+  quietly resolves to the *data server's* API rather than the desktop's. On a
+  client machine there is no data server, so every agent data tool fails with
+  connection-refused. `make client` exports
+  `ADSB_AGENT_TOOL_SERVER_URL=http://127.0.0.1:8788` for exactly this.
 - **The Quack token is printed at startup** when `share_token` is unset —
   DuckDB generates one and that log line is the only way to learn it. Grep
   `.run/logs/data-server.log` for `token:`.
@@ -238,6 +284,8 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
 | `MQTT connection ... lost: Connection closed by peer abruptly`, repeatedly | Two clients sharing an MQTT id are evicting each other. After a few short-lived connections the log says so outright and names the id. Almost always a leftover process: `make doctor` (it counts duplicates), then `make reap`. |
 | DB History panel works, live map empty | Only the history plane is pointed at the remote node. Set `[mqtt].host` to the Pi and relaunch with `make remote`, or switch **Settings → Connection → Feed Source** to MQTT. |
 | Desktop shows no aircraft but `make verify` passes | The recorder is receiving and the desktop is not — they use different planes. Check the desktop's `source_kind`; with `mqtt`, check it reached the broker (`.run/logs/desktop.log`). |
+| Agent chat works but every data tool errors | On a client machine, the agent is still pointed at :8787 where nothing listens. Launch via `make client`, which sets `ADSB_AGENT_TOOL_SERVER_URL`. |
+| Reconnect storm right after adding a second machine | Two subscribers sharing `<source_id>-sub`. Give the desktop its own `receiver.id` — see Identity above. |
 | Port 1883 busy but no broker | A system mosquitto is running: `brew services stop mosquitto`, or point `mqtt.host` at it and skip the container. |
 
 ## Files
@@ -250,6 +298,9 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
 | `scripts/stack.sh` | Process supervision (PID files in `.run/`) |
 | `Makefile` | Entry point; delegates build/deploy to `rust/Makefile` |
 | `scripts/install-skills.sh` | Links `skills/` into `.claude/` |
+| `deploy/fleet-template.toml` | Tracked template for a deployed fleet |
+| `deploy/README.md` | The stage convention and the id rules, in full |
+| `scripts/tests/test_render_fleet.py` | `make test-scripts` — stdlib unittest, no pytest |
 
 ## Verification status
 

@@ -19,6 +19,7 @@ help:
 	@echo "  make up-agents    ... plus the AI agents (:8000, :8300)"
 	@echo "  make up-desktop   ... plus the desktop app (backgrounded)"
 	@echo "  make remote       desktop only, attached to [remote] in adsb-stack.toml"
+	@echo "  make client       desktop + agents only, no local broker/feed/recorder"
 	@echo "  make down         stop everything the stack started"
 	@echo "  make down-desktop stop just the desktop app"
 	@echo "  make reap         kill orphans still holding the stack's ports"
@@ -26,6 +27,7 @@ help:
 	@echo "  make logs         tail all logs (make logs N=feed for one)"
 	@echo "  make verify       confirm rows are actually being recorded"
 	@echo "  make render       regenerate .run/*.toml from adsb-stack.toml"
+	@echo "  make render-fleet F=deploy/prod.toml   render per-node fleet configs"
 	@echo ""
 	@echo "Build:"
 	@echo "  make build        cargo build --release (host)"
@@ -68,6 +70,19 @@ down-desktop:
 .PHONY: reap
 reap: ; @$(STACK) reap
 
+# The three-node topology: this machine is a pure client of a fleet elsewhere.
+# Unlike `remote`, it also starts the agents and backgrounds the desktop with a
+# PID file, so `make down` can stop the whole thing.
+.PHONY: client
+client: ; @$(STACK) client
+
+# Fleet configs for deployed nodes -- a different lifecycle from the dev stack:
+# see deploy/README.md. F defaults to the conventional prod fleet.
+.PHONY: render-fleet
+render-fleet: F ?= deploy/prod.toml
+render-fleet:
+	@python3 scripts/render-config.py --fleet $(F)
+
 # Desktop against a data server elsewhere -- no local feed or recorder.
 #
 # Two independent planes, and BOTH have to be pointed at the remote node:
@@ -102,6 +117,17 @@ skills: ; @$(CURDIR)/scripts/install-skills.sh install
 .PHONY: build
 build: ; @cd $(RUST) && cargo build --release
 
-.PHONY: edge-arm64 feed-arm64 server-arm64 deploy ci
-edge-arm64 feed-arm64 server-arm64 deploy ci:
+.PHONY: edge-arm64 feed-arm64 server-arm64 feed-armv7 deploy
+edge-arm64 feed-arm64 server-arm64 feed-armv7 deploy:
 	@$(MAKE) -C $(RUST) $@
+
+# The shell/Python tooling has its own tests. Stdlib unittest, no pytest, so it
+# runs from a bare checkout the same way `make render` does.
+.PHONY: test-scripts
+test-scripts:
+	@python3 scripts/tests/test_render_fleet.py
+
+# The full gate: the tooling tests, then the Rust workspace gate in rust/.
+.PHONY: ci
+ci: test-scripts
+	@$(MAKE) -C $(RUST) ci

@@ -95,6 +95,67 @@ To set the Pi up in the first place, see `rust/docs/DEPLOYMENT.md` — that path
 uses `make edge-arm64`, `make deploy` and `install-edge.sh` with systemd, and is
 independent of the local tooling here.
 
+## 4. Split fleet: feed Pi → recorder Pi → this desktop
+
+The receiver and the recorder on separate machines, with this Mac as a pure
+client. Nothing runs locally — no broker, no feed, no recorder.
+
+```
+[Pi 3, armv7]                   [Pi 4, aarch64]                  [macOS]
+dump1090 → adsb-pulsar-client ──MQTT──→ mosquitto → adsb-data-server
+                                  :1883                    ↓  ↓
+                                            :1883 (live) ──┘  └── :9494 (history)
+                                                     ↓              ↓
+                                                    this desktop + agents
+```
+
+**Fleet config lives in `deploy/`**, not in `adsb-stack.toml` — deployed nodes
+have a different lifecycle from the dev stack (`/etc/adsb` and systemd, versus
+`.run/` and `stack.sh`). One authored file per stage renders both nodes:
+
+```bash
+cp deploy/fleet-template.toml deploy/prod.toml   # gitignored, like adsb-stack.toml
+$EDITOR deploy/prod.toml                          # hostnames, site id, token
+make render-fleet F=deploy/prod.toml              # -> deploy/.rendered/<node>/
+
+cd rust
+make feed-armv7 && make deploy TARGET_DIR=target-linux-armv7 \
+    PI_HOST=pi@pi3.lan CONFIG_DIR=../deploy/.rendered/pi3
+make edge-arm64 && make deploy PI_HOST=pi@pi4.lan CONFIG_DIR=../deploy/.rendered/pi4
+# then on each Pi:  sudo bash /tmp/install-edge.sh
+```
+
+Then point this machine at it in `adsb-stack.toml` — **both planes**, and give
+the client its **own** `receiver.id`:
+
+```toml
+[receiver]
+id = "mac-desktop-prod"        # NOT the fleet's id -- see below
+[dump1090]
+mock = false
+[mqtt]
+host = "pi4.lan"               # live plane
+topic = "adsb/prod/sbs/raw"
+[remote]
+uri = "quack:pi4.lan:9494"     # history plane
+token = "<the fleet's share_token>"
+```
+
+```bash
+make client      # desktop + agents, nothing else
+```
+
+**Why the client needs its own id.** A subscriber's MQTT client id is
+`<receiver.id>-sub`. The Pi 4's recorder already holds `pi-roof-prod-sub`, so a
+desktop reusing the fleet's id would take the same one and the two would evict
+each other in a loop — killing recording and the live map together, with only a
+reconnect storm in the logs to show for it. `make doctor` warns about this and
+about a stage that disagrees between `receiver.id` and `mqtt.topic`.
+
+See `deploy/README.md` for the full convention and `rust/docs/DEPLOYMENT.md` for
+the node setup, including configuring mosquitto (`apt install` alone leaves it
+listening on localhost only).
+
 ## Where things are
 
 | Path | What |
@@ -104,6 +165,9 @@ independent of the local tooling here.
 | `.run/` | Rendered configs, PID files, logs, dev database. Disposable, gitignored |
 | `.run/logs/*.log` | Per-process output (`make logs N=feed`) |
 | `skills/` | Agent skills, symlinked into `.claude/` by `make skills` |
+| `deploy/fleet-template.toml` | Tracked template for a deployed fleet |
+| `deploy/<stage>.toml` | Your fleet: hostnames, ids, Quack token. Gitignored |
+| `deploy/.rendered/` | Per-node configs `make deploy` ships. Derived, gitignored |
 
 ## Ports
 

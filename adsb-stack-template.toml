@@ -20,7 +20,17 @@
 # Stamped onto every stored record, and the MQTT client id derives from it.
 # Must be unique per node: duplicates make data unattributable, and brokers
 # evict a session when a second client connects with the same id.
-id = "dev-laptop"
+#
+# Convention: `<host-or-site>-<stage>`, stage being dev / prod. The stage is
+# half of the identity -- without it, this dev stack and a deployed fleet on
+# the same LAN take the same client ids and evict each other in a loop. Pair it
+# with a matching mqtt.topic below; `make doctor` warns when they disagree.
+#
+# Pointing this machine at a fleet? Give it its OWN id. A desktop subscribing
+# to the bus takes the client id `<id>-sub`, which is already the recorder's if
+# you reuse the recorder's id -- and they will evict each other. See
+# deploy/README.md.
+id = "dev-laptop-dev"
 # Your antenna's real position: used as the map centre, for distance and
 # detection-range calculations, and as the origin for the mock feed.
 latitude = 46.717915
@@ -39,7 +49,10 @@ mock = true
 [mqtt]
 host = "localhost"
 port = 1883
-topic = "adsb/sbs/raw"
+# Stage-scoped, matching receiver.id above. This is the stronger of the two
+# isolation guards: distinct ids stop clients evicting each other, but only a
+# distinct topic stops a dev feed writing into a prod recorder's database.
+topic = "adsb/dev/sbs/raw"
 # 0 = at most once. Right for a live feed: a subscriber that was not connected
 # has missed nothing it can still use, and durability is the recorder's job.
 qos = 0
