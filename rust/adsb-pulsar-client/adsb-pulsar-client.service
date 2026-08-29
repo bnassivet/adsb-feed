@@ -5,6 +5,12 @@ After=network-online.target
 Wants=network-online.target
 # dump1090 is the data source; start after it when co-located.
 After=dump1090-fa.service
+# MQTT here is QoS 0 with persistence off, so anything published before the
+# recorder has subscribed is lost. Ordering only -- a recorder that fails to
+# start must NOT stop the feed, which may still have a Pulsar leg and in any
+# case should keep running when storage is broken. Ignored on 32-bit nodes,
+# where adsb-data-server is not installed.
+After=adsb-data-server.service
 
 [Service]
 Type=simple

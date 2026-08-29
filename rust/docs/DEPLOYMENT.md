@@ -90,10 +90,75 @@ and cause brokers to evict each other's sessions.
 
 ## The broker
 
-The MQTT hop needs one. On the Pi: `apt install mosquitto`, or use the compose
-stack at `infrastructure/mqtt/`. Persistence is deliberately off: the ADS-B feed
-is a live stream, so a disconnected subscriber has missed nothing it can use,
-and persistence only costs SD-card writes. Durability is the recorder's job.
+Everything downstream of dump1090 goes through MQTT, so the node needs a broker:
+`apt install mosquitto`, or the compose stack at `infrastructure/mqtt/`. It does
+not have to run on the same node as the feed client — `mqtt_broker` is just an
+address — but co-locating it with the recorder is the usual choice.
+
+**Mosquitto 2.x ships closed.** With no `listener` directive its default
+listener binds `localhost` and refuses remote anonymous clients, so a broker
+installed from `apt` and left alone accepts the local feed client and **nothing
+across the LAN** — the desktop app then sees no live aircraft with no error that
+names the cause. Copy `infrastructure/mqtt/mosquitto.conf`, or at minimum:
+
+```conf
+listener 1883
+allow_anonymous true    # LAN-local bus; see the warning below
+persistence false
+```
+
+`allow_anonymous true` means anyone who can reach port 1883 can read the feed
+and publish to it. That is acceptable on a trusted LAN and nowhere else — never
+port-forward it.
+
+**The clients cannot authenticate.** There is no `mqtt_username`/`mqtt_password`
+in `Config`; `allow_anonymous false` therefore locks out the feed client and the
+recorder along with everyone else. The isolation mechanism is the network, not
+the broker: keep 1883 on a trusted segment, and put a proxy in front of it if
+that is not enough. Adding credentials means adding the fields and passing them
+through `MqttOptions::set_credentials` on both ends first.
+
+`persistence false` is deliberate: the ADS-B feed is a live stream, so a
+disconnected subscriber has missed nothing it can still use, and persistence
+only costs SD-card writes. Durability is the recorder's job, in DuckDB.
+
+### Start order, and what systemd does not guarantee
+
+QoS 0 plus no persistence means **anything published before the recorder
+subscribes is gone**. `adsb-data-server.service` carries
+`After=mosquitto.service` and `adsb-pulsar-client.service` carries
+`After=adsb-data-server.service`, so a boot brings them up in the right order.
+
+`After=` is ordering only, not a dependency: it says "not before", never "only
+if it worked". A recorder that starts and then crashes still lets the feed
+start, and the feed will happily publish into a topic nobody is reading. That
+is the intended posture for an edge node — the feed must not stop because
+storage is broken — but it means **`systemctl is-active` on both units is not
+proof that anything is being recorded.** Check `row_count`, as below.
+
+The window is small in practice (the recorder subscribes within a second or
+two of starting) and costs a few seconds of positions after a reboot. It is not
+worth engineering away; it *is* worth knowing about before you go hunting for a
+gap in the data at every restart.
+
+### When two clients fight
+
+The MQTT client id derives from `source_id`. Brokers evict an existing session
+when a second client connects with the same id, so two nodes sharing a
+`source_id` — or one node with a leftover process — knock each other off in a
+loop. The feed client detects this and says so outright after a few short-lived
+connections:
+
+```
+MQTT connection to localhost:1883 keeps dropping (2 times). Another client is
+probably connected with the same id ('pi-roof') and evicting this one --
+check for a second adsb-pulsar-client, or set a distinct mqtt_client_id.
+```
+
+Reconnects are paced by the client itself (100 ms doubling to 30 s), and the
+attempt counter resets only after a connection has held for 30 s — an eviction
+storm connects *successfully* every time, so resetting on connect would leave it
+spinning. Set `mqtt_client_id` explicitly if one node must run two feed clients.
 
 ## Resource limits
 
@@ -123,6 +188,24 @@ Off by default (`share = false`). Before enabling it:
 
 Treat it as homelab-grade on a trusted LAN. Never port-forward it.
 
+## Pointing a desktop at this node
+
+The desktop has **two independent planes**, and a Pi deployment has to satisfy
+both:
+
+| Plane | Desktop setting | Serves from |
+|---|---|---|
+| Live aircraft | `[mqtt].host` = this node | the broker, port 1883 |
+| History | `[remote].uri` = `quack:<host>:9494` + `token` | `adsb-data-server`, Quack sharing on |
+
+Setting only the second is the common mistake: history loads, live map stays
+empty. From the developer machine, `make remote` sets both — see
+`QUICKSTART.md` topology 3 and the `run-adsb-stack` skill.
+
+History over Quack additionally needs `share = true` in
+`/etc/adsb/data-server.toml` (off by default, see above). The live plane needs
+only a reachable broker.
+
 ## Verifying a node
 
 ```bash
@@ -134,6 +217,10 @@ curl -s -X POST localhost:8787/tools/getStorageStats -d '{}' | python3 -m json.t
 
 # Watch the raw feed
 mosquitto_sub -h localhost -t 'adsb/sbs/raw' -C 5
+
+# ... and from ANOTHER machine, which is what the desktop actually does.
+# Works locally but not remotely => the mosquitto listener is still localhost-only.
+mosquitto_sub -h raspberrypi.local -t 'adsb/sbs/raw' -C 5
 ```
 
 Watch RSS against `MemoryMax` for at least an hour of real traffic before
