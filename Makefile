@@ -69,16 +69,30 @@ down-desktop:
 reap: ; @$(STACK) reap
 
 # Desktop against a data server elsewhere -- no local feed or recorder.
-# ADSB_REMOTE_URI seeds the mode on FIRST launch only; afterwards the stored
-# setting wins, so change it in Settings -> History Storage.
+#
+# Two independent planes, and BOTH have to be pointed at the remote node:
+#   history -> ADSB_REMOTE_URI (Quack ATTACH), seeded on FIRST launch only;
+#              afterwards the stored setting wins -- Settings -> History Storage.
+#   live    -> ADSB_SOURCE_KIND=mqtt + the broker, applied on EVERY launch.
+# Setting only the first is the failure this target used to have: history loads
+# from the Pi while the live map stays empty, because source_kind defaulted to
+# `socket` against a 127.0.0.1:30003 with nothing behind it.
 .PHONY: remote
 remote:
 	@test -f adsb-stack.toml || { echo "adsb-stack.toml not found -- run: make config" >&2; exit 1; }; \
-	uri=$$(python3 -c "import tomllib;print(tomllib.load(open('adsb-stack.toml','rb'))['remote']['uri'])"); \
-	tok=$$(python3 -c "import tomllib;print(tomllib.load(open('adsb-stack.toml','rb'))['remote']['token'])"); \
+	get() { python3 -c "import tomllib,sys;print(tomllib.load(open('adsb-stack.toml','rb'))[sys.argv[1]][sys.argv[2]])" "$$1" "$$2"; }; \
+	uri=$$(get remote uri); tok=$$(get remote token); \
+	mh=$$(get mqtt host); mp=$$(get mqtt port); mt=$$(get mqtt topic); \
 	if [ -z "$$uri" ]; then echo "Set [remote].uri in adsb-stack.toml first." >&2; exit 1; fi; \
-	echo "Attaching the desktop to $$uri"; \
-	cd rust/adsb-pulsar-client-desktop && ADSB_REMOTE_URI="$$uri" ADSB_REMOTE_TOKEN="$$tok" npm run tauri dev
+	case "$$mh" in localhost|127.0.0.1) \
+	  echo "Note: mqtt.host is $$mh, so the live feed will be read locally." >&2; \
+	  echo "      Point it at the remote node for live aircraft over the LAN." >&2;; \
+	esac; \
+	echo "Attaching the desktop to $$uri (live feed: mqtt://$$mh:$$mp/$$mt)"; \
+	cd rust/adsb-pulsar-client-desktop && \
+	  ADSB_REMOTE_URI="$$uri" ADSB_REMOTE_TOKEN="$$tok" \
+	  ADSB_SOURCE_KIND=mqtt ADSB_MQTT_BROKER="$$mh" ADSB_MQTT_PORT="$$mp" ADSB_MQTT_TOPIC="$$mt" \
+	  npm run tauri dev
 
 # --- setup and build -------------------------------------------------------
 

@@ -5,9 +5,15 @@ description: Configure, launch, verify and stop the local ADS-B stack (MQTT brok
 
 # Running the ADS-B stack
 
-The no-Pulsar path is four processes: an MQTT broker, `adsb-pulsar-client`
-(dump1090 → MQTT), `adsb-data-server` (MQTT → DuckDB, served over Quack), and
-the desktop app. Two optional Python agents add chat and simulated flights.
+The no-Pulsar path is four processes joined by an **MQTT broker**:
+`adsb-pulsar-client` (dump1090 → MQTT), `adsb-data-server` (MQTT → DuckDB,
+served over Quack), and the desktop app. Two optional Python agents add chat and
+simulated flights.
+
+The broker is the whole point: it decouples the receiver's machine from the UI's,
+and lets the recorder keep working with the app closed. Apache Pulsar is **not**
+in this path — it is an optional extra fan-out leg for Spark/Delta, enabled with
+`pulsar.enabled = true`, never a replacement for MQTT.
 
 **All paths below are relative to the repo root (`adsb-feed/`).**
 
@@ -52,12 +58,38 @@ make down        # stops EVERYTHING it started, including the desktop
 | `make down-desktop` | stop just the desktop |
 | `make up-agents` | stack + adsb-agent and adsb-simulation-agent |
 | `make reap` | kill whatever still holds the stack's ports (orphans) |
+| `make remote` | desktop only, pointed at a data server elsewhere |
 
 `make verify` samples `row_count` twice six seconds apart and fails if it has
 not moved. That distinction matters: every process can be "running" while
 nothing is recorded — see the ordering gotcha below.
 
 Add the desktop with `make up-desktop`, or the agents with `make up-agents`.
+
+## Live feed and history are two independent planes
+
+This trips people up, so check both when the app looks half-broken:
+
+| Plane | Comes from | Selected by | Env precedence |
+|---|---|---|---|
+| **Live aircraft** | the broker, or dump1090 directly | `source_kind` = `mqtt` \| `socket` | env wins on **every** launch |
+| **History / DB panel** | local DuckDB, or a remote one over Quack | storage mode = embedded \| remote | env seeds the **first** launch only |
+
+They are configured separately and can disagree. An empty live map with a
+working DB History panel means the history plane is pointed at the remote node
+and the live plane is not.
+
+`make up-desktop` points neither plane anywhere. Locally the desktop reads
+dump1090 on `:30003` directly — the same socket the feed client uses, one hop
+less for the same data. The MQTT path is still exercised, by the recorder, which
+is what `make verify` proves. To put the desktop itself on the broker:
+
+```bash
+cd rust/adsb-pulsar-client-desktop
+ADSB_SOURCE_KIND=mqtt ADSB_MQTT_BROKER=localhost npm run tauri dev
+```
+
+or set **Settings → Connection → Feed Source** to *MQTT subscription*.
 
 ## Configuration
 
@@ -95,16 +127,26 @@ To confirm a change actually reached a binary:
 
 ## Desktop against a real Raspberry Pi
 
+Nothing runs locally — no broker, no feed, no recorder. **Both planes have to be
+pointed at the Pi**: set `[remote].uri` (e.g. `quack:raspberrypi.local:9494`) and
+`[remote].token` for history, and `[mqtt].host` to the Pi's hostname for the live
+feed. Then:
+
 ```bash
-# Set [remote].uri (e.g. quack:raspberrypi.local:9494) and token, then:
 make remote
 ```
 
-**The environment seeds the mode on first launch only.** After anything is
-stored, the Settings UI wins — so if the app has run before, change it in
+`make remote` exports `ADSB_REMOTE_URI`/`ADSB_REMOTE_TOKEN` for history *and*
+`ADSB_SOURCE_KIND=mqtt` plus the broker address for the live feed, and warns if
+`mqtt.host` is still `localhost`. It used to export only the first, which is why
+the "history works, live map empty" symptom below exists at all.
+
+**The environment seeds the storage mode on first launch only.** After anything
+is stored, the Settings UI wins — so if the app has run before, change it in
 **Settings → History Storage** rather than expecting `make remote` to override.
 That precedence is deliberate: the other way round, a leftover env var would
-make the settings toggle appear dead.
+make the settings toggle appear dead. The live source has **no** such rule; the
+environment wins every launch.
 
 In remote mode the desktop stops recording its own history and uses a separate
 local file (`adsb_local.db`) for scenarios and events of interest. The embedded
@@ -163,6 +205,9 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
   share one MQTT client id (derived from `source_id`), and brokers evict an
   existing session when a second client arrives with the same id — so they kick
   each other in a loop. `make doctor` counts them; `make reap` clears them.
+- **A remote data server does not imply a remote live feed.** They are separate
+  settings with different precedence rules (see the table above). `make remote`
+  now sets both; anything launched by hand sets neither.
 - **The Quack token is printed at startup** when `share_token` is unset —
   DuckDB generates one and that log line is the only way to learn it. Grep
   `.run/logs/data-server.log` for `token:`.
@@ -191,6 +236,8 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
 | `EADDRINUSE :::3000` from `make up-desktop` | A previous desktop tree was orphaned. `make reap`, then retry. |
 | `make down` says stopped but a port is still held | Something outside the stack owns it — `down` lists what. `make reap` if you want it gone. |
 | `MQTT connection ... lost: Connection closed by peer abruptly`, repeatedly | Two clients sharing an MQTT id are evicting each other. After a few short-lived connections the log says so outright and names the id. Almost always a leftover process: `make doctor` (it counts duplicates), then `make reap`. |
+| DB History panel works, live map empty | Only the history plane is pointed at the remote node. Set `[mqtt].host` to the Pi and relaunch with `make remote`, or switch **Settings → Connection → Feed Source** to MQTT. |
+| Desktop shows no aircraft but `make verify` passes | The recorder is receiving and the desktop is not — they use different planes. Check the desktop's `source_kind`; with `mqtt`, check it reached the broker (`.run/logs/desktop.log`). |
 | Port 1883 busy but no broker | A system mosquitto is running: `brew services stop mosquitto`, or point `mqtt.host` at it and skip the container. |
 
 ## Files
@@ -211,3 +258,8 @@ Confirmed in the session that authored this: `doctor`, `up`, `status`, `verify`
 that `down` leaves foreign processes on :8000 untouched. `make up-desktop` and
 `make remote` start the app correctly but their UI cannot be verified from a
 shell on macOS.
+
+`make remote`'s environment export was verified separately with `npm` stubbed:
+it emits `ADSB_SOURCE_KIND=mqtt`, the broker host/port/topic and the remote
+URI/token together, and prints the `mqtt.host is localhost` warning. Whether the
+app then renders remote aircraft is the part that needs a human with a Pi.
