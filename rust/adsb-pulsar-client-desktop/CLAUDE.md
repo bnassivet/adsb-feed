@@ -467,6 +467,20 @@ Requires `adsb-agent` (:8000) and `adsb-simulation-agent` (:8300) running; witho
   excludes `docs/`, notebooks and markdown. **That file is read once, at `tauri dev`
   startup** — changing it does nothing until you restart the dev session.
 
+- **Two instances can run at once**, one per stack, and four things keep them
+  apart. Three are set by `scripts/stack.sh`; the fourth lives here:
+  - `ADSB_STACK=<name>` → the app's DuckDB and settings move to
+    `<app-data>/<name>/`. Unset keeps the historical paths. The name is
+    validated (`[A-Za-z0-9_-]+`) because it is a path component, and
+    `init_storage` must `create_dir_all` it — DuckDB will not create a missing
+    parent, and the failure is swallowed as "Storage init failed".
+  - `NEXT_DIST_DIR=.next-<name>` → Next 16 permits **one dev server per dist
+    dir** (it flocks `<distDir>/dev/lock`), not one per port.
+  - `tauri dev -c` overrides `devUrl` and the **CSP**, which pins the agent's
+    port — a second stack's agent is blocked outright without it.
+  - `NEXT_PUBLIC_AGENT_URL` → `src/lib/agent-url.ts`. Never hardcode
+    `localhost:8000` again; two call sites did, and a second window then
+    queried the first stack's data.
 - `bridge.rs` names `MqttSource` with no `#[cfg]`, so `src-tauri/Cargo.toml` must keep
   `features = ["mqtt"]` on the `adsb-pulsar-client` dep. It compiled without it only via
   feature unification through `adsb-data-server` — a build that worked by accident.

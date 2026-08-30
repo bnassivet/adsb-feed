@@ -332,6 +332,9 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
 | Desktop shows no aircraft but `make verify` passes | The recorder is receiving and the desktop is not — they use different planes. Check the desktop's `source_kind`; with `mqtt`, check it reached the broker (`.run/logs/desktop.log`). |
 | Agent chat works but every data tool errors | On a client machine, the agent is still pointed at :8787 where nothing listens. Launch via `make client`, which sets `ADSB_AGENT_TOOL_SERVER_URL`. |
 | Reconnect storm right after adding a second machine | Two subscribers sharing `<source_id>-sub`. Give the desktop its own `receiver.id` — see Identity above. |
+| `Another next dev server is already running` from `make up-desktop STACK=...` | Next 16 permits one dev server **per dist dir**, not per port — it flocks `<distDir>/dev/lock`. `stack.sh` sets `NEXT_DIST_DIR=.next-<stack>`; this error means it was launched by hand without it. |
+| Desktop starts but its history is empty and the log says `Storage init failed` | Its `<app-data>/<stack>/` directory could not be created, or `ADSB_STACK` was rejected. A stack name must be `[A-Za-z0-9_-]+` — anything else falls back to the default stack with a warning. |
+| Second desktop's chat answers with the *other* stack's aircraft | It was launched by hand without `NEXT_PUBLIC_AGENT_URL`, so the frontend fell back to `:8000`. Use `make up-desktop STACK=...`, which sets it. |
 | Port 1883 busy but no broker | A system mosquitto is running: `brew services stop mosquitto`, or point `mqtt.host` at it and skip the container. |
 
 ## Files

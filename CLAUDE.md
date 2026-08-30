@@ -8,7 +8,33 @@ Configuration is `adsb-stack.toml` — gitignored, like a `.env`. Create it with
 `make config` (copies `adsb-stack-template.toml`, never overwrites). It is
 expanded into `.run/*.toml` by `make render`; never edit the rendered files.
 A new setting belongs in the **template** as well, or it exists on one machine
-only. See QUICKSTART.md for the three supported topologies.
+only. See QUICKSTART.md for the five supported topologies.
+
+### Named stacks: dev and prod in parallel
+
+`STACK=<name>` selects a configuration. **Unset resolves exactly as it always
+has** — `adsb-stack.toml`, `.run/` — so nothing that predates named stacks
+needs renaming.
+
+```bash
+make up                    # adsb-stack.toml       .run/        (dev)
+make client STACK=prod     # adsb-stack-prod.toml  .run/prod/   (a fleet client)
+make paths  STACK=prod     # which files does this resolve to?
+```
+
+| Target | Starts |
+|---|---|
+| `make up` | broker → recorder → feed |
+| `make up-desktop` | ...and the desktop app |
+| `make up-agents` | ...and the AI agents |
+| `make client` | desktop + agents ONLY — for a machine whose data lives elsewhere |
+
+Keyed by the stack name: rendered configs, PIDs, logs, the DuckDB file, the
+docker compose project, the desktop's own app-data directory
+(`<app-data>/<stack>/`) and its Cargo target dir. **Ports are not** — they come
+from each stack's config, where a person can see and choose them, and
+`make doctor STACK=<name>` reports collisions. A stack whose `mqtt.host` is not
+local starts no broker and `down` will not stop one.
 
 Skills live in `skills/` and are symlinked into `.claude/` by `make skills`
 (once per checkout). The `run-adsb-stack` skill covers this for agents.

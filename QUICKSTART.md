@@ -57,8 +57,9 @@ all keyed by the name. **Ports are not** — set them in the second stack's own
 `[mqtt]`, `[storage]`, `[dump1090]` and `[agents]`, and `make doctor STACK=prod`
 reports what still collides.
 
-The desktop app can run twice — set `[desktop].dev_port` (`:3000` is pinned in
-`tauri.conf.json`) and the rest follows. Each instance keeps its **own DuckDB and
+The desktop app can run twice — set `[desktop].dev_port` and
+`[desktop].tool_port` (`:3000` and `:8788` are the defaults) and the rest
+follows. Each instance keeps its **own DuckDB and
 settings** in `<app-data>/<stack>/`, so dev and prod history never mix, and talks
 to its own stack's agent. A named stack builds into `rust/target-desktop-<name>`,
 so the first run compiles from scratch (~10 min, several GB) and says so.
@@ -115,7 +116,39 @@ To set the Pi up in the first place, see `rust/docs/DEPLOYMENT.md` — that path
 uses `make edge-arm64`, `make deploy` and `install-edge.sh` with systemd, and is
 independent of the local tooling here.
 
-## 4. Split fleet: feed Pi → recorder Pi → this desktop
+## 4. Dev and prod side by side
+
+The common pairing: the all-local dev stack for development, and a prod stack
+that is a **client** of the Pi fleet. Both at once, on this machine.
+
+```bash
+# once
+make config STACK=prod          # -> adsb-stack-prod.toml (gitignored)
+$EDITOR adsb-stack-prod.toml    # the Pi's hostname, the Quack token, and
+                                # ports that differ from the dev stack's
+
+# every day
+make up-desktop                 # dev:  local broker, feed, recorder, desktop
+make client STACK=prod          # prod: desktop + agents against the Pi fleet
+
+make status ; make status STACK=prod
+make down   ; make down   STACK=prod
+```
+
+Give the prod stack its own ports — nothing derives them:
+
+| | dev | prod |
+|---|---|---|
+| `[desktop].dev_port` / `tool_port` | 3000 / 8788 | 3010 / 8798 |
+| `[agents].agent_port` / `sim_agent_port` | 8000 / 8300 | 8010 / 8310 |
+| `[storage].http_port` | 8787 | 8797 |
+| `[receiver].id` | `<host>-dev` | `<host>-prod` — and **not** the fleet's id |
+
+`make doctor STACK=prod` reports what still collides. The two desktops keep
+separate history (`<app-data>/prod/`), separate settings, and each talks to its
+own stack's agent.
+
+## 5. Split fleet: feed Pi → recorder Pi → this desktop
 
 The receiver and the recorder on separate machines, with this Mac as a pure
 client. Nothing runs locally — no broker, no feed, no recorder.
@@ -197,6 +230,13 @@ listening on localhost only).
 | 30003 | dump1090 (real or mock) |
 | 8787 | Data server query API |
 | 8788 | Desktop tool server — separate port so it does not collide with 8787 |
+| 3010 / 8798 | A second stack's desktop (`[desktop].dev_port` / `tool_port`) |
+| 8010 / 8310 | A second stack's agents |
+| 8797 / 9495 | A second stack's data server and Quack |
 | 9494 | Quack (DuckDB over HTTP) |
 | 3000 | Desktop dev server — **collides with Grafana** in the Pulsar stack |
 | 8000 / 8300 | adsb-agent / adsb-simulation-agent |
+
+Nothing derives a second stack's ports — set them in that stack's own config
+and let `make doctor STACK=<name>` tell you what still collides. The values
+above are only the convention this repo's examples use.
