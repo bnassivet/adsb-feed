@@ -68,6 +68,34 @@ nothing is recorded — see the ordering gotcha below.
 
 Add the desktop with `make up-desktop`, or the agents with `make up-agents`.
 
+## Running two stacks at once
+
+`STACK` selects one. Unset, everything resolves as it always has —
+`adsb-stack.toml` and `.run/` — so nothing needs renaming.
+
+```bash
+make up                      # adsb-stack.toml      -> .run/
+make config STACK=prod       # creates adsb-stack-prod.toml
+make up     STACK=prod       # adsb-stack-prod.toml -> .run/prod/
+make paths  STACK=prod       # which files does this resolve to?
+```
+
+Everything mutable is keyed by the name: rendered configs, PID files, logs, the
+database and the docker compose project. **Ports are not** — they come from each
+stack's own config, which is where you can see and choose them. So a second
+stack needs its own `mqtt.port`, `storage.http_port`, `dump1090.port`,
+`agents.*_port`; `make doctor STACK=<name>` reports the collisions.
+
+Two caveats worth knowing before you try:
+
+- **The desktop app is single-instance across all stacks.** Its dev server is
+  pinned to :3000, and both instances would resolve the same Tauri app-data
+  directory, sharing one settings store and one DuckDB file — whose exclusive
+  lock the second would lose, silently running real-time-only. `make up-desktop`
+  and `make client` refuse with an explanation rather than half-work.
+- **A stack whose `mqtt.host` is not local starts no broker** and `down` will not
+  stop one. That is what makes a client stack safe to run beside a full one.
+
 ## Live feed and history are two independent planes
 
 This trips people up, so check both when the app looks half-broken:
@@ -300,7 +328,7 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
 | `scripts/install-skills.sh` | Links `skills/` into `.claude/` |
 | `deploy/fleet-template.toml` | Tracked template for a deployed fleet |
 | `deploy/README.md` | The stage convention and the id rules, in full |
-| `scripts/tests/test_render_fleet.py` | `make test-scripts` — stdlib unittest, no pytest |
+| `scripts/tests/test_render_config.py` | `make test-scripts` — stdlib unittest, no pytest |
 
 ## Verification status
 

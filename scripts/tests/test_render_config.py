@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Tests for the fleet renderer in scripts/render-config.py.
+"""Tests for scripts/render-config.py -- both the stack and fleet modes.
 
 Stdlib unittest, no pytest: this must run from a bare checkout with nothing
 installed, the same way `make render` does.
 
-    python3 scripts/tests/test_render_fleet.py
+    python3 scripts/tests/test_render_config.py
 """
 import importlib.util
 import sys
@@ -143,6 +143,52 @@ class Safety(unittest.TestCase):
         self.assertEqual(rc.node_dir("pi3.lan"), "pi3")
         self.assertEqual(rc.node_dir("raspberrypi.local"), "raspberrypi")
         self.assertEqual(rc.node_dir("192.168.1.10"), "192.168.1.10")
+
+
+STACK = {
+    "receiver": {"id": "dev-laptop-dev", "latitude": 46.7, "longitude": -2.3},
+    "dump1090": {"host": "127.0.0.1", "port": 30003, "mock": True},
+    "mqtt": {"host": "localhost", "port": 1883, "topic": "adsb/dev/sbs/raw"},
+    "storage": {"db_path": ".run/adsb.db", "http_port": 8787, "share": True,
+                "share_uri": "quack:localhost:9494", "share_token": "t"},
+    "pulsar": {"enabled": False},
+}
+
+
+class StackDbPathScoping(unittest.TestCase):
+    """Two named stacks must not share one DuckDB file.
+
+    They would not merely mix data: DuckDB takes an exclusive lock, so the
+    second stack's recorder simply fails to open and degrades silently.
+    """
+
+    def test_default_run_dir_is_unchanged(self):
+        # The pre-existing layout must survive byte-for-byte, or every existing
+        # checkout's database moves out from under it.
+        out = REPO / ".run"
+        rec = parse(rc.render_server(STACK, out))
+        self.assertEqual(rec["db_path"], str(REPO / ".run" / "adsb.db"))
+
+    def test_named_stack_gets_its_own_database(self):
+        rec = parse(rc.render_server(STACK, REPO / ".run" / "prod"))
+        self.assertEqual(rec["db_path"], str(REPO / ".run" / "prod" / "adsb.db"))
+
+    def test_two_named_stacks_do_not_collide(self):
+        a = parse(rc.render_server(STACK, REPO / ".run" / "prod"))["db_path"]
+        b = parse(rc.render_server(STACK, REPO / ".run" / "lab"))["db_path"]
+        self.assertNotEqual(a, b)
+
+    def test_absolute_db_path_is_respected_verbatim(self):
+        cfg = dict(STACK, storage=dict(STACK["storage"], db_path="/var/lib/adsb/x.db"))
+        rec = parse(rc.render_server(cfg, REPO / ".run" / "prod"))
+        self.assertEqual(rec["db_path"], "/var/lib/adsb/x.db")
+
+    def test_a_non_run_relative_path_is_left_repo_relative(self):
+        # Only the `.run/` prefix is stack-scoped; anything else the user wrote
+        # deliberately is theirs.
+        cfg = dict(STACK, storage=dict(STACK["storage"], db_path="data/x.db"))
+        rec = parse(rc.render_server(cfg, REPO / ".run" / "prod"))
+        self.assertEqual(rec["db_path"], str(REPO / "data" / "x.db"))
 
 
 if __name__ == "__main__":

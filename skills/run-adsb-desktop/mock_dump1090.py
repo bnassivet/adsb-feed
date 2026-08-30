@@ -1,17 +1,34 @@
 #!/usr/bin/env python3
-"""Mock dump1090 SBS-1 feed on :30003 for verifying the desktop app.
+"""Mock dump1090 SBS-1 feed for verifying the desktop app.
 
 Emits a handful of aircraft orbiting the configured receiver location,
 interleaving MSG3 (position), MSG1 (callsign) and MSG4 (speed) so the
 ingest pipeline's per-aircraft merge is actually exercised -- a MSG1
 arriving after a MSG3 in the same 500ms flush window must not erase the
 position. Hex idents are deliberately fake and greppable.
+
+Listens on :30003 by default. Override with --port/--host, or MOCK_PORT/
+MOCK_HOST in the environment -- two stacks running in parallel each need
+their own mock, and the port they expect comes from their own config.
+The receiver position can be overridden the same way, since the aircraft
+orbit it and a stack centred elsewhere would otherwise get traffic in the
+wrong place.
 """
-import math, socket, threading, time
+import math, os, socket, sys, threading, time
 from datetime import datetime
 
-HOST, PORT = "127.0.0.1", 30003
-RX_LAT, RX_LON = 46.717915, -2.33716964
+
+def _opt(flag, env, default, cast=str):
+    """Command-line flag, else environment, else default."""
+    if flag in sys.argv:
+        return cast(sys.argv[sys.argv.index(flag) + 1])
+    return cast(os.environ.get(env, default))
+
+
+HOST = _opt("--host", "MOCK_HOST", "127.0.0.1")
+PORT = _opt("--port", "MOCK_PORT", "30003", int)
+RX_LAT = _opt("--lat", "MOCK_RX_LAT", "46.717915", float)
+RX_LON = _opt("--lon", "MOCK_RX_LON", "-2.33716964", float)
 
 AIRCRAFT = [
     # hex,    callsign,   radius_nm, bearing0, alt,   speed, squawk

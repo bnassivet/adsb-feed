@@ -10,13 +10,64 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUN="$REPO/.run"
-LOGS="$RUN/logs"
-STACK="$REPO/adsb-stack.toml"
 TEMPLATE="$REPO/adsb-stack-template.toml"
 BIN="$REPO/rust/target/release"
 MOCK="$REPO/skills/run-adsb-desktop/mock_dump1090.py"
 COMPOSE="$REPO/infrastructure/mqtt/docker-compose.yml"
+
+# ---------------------------------------------------------------------------
+# Which stack?
+# ---------------------------------------------------------------------------
+#
+# $STACK selects one. Unset, everything resolves exactly as it always has --
+# adsb-stack.toml and .run/ -- so nothing that predates named stacks breaks and
+# no file needs renaming.
+#
+#   (unset)   adsb-stack.toml         .run/          project adsb-mqtt
+#   prod      adsb-stack-prod.toml    .run/prod/     project adsb-mqtt-prod
+#   a/path.toml   that file           .run/path/     project adsb-mqtt-path
+#
+# Everything mutable is keyed by that name: rendered configs, PID files, logs,
+# the dev database and the docker compose project. Two stacks that shared any
+# of them would not be independent -- `down` on one would stop the other's
+# processes, and both would record into a single DuckDB file.
+#
+# Ports are NOT keyed here: they come from each stack's own config, which is
+# where a person can see and choose them. `doctor` reports the collisions.
+STACK_SEL="${STACK:-}"
+case "$STACK_SEL" in
+  "")
+    STACK="$REPO/adsb-stack.toml"
+    STACK_NAME="default"
+    RUN="$REPO/.run"
+    ;;
+  */*|*.toml)
+    # A path. Key the run directory off its stem so .run/ still means something.
+    case "$STACK_SEL" in
+      /*) STACK="$STACK_SEL" ;;
+      *)  STACK="$REPO/$STACK_SEL" ;;
+    esac
+    STACK_NAME="$(basename "$STACK")"; STACK_NAME="${STACK_NAME%.toml}"
+    STACK_NAME="${STACK_NAME#adsb-stack-}"
+    RUN="$REPO/.run/$STACK_NAME"
+    ;;
+  *)
+    STACK="$REPO/adsb-stack-$STACK_SEL.toml"
+    STACK_NAME="$STACK_SEL"
+    RUN="$REPO/.run/$STACK_NAME"
+    ;;
+esac
+LOGS="$RUN/logs"
+
+# Compose project name. Without a distinct one, `docker compose up` on the
+# second stack ADOPTS the first stack's container rather than starting another
+# -- it matches on project + service, so it would look like success and quietly
+# give you one broker shared by two stacks.
+if [ "$STACK_NAME" = "default" ]; then
+  COMPOSE_PROJECT="adsb-mqtt"
+else
+  COMPOSE_PROJECT="adsb-mqtt-$STACK_NAME"
+fi
 
 mkdir -p "$RUN" "$LOGS"
 
@@ -86,7 +137,7 @@ start() { # start <name> <command...>
     > "$LOGS/$name.log" 2>&1 &
   local pid=$!
   echo "$pid" > "$(pidfile "$name")"
-  echo "  started $name (pid $pid) -> .run/logs/$name.log"
+  echo "  started $name (pid $pid) -> ${LOGS#"$REPO"/}/$name.log"
 }
 
 stop() { # stop <name>
@@ -114,17 +165,81 @@ stop() { # stop <name>
 
 # Ports the stack is expected to own, for orphan reporting.
 stack_ports() {
-  echo "1883 $(cfg dump1090 port 30003) $(cfg storage http_port 8787)"
+  # Every port comes from THIS stack's config, so `reap` and `down` only ever
+  # name ports this stack claims -- never a sibling stack's.
+  echo "$(cfg mqtt port 1883) $(cfg dump1090 port 30003) $(cfg storage http_port 8787)"
   echo "$(cfg agents desktop_tool_port 8788) 3000"
   [ "$(cfg agents enabled false)" = "true" ] && \
     echo "$(cfg agents agent_port 8000) $(cfg agents sim_agent_port 8300)"
 }
 
-render() { python3 "$REPO/scripts/render-config.py"; }
+render() { python3 "$REPO/scripts/render-config.py" "$STACK" "$RUN"; }
+
+# Every compose call goes through this: the project name and the published port
+# are what keep two stacks' brokers apart.
+compose() {
+  MQTT_CONTAINER="$COMPOSE_PROJECT" MQTT_PORT="$(cfg mqtt port 1883)" \
+    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE" "$@"
+}
+
+# The agents' environment. Until this existed, agents.agent_port,
+# sim_agent_port and llm_base_url were read ONLY for doctor's port check and
+# never passed to anything -- changing them in the config did nothing, which
+# also made two stacks' agents collide on 8000/8300 with no way to separate
+# them. The pydantic settings prefixes are ADSB_AGENT_ and ADSB_SIM_AGENT_.
+agent_env() {
+  ap="$(cfg agents agent_port 8000)"
+  sp="$(cfg agents sim_agent_port 8300)"
+  printf '%s\n' \
+    "ADSB_AGENT_PORT=$ap" \
+    "ADSB_AGENT_LLM_BASE_URL=$(cfg agents llm_base_url http://localhost:1234/v1)" \
+    "ADSB_AGENT_SIMULATION_AGENT_URL=http://127.0.0.1:$sp" \
+    "ADSB_AGENT_TOOL_SERVER_URL=http://127.0.0.1:$(cfg agents desktop_tool_port 8788)"
+}
+sim_agent_env() {
+  printf '%s\n' "ADSB_SIM_AGENT_PORT=$(cfg agents sim_agent_port 8300)"
+}
+
+# The desktop is single-instance, for now.
+#
+# Two would need more than a free port: the Next dev server is pinned to :3000
+# in both tauri.conf.json (devUrl) and package.json, and -- the harder half --
+# both instances would resolve the same Tauri app-data directory from the same
+# bundle identifier, so they would share one settings store and one DuckDB
+# file. DuckDB takes an exclusive lock, so the second would silently lose its
+# history and run real-time-only. Fixable with `tauri dev -c` overrides for the
+# identifier and the port; until then, refuse clearly rather than half-work.
+desktop_guard() {
+  if port_busy 3000; then
+    echo "Refusing: something already holds :3000 (the desktop's dev server)." >&2
+    echo "The desktop is single-instance across ALL stacks -- two would share" >&2
+    echo "one app-data dir and one DuckDB file, and the second would lose its" >&2
+    echo "history to the first's exclusive lock." >&2
+    echo "Stop the other one first:  make down-desktop [STACK=...]" >&2
+    return 1
+  fi
+}
+
+# Does this stack run its own broker? A config pointing at a broker elsewhere
+# (a Pi, another stack) must not start a local container -- and must not have
+# `down` stop someone else's.
+owns_broker() {
+  case "$(cfg mqtt host localhost)" in
+    localhost|127.0.0.1|0.0.0.0) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 # ---------------------------------------------------------------------------
 
 case "${1:-help}" in
+
+paths)
+  # Where this stack's state lives. Exists so the tests can assert the layout,
+  # and so `make paths STACK=prod` answers "which files am I actually using?"
+  printf 'name %s\nconfig %s\nrun %s\nlogs %s\nproject %s\n' \
+    "$STACK_NAME" "$STACK" "$RUN" "$LOGS" "$COMPOSE_PROJECT"
+  ;;
 
 config)
   if [ -f "$STACK" ]; then
@@ -135,14 +250,21 @@ config)
     exit 0
   fi
   cp "$TEMPLATE" "$STACK"
-  echo "Created adsb-stack.toml from the template."
-  echo "Edit [receiver] with your antenna's real position, then: make up"
+  echo "Created $(basename "$STACK") from the template."
+  echo "Edit [receiver] with your antenna's real position, then: make up${STACK_SEL:+ STACK=$STACK_SEL}"
+  if [ "$STACK_NAME" != "default" ]; then
+    echo
+    echo "This is a SECOND stack. To run it alongside the first, give it its own"
+    echo "ports in [mqtt], [storage] and [agents] -- 'make doctor STACK=$STACK_NAME'"
+    echo "reports the collisions. Its state is separate already (${RUN#"$REPO"/})."
+  fi
   ;;
 
 render) require_config; render ;;
 
 doctor)
   rc=0
+  echo "Stack: $STACK_NAME ($(basename "$STACK"), state in ${RUN#"$REPO"/})"
   echo "Config:"
   if [ -f "$STACK" ]; then
     echo "  ok      adsb-stack.toml"
@@ -202,7 +324,7 @@ doctor)
   echo "Ports:"
   # 3000 is listed because Grafana in infrastructure/docker-compose.yml wants
   # the same port as the desktop's Next dev server -- they cannot both run.
-  for p in 1883 "$(cfg dump1090 port 30003)" "$(cfg storage http_port 8787)" \
+  for p in "$(cfg mqtt port 1883)" "$(cfg dump1090 port 30003)" "$(cfg storage http_port 8787)" \
            "$(cfg agents desktop_tool_port 8788)" 3000 8000 8300; do
     if port_busy "$p"; then echo "  BUSY    $p"; else echo "  free    $p"; fi
   done
@@ -242,7 +364,11 @@ up)
   require_config
   render
   echo "Broker:"
-  docker compose -f "$COMPOSE" up -d 2>&1 | sed 's/^/  /'
+  if owns_broker; then
+    compose up -d 2>&1 | sed 's/^/  /'
+  else
+    echo "  skipped -- mqtt.host is $(cfg mqtt host localhost), not this machine"
+  fi
 
   # The recorder must be subscribed BEFORE the feed publishes. MQTT here is
   # QoS 0 with persistence off, so anything sent while nobody is subscribed is
@@ -258,7 +384,14 @@ up)
 
   if [ "$(cfg dump1090 mock true)" = "true" ]; then
     echo "Mock receiver:"
-    start mock python3 "$MOCK"
+    # The mock must listen where THIS stack's feed will look, and orbit this
+    # stack's receiver -- both come from its own config.
+    start mock env \
+      "MOCK_PORT=$(cfg dump1090 port 30003)" \
+      "MOCK_HOST=$(cfg dump1090 host 127.0.0.1)" \
+      "MOCK_RX_LAT=$(cfg receiver latitude 46.717915)" \
+      "MOCK_RX_LON=$(cfg receiver longitude -2.33716964)" \
+      python3 "$MOCK"
     sleep 1
   fi
 
@@ -267,8 +400,11 @@ up)
 
   if [ "${2-}" = "--agents" ] || [ "$(cfg agents enabled false)" = "true" ]; then
     echo "Agents:"
-    start sim-agent sh -c "cd '$REPO/rust/adsb-simulation-agent' && exec uv run python -m adsb_simulation_agent"
-    start agent     sh -c "cd '$REPO/rust/adsb-agent' && exec uv run python -m adsb_agent"
+    # shellcheck disable=SC2046  # word splitting is the point: one VAR=x per line
+    start sim-agent env $(sim_agent_env) \
+      sh -c "cd '$REPO/rust/adsb-simulation-agent' && exec uv run python -m adsb_simulation_agent"
+    start agent env $(agent_env) \
+      sh -c "cd '$REPO/rust/adsb-agent' && exec uv run python -m adsb_agent"
   fi
 
   echo
@@ -277,6 +413,7 @@ up)
 
 desktop)
   require_config
+  desktop_guard || exit 1
   port="$(cfg agents desktop_tool_port 8788)"
   echo "Desktop:"
   # Backgrounded with a PID file like everything else, so `down` can stop it.
@@ -306,6 +443,7 @@ client)
       echo "      Point it at the remote node for live aircraft over the LAN." >&2;;
   esac
 
+  desktop_guard || exit 1
   echo "Desktop (remote: $uri, live: mqtt://$mh:$mp/$mt):"
   # Both planes, explicitly. History is seeded on FIRST launch only; the live
   # source is applied every launch. See QUICKSTART.md topology 4.
@@ -320,8 +458,10 @@ client)
   # The agent defaults its tool server to :8787, which in the all-local stack
   # resolves to the data server. There is no data server on this machine, so
   # without this every one of its data tools fails with connection-refused.
-  start sim-agent sh -c "cd '$REPO/rust/adsb-simulation-agent' && exec uv run python -m adsb_simulation_agent"
-  start agent env "ADSB_AGENT_TOOL_SERVER_URL=http://127.0.0.1:$port" \
+  # shellcheck disable=SC2046
+  start sim-agent env $(sim_agent_env) \
+    sh -c "cd '$REPO/rust/adsb-simulation-agent' && exec uv run python -m adsb_simulation_agent"
+  start agent env $(agent_env) \
     sh -c "cd '$REPO/rust/adsb-agent' && exec uv run python -m adsb_agent"
 
   echo
@@ -337,7 +477,11 @@ down)
   # Reverse of start order: producers first, so the recorder sees the tail.
   for n in desktop agent sim-agent feed mock data-server; do stop "$n"; done
   echo "Broker:"
-  docker compose -f "$COMPOSE" down 2>&1 | sed 's/^/  /'
+  if owns_broker; then
+    compose down 2>&1 | sed 's/^/  /'
+  else
+    echo "  skipped -- not ours to stop (mqtt.host is $(cfg mqtt host localhost))"
+  fi
 
   # Report anything still holding a stack port that we did not start. Killing
   # it is deliberately NOT automatic -- it may be the developer's own process --
@@ -383,7 +527,8 @@ status)
     fi
   done
   printf "  %-12s " "broker"
-  port_busy 1883 && echo "listening on 1883" || echo "not listening"
+  bport="$(cfg mqtt port 1883)"
+  port_busy "$bport" && echo "listening on $bport" || echo "not listening on $bport"
   printf "  %-12s " "query api"
   curl -s -m 3 -X POST "localhost:$http/tools/getStorageStats" \
     -H 'Content-Type: application/json' -d '{}' 2>/dev/null | grep -q '"ok":true' \

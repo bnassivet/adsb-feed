@@ -411,6 +411,10 @@ graphify-out/GRAPH_REPORT.md
 # it holds host-specific paths, a receiver location and a Quack token, and one
 # person's settings should never land in someone else's checkout.
 adsb-stack.toml
+# Named stacks (make up STACK=prod -> adsb-stack-prod.toml). The negation keeps
+# the tracked template, which matches the same glob.
+adsb-stack-*.toml
+!adsb-stack-template.toml
 
 # Fleet configuration. Same reasoning as adsb-stack.toml: a fleet file holds
 # real hostnames and a Quack token. deploy/.rendered/ is derived from it.

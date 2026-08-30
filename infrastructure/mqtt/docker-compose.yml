@@ -4,13 +4,18 @@
 # publishes raw SBS-1 lines, adsb-data-server records them, and the desktop app
 # subscribes for live aircraft. Apache Pulsar is only needed for the
 # Spark/Delta analytics path -- see ../docker-compose.yml for that stack.
+# Container name and host port come from the environment so that several
+# stacks can each run their own broker. scripts/stack.sh sets them (and a
+# distinct compose project name, without which the second `up` would ADOPT the
+# first stack's container instead of starting one -- compose matches on project
+# plus service, so it would look like success and quietly share one broker).
 services:
   mosquitto:
     image: eclipse-mosquitto:2.0
-    container_name: adsb-mosquitto
+    container_name: ${MQTT_CONTAINER:-adsb-mosquitto}
     restart: unless-stopped
     ports:
-      - "1883:1883"
+      - "${MQTT_PORT:-1883}:1883"
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - adsb_mosquitto_data:/mosquitto/data

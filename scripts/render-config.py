@@ -10,6 +10,7 @@ nothing.
 Two modes, same reasoning applied at two scales:
 
     render-config.py                     adsb-stack.toml -> .run/*.toml
+    render-config.py <stack> <outdir>    a named stack, e.g. .run/prod/
                                          one machine, the development stack
 
     render-config.py --fleet deploy/prod.toml
@@ -29,6 +30,10 @@ import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+# Defaults for the unnamed stack. Both are overridable so that several stacks
+# can be rendered side by side without overwriting each other -- see
+# `stack.sh paths`, which is what passes these in.
 STACK = REPO / "adsb-stack.toml"
 OUT = REPO / ".run"
 
@@ -56,7 +61,7 @@ def emit(pairs) -> str:
     return "\n".join(f"{k} = {q(v)}" for k, v in pairs if v is not None) + "\n"
 
 
-def render_feed(cfg: dict) -> str:
+def render_feed(cfg: dict, out: Path = OUT) -> str:
     rx, d, m, p = cfg["receiver"], cfg["dump1090"], cfg["mqtt"], cfg["pulsar"]
 
     # The forwarder list is what makes a deployment "no-Pulsar" or not, so it is
@@ -91,14 +96,22 @@ def render_feed(cfg: dict) -> str:
     return HEADER + "\n" + body
 
 
-def render_server(cfg: dict) -> str:
+def render_server(cfg: dict, out: Path = OUT) -> str:
     rx, m, s = cfg["receiver"], cfg["mqtt"], cfg["storage"]
 
-    # Relative db_path is resolved against the repo root, so `make up` works
-    # from anywhere and the dev database lands in .run/ rather than $PWD.
+    # A relative db_path is resolved against the repo root so `make up` works
+    # from anywhere and the database lands in .run/ rather than $PWD.
+    #
+    # `.run/<file>` is rewritten into THIS stack's run directory: two stacks
+    # both saying ".run/adsb.db" must not end up sharing one DuckDB file, and
+    # DuckDB takes an exclusive lock, so the second would simply fail to open.
     db_path = Path(s["db_path"])
     if not db_path.is_absolute():
-        db_path = REPO / db_path
+        parts = db_path.parts
+        if parts and parts[0] == ".run":
+            db_path = out.joinpath(*parts[1:])
+        else:
+            db_path = REPO / db_path
 
     pairs = [
         ("source_id", rx["id"]),
@@ -267,27 +280,41 @@ def render_fleet(path: Path) -> int:
     return 0
 
 
+def render_stack(stack: Path, out: Path) -> int:
+    if not stack.exists():
+        print(f"error: {stack} not found", file=sys.stderr)
+        return 1
+    with stack.open("rb") as fh:
+        cfg = tomllib.load(fh)
+
+    out.mkdir(parents=True, exist_ok=True)
+    for name, text in (
+        ("feed.toml", render_feed(cfg, out)),
+        ("data-server.toml", render_server(cfg, out)),
+    ):
+        (out / name).write_text(text)
+        try:
+            shown = out.relative_to(REPO)
+        except ValueError:
+            shown = out
+        print(f"  rendered {shown}/{name}")
+    return 0
+
+
 def main() -> int:
-    if len(sys.argv) > 1:
-        if sys.argv[1] != "--fleet" or len(sys.argv) != 3:
-            print("usage: render-config.py [--fleet <fleet.toml>]", file=sys.stderr)
+    if len(sys.argv) > 1 and sys.argv[1] == "--fleet":
+        if len(sys.argv) != 3:
+            print("usage: render-config.py --fleet <fleet.toml>", file=sys.stderr)
             return 2
         return render_fleet(Path(sys.argv[2]))
 
-    if not STACK.exists():
-        print(f"error: {STACK} not found", file=sys.stderr)
-        return 1
-    with STACK.open("rb") as fh:
-        cfg = tomllib.load(fh)
-
-    OUT.mkdir(exist_ok=True)
-    for name, text in (
-        ("feed.toml", render_feed(cfg)),
-        ("data-server.toml", render_server(cfg)),
-    ):
-        (OUT / name).write_text(text)
-        print(f"  rendered .run/{name}")
-    return 0
+    if len(sys.argv) == 3:
+        return render_stack(Path(sys.argv[1]), Path(sys.argv[2]))
+    if len(sys.argv) == 1:
+        return render_stack(STACK, OUT)
+    print("usage: render-config.py [<stack.toml> <outdir>] | [--fleet <fleet.toml>]",
+          file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

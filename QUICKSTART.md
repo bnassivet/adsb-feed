@@ -43,6 +43,21 @@ make down        # stops everything, desktop included
 
 `make reap` clears orphans if a previous run left something holding a port.
 
+**A second stack in parallel.** `STACK=<name>` selects one; unset behaves exactly
+as above, so nothing needs renaming.
+
+```bash
+make config STACK=prod   # creates adsb-stack-prod.toml
+make up     STACK=prod   # its own .run/prod/, database, logs and broker
+make paths  STACK=prod   # which files am I actually using?
+```
+
+Rendered configs, PIDs, logs, the database and the docker compose project are
+all keyed by the name. **Ports are not** — set them in the second stack's own
+`[mqtt]`, `[storage]`, `[dump1090]` and `[agents]`, and `make doctor STACK=prod`
+reports what still collides. The desktop app is single-instance across all
+stacks and says so if you try to start a second.
+
 With a real receiver, set `dump1090.mock = false` and point `[dump1090]` at it.
 
 **The desktop reads dump1090 directly here, not through the broker.** Its

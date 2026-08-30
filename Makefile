@@ -7,13 +7,24 @@
 # duplicated, so the Docker arm64 logic and its job caps stay in one place.
 
 RUST := $(CURDIR)/rust
-STACK := $(CURDIR)/scripts/stack.sh
+
+# Which stack. Unset means adsb-stack.toml and .run/, exactly as before, so
+# nothing that predates named stacks needs renaming:
+#
+#   make up                 adsb-stack.toml        .run/
+#   make up STACK=prod      adsb-stack-prod.toml   .run/prod/
+#
+# Two stacks run in parallel as long as their configs choose different ports;
+# `make doctor STACK=...` reports collisions. The desktop app is the exception
+# -- single-instance across all stacks, and it says so if you try.
+STACK ?=
+SH := STACK=$(STACK) $(CURDIR)/scripts/stack.sh
 
 .DEFAULT_GOAL := help
 
 .PHONY: help
 help:
-	@echo "Run the stack:"
+	@echo "Run the stack:  (add STACK=<name> for a second, parallel stack)"
 	@echo "  make doctor       preflight: binaries, docker, ports, skills"
 	@echo "  make up           broker -> recorder -> feed"
 	@echo "  make up-agents    ... plus the AI agents (:8000, :8300)"
@@ -27,6 +38,7 @@ help:
 	@echo "  make logs         tail all logs (make logs N=feed for one)"
 	@echo "  make verify       confirm rows are actually being recorded"
 	@echo "  make render       regenerate .run/*.toml from adsb-stack.toml"
+	@echo "  make paths        which config and state dir this STACK resolves to"
 	@echo "  make render-fleet F=deploy/prod.toml   render per-node fleet configs"
 	@echo ""
 	@echo "Build:"
@@ -42,17 +54,18 @@ help:
 # --- running ---------------------------------------------------------------
 
 .PHONY: config
-config: ; @$(STACK) config
+config: ; @$(SH) config
 
-.PHONY: doctor up up-agents down status logs verify render
-doctor:  ; @$(STACK) doctor
-up:      ; @$(STACK) up
-up-agents: ; @$(STACK) up --agents
-down:    ; @$(STACK) down
-status:  ; @$(STACK) status
-verify:  ; @$(STACK) verify
-render:  ; @$(STACK) render
-logs:    ; @$(STACK) logs $(N)
+.PHONY: doctor up up-agents down status logs verify render paths
+paths:   ; @$(SH) paths
+doctor:  ; @$(SH) doctor
+up:      ; @$(SH) up
+up-agents: ; @$(SH) up --agents
+down:    ; @$(SH) down
+status:  ; @$(SH) status
+verify:  ; @$(SH) verify
+render:  ; @$(SH) render
+logs:    ; @$(SH) logs $(N)
 
 # Backgrounded with a PID file like every other process, so `make down` can
 # actually stop it. It used to run in the foreground for its output, but that
@@ -61,20 +74,20 @@ logs:    ; @$(STACK) logs $(N)
 # squatting on :3000 that failed the next launch with EADDRINUSE.
 .PHONY: up-desktop
 up-desktop: up
-	@$(STACK) desktop
+	@$(SH) desktop
 
 .PHONY: down-desktop
 down-desktop:
-	@$(STACK) stop-desktop
+	@$(SH) stop-desktop
 
 .PHONY: reap
-reap: ; @$(STACK) reap
+reap: ; @$(SH) reap
 
 # The three-node topology: this machine is a pure client of a fleet elsewhere.
 # Unlike `remote`, it also starts the agents and backgrounds the desktop with a
 # PID file, so `make down` can stop the whole thing.
 .PHONY: client
-client: ; @$(STACK) client
+client: ; @$(SH) client
 
 # Fleet configs for deployed nodes -- a different lifecycle from the dev stack:
 # see deploy/README.md. F defaults to the conventional prod fleet.
@@ -125,7 +138,8 @@ edge-arm64 feed-arm64 server-arm64 feed-armv7 deploy:
 # runs from a bare checkout the same way `make render` does.
 .PHONY: test-scripts
 test-scripts:
-	@python3 scripts/tests/test_render_fleet.py
+	@python3 scripts/tests/test_render_config.py
+	@bash scripts/tests/test_stack_paths.sh
 
 # The full gate: the tooling tests, then the Rust workspace gate in rust/.
 .PHONY: ci
