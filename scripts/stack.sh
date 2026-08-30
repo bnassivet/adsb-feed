@@ -483,14 +483,19 @@ doctor)
   if [ "$(cfg agents enabled false)" = "true" ]; then
     echo "Agents:"
     llm="$(cfg agents llm_base_url)"
-    if curl -s -m 3 -o /dev/null "$llm/models" 2>/dev/null; then
-      # Reachable is not the same as usable. LM Studio's /v1/models lists every
-      # DOWNLOADED model whether or not one is loaded, so this check used to
-      # pass while every chat turn failed with
-      #   400 "No models loaded. Please load a model ... or use 'lms load'".
-      # Its native /api/v0/models carries a per-model `state`; ask that when it
-      # exists, and fall back to the plain reachability check when it does not
-      # (Ollama, a gateway, anything else).
+    # `/models` is not universal: LM Studio serves it, the MLflow AI Gateway
+    # 404s on it. So separate "no HTTP answer at all" (curl exit 7) from "an
+    # answer, just not that route" -- treating a 404 as a dead endpoint would
+    # condemn the gateway, which is the endpoint we actually use.
+    code="$(curl -s -m 3 -o /dev/null -w '%{http_code}' "$llm/models" 2>/dev/null)"
+    rc=$?
+    if [ $rc -ne 0 ] && [ "$code" = "000" ]; then
+      echo "  MISSING LLM at $llm -- nothing answering. The agents will start"
+      echo "          but every chat turn will fail."
+    elif [ "$code" = "200" ]; then
+      # Reachable is not usable. LM Studio's /v1/models lists every DOWNLOADED
+      # model whether or not one is loaded, so this used to print "ok" while
+      # every turn failed with 400 "No models loaded".
       loaded="$(curl -s -m 3 "${llm%/v1}/api/v0/models" 2>/dev/null \
         | python3 -c 'import json,sys
 try:
@@ -498,19 +503,19 @@ try:
 except Exception:
     sys.exit(1)
 print(",".join(m["id"] for m in ms if m.get("state") == "loaded"))' 2>/dev/null)"
-      rc_loaded=$?
-      if [ $rc_loaded -ne 0 ]; then
+      if [ $? -ne 0 ]; then
         echo "  ok      LLM endpoint at $llm (loaded-model state not reported)"
       elif [ -n "$loaded" ]; then
         echo "  ok      LLM at $llm -- loaded: $loaded"
       else
-        echo "  MISSING no model LOADED at $llm (the endpoint answers, and lists"
-        echo "          downloaded models, which is why this used to look fine)."
-        echo "          Load one -- 'lms load <model>' -- and make sure the id"
-        echo "          matches ADSB_AGENT_MODEL exactly, prefix included."
+        echo "  MISSING no model LOADED at $llm. It answers and lists downloaded"
+        echo "          models, which is why this used to look fine. Load one"
+        echo "          ('lms load <id>'), or point agents.llm_base_url at the"
+        echo "          MLflow gateway, which loads on demand."
       fi
     else
-      echo "  MISSING LLM at $llm -- the agents will start but fail on first use"
+      # An HTTP answer, just not /models -- the gateway's shape.
+      echo "  ok      LLM endpoint at $llm (no /models route; HTTP $code)"
     fi
 
     # MLflow is worth its own line because the failure is far worse than the
