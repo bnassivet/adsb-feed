@@ -433,6 +433,9 @@ deploy/.rendered/
 rust/target-linux-arm64/
 rust/target-linux-armv7/
 
+# Per-stack cargo target dirs for the desktop app (STACK=<name> keys its own)
+rust/target-desktop-*/
+
 # Ad-hoc logs captured while debugging a run
 desktop_log.txt
 *_log.txt
