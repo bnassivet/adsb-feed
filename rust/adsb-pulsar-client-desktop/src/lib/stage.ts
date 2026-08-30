@@ -1,9 +1,9 @@
 /**
  * The deployment stage this window belongs to.
  *
- * Shown in the window title and the header so two instances running side by
- * side — a dev stack and a client of the prod fleet — are never confused for
- * each other. Getting that wrong is expensive: the windows are identical, and
+ * Shown as a badge in the top bar so two instances running side by side — a
+ * dev stack and a client of the prod fleet — are never confused for each
+ * other. Getting that wrong is expensive: the windows are identical, and
  * the mistake is only visible once you have acted on the wrong data.
  *
  * Derived from `source_id`, following the convention in `deploy/README.md`:
@@ -34,9 +34,4 @@ export function stageOf(sourceId: string | null | undefined): Stage | null {
   return (STAGES as readonly string[]).includes(last ?? "")
     ? (last as Stage)
     : null;
-}
-
-/** `"ADS-B Aircraft Tracker [dev]"`, or the bare title when there is no stage. */
-export function titleWithStage(title: string, stage: Stage | null): string {
-  return stage ? `${title} [${stage}]` : title;
 }

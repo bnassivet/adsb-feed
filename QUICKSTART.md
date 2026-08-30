@@ -144,9 +144,9 @@ Give the prod stack its own ports — nothing derives them:
 | `[storage].http_port` | 8787 | 8797 |
 | `[receiver].id` | `<host>-dev` | `<host>-prod` — and **not** the fleet's id |
 
-Each window shows its stage — `ADS-B Aircraft Tracker [dev]` in the title bar
-and a badge in the header, amber for `prod`. It is read from `receiver.id`'s
-suffix, so an id without one shows no badge; `make doctor` warns about that.
+Each window shows its stage as a badge in the top bar — blue for `dev`, amber
+for `prod`. It is read from `receiver.id`'s suffix, so an id without one shows
+no badge; `make doctor` warns about that.
 
 `make doctor STACK=prod` reports what still collides. The two desktops keep
 separate history (`<app-data>/prod/`), separate settings, and each talks to its

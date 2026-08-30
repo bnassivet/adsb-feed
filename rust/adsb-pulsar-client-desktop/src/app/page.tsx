@@ -52,8 +52,7 @@ import type { AircraftTrack, ActiveMode, Config, Filters, DensityMetric, Density
 import type { SelectEvent } from "@/components/AircraftTable";
 import { ModeTabs } from "@/components/ModeTabs";
 import Link from "next/link";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { stageOf, titleWithStage } from "@/lib/stage";
+import { stageOf } from "@/lib/stage";
 
 /** Base window/header title. `tauri.conf.json` sets the same string. */
 const APP_TITLE = "ADS-B Aircraft Tracker";
@@ -179,17 +178,14 @@ export default function Dashboard() {
   useEffect(() => {
     getConfig().then(setAppConfig).catch(() => {});
   }, []);
-  // Stage badge + window title. Two instances (a dev stack and a client of the
-  // prod fleet) are otherwise identical on screen, and acting on the wrong
-  // one's data is only obvious afterwards.
+  // Which stack's data this window is showing. Two instances -- a dev stack and
+  // a client of the prod fleet -- are otherwise identical on screen, and acting
+  // on the wrong one's data is only obvious afterwards.
+  //
+  // Shown in the top bar only. Setting the OS window title was tried and did
+  // not take effect, and it is the wrong place regardless: the top bar is
+  // where you are already looking.
   const stage = useMemo(() => stageOf(appConfig?.source_id), [appConfig?.source_id]);
-  useEffect(() => {
-    // Best-effort: the title is a nicety, and a webview outside Tauri (or a
-    // missing window permission) must not break the page.
-    getCurrentWindow()
-      .setTitle(titleWithStage(APP_TITLE, stage))
-      .catch(() => {});
-  }, [stage]);
 
   const receiverLocation = useMemo(() => {
     if (appConfig?.receiver_latitude != null && appConfig?.receiver_longitude != null) {
@@ -1108,15 +1104,14 @@ export default function Dashboard() {
           </h1>
           {stage && (
             <span
-              // Prod is coloured differently on purpose: the badge exists to
-              // stop you acting on the wrong window, and that only matters in
-              // one direction.
-              className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+              // Prod is loud on purpose: the badge exists to stop you acting on
+              // the wrong window, and that only matters in one direction.
+              className={`rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wider ${
                 stage === "prod"
-                  ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
-                  : "bg-slate-700 text-slate-300"
+                  ? "bg-amber-500 text-slate-950"
+                  : "bg-sky-600 text-white"
               }`}
-              title={`Stage ${stage} (source_id: ${appConfig?.source_id})`}
+              title={`Stage: ${stage} — source_id ${appConfig?.source_id}`}
             >
               {stage}
             </span>

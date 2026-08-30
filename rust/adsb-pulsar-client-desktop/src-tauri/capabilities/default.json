@@ -7,7 +7,6 @@
     "core:default",
     "core:event:default",
     "core:window:default",
-    "core:window:allow-set-title",
     "store:default",
     "shell:default",
     "dialog:default",

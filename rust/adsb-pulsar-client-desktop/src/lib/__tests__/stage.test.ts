@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { STAGES, stageOf, titleWithStage } from "../stage";
+import { STAGES, stageOf } from "../stage";
 
 describe("stageOf", () => {
   it("reads the stage from the source_id suffix", () => {
@@ -44,20 +44,5 @@ describe("stageOf", () => {
   it("is null for a missing id rather than throwing", () => {
     expect(stageOf(undefined)).toBeNull();
     expect(stageOf(null)).toBeNull();
-  });
-});
-
-describe("titleWithStage", () => {
-  it("appends the stage in brackets", () => {
-    expect(titleWithStage("ADS-B Aircraft Tracker", "dev")).toBe(
-      "ADS-B Aircraft Tracker [dev]",
-    );
-  });
-
-  it("leaves the title alone when there is no stage", () => {
-    // A single-stack user must not see an empty "[]".
-    expect(titleWithStage("ADS-B Aircraft Tracker", null)).toBe(
-      "ADS-B Aircraft Tracker",
-    );
   });
 });
