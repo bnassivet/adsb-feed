@@ -90,6 +90,11 @@ enabled = false
 agent_port = 8000
 sim_agent_port = 8300
 llm_base_url = "http://localhost:1234/v1"
+# MLflow tracing. Both agents resolve their experiment at IMPORT time and retry
+# a refused connection several times with backoff, so an MLflow that is down
+# makes them HANG at startup -- no port, no log output, reading exactly like
+# "the agents will not start". `make doctor` checks it.
+mlflow_uri = "http://localhost:5010"
 
 [desktop]
 # The Next dev server. Pinned to 3000 in tauri.conf.json, so a SECOND stack

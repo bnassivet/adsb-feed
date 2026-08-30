@@ -191,14 +191,18 @@ compose() {
 agent_env() {
   ap="$(cfg agents agent_port 8000)"
   sp="$(cfg agents sim_agent_port 8300)"
+  ml="$(cfg agents mlflow_uri http://localhost:5010)"
   printf '%s\n' \
+    "ADSB_AGENT_MLFLOW_TRACKING_URI=$ml" \
     "ADSB_AGENT_PORT=$ap" \
     "ADSB_AGENT_LLM_BASE_URL=$(cfg agents llm_base_url http://localhost:1234/v1)" \
     "ADSB_AGENT_SIMULATION_AGENT_URL=http://127.0.0.1:$sp" \
     "ADSB_AGENT_TOOL_SERVER_URL=http://127.0.0.1:$(desktop_tool_port)"
 }
 sim_agent_env() {
-  printf '%s\n' "ADSB_SIM_AGENT_PORT=$(cfg agents sim_agent_port 8300)"
+  printf '%s\n' \
+    "ADSB_SIM_AGENT_PORT=$(cfg agents sim_agent_port 8300)" \
+    "ADSB_SIM_AGENT_MLFLOW_TRACKING_URI=$(cfg agents mlflow_uri http://localhost:5010)"
 }
 
 # The desktop is single-instance, for now.
@@ -480,9 +484,48 @@ doctor)
     echo "Agents:"
     llm="$(cfg agents llm_base_url)"
     if curl -s -m 3 -o /dev/null "$llm/models" 2>/dev/null; then
-      echo "  ok      LLM at $llm"
+      # Reachable is not the same as usable. LM Studio's /v1/models lists every
+      # DOWNLOADED model whether or not one is loaded, so this check used to
+      # pass while every chat turn failed with
+      #   400 "No models loaded. Please load a model ... or use 'lms load'".
+      # Its native /api/v0/models carries a per-model `state`; ask that when it
+      # exists, and fall back to the plain reachability check when it does not
+      # (Ollama, a gateway, anything else).
+      loaded="$(curl -s -m 3 "${llm%/v1}/api/v0/models" 2>/dev/null \
+        | python3 -c 'import json,sys
+try:
+    ms = json.load(sys.stdin).get("data", [])
+except Exception:
+    sys.exit(1)
+print(",".join(m["id"] for m in ms if m.get("state") == "loaded"))' 2>/dev/null)"
+      rc_loaded=$?
+      if [ $rc_loaded -ne 0 ]; then
+        echo "  ok      LLM endpoint at $llm (loaded-model state not reported)"
+      elif [ -n "$loaded" ]; then
+        echo "  ok      LLM at $llm -- loaded: $loaded"
+      else
+        echo "  MISSING no model LOADED at $llm (the endpoint answers, and lists"
+        echo "          downloaded models, which is why this used to look fine)."
+        echo "          Load one -- 'lms load <model>' -- and make sure the id"
+        echo "          matches ADSB_AGENT_MODEL exactly, prefix included."
+      fi
     else
       echo "  MISSING LLM at $llm -- the agents will start but fail on first use"
+    fi
+
+    # MLflow is worth its own line because the failure is far worse than the
+    # LLM's. Both agents resolve their tracing experiment at IMPORT time, and
+    # a refused connection is retried by urllib3 six times with backoff -- so
+    # the agent never binds its port and never writes a single log line. It
+    # presents as "the agents are not starting", with a zero-byte log and no
+    # mention of MLflow anywhere.
+    ml="$(cfg agents mlflow_uri http://localhost:5010)"
+    if curl -s -m 3 -o /dev/null "$ml/health" 2>/dev/null; then
+      echo "  ok      MLflow at $ml"
+    else
+      echo "  MISSING MLflow at $ml -- the agents will HANG at startup, not"
+      echo "          degrade: no port, no log output. Start it, or set"
+      echo "          agents.mlflow_uri to an empty string to skip tracing."
     fi
   fi
   exit $rc
