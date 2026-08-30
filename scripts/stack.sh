@@ -168,7 +168,7 @@ stack_ports() {
   # Every port comes from THIS stack's config, so `reap` and `down` only ever
   # name ports this stack claims -- never a sibling stack's.
   echo "$(cfg mqtt port 1883) $(cfg dump1090 port 30003) $(cfg storage http_port 8787)"
-  echo "$(cfg agents desktop_tool_port 8788) 3000"
+  echo "$(desktop_tool_port) $(desktop_dev_port)"
   [ "$(cfg agents enabled false)" = "true" ] && \
     echo "$(cfg agents agent_port 8000) $(cfg agents sim_agent_port 8300)"
 }
@@ -194,7 +194,7 @@ agent_env() {
     "ADSB_AGENT_PORT=$ap" \
     "ADSB_AGENT_LLM_BASE_URL=$(cfg agents llm_base_url http://localhost:1234/v1)" \
     "ADSB_AGENT_SIMULATION_AGENT_URL=http://127.0.0.1:$sp" \
-    "ADSB_AGENT_TOOL_SERVER_URL=http://127.0.0.1:$(cfg agents desktop_tool_port 8788)"
+    "ADSB_AGENT_TOOL_SERVER_URL=http://127.0.0.1:$(desktop_tool_port)"
 }
 sim_agent_env() {
   printf '%s\n' "ADSB_SIM_AGENT_PORT=$(cfg agents sim_agent_port 8300)"
@@ -209,14 +209,89 @@ sim_agent_env() {
 # file. DuckDB takes an exclusive lock, so the second would silently lose its
 # history and run real-time-only. Fixable with `tauri dev -c` overrides for the
 # identifier and the port; until then, refuse clearly rather than half-work.
-desktop_guard() {
-  if port_busy 3000; then
-    echo "Refusing: something already holds :3000 (the desktop's dev server)." >&2
-    echo "The desktop is single-instance across ALL stacks -- two would share" >&2
-    echo "one app-data dir and one DuckDB file, and the second would lose its" >&2
-    echo "history to the first's exclusive lock." >&2
-    echo "Stop the other one first:  make down-desktop [STACK=...]" >&2
+# --- the desktop app -------------------------------------------------------
+#
+# Two instances can run at once, one per stack. Four things had to be separated
+# for that to be safe; three are set here, and the fourth -- the app's DuckDB
+# and settings directory -- is ADSB_STACK, handled inside the app itself:
+#
+#   dev port   :3000 is pinned in tauri.conf.json and package.json
+#   CSP        connect-src pins the agent's port; a different one is BLOCKED
+#              with nothing but a console message to show for it
+#   agent URL  two frontend call sites used to hardcode :8000, so a second
+#              window would have queried the FIRST stack's data
+
+desktop_dev_port() { cfg desktop dev_port 3000; }
+
+# The desktop's own tool server. [desktop].tool_port supersedes
+# [agents].desktop_tool_port, which described the desktop but lived under the
+# Python agents; the old key still works so existing configs keep running.
+desktop_tool_port() {
+  p="$(cfg desktop tool_port "")"
+  if [ -n "$p" ]; then echo "$p"; else cfg agents desktop_tool_port 8788; fi
+}
+
+agent_base_url() { echo "http://localhost:$(cfg agents agent_port 8000)"; }
+
+# Config merged over tauri.conf.json for this instance. Empty for a stack that
+# wants the committed ports, which then runs the plain `npm run tauri dev`.
+tauri_config_override() {
+  dev="$(desktop_dev_port)"
+  ap="$(cfg agents agent_port 8000)"
+  if [ "$dev" = "3000" ] && [ "$ap" = "8000" ]; then return 0; fi
+  python3 "$REPO/scripts/tauri-dev-config.py" "$dev" "$ap"
+}
+
+# Named stacks build into their own target dir. Sharing one would serialise the
+# two instances on cargo's build lock AND recompile the app crate on every
+# switch, because each passes a different `tauri -c`.
+desktop_target_dir() {
+  if [ "$STACK_NAME" = "default" ]; then
+    echo "$REPO/rust/target"
+  else
+    echo "$REPO/rust/target-desktop-$STACK_NAME"
+  fi
+}
+
+# Start the desktop with everything this stack needs. Any extra env pairs the
+# caller wants (remote mode, live source) are passed as arguments.
+start_desktop() { # start_desktop [VAR=value ...]
+  dev="$(desktop_dev_port)"
+  if port_busy "$dev"; then
+    echo "Refusing: :$dev is already in use (this stack's desktop dev server)." >&2
+    echo "Either this stack's desktop is already running -- 'make down-desktop" >&2
+    echo "STACK=$STACK_NAME' -- or another stack was given the same desktop.dev_port." >&2
     return 1
+  fi
+
+  target="$(desktop_target_dir)"
+  if [ "$STACK_NAME" != "default" ] && [ ! -d "$target" ]; then
+    echo "  first run for stack '$STACK_NAME': building into $(basename "$target")."
+    echo "  This compiles the whole tree including DuckDB -- expect ~10 minutes"
+    echo "  and several GB. Later runs reuse it."
+  fi
+
+  cfg_json="$(tauri_config_override)"
+  # Next 16 permits one dev server per dist dir: it flocks <distDir>/dev/lock
+  # and refuses a second whatever port it is given. A dist dir per stack is
+  # needed regardless -- two dev servers sharing one .next would fight over the
+  # same build output.
+  dist=".next"
+  [ "$STACK_NAME" = "default" ] || dist=".next-$STACK_NAME"
+
+  set -- "$@" \
+    "ADSB_STACK=$STACK_NAME" \
+    "ADSB_AGENT_TOOL_SERVER_PORT=$(desktop_tool_port)" \
+    "NEXT_PUBLIC_AGENT_URL=$(agent_base_url)" \
+    "NEXT_DIST_DIR=$dist" \
+    "CARGO_TARGET_DIR=$target"
+
+  if [ -n "$cfg_json" ]; then
+    CFG_JSON="$cfg_json" start desktop env "$@" "TAURI_DEV_CONFIG=$cfg_json" \
+      sh -c "cd '$REPO/rust/adsb-pulsar-client-desktop' && exec npx tauri dev -c \"\$TAURI_DEV_CONFIG\""
+  else
+    start desktop env "$@" \
+      sh -c "cd '$REPO/rust/adsb-pulsar-client-desktop' && exec npm run tauri dev"
   fi
 }
 
@@ -233,6 +308,14 @@ owns_broker() {
 # ---------------------------------------------------------------------------
 
 case "${1:-help}" in
+
+tauri-config)
+  # The `tauri dev -c` override this stack would use; empty when it wants the
+  # committed configuration. Exists so the tests can assert it, and so
+  # `make tauri-config STACK=prod` shows what the desktop is actually launched
+  # with -- a CSP or port problem is invisible otherwise.
+  tauri_config_override
+  ;;
 
 paths)
   # Where this stack's state lives. Exists so the tests can assert the layout,
@@ -325,7 +408,8 @@ doctor)
   # 3000 is listed because Grafana in infrastructure/docker-compose.yml wants
   # the same port as the desktop's Next dev server -- they cannot both run.
   for p in "$(cfg mqtt port 1883)" "$(cfg dump1090 port 30003)" "$(cfg storage http_port 8787)" \
-           "$(cfg agents desktop_tool_port 8788)" 3000 8000 8300; do
+           "$(desktop_tool_port)" "$(desktop_dev_port)" \
+           "$(cfg agents agent_port 8000)" "$(cfg agents sim_agent_port 8300)"; do
     if port_busy "$p"; then echo "  BUSY    $p"; else echo "  free    $p"; fi
   done
 
@@ -413,14 +497,11 @@ up)
 
 desktop)
   require_config
-  desktop_guard || exit 1
-  port="$(cfg agents desktop_tool_port 8788)"
   echo "Desktop:"
   # Backgrounded with a PID file like everything else, so `down` can stop it.
-  # `npm run tauri dev` is a process tree -- next dev, cargo, the app binary --
-  # which is why start/stop work on process groups.
-  start desktop env "ADSB_AGENT_TOOL_SERVER_PORT=$port" \
-    sh -c "cd '$REPO/rust/adsb-pulsar-client-desktop' && exec npm run tauri dev"
+  # `tauri dev` is a process tree -- next dev, cargo, the app binary -- which
+  # is why start/stop work on process groups.
+  start_desktop || exit 1
   echo "  watch it with: make logs N=desktop"
   ;;
 
@@ -435,7 +516,6 @@ client)
   mh="$(cfg mqtt host localhost)"
   mp="$(cfg mqtt port 1883)"
   mt="$(cfg mqtt topic adsb/sbs/raw)"
-  port="$(cfg agents desktop_tool_port 8788)"
 
   case "$mh" in
     localhost|127.0.0.1)
@@ -443,16 +523,13 @@ client)
       echo "      Point it at the remote node for live aircraft over the LAN." >&2;;
   esac
 
-  desktop_guard || exit 1
   echo "Desktop (remote: $uri, live: mqtt://$mh:$mp/$mt):"
   # Both planes, explicitly. History is seeded on FIRST launch only; the live
   # source is applied every launch. See QUICKSTART.md topology 4.
-  start desktop env \
+  start_desktop \
     "ADSB_REMOTE_URI=$uri" "ADSB_REMOTE_TOKEN=$tok" \
     "ADSB_SOURCE_KIND=mqtt" "ADSB_MQTT_BROKER=$mh" \
-    "ADSB_MQTT_PORT=$mp" "ADSB_MQTT_TOPIC=$mt" \
-    "ADSB_AGENT_TOOL_SERVER_PORT=$port" \
-    sh -c "cd '$REPO/rust/adsb-pulsar-client-desktop' && exec npm run tauri dev"
+    "ADSB_MQTT_PORT=$mp" "ADSB_MQTT_TOPIC=$mt" || exit 1
 
   echo "Agents:"
   # The agent defaults its tool server to :8787, which in the all-local stack

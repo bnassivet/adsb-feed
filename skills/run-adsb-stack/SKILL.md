@@ -86,15 +86,33 @@ stack's own config, which is where you can see and choose them. So a second
 stack needs its own `mqtt.port`, `storage.http_port`, `dump1090.port`,
 `agents.*_port`; `make doctor STACK=<name>` reports the collisions.
 
-Two caveats worth knowing before you try:
+Two things worth knowing:
 
-- **The desktop app is single-instance across all stacks.** Its dev server is
-  pinned to :3000, and both instances would resolve the same Tauri app-data
-  directory, sharing one settings store and one DuckDB file — whose exclusive
-  lock the second would lose, silently running real-time-only. `make up-desktop`
-  and `make client` refuse with an explanation rather than half-work.
 - **A stack whose `mqtt.host` is not local starts no broker** and `down` will not
   stop one. That is what makes a client stack safe to run beside a full one.
+- **The desktop app can run twice**, but a second instance needs four things
+  separated, not just a port. `[desktop].dev_port` is the one you set; the rest
+  follow from it and from `agents.agent_port`:
+
+  | | Why |
+  |---|---|
+  | `[desktop].dev_port` | :3000 is pinned in `tauri.conf.json` and `package.json` |
+  | CSP `connect-src` | pins the agent's port — a different one is **blocked**, with only a console message |
+  | `NEXT_PUBLIC_AGENT_URL` | two frontend call sites used to hardcode :8000 |
+  | `ADSB_STACK` | the app's own DuckDB and settings move to `<app-data>/<stack>/` |
+
+  `make up-desktop STACK=<name>` sets all four. Inspect what it will pass with
+  `make tauri-config STACK=<name>`; the default stack prints nothing, meaning it
+  runs the committed configuration unchanged.
+
+  A named stack builds into `rust/target-desktop-<name>`, so the two do not
+  serialise on cargo's build lock or recompile each other on every switch. The
+  **first** run for a stack therefore builds from scratch, DuckDB included —
+  roughly ten minutes and several GB. It says so before it starts.
+
+  This is a **development** capability. `NEXT_PUBLIC_*` is baked in at
+  `next build` time, so a bundled app keeps whatever agent URL and CSP it was
+  built with.
 
 ## Live feed and history are two independent planes
 

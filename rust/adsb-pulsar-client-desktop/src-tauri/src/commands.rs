@@ -1019,7 +1019,7 @@ pub async fn set_storage_mode(
 /// Persists the storage mode so it survives a restart.
 fn persist_storage_mode(app: &tauri::AppHandle, mode: &StorageMode) -> Result<(), String> {
     let store = app
-        .store(crate::CONFIG_STORE_FILE)
+        .store(crate::config_store_path())
         .map_err(|e| format!("Failed to open config store: {e}"))?;
     let value =
         serde_json::to_value(mode).map_err(|e| format!("Failed to serialize storage mode: {e}"))?;

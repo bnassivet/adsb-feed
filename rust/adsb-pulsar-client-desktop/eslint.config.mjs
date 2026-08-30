@@ -3,7 +3,16 @@ import nextTypeScript from "eslint-config-next/typescript";
 
 const eslintConfig = [
   {
-    ignores: [".next/**", "out/**", "node_modules/**", "src-tauri/**", "next-env.d.ts"],
+    // `.next-*` covers the per-stack dist dirs (NEXT_DIST_DIR) that let two
+    // desktop instances run at once -- generated output, never ours to lint.
+    ignores: [
+      ".next/**",
+      ".next-*/**",
+      "out/**",
+      "node_modules/**",
+      "src-tauri/**",
+      "next-env.d.ts",
+    ],
   },
   ...nextCoreWebVitals,
   ...nextTypeScript,

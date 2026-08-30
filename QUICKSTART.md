@@ -55,8 +55,13 @@ make paths  STACK=prod   # which files am I actually using?
 Rendered configs, PIDs, logs, the database and the docker compose project are
 all keyed by the name. **Ports are not** — set them in the second stack's own
 `[mqtt]`, `[storage]`, `[dump1090]` and `[agents]`, and `make doctor STACK=prod`
-reports what still collides. The desktop app is single-instance across all
-stacks and says so if you try to start a second.
+reports what still collides.
+
+The desktop app can run twice — set `[desktop].dev_port` (`:3000` is pinned in
+`tauri.conf.json`) and the rest follows. Each instance keeps its **own DuckDB and
+settings** in `<app-data>/<stack>/`, so dev and prod history never mix, and talks
+to its own stack's agent. A named stack builds into `rust/target-desktop-<name>`,
+so the first run compiles from scratch (~10 min, several GB) and says so.
 
 With a real receiver, set `dump1090.mock = false` and point `[dump1090]` at it.
 

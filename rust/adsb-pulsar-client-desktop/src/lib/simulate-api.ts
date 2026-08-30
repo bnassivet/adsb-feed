@@ -8,9 +8,10 @@
  */
 import type { AgentTrajectory } from "./simulation-data";
 
-/** Base URL of the Python agent service (adsb-agent). */
-export const AGENT_BASE_URL =
-  process.env.NEXT_PUBLIC_AGENT_URL ?? "http://localhost:8000";
+import { AGENT_BASE_URL } from "./agent-url";
+
+// Re-exported: several callers already import it from this module.
+export { AGENT_BASE_URL };
 
 export interface SimulateRequest {
   category: "airliner" | "ga" | "helicopter" | "fighter";

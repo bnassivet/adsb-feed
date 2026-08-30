@@ -89,12 +89,20 @@ topic = "persistent://kradsb/adsb/sbs-topic"
 enabled = false
 agent_port = 8000
 sim_agent_port = 8300
-# The desktop app runs its OWN read-only tool server for the agent, serving its
-# own storage. It must not collide with storage.http_port above, which the data
-# server owns -- when both run, whichever starts second fails to bind and its
-# history tools are silently disabled.
-desktop_tool_port = 8788
 llm_base_url = "http://localhost:1234/v1"
+
+[desktop]
+# The Next dev server. Pinned to 3000 in tauri.conf.json, so a SECOND stack
+# running its desktop at the same time needs a different one here -- and gets a
+# matching CSP entry automatically, without which its agent calls are blocked
+# with nothing but a console message.
+dev_port = 3000
+
+# The desktop's OWN read-only tool server for the agent, serving its own
+# storage. Must not collide with storage.http_port above, which the data server
+# owns: whichever starts second fails to bind and its history tools are silently
+# disabled. (Was agents.desktop_tool_port, which still works.)
+tool_port = 8788
 
 [remote]
 # For `make remote`: run the desktop app against a data server on another host

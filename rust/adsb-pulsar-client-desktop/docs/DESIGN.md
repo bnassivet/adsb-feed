@@ -4309,10 +4309,44 @@ crate with `features = ["mqtt"]` and Cargo unifies features within a build. That
 build that works by accident — removing an unrelated dependency would have broken the
 desktop app from a distance. The dependency line now declares what it actually uses.
 
+### Per-stack data directories
+
+The app can run twice on one machine, one instance per stack, and the two must
+not share history. `ADSB_STACK` selects a **subdirectory** of the Tauri app-data
+directory; unset keeps the historical layout exactly, so an existing install's
+database does not move.
+
+| `ADSB_STACK` | Location |
+|---|---|
+| (unset) | `<app-data>/` — `config.json`, `adsb_history.db`, `adsb_local.db` |
+| `prod` | `<app-data>/prod/` — the same three names |
+
+A directory rather than a filename suffix, because it makes scoping the
+*default* for anything added later: with suffixes every new artifact must
+remember to apply one, and forgetting is a silent cross-mix. `to_storage_config`
+needed no change at all — `init_storage` simply passes it a different base.
+
+Two details that bite:
+
+- **`init_storage` must create the directory.** DuckDB does not create a missing
+  parent, and the failure lands in the graceful-degradation arm — a window
+  running real-time-only with no history and nothing naming the cause.
+- **The name is validated** (`[A-Za-z0-9_-]+`, else the default). It becomes a
+  path component, so `../..` would otherwise place the database anywhere the
+  process can write.
+
+The other three collisions are handled outside the app, by
+`scripts/stack.sh`: the Next dev port and the CSP via `tauri dev -c` (the CSP
+pins the agent's port, so a second instance is blocked without it), and
+`NEXT_PUBLIC_AGENT_URL` so each window's chat reaches its own stack's agent.
+
 ### Files
 
 | File | Purpose |
 |------|---------|
+| `src-tauri/src/lib.rs` | `stack_data_dir`, `store_path`, `stack_name` validation |
+| `scripts/tauri-dev-config.py` | The `tauri dev -c` override: dev port + CSP |
+| `src/lib/agent-url.ts` | One agent URL for the frontend's three call sites |
 | `adsb-pulsar-client/src/source/mod.rs` | `MessageSource` trait, `SourceStatus`, `LivenessPolicy`, `split_lines` |
 | `adsb-pulsar-client/src/source/mqtt_source.rs` | Subscriber; re-subscribes per `ConnAck` |
 | `adsb-pulsar-client/src/source/socket_source.rs` | Direct dump1090 TCP source |

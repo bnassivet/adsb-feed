@@ -26,6 +26,67 @@ use tracing_subscriber::EnvFilter;
 
 pub const CONFIG_STORE_FILE: &str = "config.json";
 const CONFIG_STORE_KEY: &str = "config";
+
+/// Environment variable selecting which stack's data this instance owns.
+///
+/// Set by `scripts/stack.sh` from `STACK=<name>`. Unset is the default stack.
+const STACK_ENV: &str = "ADSB_STACK";
+
+/// The validated stack name, or `None` for the default stack.
+///
+/// Only `[A-Za-z0-9_-]+` is accepted because the name becomes a *directory*:
+/// anything else could place the database outside the app-data dir entirely.
+/// A rejected name falls back to the default stack rather than erroring --
+/// degrading to today's behaviour is safer than a launch failure, and far safer
+/// than quietly writing somewhere unexpected.
+fn stack_name(raw: Option<&str>) -> Option<String> {
+    let name = raw?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        warn!("Ignoring {STACK_ENV}={name:?}: only letters, digits, '-' and '_' are allowed");
+        return None;
+    }
+    Some(name.to_string())
+}
+
+/// This instance's stack name, read from the environment.
+fn stack_from_env() -> Option<String> {
+    stack_name(std::env::var(STACK_ENV).ok().as_deref())
+}
+
+/// Directory holding this stack's databases.
+///
+/// A subdirectory rather than a filename suffix so that anything added later is
+/// scoped by construction. With suffixes, every new artifact has to remember to
+/// apply one, and forgetting is a silent cross-mix between stacks.
+fn stack_data_dir(app_data_dir: &std::path::Path, stack: Option<&str>) -> std::path::PathBuf {
+    match stack {
+        Some(name) => app_data_dir.join(name),
+        None => app_data_dir.to_path_buf(),
+    }
+}
+
+/// Store path passed to the Tauri store plugin, relative to the app-data dir.
+///
+/// The plugin creates the parent directory when it saves, so a nested path
+/// needs no preparation here (unlike DuckDB -- see `init_storage`).
+fn store_path(stack: Option<&str>) -> String {
+    match stack {
+        Some(name) => format!("{name}/{CONFIG_STORE_FILE}"),
+        None => CONFIG_STORE_FILE.to_string(),
+    }
+}
+
+/// This instance's settings-store path. Use this, never `CONFIG_STORE_FILE`
+/// directly, or two stacks end up sharing one settings file.
+pub fn config_store_path() -> String {
+    store_path(stack_from_env().as_deref())
+}
 /// Store key for the persisted storage mode. Separate from the feed `config`
 /// key: this is about where history lives, not about the feed.
 pub const STORAGE_MODE_STORE_KEY: &str = "storage_mode";
@@ -132,7 +193,7 @@ pub fn run() {
 
 /// Load config from the Tauri store, falling back to defaults.
 fn load_config(app: &tauri::App) -> Config {
-    match app.store(CONFIG_STORE_FILE) {
+    match app.store(config_store_path()) {
         Ok(store) => {
             if let Some(value) = store.get(CONFIG_STORE_KEY) {
                 match serde_json::from_value::<Config>(value.clone()) {
@@ -212,7 +273,7 @@ fn apply_env_overrides(mut config: Config, get: &dyn Fn(&str) -> Option<String>)
 /// Save config to the Tauri store for persistence across restarts.
 pub fn persist_config(app: &tauri::AppHandle, config: &Config) -> Result<(), String> {
     let store = app
-        .store(CONFIG_STORE_FILE)
+        .store(config_store_path())
         .map_err(|e| format!("Failed to open config store: {e}"))?;
     let value =
         serde_json::to_value(config).map_err(|e| format!("Failed to serialize config: {e}"))?;
@@ -282,7 +343,7 @@ fn truthy(value: Option<&str>) -> bool {
 
 /// Reads the persisted storage mode, if one has been saved.
 fn load_storage_mode(app: &tauri::App) -> Option<storage_mode::StorageMode> {
-    let store = app.store(CONFIG_STORE_FILE).ok()?;
+    let store = app.store(config_store_path()).ok()?;
     let value = store.get(STORAGE_MODE_STORE_KEY)?;
     match serde_json::from_value(value.clone()) {
         Ok(mode) => Some(mode),
@@ -349,11 +410,26 @@ fn init_storage(
         Ok(dir) => dir,
         Err(_) => return (None, None, storage_mode::StorageMode::default()),
     };
+    // Each stack owns a subdirectory, so a dev window and a prod window never
+    // open the same database. Unset ADSB_STACK keeps the historical layout.
+    let stack = stack_from_env();
+    let data_dir = stack_data_dir(&app_data_dir, stack.as_deref());
+    if let Some(name) = &stack {
+        // DuckDB does not create a missing parent, and the failure would be
+        // swallowed by the graceful-degradation arm below -- a window running
+        // real-time-only with no history and nothing pointing at the cause.
+        if let Err(e) = std::fs::create_dir_all(&data_dir) {
+            warn!("Could not create data directory for stack {name:?}: {e}");
+            return (None, None, storage_mode::StorageMode::default());
+        }
+        info!("Stack: {name} (data in {})", data_dir.display());
+    }
+
     // A stored choice wins; the environment only seeds the mode the first time.
     let mode = storage_mode::resolve_mode(load_storage_mode(app), storage_mode_from_env());
     info!("Storage mode: {}", mode.label());
 
-    let config = mode.to_storage_config(&app_data_dir, share_config_from_env());
+    let config = mode.to_storage_config(&data_dir, share_config_from_env());
     let db_path = config.db_path.clone().unwrap_or_default();
 
     match StorageHandle::open(config.clone()) {
@@ -369,6 +445,81 @@ fn init_storage(
             warn!("Storage init failed (continuing without history): {e}");
             (None, Some(config), mode)
         }
+    }
+}
+
+#[cfg(test)]
+mod stack_scope_tests {
+    use super::{stack_data_dir, stack_name, store_path};
+    use std::path::Path;
+
+    fn root() -> &'static Path {
+        Path::new("/data/com.adsb.aircraft-tracker")
+    }
+
+    #[test]
+    fn no_stack_keeps_todays_paths_exactly() {
+        // The compatibility guarantee. An existing install must not have its
+        // history and settings move out from under it.
+        assert_eq!(stack_data_dir(root(), None), root());
+        assert_eq!(store_path(None), "config.json");
+    }
+
+    #[test]
+    fn a_named_stack_gets_its_own_subdirectory() {
+        assert_eq!(stack_data_dir(root(), Some("prod")), root().join("prod"));
+        assert_eq!(store_path(Some("prod")), "prod/config.json");
+    }
+
+    #[test]
+    fn two_named_stacks_do_not_share_a_directory() {
+        assert_ne!(
+            stack_data_dir(root(), Some("prod")),
+            stack_data_dir(root(), Some("dev"))
+        );
+    }
+
+    #[test]
+    fn traversal_attempts_fall_back_to_the_root() {
+        // A directory scheme makes this load-bearing: without it, ADSB_STACK
+        // could place the database anywhere the process can write. Falling back
+        // to the root is the safe failure -- it degrades to today's behaviour
+        // rather than silently pointing two stacks at one file.
+        for bad in [
+            "../evil",
+            "../../etc",
+            "a/b",
+            "/absolute",
+            "..",
+            ".",
+            "with space",
+            "semi;colon",
+            "",
+            "   ",
+        ] {
+            assert_eq!(stack_name(Some(bad)), None, "{bad:?} must be rejected");
+            let resolved = stack_name(Some(bad));
+            assert_eq!(stack_data_dir(root(), resolved.as_deref()), root());
+        }
+    }
+
+    #[test]
+    fn ordinary_names_are_accepted() {
+        for good in ["prod", "dev", "lab-2", "my_stack", "A1"] {
+            assert_eq!(stack_name(Some(good)), Some(good.to_string()));
+        }
+    }
+
+    #[test]
+    fn whitespace_around_a_good_name_is_trimmed() {
+        // `STACK=prod ` out of a shell script should not become a directory
+        // called "prod ", which would silently be a *different* stack.
+        assert_eq!(stack_name(Some("  prod  ")), Some("prod".to_string()));
+    }
+
+    #[test]
+    fn an_unset_variable_is_the_default_stack() {
+        assert_eq!(stack_name(None), None);
     }
 }
 
