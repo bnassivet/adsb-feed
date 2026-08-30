@@ -147,6 +147,18 @@ pub fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, String> 
     Ok(status.clone())
 }
 
+/// The stack this instance was launched for, or `None` for the unnamed one.
+///
+/// Exists because the UI cannot otherwise know: the badge used to derive the
+/// stage from `source_id`, which comes from the app's own settings store -- and
+/// a freshly-scoped stack starts with an empty store, so it fell back to the
+/// default id and showed nothing. `ADSB_STACK` is the value `make up-desktop
+/// STACK=<name>` actually sets.
+#[tauri::command]
+pub fn get_stack() -> Option<String> {
+    crate::stack_from_env()
+}
+
 /// Returns the current metrics snapshot, including bridge-level counters
 /// (`messages_parsed`) that the TS `MetricsSnapshot` type expects to be present.
 #[tauri::command]

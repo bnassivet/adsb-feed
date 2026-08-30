@@ -62,7 +62,7 @@ fn stack_name(raw: Option<&str>) -> Option<String> {
 }
 
 /// This instance's stack name, read from the environment.
-fn stack_from_env() -> Option<String> {
+pub(crate) fn stack_from_env() -> Option<String> {
     stack_name(std::env::var(STACK_ENV).ok().as_deref())
 }
 
@@ -146,6 +146,7 @@ pub fn run() {
             commands::stop_feed,
             commands::get_status,
             commands::get_metrics,
+            commands::get_stack,
             commands::get_config,
             commands::save_config,
             commands::validate_config,

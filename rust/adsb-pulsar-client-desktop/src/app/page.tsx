@@ -41,7 +41,7 @@ import { useEventsOfInterest } from "@/hooks/useEventsOfInterest";
 import { useCopilotTools } from "@/hooks/useCopilotTools";
 import { useCopilotContext } from "@/hooks/useCopilotContext";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
-import { startFeed, stopFeed, getConfig, getStorageStatus, releaseStorage, reclaimStorage, exportDatabase, previewImportDatabase, importDatabase, swapDatabase, getStorageStats, startSharing, stopSharing, sharingStatus } from "@/lib/commands";
+import { startFeed, stopFeed, getConfig, getStack, getStorageStatus, releaseStorage, reclaimStorage, exportDatabase, previewImportDatabase, importDatabase, swapDatabase, getStorageStats, startSharing, stopSharing, sharingStatus } from "@/lib/commands";
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
 import { listen } from "@tauri-apps/api/event";
 import { ask, message, save, open } from "@tauri-apps/plugin-dialog";
@@ -52,7 +52,7 @@ import type { AircraftTrack, ActiveMode, Config, Filters, DensityMetric, Density
 import type { SelectEvent } from "@/components/AircraftTable";
 import { ModeTabs } from "@/components/ModeTabs";
 import Link from "next/link";
-import { stageOf } from "@/lib/stage";
+import { resolveStage } from "@/lib/stage";
 
 /** Base window/header title. `tauri.conf.json` sets the same string. */
 const APP_TITLE = "ADS-B Aircraft Tracker";
@@ -185,7 +185,17 @@ export default function Dashboard() {
   // Shown in the top bar only. Setting the OS window title was tried and did
   // not take effect, and it is the wrong place regardless: the top bar is
   // where you are already looking.
-  const stage = useMemo(() => stageOf(appConfig?.source_id), [appConfig?.source_id]);
+  // ADSB_STACK from the backend, which is what `make up-desktop STACK=<name>`
+  // sets; source_id is only the fallback, since it lives in the app's own store
+  // and a freshly-scoped stack starts that store empty.
+  const [stackName, setStackName] = useState<string | null>(null);
+  useEffect(() => {
+    getStack().then(setStackName).catch(() => {});
+  }, []);
+  const stage = useMemo(
+    () => resolveStage(stackName, appConfig?.source_id),
+    [stackName, appConfig?.source_id],
+  );
 
   const receiverLocation = useMemo(() => {
     if (appConfig?.receiver_latitude != null && appConfig?.receiver_longitude != null) {

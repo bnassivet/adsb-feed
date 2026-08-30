@@ -57,6 +57,11 @@ export async function getMetrics(): Promise<MetricsSnapshot> {
   return invoke("get_metrics");
 }
 
+/** The stack this window was launched for (`ADSB_STACK`), or null if unnamed. */
+export async function getStack(): Promise<string | null> {
+  return invoke("get_stack");
+}
+
 export async function getConfig(): Promise<Config> {
   return invoke("get_config");
 }

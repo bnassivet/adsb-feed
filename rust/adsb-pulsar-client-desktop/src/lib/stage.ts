@@ -35,3 +35,26 @@ export function stageOf(sourceId: string | null | undefined): Stage | null {
     ? (last as Stage)
     : null;
 }
+
+/**
+ * What to show in the top bar, given what the backend reports and the config.
+ *
+ * `stack` -- the validated `ADSB_STACK` the backend was launched with -- wins,
+ * because it is the only one the stack config controls. `source_id` comes from
+ * the app's OWN settings store, which a freshly-scoped stack starts empty: the
+ * badge then fell back to the default id `kraspberryPi`, matched no stage, and
+ * showed nothing at all.
+ *
+ * A stack name that is not a known stage is shown verbatim -- a window
+ * belonging to a stack called `lab` should say so.
+ */
+export function resolveStage(
+  stack: string | null | undefined,
+  sourceId: string | null | undefined,
+): string | null {
+  const named = stack?.trim();
+  // "default" is stack.sh's internal label for the unnamed stack; it is never
+  // a badge. Defensive -- stack.sh sends "" -- but the two must agree.
+  if (named && named.toLowerCase() !== "default") return named.toLowerCase();
+  return stageOf(sourceId);
+}
