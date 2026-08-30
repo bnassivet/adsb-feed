@@ -467,6 +467,22 @@ Requires `adsb-agent` (:8000) and `adsb-simulation-agent` (:8300) running; witho
   excludes `docs/`, notebooks and markdown. **That file is read once, at `tauri dev`
   startup** — changing it does nothing until you restart the dev session.
 
+- **The stage badge** (`src/lib/stage.ts`) comes from `source_id`'s suffix, not
+  from `ADSB_STACK`: the *stack* of the unnamed config is "default" while its
+  *stage* is whatever its id says, usually `dev`. Shown in the header and
+  pushed to the OS window title, which needs `core:window:allow-set-title` --
+  the `core:window:default` set grants `allow-title` (read) but not the write,
+  so without it `setTitle` is denied silently.
+- **The stage badge** (`src/lib/stage.ts`) is read from `source_id`'s suffix,
+  not from `ADSB_STACK`: the *stack* of the unnamed config is "default" while
+  its *stage* is whatever the id says, usually `dev`. It is shown in the header
+  and pushed to the OS window title, which requires
+  `core:window:allow-set-title` -- `core:window:default` grants `allow-title`
+  (read) but not the write, so without it `setTitle` is denied silently.
+- **`ADSB_STACK=default` means the DEFAULT stack**, not a stack called
+  "default". `stack.sh` labels the unnamed stack "default" internally; passing
+  that through put an existing install's history in a `default/` subdirectory.
+  Both ends now special-case it.
 - **Two instances can run at once**, one per stack, and four things keep them
   apart. Three are set by `scripts/stack.sh`; the fourth lives here:
   - `ADSB_STACK=<name>` → the app's DuckDB and settings move to

@@ -44,6 +44,13 @@ fn stack_name(raw: Option<&str>) -> Option<String> {
     if name.is_empty() {
         return None;
     }
+    // "default" is the unnamed stack's own label in scripts/stack.sh, which
+    // passes STACK_NAME through verbatim. Treating it as an ordinary name would
+    // put the default stack's database in a `default/` subdirectory -- i.e.
+    // silently abandon the history of every install that predates named stacks.
+    if name.eq_ignore_ascii_case("default") {
+        return None;
+    }
     if !name
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
@@ -520,6 +527,26 @@ mod stack_scope_tests {
     #[test]
     fn an_unset_variable_is_the_default_stack() {
         assert_eq!(stack_name(None), None);
+    }
+
+    #[test]
+    fn the_literal_name_default_is_the_default_stack() {
+        // scripts/stack.sh calls the unnamed stack "default" and passes
+        // STACK_NAME through verbatim, so the app receives ADSB_STACK=default.
+        // Treating that as a name put an existing install's 80 MB history in a
+        // `default/` subdirectory it had never used -- found by running it, not
+        // by the unit tests, which only ever asserted the None case.
+        for spelling in ["default", "DEFAULT", " Default "] {
+            assert_eq!(stack_name(Some(spelling)), None, "{spelling:?}");
+            assert_eq!(
+                stack_data_dir(root(), stack_name(Some(spelling)).as_deref()),
+                root()
+            );
+        }
+        assert_eq!(
+            store_path(stack_name(Some("default")).as_deref()),
+            "config.json"
+        );
     }
 }
 

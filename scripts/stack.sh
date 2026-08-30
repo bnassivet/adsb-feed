@@ -280,8 +280,16 @@ start_desktop() { # start_desktop [VAR=value ...]
   dist=".next"
   [ "$STACK_NAME" = "default" ] || dist=".next-$STACK_NAME"
 
+  # Empty for the default stack, NOT the literal "default": that is this
+  # script's own label for the unnamed stack, and the app would take it as a
+  # name and put the database in a `default/` subdirectory -- abandoning the
+  # history of every install that predates named stacks. The app rejects
+  # "default" as well; belt and braces, because the two ends must agree.
+  stack_env=""
+  [ "$STACK_NAME" = "default" ] || stack_env="$STACK_NAME"
+
   set -- "$@" \
-    "ADSB_STACK=$STACK_NAME" \
+    "ADSB_STACK=$stack_env" \
     "ADSB_AGENT_TOOL_SERVER_PORT=$(desktop_tool_port)" \
     "NEXT_PUBLIC_AGENT_URL=$(agent_base_url)" \
     "NEXT_DIST_DIR=$dist" \

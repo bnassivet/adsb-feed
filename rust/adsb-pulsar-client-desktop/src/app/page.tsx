@@ -52,6 +52,11 @@ import type { AircraftTrack, ActiveMode, Config, Filters, DensityMetric, Density
 import type { SelectEvent } from "@/components/AircraftTable";
 import { ModeTabs } from "@/components/ModeTabs";
 import Link from "next/link";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { stageOf, titleWithStage } from "@/lib/stage";
+
+/** Base window/header title. `tauri.conf.json` sets the same string. */
+const APP_TITLE = "ADS-B Aircraft Tracker";
 
 const MIN_TABLE_HEIGHT = 150;
 const MAX_TABLE_HEIGHT_VH = 0.5; // 50vh
@@ -174,6 +179,18 @@ export default function Dashboard() {
   useEffect(() => {
     getConfig().then(setAppConfig).catch(() => {});
   }, []);
+  // Stage badge + window title. Two instances (a dev stack and a client of the
+  // prod fleet) are otherwise identical on screen, and acting on the wrong
+  // one's data is only obvious afterwards.
+  const stage = useMemo(() => stageOf(appConfig?.source_id), [appConfig?.source_id]);
+  useEffect(() => {
+    // Best-effort: the title is a nicety, and a webview outside Tauri (or a
+    // missing window permission) must not break the page.
+    getCurrentWindow()
+      .setTitle(titleWithStage(APP_TITLE, stage))
+      .catch(() => {});
+  }, [stage]);
+
   const receiverLocation = useMemo(() => {
     if (appConfig?.receiver_latitude != null && appConfig?.receiver_longitude != null) {
       return { lat: appConfig.receiver_latitude, lng: appConfig.receiver_longitude, alt: appConfig.receiver_altitude };
@@ -1087,8 +1104,23 @@ export default function Dashboard() {
       <header className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-700">
         <div className="flex items-center gap-4">
           <h1 className="text-sm font-semibold text-slate-200">
-            ADS-B Aircraft Tracker
+            {APP_TITLE}
           </h1>
+          {stage && (
+            <span
+              // Prod is coloured differently on purpose: the badge exists to
+              // stop you acting on the wrong window, and that only matters in
+              // one direction.
+              className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                stage === "prod"
+                  ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
+                  : "bg-slate-700 text-slate-300"
+              }`}
+              title={`Stage ${stage} (source_id: ${appConfig?.source_id})`}
+            >
+              {stage}
+            </span>
+          )}
           <ConnectionStatusIndicator
             label="Socket"
             status={status.socket_status}
