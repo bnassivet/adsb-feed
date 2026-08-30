@@ -167,7 +167,8 @@ stop() { # stop <name>
 stack_ports() {
   # Every port comes from THIS stack's config, so `reap` and `down` only ever
   # name ports this stack claims -- never a sibling stack's.
-  echo "$(cfg mqtt port 1883) $(cfg dump1090 port 30003) $(cfg storage http_port 8787)"
+  owns_broker && echo "$(cfg mqtt port 1883)"
+  echo "$(cfg dump1090 port 30003) $(cfg storage http_port 8787)"
   echo "$(desktop_tool_port) $(desktop_dev_port)"
   [ "$(cfg agents enabled false)" = "true" ] && \
     echo "$(cfg agents agent_port 8000) $(cfg agents sim_agent_port 8300)"
@@ -332,7 +333,34 @@ config)
     echo "Compare against the template with:  diff adsb-stack-template.toml adsb-stack.toml"
     exit 0
   fi
-  cp "$TEMPLATE" "$STACK"
+  # Rewrite the leading block rather than copying it: the template opens with
+  # "TEMPLATE -- copy me, do not edit me", which is exactly wrong for the file
+  # you are meant to edit. Everything from the first section header down is
+  # copied verbatim.
+  python3 - "$TEMPLATE" "$STACK" "$(basename "$STACK")" <<'PY'
+import sys
+template, dest, name = sys.argv[1:4]
+body = open(template, encoding="utf-8").read()
+head, _, rest = body.partition("\n[")
+open(dest, "w", encoding="utf-8").write(
+    f"""# {name} -- THIS MACHINE's configuration. Edit freely.
+#
+# Gitignored, for the same reasons a .env is: host-specific paths, a receiver
+# location and a Quack token. Copied from adsb-stack-template.toml, which is
+# the tracked one -- a new setting belongs THERE too, or it exists here and
+# nowhere else.
+#
+# `make render` expands this into the per-binary configs the Rust loaders read.
+# Those are derived: never edit them.
+#
+# One file rather than two because source_id and the MQTT broker/port/topic are
+# needed by *both* binaries. Kept in two hand-edited files they drift, and the
+# failure is silent -- a feed publishing to one topic while the recorder
+# subscribes to another looks healthy from both sides and records nothing.
+
+[""" + rest
+)
+PY
   echo "Created $(basename "$STACK") from the template."
   echo "Edit [receiver] with your antenna's real position, then: make up${STACK_SEL:+ STACK=$STACK_SEL}"
   if [ "$STACK_NAME" != "default" ]; then
@@ -350,7 +378,7 @@ doctor)
   echo "Stack: $STACK_NAME ($(basename "$STACK"), state in ${RUN#"$REPO"/})"
   echo "Config:"
   if [ -f "$STACK" ]; then
-    echo "  ok      adsb-stack.toml"
+    echo "  ok      $(basename "$STACK")"
   else
     echo "  MISSING adsb-stack.toml -- run: make config"
     rc=1
@@ -405,13 +433,21 @@ doctor)
   else echo "  MISSING docker daemon -- needed for the MQTT broker"; rc=1; fi
 
   echo "Ports:"
-  # 3000 is listed because Grafana in infrastructure/docker-compose.yml wants
-  # the same port as the desktop's Next dev server -- they cannot both run.
-  for p in "$(cfg mqtt port 1883)" "$(cfg dump1090 port 30003)" "$(cfg storage http_port 8787)" \
-           "$(desktop_tool_port)" "$(desktop_dev_port)" \
-           "$(cfg agents agent_port 8000)" "$(cfg agents sim_agent_port 8300)"; do
+  # The desktop's dev port is worth watching because Grafana in
+  # infrastructure/docker-compose.yml wants :3000 too -- they cannot both run.
+  #
+  # The MQTT port is only OURS to bind when the broker is local. With a broker
+  # on a Pi, a local :1883 belongs to some other stack, and reporting it BUSY
+  # here is a false alarm that sends people hunting for a conflict they do not
+  # have.
+  ports="$(cfg dump1090 port 30003) $(cfg storage http_port 8787)"
+  ports="$ports $(desktop_tool_port) $(desktop_dev_port)"
+  ports="$ports $(cfg agents agent_port 8000) $(cfg agents sim_agent_port 8300)"
+  owns_broker && ports="$(cfg mqtt port 1883) $ports"
+  for p in $ports; do
     if port_busy "$p"; then echo "  BUSY    $p"; else echo "  free    $p"; fi
   done
+  owns_broker || echo "  remote  $(cfg mqtt host) mqtt -- no local broker for this stack"
 
   # Duplicate feeds share one MQTT client id and evict each other in a loop.
   # That storm produced 567k reconnects and a 144 MB log before it was noticed,
