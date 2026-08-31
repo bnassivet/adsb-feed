@@ -1,0 +1,33 @@
+# adsb-pulsar-client configuration.
+#
+# Precedence, lowest to highest: these values < environment < CLI flags.
+# Install to /etc/adsb/feed.toml.
+
+# Unique per node. A fleet that shares a source_id cannot be attributed, and
+# the MQTT client id derives from this, so duplicates also make brokers evict
+# each other's sessions.
+source_id = "pi-roof"
+
+# --- Input ------------------------------------------------------------------
+socket_host = "localhost"
+socket_port = 30003
+connection_mode = "client"
+
+# --- Output -----------------------------------------------------------------
+# Backends to fan out to. A no-Pulsar edge node uses just ["mqtt"]; add
+# "pulsar" to also feed the Spark/Delta analytics path. Each backend has its
+# own retry queue, so a dead broker on one leg cannot stall the other or the
+# socket read loop.
+forwarders = ["mqtt"]
+
+mqtt_broker = "localhost"
+mqtt_port = 1883
+mqtt_topic = "adsb/sbs/raw"
+mqtt_qos = 0
+
+# Only consulted when "pulsar" is in `forwarders`.
+# pulsar_broker = "pulsar://analytics.lan:6650"
+# pulsar_topic = "persistent://kradsb/adsb/sbs-topic"
+
+log_level = "info"
+log_sample_rate = 100

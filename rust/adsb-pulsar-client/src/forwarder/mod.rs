@@ -4,6 +4,8 @@
 //! client to forward to Pulsar, files, or any custom backend.
 
 pub mod file;
+#[cfg(feature = "mqtt")]
+pub mod mqtt_forwarder;
 #[cfg(feature = "pulsar")]
 pub mod pulsar_forwarder;
 

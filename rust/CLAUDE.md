@@ -8,7 +8,8 @@ Cargo workspace containing the ADS-B feed client library, adsd-data-engine and T
 |-------|------|---------|
 | `adsb-pulsar-client` | `adsb-pulsar-client/` | Library + CLI for dump1090 → Pulsar forwarding |
 | `adsb-pulsar-client-desktop-lib` | `adsb-pulsar-client-desktop/src-tauri/` | Tauri v2 desktop app backend |
-| `adsb-data-engine` | `adsb-data-engine/` | Shared SBS-1 parser + DuckDB persistent storage for historical queries |
+| `adsb-data-engine` | `adsb-data-engine/` | Shared SBS-1 parser, ingest pipeline, and DuckDB persistent storage for historical queries |
+| `adsb-data-server` | `adsb-data-server/` | Headless recorder: MQTT ingest → DuckDB, Quack sharing, read-only HTTP query API. Also the home of `tool_service`/`server` (moved out of the Tauri crate) so desktop, agent and daemon answer queries identically |
 
 ## Non-Cargo Component
 
@@ -88,7 +89,8 @@ cargo fmt --all --check             # Format check
 ```bash
 cargo test -p adsb-pulsar-client              # Library: ~65 tests (unit + integration + doc)
 cargo test -p adsb-pulsar-client-desktop-lib  # Tauri: ~19 tests (unit)
-cargo test -p adsb-data-engine               # Data engine: ~113 tests (SBS parser + storage + import)
+cargo test -p adsb-data-engine               # Data engine: ~126 tests (SBS parser + ingest + storage + import)
+cargo test -p adsb-data-server               # Data server: ~32 tests (recorder + config layering + tool API)
 ```
 
 ### Run Specific Tests
@@ -110,12 +112,37 @@ cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt -
 Save new feature development plan in adsb-pulsar-client-desktop/docs/plans before starting implementation.
 Update Design documentation (DESIGN.md, DOCUMENTATION.md) before proposing to commit a new feature implementation.
 
+## Edge builds (Raspberry Pi)
+
+See `docs/DEPLOYMENT.md`. The short version:
+
+- On **Apple Silicon this is not a cross-compile** — host `arm64` and Pi
+  `aarch64` are the same architecture, so `--platform linux/arm64` builds
+  natively under Docker's VM. `make feed-arm64` / `make server-arm64`.
+- **`cross` does not work here**: its images are x86_64 and `rust-toolchain.toml`
+  pins 1.92, so it tries to install a non-host toolchain and rustup refuses.
+- **Cap build parallelism, twice over.** `codegen-units = 1` means each parallel
+  rustc holds a whole crate's codegen. `JOBS = 4` for the feed client; the data
+  server needs `SERVER_JOBS = 2` because DuckDB's unity-build C++ units each take
+  GBs in cc1plus, and cc-rs reports the OOM kill as a bare `exit status: 1` that
+  reads like a compile error. Measured: 2.1 MB / 19s (feed), 38 MB / 9m44s (server)
+- **`MemoryMax` is not copyable between the two units**: 100M for the feed
+  client, 512M for `adsb-data-server` (DuckDB wants >=125 MB per thread).
+
 ## Build Notes
 
 - `cli` feature (default-enabled on `adsb-pulsar-client`) gates `clap` dependency
 - Tauri crate uses `default-features = false` to exclude clap
 - `[profile.release]` settings must be in this workspace root `Cargo.toml`, not member crates
-- `protoc` required at build time (Pulsar crate dependency)
+- `adsb-data-server` is **aarch64/x86_64 only** (DuckDB has no 32-bit ARM support). `adsb-pulsar-client` has no such limit, which is why a mixed fleet runs the feed client everywhere and the recorder only on 64-bit nodes
+- The Tauri crate now depends on `adsb-data-server` (`default-features = false`) for the shared query surface. `clap` still stays out; `rumqttc` does arrive transitively, which Phase 6's MQTT live source needs anyway
+- `protoc` required at build time (Pulsar crate dependency). Building
+  `adsb-pulsar-client` with `--no-default-features --features cli,mqtt` drops the `pulsar`
+  crate and therefore the `protoc` requirement — the no-Pulsar edge deployment, and the
+  easiest path when cross-compiling for a Raspberry Pi
+- `mqtt` feature (default-enabled on `adsb-pulsar-client`) gates `rumqttc`, built with
+  `default-features = false` so it does not pull a rustls TLS stack for what is a
+  plain-text LAN hop
 - `adsb-data-engine` uses the `duckdb` crate via C FFI — no extra system packages needed beyond the Rust toolchain; DuckDB is statically linked
 - **The `duckdb` version is pinned exactly** (`=1.10505.0`, DuckDB v1.5.5). Not hygiene: the
   `quack` extension is *not* statically linked into the bundled build and is autoinstalled from

@@ -6,6 +6,7 @@ use crate::bridge;
 use crate::state::{
     AppState, ConnectionStatus, RecordingState, StatusResponse, StorageAvailability,
 };
+use crate::storage_mode::StorageMode;
 use adsb_data_engine::{
     AircraftSummary, BboxQuery, CreateEventOfInterest, CreateScenario, CreateScenarioTrack,
     DetectionRangeQuery, DetectionRangeSector, EventOfInterest, EventOfInterestQuery,
@@ -16,11 +17,12 @@ use adsb_data_engine::{
     TrajectoryQuery, UpdateEventOfInterest, UpdateScenario, UpdateScenarioTrack,
 };
 use adsb_pulsar_client::Config;
+use tauri_plugin_store::StoreExt;
 
 use crate::bridge::DesktopMetrics;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use tauri::{Emitter, State, ipc::Response};
+use tauri::{Emitter, Manager, State, ipc::Response};
 use tracing::info;
 
 /// Starts the ADS-B feed client with the current configuration.
@@ -145,6 +147,18 @@ pub fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, String> 
     Ok(status.clone())
 }
 
+/// The stack this instance was launched for, or `None` for the unnamed one.
+///
+/// Exists because the UI cannot otherwise know: the badge used to derive the
+/// stage from `source_id`, which comes from the app's own settings store -- and
+/// a freshly-scoped stack starts with an empty store, so it fell back to the
+/// default id and showed nothing. `ADSB_STACK` is the value `make up-desktop
+/// STACK=<name>` actually sets.
+#[tauri::command]
+pub fn get_stack() -> Option<String> {
+    crate::stack_from_env()
+}
+
 /// Returns the current metrics snapshot, including bridge-level counters
 /// (`messages_parsed`) that the TS `MetricsSnapshot` type expects to be present.
 #[tauri::command]
@@ -240,7 +254,7 @@ pub async fn get_trajectory(
     query: TrajectoryQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<PositionRecord>, String> {
-    crate::tool_service::get_trajectory(&state.storage, query).await
+    adsb_data_server::tool_service::get_trajectory(&state.storage, query).await
 }
 
 /// Get trajectories for multiple flights in a single batch, returned as Arrow IPC.
@@ -294,7 +308,7 @@ pub async fn get_aircraft_summary(
     end_ms: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<Vec<AircraftSummary>, String> {
-    crate::tool_service::get_aircraft_summary(&state.storage, start_ms, end_ms).await
+    adsb_data_server::tool_service::get_aircraft_summary(&state.storage, start_ms, end_ms).await
 }
 
 /// Get flight-segmented summaries for a time window.
@@ -303,7 +317,7 @@ pub async fn get_flight_summary(
     query: FlightSummaryQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<FlightSummary>, String> {
-    crate::tool_service::get_flight_summary(&state.storage, query).await
+    adsb_data_server::tool_service::get_flight_summary(&state.storage, query).await
 }
 
 /// Get flight-segmented summaries as Arrow IPC bytes.
@@ -331,13 +345,13 @@ pub async fn get_time_distribution(
     query: TimeDistributionQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<TimeDistributionBucket>, String> {
-    crate::tool_service::get_time_distribution(&state.storage, query).await
+    adsb_data_server::tool_service::get_time_distribution(&state.storage, query).await
 }
 
 /// Get storage statistics (row count, time range, estimated size).
 #[tauri::command]
 pub async fn get_storage_stats(state: State<'_, AppState>) -> Result<StorageStats, String> {
-    crate::tool_service::get_storage_stats(&state.storage).await
+    adsb_data_server::tool_service::get_storage_stats(&state.storage).await
 }
 
 /// Get detection range by 10° azimuth sectors.
@@ -362,7 +376,7 @@ pub async fn get_hourly_heatmap(
     query: HourlyHeatmapQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<HourlyHeatmapCell>, String> {
-    crate::tool_service::get_hourly_heatmap(&state.storage, query).await
+    adsb_data_server::tool_service::get_hourly_heatmap(&state.storage, query).await
 }
 
 /// Count raw messages in an optional time range.
@@ -469,7 +483,7 @@ pub async fn get_storage_status(state: State<'_, AppState>) -> Result<StorageAva
     let guard = state.storage.read().await;
     if guard.is_some() {
         Ok(StorageAvailability::Available)
-    } else if state.storage_config.is_some() {
+    } else if state.storage_config.lock().unwrap().is_some() {
         // Config exists but handle is None → was released
         Ok(StorageAvailability::Released)
     } else {
@@ -520,9 +534,10 @@ pub async fn reclaim_storage(
 ) -> Result<(), String> {
     let config = state
         .storage_config
-        .as_ref()
-        .ok_or_else(|| "No storage config available — storage was never initialized".to_string())?
-        .clone();
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| "No storage config available — storage was never initialized".to_string())?;
 
     let handle =
         StorageHandle::open(config).map_err(|e| format!("Failed to reopen storage: {e}"))?;
@@ -560,13 +575,14 @@ pub async fn swap_database(
     // 1. Read db_path from storage_config
     let config = state
         .storage_config
-        .as_ref()
+        .lock()
+        .unwrap()
+        .clone()
         .ok_or_else(|| "No storage config — storage was never initialized".to_string())?;
     let db_path = config
         .db_path
-        .as_ref()
-        .ok_or_else(|| "Cannot swap an in-memory database".to_string())?
-        .clone();
+        .clone()
+        .ok_or_else(|| "Cannot swap an in-memory database".to_string())?;
 
     let db_parent = db_path
         .parent()
@@ -585,6 +601,7 @@ pub async fn swap_database(
         source_id: config.source_id.clone(),
         gap_threshold_ms: config.gap_threshold_ms,
         share: None,
+        remote: None,
     };
     let new_handle = StorageHandle::open(staging_config)
         .map_err(|e| format!("Failed to create staging database: {e}"))?;
@@ -720,7 +737,7 @@ pub async fn get_events_of_interest(
     query: EventOfInterestQuery,
     state: State<'_, AppState>,
 ) -> Result<Vec<EventOfInterest>, String> {
-    crate::tool_service::get_events_of_interest(&state.storage, query).await
+    adsb_data_server::tool_service::get_events_of_interest(&state.storage, query).await
 }
 
 #[tauri::command]
@@ -770,12 +787,13 @@ pub async fn delete_event_of_interest(
 
 // --- Simulation scenario commands ---
 //
-// Reads go through `tool_service` so the agent tool server shares them; writes
+// Reads go through `adsb-data-server`'s `tool_service` so the desktop app, the
+// agent tool server and the headless daemon all answer queries identically; writes
 // take the lock here, mirroring the events-of-interest commands above.
 
 #[tauri::command]
 pub async fn list_scenarios(state: State<'_, AppState>) -> Result<Vec<Scenario>, String> {
-    crate::tool_service::list_scenarios(&state.storage).await
+    adsb_data_server::tool_service::list_scenarios(&state.storage).await
 }
 
 #[tauri::command]
@@ -783,7 +801,7 @@ pub async fn get_scenario(
     id: String,
     state: State<'_, AppState>,
 ) -> Result<ScenarioWithTracks, String> {
-    crate::tool_service::get_scenario(&state.storage, id).await
+    adsb_data_server::tool_service::get_scenario(&state.storage, id).await
 }
 
 #[tauri::command]
@@ -935,4 +953,90 @@ pub async fn sharing_status(state: State<'_, AppState>) -> Result<ShareStatus, S
         return Ok(ShareStatus::Off);
     };
     storage.sharing_status().await.map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Storage mode
+// ---------------------------------------------------------------------------
+
+/// Returns the storage mode currently in effect.
+#[tauri::command]
+pub async fn get_storage_mode(state: State<'_, AppState>) -> Result<StorageMode, String> {
+    Ok(state.storage_mode.lock().unwrap().clone())
+}
+
+/// Switches between embedded and remote storage, reopening the database.
+///
+/// The switch is applied immediately rather than on next launch, because the
+/// two modes open *different files* and a user who flips the toggle expects the
+/// history panel to change now.
+///
+/// On failure the previous storage is left released rather than silently
+/// reopened in the old mode: mode is explicit configuration, and quietly
+/// reverting would hide from the user that their daemon is unreachable.
+#[tauri::command]
+pub async fn set_storage_mode(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    mode: StorageMode,
+) -> Result<StorageAvailability, String> {
+    mode.validate()?;
+
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("No app data directory: {e}"))?;
+
+    let share = state
+        .storage_config
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|c| c.share.clone());
+    let config = mode.to_storage_config(&app_data_dir, share);
+
+    // Drop the old connection first: DuckDB takes an exclusive file lock, and
+    // in embedded->embedded reopens the target could be the very file we hold.
+    {
+        let mut guard = state.storage.write().await;
+        if let Some(old) = guard.take() {
+            let _ = old.checkpoint().await;
+        }
+    }
+
+    let handle = StorageHandle::open(config.clone()).map_err(|e| {
+        let _ = app.emit("adsb:storage-status", &StorageAvailability::Unavailable);
+        format!("Failed to open storage in {} mode: {e}", mode.label())
+    })?;
+
+    let _ = handle
+        .insert_status_event(StatusEvent::now(
+            StatusEventType::Storage,
+            StatusEventStatus::Reclaimed,
+        ))
+        .await;
+
+    *state.storage.write().await = Some(handle);
+    *state.storage_config.lock().unwrap() = Some(config);
+    *state.storage_mode.lock().unwrap() = mode.clone();
+
+    persist_storage_mode(&app, &mode)?;
+    info!("Storage mode changed to {}", mode.label());
+
+    let status = StorageAvailability::Available;
+    let _ = app.emit("adsb:storage-status", &status);
+    Ok(status)
+}
+
+/// Persists the storage mode so it survives a restart.
+fn persist_storage_mode(app: &tauri::AppHandle, mode: &StorageMode) -> Result<(), String> {
+    let store = app
+        .store(crate::config_store_path())
+        .map_err(|e| format!("Failed to open config store: {e}"))?;
+    let value =
+        serde_json::to_value(mode).map_err(|e| format!("Failed to serialize storage mode: {e}"))?;
+    store.set(crate::STORAGE_MODE_STORE_KEY.to_string(), value);
+    store
+        .save()
+        .map_err(|e| format!("Failed to save config store: {e}"))
 }

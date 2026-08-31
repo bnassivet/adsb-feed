@@ -14,7 +14,7 @@ env:
 
 jobs:
   rust-core:
-    name: Rust core (adsb-pulsar-client + adsb-data-engine)
+    name: Rust core (adsb-pulsar-client + adsb-data-engine + adsb-data-server)
     runs-on: ubuntu-latest
     env:
       # DuckDB's `bundled` feature compiles the full C++ amalgamation; debug
@@ -75,10 +75,54 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy -p adsb-pulsar-client -p adsb-data-engine -- -D warnings
+        run: cargo clippy -p adsb-pulsar-client -p adsb-data-engine -p adsb-data-server -- -D warnings
 
       - name: Run tests
-        run: cargo test -p adsb-pulsar-client -p adsb-data-engine
+        run: cargo test -p adsb-pulsar-client -p adsb-data-engine -p adsb-data-server
+
+      # A feature-gated crate needs its no-default-features path exercised or
+      # breakage ships silently: `cargo build -p adsb-pulsar-client` uses
+      # default features, so code that wrongly assumes `clap`/`toml` exist
+      # compiles fine there and only fails for the consumers that disable them
+      # (the Tauri app and adsb-data-server). This caught exactly that.
+      - name: Build without default features (proves Pulsar is optional)
+        run: |
+          cargo build -p adsb-pulsar-client --no-default-features --features cli,mqtt
+          cargo build -p adsb-pulsar-client --no-default-features
+
+  edge-arm64:
+    name: Edge build (aarch64, Raspberry Pi artifacts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
+      - uses: docker/setup-qemu-action@v3
+
+      # The same arm64 container the Makefile uses. On an x86_64 runner this is
+      # emulated, so it is slower than on an Apple Silicon workstation -- but it
+      # is the only thing that proves the Pi artifacts still build.
+      - name: Build feed client (no Pulsar, no protoc)
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD/rust":/work -w /work \
+            -e CARGO_TARGET_DIR=/work/target-linux-arm64 \
+            -e CARGO_PROFILE_RELEASE_DEBUG=0 \
+            rust:1.92-bookworm \
+            cargo build --release -p adsb-pulsar-client -j 2 \
+              --no-default-features --features cli,mqtt
+
+      - name: Verify the artifact is an aarch64 ELF
+        run: |
+          file rust/target-linux-arm64/release/adsb-pulsar-client
+          file rust/target-linux-arm64/release/adsb-pulsar-client | grep -q "ARM aarch64"
 
   # rust-desktop:
   #   name: Rust desktop (adsb-pulsar-client-desktop / Tauri)

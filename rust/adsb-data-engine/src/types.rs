@@ -538,6 +538,25 @@ pub struct UpdateScenarioTrack {
     pub ordinal: Option<i64>,
 }
 
+/// Connection to a remote `adsb-data-server` over DuckDB's Quack protocol.
+///
+/// Used by the desktop app in `remote` mode: observed tables (positions,
+/// raw_messages, flights, status_events) are read from the daemon that records
+/// them, while authored tables (scenarios, events of interest) stay in a local
+/// database this app owns.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RemoteConfig {
+    /// Quack URI of the daemon, e.g. `quack:pi.lan:9494`.
+    pub uri: String,
+    /// Auth token issued by the daemon. Note it grants read **and** write
+    /// access to every table -- treat it as homelab-grade on a trusted LAN.
+    pub token: Option<String>,
+    /// Override the host-based TLS heuristic. `None` disables SSL for local
+    /// hosts only, matching DuckDB's own default.
+    #[serde(default)]
+    pub disable_ssl: Option<bool>,
+}
+
 /// Configuration for opening a storage handle.
 #[derive(Debug, Clone)]
 pub struct StorageConfig {
@@ -550,6 +569,9 @@ pub struct StorageConfig {
     pub gap_threshold_ms: i64,
     /// Optional Quack sharing configuration. `None` keeps the database private.
     pub share: Option<ShareConfig>,
+    /// Optional remote daemon to read observed data from. `None` is embedded
+    /// mode: this process owns all seven tables.
+    pub remote: Option<RemoteConfig>,
 }
 
 impl Default for StorageConfig {
@@ -559,6 +581,7 @@ impl Default for StorageConfig {
             source_id: "unknown".to_string(),
             gap_threshold_ms: 3_600_000, // 1 hour
             share: None,
+            remote: None,
         }
     }
 }

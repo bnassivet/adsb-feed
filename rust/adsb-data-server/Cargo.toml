@@ -1,0 +1,48 @@
+[package]
+name = "adsb-data-server"
+version = "0.1.0"
+edition = "2024"
+authors = ["bruno.nassivet@gmail.com"]
+description = "Headless ADS-B recorder: MQTT ingest to DuckDB, with Quack sharing and a read-only query API"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+
+[dependencies]
+adsb-data-engine = { path = "../adsb-data-engine" }
+# Source-side only: the MQTT subscriber and the raw-SBS broadcast contract both
+# live in the feed client. `default-features = false` drops clap and pulsar,
+# so this crate never pulls protoc.
+adsb-pulsar-client = { path = "../adsb-pulsar-client", default-features = false, features = ["mqtt"] }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# CLI + layered config (optional, for the binary)
+clap = { version = "4.5", features = ["derive", "env"], optional = true }
+toml = { version = "0.8", optional = true }
+
+# Read-only HTTP query API (optional)
+axum = { version = "0.8", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+async-trait = "0.1"
+
+[features]
+default = ["cli", "http-api"]
+cli = ["dep:clap", "dep:toml"]
+http-api = ["dep:axum"]
+
+[lib]
+name = "adsb_data_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "adsb-data-server"
+path = "src/main.rs"
+required-features = ["cli"]

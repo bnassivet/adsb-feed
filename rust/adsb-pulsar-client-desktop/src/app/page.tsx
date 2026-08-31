@@ -41,7 +41,7 @@ import { useEventsOfInterest } from "@/hooks/useEventsOfInterest";
 import { useCopilotTools } from "@/hooks/useCopilotTools";
 import { useCopilotContext } from "@/hooks/useCopilotContext";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
-import { startFeed, stopFeed, getConfig, getStorageStatus, releaseStorage, reclaimStorage, exportDatabase, previewImportDatabase, importDatabase, swapDatabase, getStorageStats, startSharing, stopSharing, sharingStatus } from "@/lib/commands";
+import { startFeed, stopFeed, getConfig, getStack, getStorageStatus, releaseStorage, reclaimStorage, exportDatabase, previewImportDatabase, importDatabase, swapDatabase, getStorageStats, startSharing, stopSharing, sharingStatus } from "@/lib/commands";
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
 import { listen } from "@tauri-apps/api/event";
 import { ask, message, save, open } from "@tauri-apps/plugin-dialog";
@@ -52,6 +52,10 @@ import type { AircraftTrack, ActiveMode, Config, Filters, DensityMetric, Density
 import type { SelectEvent } from "@/components/AircraftTable";
 import { ModeTabs } from "@/components/ModeTabs";
 import Link from "next/link";
+import { resolveStage } from "@/lib/stage";
+
+/** Base window/header title. `tauri.conf.json` sets the same string. */
+const APP_TITLE = "ADS-B Aircraft Tracker";
 
 const MIN_TABLE_HEIGHT = 150;
 const MAX_TABLE_HEIGHT_VH = 0.5; // 50vh
@@ -174,6 +178,25 @@ export default function Dashboard() {
   useEffect(() => {
     getConfig().then(setAppConfig).catch(() => {});
   }, []);
+  // Which stack's data this window is showing. Two instances -- a dev stack and
+  // a client of the prod fleet -- are otherwise identical on screen, and acting
+  // on the wrong one's data is only obvious afterwards.
+  //
+  // Shown in the top bar only. Setting the OS window title was tried and did
+  // not take effect, and it is the wrong place regardless: the top bar is
+  // where you are already looking.
+  // ADSB_STACK from the backend, which is what `make up-desktop STACK=<name>`
+  // sets; source_id is only the fallback, since it lives in the app's own store
+  // and a freshly-scoped stack starts that store empty.
+  const [stackName, setStackName] = useState<string | null>(null);
+  useEffect(() => {
+    getStack().then(setStackName).catch(() => {});
+  }, []);
+  const stage = useMemo(
+    () => resolveStage(stackName, appConfig?.source_id),
+    [stackName, appConfig?.source_id],
+  );
+
   const receiverLocation = useMemo(() => {
     if (appConfig?.receiver_latitude != null && appConfig?.receiver_longitude != null) {
       return { lat: appConfig.receiver_latitude, lng: appConfig.receiver_longitude, alt: appConfig.receiver_altitude };
@@ -1087,8 +1110,22 @@ export default function Dashboard() {
       <header className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-700">
         <div className="flex items-center gap-4">
           <h1 className="text-sm font-semibold text-slate-200">
-            ADS-B Aircraft Tracker
+            {APP_TITLE}
           </h1>
+          {stage && (
+            <span
+              // Prod is loud on purpose: the badge exists to stop you acting on
+              // the wrong window, and that only matters in one direction.
+              className={`rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wider ${
+                stage === "prod"
+                  ? "bg-amber-500 text-slate-950"
+                  : "bg-sky-600 text-white"
+              }`}
+              title={`Stage: ${stage} — source_id ${appConfig?.source_id}`}
+            >
+              {stage}
+            </span>
+          )}
           <ConnectionStatusIndicator
             label="Socket"
             status={status.socket_status}

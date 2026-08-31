@@ -115,9 +115,14 @@ src/
 ├── connection_monitor.rs     ConnectionMonitor — heartbeat-aware idle detection
 ├── error.rs                  ClientError, Result
 ├── metrics.rs                Metrics (lock-free atomics), MetricsSnapshot
+├── source/
+│   ├── mod.rs                MessageSource trait + SourceStatus + split_lines
+│   ├── socket_source.rs      SocketSource (wraps ADSBFeedClient)
+│   └── mqtt_source.rs        MqttSource (cfg(feature = "mqtt"))
 └── forwarder/
     ├── mod.rs                MessageForwarder trait + NoopForwarder
     ├── file.rs               FileForwarder (BufWriter, append mode)
+    ├── mqtt_forwarder.rs     MqttForwarder (cfg(feature = "mqtt"))
     └── pulsar_forwarder.rs   PulsarForwarder (cfg(feature = "pulsar"))
 ```
 
@@ -198,7 +203,7 @@ Key fields relevant to multi-forwarder operation:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `forwarders` | `Vec<ForwarderKind>` | `[Pulsar]` | Ordered list of active backends |
+| `forwarders` | `Vec<ForwarderKind>` | `[Pulsar]` | Ordered list of active backends (`Pulsar`, `Mqtt`, `File`, `Noop`) |
 | `file_path` | `String` | `adsb_messages_<timestamp>.sbs` | Output path for `FileForwarder` |
 | `pulsar_broker` | `String` | `pulsar://localhost:6650` | Pulsar broker URL |
 | `pulsar_topic` | `String` | `persistent://kradsb/adsb/sbs-topic` | Pulsar topic |
@@ -277,6 +282,32 @@ batched I/O; the buffer is flushed by the client's housekeeping tick every ~500 
 `disconnect()`.
 
 Configuration: set `--forwarder file --file-path <path>` or populate `Config { forwarders: vec![ForwarderKind::File], file_path: "...".into(), .. }`.
+
+### `MqttForwarder` (`feature = "mqtt"`)
+
+Publishes each raw SBS-1 line to an MQTT topic. This is the lightweight LAN transport that
+lets `adsb-data-server` and the desktop app consume the feed **without an Apache Pulsar
+broker** — selecting only `--forwarder mqtt` yields a no-Pulsar deployment. Pulsar remains
+available as an additional fan-out leg for the Spark/Delta analytics path.
+
+`rumqttc` only makes progress while its event loop is polled, and the loop is also the only
+place connection state is observable, so `connect()` spawns a task that owns the event loop
+for the life of the forwarder and reports transitions through an `AtomicBool` read by
+`is_connected()`. Reconnection and its backoff are handled by `rumqttc` itself, unlike
+`PulsarForwarder`, which hand-rolls a reconnect task.
+
+**Loss posture.** QoS defaults to 0 and `send()` uses `try_publish` (non-blocking). The
+client fans out to each forwarder in sequence, so a slow or wedged broker must never stall
+the socket read loop or the Pulsar leg; a full outbound queue surfaces as a send error —
+accounted for by the per-forwarder retry queue — rather than being awaited.
+
+Configuration: `--forwarder mqtt --mqtt-broker <host> --mqtt-topic <topic>`, or populate
+`Config { forwarders: vec![ForwarderKind::Mqtt], mqtt_broker: "...".into(), .. }`. The MQTT
+client id defaults to `source_id`; it must be unique per node, since brokers evict an
+existing session when a second client connects with the same id.
+
+Building with `--no-default-features --features cli,mqtt` drops the `pulsar` crate and with
+it the `protoc` build requirement — the main friction when cross-compiling for a Pi.
 
 ### `PulsarForwarder` (`feature = "pulsar"`)
 
@@ -368,3 +399,66 @@ Stats tick (10s):
 | `pulsar` | yes | Enables `pulsar` crate dependency, `PulsarForwarder`, `ClientError::Pulsar` |
 
 Tauri crate: `default-features = false` → neither feature active; `NoopForwarder` + `FileForwarder` only.
+
+
+---
+
+## Message sources (input side)
+
+`MessageSource` is the mirror of `MessageForwarder`: a forwarder decides where raw SBS-1
+lines **go**, a source decides where they **come from**. Both ends of the crate trade in the
+same currency — a `broadcast::Receiver<Vec<u8>>` of raw SBS-1 lines, the shape
+`ADSBFeedClient::with_message_tap` already produces — so a consumer works unchanged
+regardless of which source feeds it.
+
+```
+                 ┌──────────────────────────────┐
+dump1090 TCP ───►│ SocketSource                 │──┐
+                 │  wraps ADSBFeedClient        │  │   broadcast::Receiver<Vec<u8>>
+                 └──────────────────────────────┘  ├──►  raw SBS-1 lines
+                 ┌──────────────────────────────┐  │     desktop app, adsb-data-server
+MQTT topic ─────►│ MqttSource                   │──┘
+                 └──────────────────────────────┘
+```
+
+| Item | Purpose |
+|------|---------|
+| `MessageSource` | `subscribe(capacity)`, `status()`, `run()`, `shutdown()`, `name()` |
+| `SourceStatus` | `Disconnected` / `Connecting` / `Connected` — transport state only |
+| `split_lines(payload)` | Splits a received payload into individual lines, normalising CRLF and dropping blanks |
+| `LivenessPolicy` | Degraded/lost thresholds appropriate to the source, plus `resolve()` |
+| `Liveness` | `Connecting` / `Healthy` / `Degraded` / `Lost` — the consumer-facing verdict |
+
+### Why liveness is a policy, not a constant
+
+The two sources have **no comparable timeout**. `SocketSource` has a TCP read
+timeout, and the desktop watchdog has always derived `read_timeout + 10s / +30s`
+from it. `MqttSource` has no such thing — reusing those numbers produces a
+connection indicator that is confidently wrong. What an MQTT subscriber *does*
+have is dump1090's 60s heartbeat relayed through the feed client, so silence is
+measured against that: `heartbeat x 1.5` to degrade, `x 3` to declare lost.
+
+`resolve()` also lets transport state win over the timers: a broker that has
+dropped us is `Lost` even if a message arrived a moment ago, because the timers
+describe the *feed* while the transport describes the *connection*.
+
+### Why `MqttSource` matters
+
+It lets a consumer read a live feed produced by a **different process** — typically the feed
+client on a Raspberry Pi — with no Apache Pulsar in the picture. This is the input half of
+the no-Pulsar deployment; `MqttForwarder` is the output half.
+
+### Design notes
+
+- **`SourceStatus` is deliberately coarse.** A source reports only what it can observe about
+  its transport. Activity-based degradation ("no messages for N seconds") is layered on top
+  by the consumer, because that threshold is a UI policy, not a transport fact — and it is
+  derived differently for a TCP socket than for a broker subscription.
+- **`MqttSource` subscribes on every `ConnAck`**, not once before the poll loop. `rumqttc`
+  reconnects transparently, but the broker has forgotten the subscription; subscribing only
+  at startup yields a source that silently stops delivering after the first reconnect.
+- **The subscriber client id is suffixed `-sub`.** A source and a forwarder built from the
+  same `Config` would otherwise collide, and brokers evict an existing session when a second
+  client connects with the same id.
+- **Delivery is fire-and-forget.** With no subscribers, or a lagging one, dropping is correct:
+  this is a live feed, not a queue. Durability is the recorder's job.

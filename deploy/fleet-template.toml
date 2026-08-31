@@ -1,0 +1,78 @@
+# One fleet, one stage.
+#
+# Copy this to deploy/<stage>.toml and adapt:
+#
+#     cp deploy/fleet-template.toml deploy/prod.toml
+#     $EDITOR deploy/prod.toml
+#     make render-fleet F=deploy/prod.toml
+#
+# Your copy is gitignored -- it holds real hostnames and a Quack token, for the
+# same reasons adsb-stack.toml is untracked. This template is the tracked one:
+# a new setting belongs HERE too, or it exists on one machine only.
+#
+# Everything shared between the two nodes is written once and composed into
+# both rendered files. That is the whole point: source_id and the MQTT topic
+# have to agree across hosts, and when they do not the failure is silent --
+# a feed publishing to one topic while the recorder subscribes to another
+# looks healthy from both sides and records nothing.
+
+# Deployment stage: half of every identity on the bus. It is appended to
+# source_id and it names the topic, so `dev` and `prod` fleets can share a LAN
+# without evicting each other or mixing their data. See deploy/README.md.
+stage = "prod"
+
+[site]
+# The receiver's identity, NOT a hostname -- both Pis share it, because the
+# recorder stamps it onto every stored record. Renders as "<id>-<stage>".
+id = "pi-roof"
+
+# The ANTENNA's position, not the laptop's. It is the map centre, the origin
+# for range analysis, and the reference for detection-range calculations.
+latitude  = 46.717915
+longitude = -2.33716964
+# altitude_ft = 120
+# timezone = "Local"      # or an IANA name, for dump1090's timestamps
+
+[broker]
+# Must be reachable from every node. Mosquitto 2.x binds localhost by default,
+# so `apt install mosquitto` alone is NOT enough -- copy
+# infrastructure/mqtt/mosquitto.conf. See rust/docs/DEPLOYMENT.md.
+host = "pi4.lan"
+port = 1883
+qos = 0
+# topic = "adsb/prod/sbs/raw"   # derived from `stage` unless set explicitly
+
+# --- nodes ------------------------------------------------------------------
+# Each [nodes.*] renders one file into deploy/.rendered/<short-hostname>/.
+# Omit a role and it is simply not rendered.
+
+[nodes.feed]
+# dump1090 + adsb-pulsar-client. Runs anywhere, including 32-bit ARM.
+host = "pi3.lan"
+dump1090_host = "127.0.0.1"     # dump1090 is on this same node
+dump1090_port = 30003
+
+[nodes.recorder]
+# adsb-data-server. aarch64/x86_64 ONLY -- DuckDB has no 32-bit ARM support.
+# When this host equals broker.host, the recorder is rendered to subscribe over
+# loopback: the durable leg should not depend on the network needlessly.
+host = "pi4.lan"
+db_path = "/var/lib/adsb/adsb.db"
+http_port = 8787
+checkpoint_secs = 300
+retention_hours = 0             # 0 keeps everything; watch SD-card wear
+
+# Quack sharing: what lets the desktop app attach this database for history.
+# The token grants full read AND write to every table and no TLS is terminated,
+# so this is homelab-grade on a trusted LAN. Never port-forward :9494.
+share = true
+share_uri = "quack:0.0.0.0:9494"   # 0.0.0.0, not localhost, or nothing remote can attach
+share_token = "change-me"          # must match [remote].token in the client's adsb-stack.toml
+
+# [pulsar]
+# Optional SECOND fan-out leg for the Spark/Delta pipeline. Off by default, and
+# note the edge binaries built with `make feed-armv7` have no pulsar support
+# compiled in at all -- enabling this there makes the feed reject its config.
+# enabled = true
+# broker = "pulsar://analytics.lan:6650"
+# topic = "persistent://kradsb/adsb/sbs-topic"

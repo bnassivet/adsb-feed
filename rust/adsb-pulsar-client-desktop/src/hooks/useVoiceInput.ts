@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocalStorage } from "./useLocalStorage";
+import { AGENT_BASE_URL } from "@/lib/agent-url";
 
 export type VoiceBackendId = "voxtral" | "lfm2-audio";
 
@@ -41,7 +42,7 @@ export interface UseVoiceInputReturn {
   clearFinalTranscript: () => void;
 }
 
-const AGENT_BASE = "http://localhost:8000";
+const AGENT_BASE = AGENT_BASE_URL;
 
 export function useVoiceInput(threadId?: string): UseVoiceInputReturn {
   const [backend, setBackend] = useLocalStorage<VoiceBackendId>(

@@ -75,7 +75,7 @@ pub enum StorageAvailability {
 /// The relay task and query commands read-lock on each access.
 /// Release takes a write-lock and sets to `None`.
 /// Reclaim reopens from the stored `StorageConfig`.
-pub type SharedStorage = Arc<RwLock<Option<StorageHandle>>>;
+pub use adsb_data_engine::SharedStorage;
 
 /// Shared connection status: `Arc<Mutex<StatusResponse>>`.
 ///
@@ -94,7 +94,13 @@ pub struct AppState {
     /// DuckDB storage handle, shared with the relay task via Arc<RwLock<...>>
     pub storage: SharedStorage,
     /// Config used to reopen storage after release (None if storage was never available)
-    pub storage_config: Option<StorageConfig>,
+    /// Config used to reopen storage after release, and to rebuild it when the
+    /// storage mode changes. Behind a `Mutex` because the settings UI can now
+    /// switch modes while the app runs.
+    pub storage_config: Mutex<Option<StorageConfig>>,
+    /// Storage mode currently in effect. Mutable: the settings UI can switch
+    /// between embedded and remote while the app runs.
+    pub storage_mode: Mutex<crate::storage_mode::StorageMode>,
     /// Whether to record position data to DuckDB (toggled at runtime)
     pub record_positions: Arc<AtomicBool>,
     /// Whether to record raw SBS-1 messages to DuckDB (toggled at runtime)
@@ -104,13 +110,19 @@ pub struct AppState {
 impl AppState {
     #[cfg(test)]
     pub fn new(storage: Option<StorageHandle>) -> Self {
-        Self::with_config(Config::default(), storage, None)
+        Self::with_config(
+            Config::default(),
+            storage,
+            None,
+            crate::storage_mode::StorageMode::default(),
+        )
     }
 
     pub fn with_config(
         config: Config,
         storage: Option<StorageHandle>,
         storage_config: Option<StorageConfig>,
+        storage_mode: crate::storage_mode::StorageMode,
     ) -> Self {
         Self {
             config: Mutex::new(config),
@@ -121,7 +133,8 @@ impl AppState {
                 pulsar_status: ConnectionStatus::Disconnected,
             })),
             storage: Arc::new(RwLock::new(storage)),
-            storage_config,
+            storage_config: Mutex::new(storage_config),
+            storage_mode: Mutex::new(storage_mode),
             record_positions: Arc::new(AtomicBool::new(true)),
             record_raw: Arc::new(AtomicBool::new(true)),
         }
@@ -224,12 +237,31 @@ mod tests {
             source_id: "test".to_string(),
             gap_threshold_ms: 3_600_000,
             share: None,
+            remote: None,
         };
-        let state = AppState::with_config(Config::default(), None, Some(config.clone()));
-        assert!(state.storage_config.is_some());
-        let stored = state.storage_config.unwrap();
+        let state = AppState::with_config(
+            Config::default(),
+            None,
+            Some(config.clone()),
+            crate::storage_mode::StorageMode::default(),
+        );
+        let stored = state.storage_config.lock().unwrap().clone();
+        let stored = stored.expect("storage config retained");
         assert_eq!(stored.source_id, "test");
         assert_eq!(stored.db_path.unwrap().to_string_lossy(), "/tmp/test.db");
+    }
+
+    #[test]
+    fn test_app_state_records_the_storage_mode_it_opened() {
+        // The mode has to survive into state, or the settings UI would report
+        // "embedded" for an app that actually attached a remote daemon.
+        let mode = crate::storage_mode::StorageMode::Remote {
+            uri: "quack:pi.lan:9494".to_string(),
+            token: None,
+            disable_ssl: None,
+        };
+        let state = AppState::with_config(Config::default(), None, None, mode.clone());
+        assert_eq!(*state.storage_mode.lock().unwrap(), mode);
     }
 
     #[test]

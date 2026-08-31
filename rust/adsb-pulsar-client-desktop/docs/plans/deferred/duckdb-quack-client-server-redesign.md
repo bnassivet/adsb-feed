@@ -1,5 +1,46 @@
 # Redesign: `adsb-data-engine` as a DuckDB-native client/server (Quack)
 
+> **Status: LARGELY IMPLEMENTED 2026-08-28 (was PARTIALLY, 2026-08-25).**
+>
+> The standalone daemon and the client/server split have since been **built**, on
+> beta, as a deliberate decision — see the Raspberry Pi deployment work
+> (`adsb-data-server`, `StorageConfig::remote`). What landed, and how it differs
+> from the blueprint below:
+>
+> - **`adsb-data-server` exists** as its own crate: MQTT ingest -> DuckDB, Quack
+>   sharing, read-only HTTP query API. It is the "daemon mode" of this document.
+> - **`Backend::Remote` landed in a simpler shape than §5 anticipated.** Rather
+>   than routing queries per table, remote mode attaches the daemon's catalog and
+>   shadows the four observed table names with views. Every existing query then
+>   works unmodified. There is no client/server rewrite of the query layer.
+> - **Constraints 1 and 3 are satisfied by construction, not by re-architecture**,
+>   because the daemon is the sole writer: ingest and flight tracking simply do
+>   not run on a client. Quack enforces this for us -- `bootstrap_flights_sync`
+>   against an attached catalog fails with "Multiple streaming scans or streaming
+>   scans + CTAS / insert in the same query are not currently supported", so it is
+>   skipped in remote mode.
+> - **Constraint 2 holds**: mode is explicit configuration (`ADSB_REMOTE_URI`),
+>   never a runtime fallback. Remote mode also uses a *separate* local file, so a
+>   client can never open the embedded database by accident.
+> - **Constraint 4/5 (filesystem-coupled commands) are NOT addressed.** Export,
+>   import, swap and snapshot still assume a local file and are untested in remote
+>   mode.
+> - **Constraint 7 is sidestepped rather than solved**: the desktop never writes
+>   to the remote, so the token's read+write scope stays a deployment note.
+>
+> Greenlight checklist items now answered empirically:
+> - **`quack` publishes for `linux_arm64`** and autoinstalls there -- verified by
+>   running `adsb-data-server --share` in an aarch64 container.
+> - **The `bundled` build still cannot statically link it** (constraint 9 stands);
+>   the autoinstall path was accepted and is documented, including the systemd
+>   unit setting `HOME` so the extension directory is writable.
+>
+> Still deferred: DuckLake re-evaluation, the multi-token ACL scheme, and
+> re-validating the Quack surface once DuckDB 2.0 ships.
+
+<details>
+<summary>Original 2026-08-25 status note</summary>
+
 > **Status: PARTIALLY IMPLEMENTED 2026-08-25 — the rest remains DEFERRED.**
 > The **embedded self-host mode** of this design has been built and shipped: `adsb-data-engine`
 > now calls `quack_serve()` on the database it already owns, so other DuckDB clients can
@@ -20,6 +61,8 @@
 > Verified empirically rather than from the docs, which do not specify it: `quack_serve`
 > returns exactly `(listen_uri, listen_url, auth_token)`, and `INSTALL quack` succeeds from
 > the bundled build (autoinstalled, so it needs network on first use).
+
+</details>
 
 > **Reevaluated 2026-08-23** against DuckDB 1.5.5 / `duckdb-rs` 1.10505.0.
 > Quack is still beta; the gate remains DuckDB 2.0, **now scheduled September 2026**.

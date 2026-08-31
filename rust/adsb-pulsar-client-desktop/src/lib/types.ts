@@ -116,9 +116,18 @@ export interface StatusResponse {
   pulsar_status: ConnectionStatus;
 }
 
+/** Where the live SBS-1 feed comes from (mirrors Rust `SourceKind`). */
+export type SourceKind = 'socket' | 'mqtt';
+
 /** Client configuration (mirrors Rust Config). */
 export interface Config {
   source_id: string;
+  /**
+   * `socket` connects straight to dump1090; `mqtt` subscribes to a feed another
+   * process publishes, which is what lets the app run against a Raspberry Pi
+   * with no Apache Pulsar involved.
+   */
+  source_kind: SourceKind;
   socket_host: string;
   socket_port: number;
   pulsar_broker: string;
@@ -137,10 +146,25 @@ export interface Config {
   log_level: string;
   connection_mode: string;
   dump1090_tz: string;
+  mqtt_broker: string;
+  mqtt_port: number;
+  mqtt_topic: string;
+  mqtt_client_id: string;
+  mqtt_qos: number;
   receiver_latitude: number | null;
   receiver_longitude: number | null;
   receiver_altitude: number | null;
 }
+
+/**
+ * Where historical data lives (mirrors Rust `StorageMode`).
+ *
+ * Serde-tagged with **`mode`** — the union must match or every status renders
+ * as the wrong variant, the same trap `ShareStatus` has with `state`.
+ */
+export type StorageMode =
+  | { mode: "embedded" }
+  | { mode: "remote"; uri: string; token?: string | null; disable_ssl?: boolean | null };
 
 /** Filter state for the UI. */
 export interface Filters {

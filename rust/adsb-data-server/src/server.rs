@@ -16,8 +16,8 @@
 //! always `{ "ok": true, "data": <result> }` or
 //! `{ "ok": false, "error": "<message>" }`.
 
-use crate::state::SharedStorage;
 use crate::tool_service;
+use adsb_data_engine::SharedStorage;
 use adsb_data_engine::{
     EventOfInterestQuery, FlightSummaryQuery, HourlyHeatmapQuery, TimeDistributionQuery,
     TrajectoryQuery,
@@ -146,28 +146,39 @@ pub fn router(storage: SharedStorage) -> Router {
         .with_state(storage)
 }
 
-/// Spawn the loopback tool server on a background tokio task.
+/// The loopback tool server itself: bind, then serve until the task is dropped.
+///
+/// Returns a future and spawns nothing, so **the caller chooses what drives
+/// it**. That matters because the two consumers have different runtimes: the
+/// daemon is inside `#[tokio::main]`, while the Tauri app calls this from its
+/// `setup` hook, where no tokio runtime is running yet and Tauri manages its
+/// own. Spawning here with `tokio::spawn` aborted the desktop app at launch
+/// with "there is no reactor running".
 ///
 /// Binds `127.0.0.1:<port>` only — never exposed off-host. Binding failure is
-/// non-fatal: the desktop app keeps running, the agent simply gets connection
-/// errors and reports tools as unavailable.
-pub fn spawn(storage: SharedStorage, port: u16) {
-    tauri::async_runtime::spawn(async move {
-        let addr = format!("127.0.0.1:{port}");
-        let listener = match tokio::net::TcpListener::bind(&addr).await {
-            Ok(l) => l,
-            Err(e) => {
-                warn!(
-                    "Agent tool server: failed to bind {addr} (agent history tools disabled): {e}"
-                );
-                return;
-            }
-        };
-        info!("Agent tool server listening on http://{addr}");
-        if let Err(e) = axum::serve(listener, router(storage)).await {
-            warn!("Agent tool server exited: {e}");
+/// non-fatal: the app keeps running, the agent simply gets connection errors
+/// and reports its history tools as unavailable.
+pub async fn serve(storage: SharedStorage, port: u16) {
+    let addr = format!("127.0.0.1:{port}");
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            warn!("Agent tool server: failed to bind {addr} (agent history tools disabled): {e}");
+            return;
         }
-    });
+    };
+    info!("Agent tool server listening on http://{addr}");
+    if let Err(e) = axum::serve(listener, router(storage)).await {
+        warn!("Agent tool server exited: {e}");
+    }
+}
+
+/// Convenience for callers already inside a tokio runtime (the daemon).
+///
+/// A Tauri app must NOT use this — it has no ambient runtime at setup time.
+/// Use `tauri::async_runtime::spawn(serve(storage, port))` instead.
+pub fn spawn(storage: SharedStorage, port: u16) {
+    tokio::spawn(serve(storage, port));
 }
 
 #[cfg(test)]
@@ -186,6 +197,7 @@ mod tests {
             source_id: "test".to_string(),
             gap_threshold_ms: 3_600_000,
             share: None,
+            remote: None,
         })
         .expect("open in-memory storage");
         Arc::new(RwLock::new(Some(handle)))
@@ -214,6 +226,23 @@ mod tests {
         let resp = dispatch(&storage, "getAircraftSummary", Value::Null).await;
         assert_eq!(resp["ok"], true);
         assert!(resp["data"].as_array().unwrap().is_empty());
+    }
+
+    /// Deliberately NOT a `#[tokio::test]`: there is no runtime in scope here,
+    /// which is the whole point.
+    ///
+    /// Regression. `spawn` used to call `tokio::spawn` directly, and the Tauri
+    /// app calls it from its `setup` hook where no runtime is running yet, so
+    /// the desktop aborted at launch with "there is no reactor running, must be
+    /// called from the context of a Tokio 1.x runtime". Building the future must
+    /// not require an ambient runtime -- only driving it does, and choosing what
+    /// drives it is the caller's business.
+    #[test]
+    fn serve_future_can_be_built_without_an_ambient_runtime() {
+        let storage: SharedStorage = Arc::new(RwLock::new(None));
+        let fut = serve(storage, 0);
+        // Dropping it unpolled is fine; constructing it is what used to panic.
+        drop(fut);
     }
 
     #[tokio::test]

@@ -12,6 +12,7 @@ Desktop aircraft tracker built with Tauri v2 (Rust backend) + Next.js 16 + React
 
 - **Backend**: Tauri v2 Rust (`src-tauri/src/`)
 - **Shared library**: `adsb-data-engine` (workspace crate) — SBS-1 parser + DuckDB persistent storage
+- **Message source**: dump1090 TCP, or MQTT (`source_kind`) — `MessageSource` in `adsb-pulsar-client`
 - **Frontend**: Next.js 16 App Router + React 19 (`src/`)
 - **Styling**: Tailwind CSS v4
 - **Map**: Leaflet via react-leaflet (dynamic import, SSR disabled)
@@ -64,6 +65,8 @@ src/
      custom DuckDB extension. Bind stays localhost unless `allow_other_hostname`; no TLS.
   3. `ShareStatus` is serde-tagged with **`state`**, not `type` — the TS union must match or
      every status silently renders as "off".
+- **Storage mode is a setting, not just an env var**: Settings → History Storage switches between *This computer* (embedded) and *A data server* (remote). `set_storage_mode` applies it **immediately** — the modes open different files, so the history views change on the spot — persists it under the `storage_mode` key in `config.json`, and reopens DuckDB. A **stored choice always wins** over the environment; `ADSB_REMOTE_URI` only seeds the mode when nothing is stored, otherwise a leftover env var would override the UI and the toggle would appear dead. On failure storage is left **unavailable rather than silently reverted** — mode is explicit configuration, and quietly falling back would hide an unreachable daemon. `AppState.storage_config` and `storage_mode` are behind `Mutex` for this reason.
+- **Remote mode (env)**: set `ADSB_REMOTE_URI` (plus `ADSB_REMOTE_TOKEN`, `ADSB_REMOTE_DISABLE_SSL`) to read observed data from an `adsb-data-server` over Quack instead of recording it locally. Scenarios and events of interest stay in a **separate local file** (`adsb_local.db`); `adsb_history.db` is untouched, because remote mode replaces the observed table names with views and creating those over real tables would mean dropping them. Mode is explicit configuration, never a runtime fallback — a client that fell back to opening the shared file while a daemon held it would be a second exclusive-lock owner
 - **Storage management**: Release/reclaim DuckDB connection at runtime (for external tool access); live export via DuckDB `ATTACH`+`CREATE TABLE AS` without stopping recording; import/merge from external `.db` files with deduplication; `StorageConfig` retained in AppState for reopening after release
 - `broadcast::channel` as message tap — fire-and-forget (`let _ = tx.send()`)
 - `watch::channel` for shutdown signal
@@ -464,6 +467,43 @@ Requires `adsb-agent` (:8000) and `adsb-simulation-agent` (:8300) running; witho
   excludes `docs/`, notebooks and markdown. **That file is read once, at `tauri dev`
   startup** — changing it does nothing until you restart the dev session.
 
+- **The stage badge** (`src/lib/stage.ts`) comes from `source_id`'s suffix, not
+  from `ADSB_STACK`: the *stack* of the unnamed config is "default" while its
+  *stage* is whatever its id says, usually `dev`. Shown in the header and
+  pushed to the OS window title, which needs `core:window:allow-set-title` --
+  the `core:window:default` set grants `allow-title` (read) but not the write,
+  so without it `setTitle` is denied silently.
+- **The stage badge** (`src/lib/stage.ts`) is read from `source_id`'s suffix,
+  not from `ADSB_STACK`: the *stack* of the unnamed config is "default" while
+  its *stage* is whatever the id says, usually `dev`. It lives in the top bar
+  only. Setting the OS window title was tried and did not take effect even with
+  `core:window:allow-set-title` granted -- do not re-add that permission
+  without evidence it now works.
+- **`ADSB_STACK=default` means the DEFAULT stack**, not a stack called
+  "default". `stack.sh` labels the unnamed stack "default" internally; passing
+  that through put an existing install's history in a `default/` subdirectory.
+  Both ends now special-case it.
+- **Two instances can run at once**, one per stack, and four things keep them
+  apart. Three are set by `scripts/stack.sh`; the fourth lives here:
+  - `ADSB_STACK=<name>` → the app's DuckDB and settings move to
+    `<app-data>/<name>/`. Unset keeps the historical paths. The name is
+    validated (`[A-Za-z0-9_-]+`) because it is a path component, and
+    `init_storage` must `create_dir_all` it — DuckDB will not create a missing
+    parent, and the failure is swallowed as "Storage init failed".
+  - `NEXT_DIST_DIR=.next-<name>` → Next 16 permits **one dev server per dist
+    dir** (it flocks `<distDir>/dev/lock`), not one per port.
+  - `tauri dev -c` overrides `devUrl` and the **CSP**, which pins the agent's
+    port — a second stack's agent is blocked outright without it.
+  - `NEXT_PUBLIC_AGENT_URL` → `src/lib/agent-url.ts`. Never hardcode
+    `localhost:8000` again; two call sites did, and a second window then
+    queried the first stack's data.
+- `bridge.rs` names `MqttSource` with no `#[cfg]`, so `src-tauri/Cargo.toml` must keep
+  `features = ["mqtt"]` on the `adsb-pulsar-client` dep. It compiled without it only via
+  feature unification through `adsb-data-server` — a build that worked by accident.
+- MQTT reconnects are paced by `adsb-pulsar-client/src/backoff.rs`, not by `rumqttc`:
+  `EventLoop::poll` returns its error immediately and applies no backoff of its own.
+  The attempt counter resets after **30 s connected**, never on `ConnAck` — duplicate
+  client ids evict each other while connecting successfully every time.
 - Root `.gitignore` has `lib/` which silently ignores `src/lib/`. Negated with `!**/src/lib/`
 - Tauri v2 commands silently fail without proper permissions in `capabilities/default.json`
 - `create-next-app` fails if `src-tauri/` exists — scaffold manually or use temp dir

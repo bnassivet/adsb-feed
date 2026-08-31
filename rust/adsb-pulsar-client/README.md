@@ -168,7 +168,7 @@ adsb-pulsar-client \
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--forwarder` | `pulsar` | Backend to use: `pulsar`, `file`, `noop`. Repeat for multiple backends. |
+| `--forwarder` | `pulsar` | Backend to use: `pulsar`, `mqtt`, `file`, `noop`. Repeat for multiple backends. |
 | `--file-path` | `adsb_messages_<timestamp>.sbs` | Output file path (used when `--forwarder file`) |
 
 ### Source and Socket
@@ -188,6 +188,65 @@ adsb-pulsar-client \
 | `--pulsar-topic` | `persistent://kradsb/adsb/sbs-topic` | Pulsar topic name |
 | `--pulsar-batch-delay-ms` | `100` | Batch delay before sending (ms) |
 | `--pulsar-batch-max-messages` | `100` | Max messages per batch |
+
+### MQTT (when `--forwarder mqtt`)
+
+The MQTT hop is the lightweight LAN transport between this client and local
+consumers (`adsb-data-server`, the desktop app). Selecting **only** `--forwarder mqtt`
+yields a deployment with no Apache Pulsar at all.
+
+| Option | Default | Environment Variable | Description |
+|--------|---------|----------------------|-------------|
+| `--mqtt-broker` | `localhost` | `ADSB_MQTT_BROKER` | MQTT broker hostname or IP |
+| `--mqtt-port` | `1883` | `ADSB_MQTT_PORT` | MQTT broker port |
+| `--mqtt-topic` | `adsb/sbs/raw` | `ADSB_MQTT_TOPIC` | Topic carrying raw SBS-1 lines |
+| `--mqtt-client-id` | *(source-id)* | `ADSB_MQTT_CLIENT_ID` | MQTT client id. Must be unique per node — brokers evict an existing session when a second client connects with the same id. |
+| `--mqtt-qos` | `0` | `ADSB_MQTT_QOS` | QoS level: `0`, `1` or `2` |
+
+```bash
+# Publish to both Pulsar and MQTT
+adsb-pulsar-client --forwarder pulsar --forwarder mqtt --mqtt-broker 127.0.0.1
+
+# No-Pulsar deployment: MQTT only
+adsb-pulsar-client --forwarder mqtt --mqtt-broker 127.0.0.1
+```
+
+**Building without Pulsar.** Pulsar support is a cargo feature. Omitting it removes
+the `pulsar` crate — and with it the **`protoc` build requirement**, which is the
+main friction when cross-compiling or building on a Raspberry Pi:
+
+```bash
+cargo build --release --no-default-features --features cli,mqtt
+```
+
+QoS defaults to 0 and publishing is non-blocking. The client fans out to each
+forwarder in turn, so a wedged MQTT broker must never stall the socket read loop
+or the Pulsar leg; a full outbound queue is reported as a send error rather than
+awaited.
+
+### Configuration file
+
+All settings can live in a TOML file, layered under environment variables and
+CLI flags: **defaults < TOML < env < flag**. A file value is *not* overridden by
+a flag's default — only by a flag actually passed.
+
+```bash
+adsb-pulsar-client --config /etc/adsb/feed.toml
+```
+
+See `feed.example.toml`. `--config` defaults to `/etc/adsb/feed.toml`; a missing
+file is not an error.
+
+### What did this node actually load?
+
+With four layers in play, `--print-config` answers it — it dumps the effective
+configuration as TOML and exits, so a running edge device can be interrogated
+without guessing:
+
+```bash
+adsb-pulsar-client --config /etc/adsb/feed.toml --print-config
+```
+
 
 ### Buffer and Reliability
 

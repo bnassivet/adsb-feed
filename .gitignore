@@ -371,6 +371,8 @@ tsconfig.tsbuildinfo
 
 # Next.js
 **/.next/
+# Per-stack Next dist dirs (NEXT_DIST_DIR), so two desktop instances can run.
+**/.next-*/
 
 experimentation/src/notebooks/figures/
 experimentation/src/notebooks/figures_copy/
@@ -401,3 +403,39 @@ graphify-out/memory/
 graphify-out/graph.html
 graphify-out/GRAPH_TREE.html
 graphify-out/GRAPH_REPORT.md
+
+# Local run state: rendered configs, PID files, logs, the dev database.
+# Everything here is derived from adsb-stack.toml and safe to delete.
+.run/
+
+# Your machine's stack configuration, copied from adsb-stack-template.toml by
+# `make config` and adapted locally. Untracked for the same reasons a .env is:
+# it holds host-specific paths, a receiver location and a Quack token, and one
+# person's settings should never land in someone else's checkout.
+adsb-stack.toml
+# Named stacks (make up STACK=prod -> adsb-stack-prod.toml). The negation keeps
+# the tracked template, which matches the same glob.
+adsb-stack-*.toml
+!adsb-stack-template.toml
+
+# Fleet configuration. Same reasoning as adsb-stack.toml: a fleet file holds
+# real hostnames and a Quack token. deploy/.rendered/ is derived from it.
+#
+# These patterns exclude FILES, not directories, deliberately: git does not
+# descend into an excluded directory, so a `deploy/` rule with a negation
+# inside it would not work.
+deploy/*.toml
+!deploy/fleet-template.toml
+deploy/.rendered/
+
+# Edge build output (Docker-based aarch64/armv7 builds use separate target dirs
+# so they never collide with the host's macOS artifacts)
+rust/target-linux-arm64/
+rust/target-linux-armv7/
+
+# Per-stack cargo target dirs for the desktop app (STACK=<name> keys its own)
+rust/target-desktop-*/
+
+# Ad-hoc logs captured while debugging a run
+desktop_log.txt
+*_log.txt

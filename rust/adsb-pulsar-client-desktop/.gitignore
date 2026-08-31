@@ -21,3 +21,5 @@ next-env.d.ts
 
 # Next.js
 **/.next/
+# Per-stack dist dirs (NEXT_DIST_DIR): one dev server per dist dir.
+**/.next-*/

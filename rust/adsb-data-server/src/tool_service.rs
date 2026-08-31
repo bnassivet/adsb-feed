@@ -6,7 +6,7 @@
 //! `tool_server.rs`. This keeps a single source of truth for the query logic
 //! and the graceful "Storage not available" degradation string.
 
-use crate::state::SharedStorage;
+use adsb_data_engine::SharedStorage;
 use adsb_data_engine::{
     AircraftSummary, EventOfInterest, EventOfInterestQuery, FlightSummary, FlightSummaryQuery,
     HourlyHeatmapCell, HourlyHeatmapQuery, PositionRecord, Scenario, ScenarioWithTracks,
@@ -179,6 +179,7 @@ mod tests {
             source_id: "test".to_string(),
             gap_threshold_ms: 3_600_000,
             share: None,
+            remote: None,
         })
         .expect("open in-memory storage");
         let storage: SharedStorage = Arc::new(RwLock::new(Some(handle)));
@@ -226,6 +227,7 @@ mod tests {
             source_id: "test".to_string(),
             gap_threshold_ms: 3_600_000,
             share: None,
+            remote: None,
         })
         .expect("open in-memory storage");
         let storage: SharedStorage = Arc::new(RwLock::new(Some(handle)));
@@ -244,6 +246,7 @@ mod tests {
             source_id: "test".to_string(),
             gap_threshold_ms: 3_600_000,
             share: None,
+            remote: None,
         })
         .expect("open in-memory storage");
         let created = handle

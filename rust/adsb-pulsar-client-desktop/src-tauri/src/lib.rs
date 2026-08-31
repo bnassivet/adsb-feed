@@ -7,8 +7,7 @@
 mod bridge;
 mod commands;
 mod state;
-mod tool_server;
-mod tool_service;
+mod storage_mode;
 
 /// Default loopback port for the agent tool server. Override with
 /// `ADSB_AGENT_TOOL_SERVER_PORT`. The Python agent must point
@@ -25,8 +24,79 @@ use tauri_plugin_store::StoreExt;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-const CONFIG_STORE_FILE: &str = "config.json";
+pub const CONFIG_STORE_FILE: &str = "config.json";
 const CONFIG_STORE_KEY: &str = "config";
+
+/// Environment variable selecting which stack's data this instance owns.
+///
+/// Set by `scripts/stack.sh` from `STACK=<name>`. Unset is the default stack.
+const STACK_ENV: &str = "ADSB_STACK";
+
+/// The validated stack name, or `None` for the default stack.
+///
+/// Only `[A-Za-z0-9_-]+` is accepted because the name becomes a *directory*:
+/// anything else could place the database outside the app-data dir entirely.
+/// A rejected name falls back to the default stack rather than erroring --
+/// degrading to today's behaviour is safer than a launch failure, and far safer
+/// than quietly writing somewhere unexpected.
+fn stack_name(raw: Option<&str>) -> Option<String> {
+    let name = raw?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    // "default" is the unnamed stack's own label in scripts/stack.sh, which
+    // passes STACK_NAME through verbatim. Treating it as an ordinary name would
+    // put the default stack's database in a `default/` subdirectory -- i.e.
+    // silently abandon the history of every install that predates named stacks.
+    if name.eq_ignore_ascii_case("default") {
+        return None;
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        warn!("Ignoring {STACK_ENV}={name:?}: only letters, digits, '-' and '_' are allowed");
+        return None;
+    }
+    Some(name.to_string())
+}
+
+/// This instance's stack name, read from the environment.
+pub(crate) fn stack_from_env() -> Option<String> {
+    stack_name(std::env::var(STACK_ENV).ok().as_deref())
+}
+
+/// Directory holding this stack's databases.
+///
+/// A subdirectory rather than a filename suffix so that anything added later is
+/// scoped by construction. With suffixes, every new artifact has to remember to
+/// apply one, and forgetting is a silent cross-mix between stacks.
+fn stack_data_dir(app_data_dir: &std::path::Path, stack: Option<&str>) -> std::path::PathBuf {
+    match stack {
+        Some(name) => app_data_dir.join(name),
+        None => app_data_dir.to_path_buf(),
+    }
+}
+
+/// Store path passed to the Tauri store plugin, relative to the app-data dir.
+///
+/// The plugin creates the parent directory when it saves, so a nested path
+/// needs no preparation here (unlike DuckDB -- see `init_storage`).
+fn store_path(stack: Option<&str>) -> String {
+    match stack {
+        Some(name) => format!("{name}/{CONFIG_STORE_FILE}"),
+        None => CONFIG_STORE_FILE.to_string(),
+    }
+}
+
+/// This instance's settings-store path. Use this, never `CONFIG_STORE_FILE`
+/// directly, or two stacks end up sharing one settings file.
+pub fn config_store_path() -> String {
+    store_path(stack_from_env().as_deref())
+}
+/// Store key for the persisted storage mode. Separate from the feed `config`
+/// key: this is about where history lives, not about the feed.
+pub const STORAGE_MODE_STORE_KEY: &str = "storage_mode";
 
 /// Main entry point for the Tauri application.
 pub fn run() {
@@ -46,11 +116,11 @@ pub fn run() {
         .setup(|app| {
             // Initialize DuckDB storage in the app data directory.
             // Failure is non-fatal — the app continues in real-time-only mode.
-            let (storage, storage_config) = init_storage(app);
+            let (storage, storage_config, storage_mode) = init_storage(app);
 
             // Load persisted config from Tauri store (falls back to defaults).
             let config = load_config(app);
-            let state = AppState::with_config(config, storage, storage_config);
+            let state = AppState::with_config(config, storage, storage_config, storage_mode);
 
             // Start the loopback tool server for the Python agent BEFORE the
             // state is moved into Tauri's managed store — it shares the same
@@ -60,7 +130,13 @@ pub fn run() {
                 .ok()
                 .and_then(|v| v.parse::<u16>().ok())
                 .unwrap_or(DEFAULT_TOOL_SERVER_PORT);
-            tool_server::spawn(std::sync::Arc::clone(&state.storage), tool_server_port);
+            // Tauri's runtime, not tokio::spawn: `setup` runs before any tokio
+            // runtime is in scope, and spawning there aborts the app at launch
+            // with "there is no reactor running".
+            tauri::async_runtime::spawn(adsb_data_server::server::serve(
+                std::sync::Arc::clone(&state.storage),
+                tool_server_port,
+            ));
 
             app.manage(state);
             Ok(())
@@ -70,6 +146,7 @@ pub fn run() {
             commands::stop_feed,
             commands::get_status,
             commands::get_metrics,
+            commands::get_stack,
             commands::get_config,
             commands::save_config,
             commands::validate_config,
@@ -115,6 +192,8 @@ pub fn run() {
             commands::update_scenario_track,
             commands::delete_scenario_track,
             commands::reorder_scenario_tracks,
+            commands::get_storage_mode,
+            commands::set_storage_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -122,13 +201,13 @@ pub fn run() {
 
 /// Load config from the Tauri store, falling back to defaults.
 fn load_config(app: &tauri::App) -> Config {
-    match app.store(CONFIG_STORE_FILE) {
+    match app.store(config_store_path()) {
         Ok(store) => {
             if let Some(value) = store.get(CONFIG_STORE_KEY) {
                 match serde_json::from_value::<Config>(value.clone()) {
                     Ok(config) => {
                         info!("Config loaded from store");
-                        return config;
+                        return apply_env_overrides(config, &|k| std::env::var(k).ok());
                     }
                     Err(e) => {
                         warn!("Failed to deserialize stored config (using defaults): {e}");
@@ -142,13 +221,67 @@ fn load_config(app: &tauri::App) -> Config {
             warn!("Failed to open config store (using defaults): {e}");
         }
     }
-    Config::default()
+    apply_env_overrides(Config::default(), &|k| std::env::var(k).ok())
+}
+
+/// Applies `ADSB_*` environment overrides on top of a stored config.
+///
+/// The desktop loads its feed config from the Tauri store, never through
+/// clap, so until this existed every `ADSB_*` variable the CLI advertises in
+/// `--help` silently did nothing here. That was a trap for anyone scripting a
+/// launch -- and it is what `scripts/stack.sh` needs in order to point the app
+/// at a broker without writing into the app's own config store.
+///
+/// Precedence matches the CLI binaries: stored value beats the default,
+/// environment beats the stored value. A blank or unparseable value is ignored
+/// rather than fatal -- a typo in a launch script must not stop the app
+/// starting, and `export ADSB_MQTT_BROKER=` is a common accident.
+///
+/// Only the fields a launch script needs are covered. The rest stay
+/// UI-and-store only, deliberately: this is a scripting seam, not a second
+/// configuration system.
+fn apply_env_overrides(mut config: Config, get: &dyn Fn(&str) -> Option<String>) -> Config {
+    let var = |name: &str| {
+        get(name)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+
+    if let Some(v) = var("ADSB_SOURCE_KIND")
+        && let Ok(kind) = v.parse()
+    {
+        config.source_kind = kind;
+    }
+    if let Some(v) = var("ADSB_SOURCE_ID") {
+        config.source_id = v;
+    }
+    if let Some(v) = var("ADSB_SOCKET_HOST") {
+        config.socket_host = v;
+    }
+    if let Some(v) = var("ADSB_SOCKET_PORT")
+        && let Ok(p) = v.parse()
+    {
+        config.socket_port = p;
+    }
+    if let Some(v) = var("ADSB_MQTT_BROKER") {
+        config.mqtt_broker = v;
+    }
+    if let Some(v) = var("ADSB_MQTT_PORT")
+        && let Ok(p) = v.parse()
+    {
+        config.mqtt_port = p;
+    }
+    if let Some(v) = var("ADSB_MQTT_TOPIC") {
+        config.mqtt_topic = v;
+    }
+
+    config
 }
 
 /// Save config to the Tauri store for persistence across restarts.
 pub fn persist_config(app: &tauri::AppHandle, config: &Config) -> Result<(), String> {
     let store = app
-        .store(CONFIG_STORE_FILE)
+        .store(config_store_path())
         .map_err(|e| format!("Failed to open config store: {e}"))?;
     let value =
         serde_json::to_value(config).map_err(|e| format!("Failed to serialize config: {e}"))?;
@@ -159,10 +292,6 @@ pub fn persist_config(app: &tauri::AppHandle, config: &Config) -> Result<(), Str
     Ok(())
 }
 
-/// Initialize DuckDB storage in the Tauri app data directory.
-///
-/// Returns `(handle, config)`. The config is kept for reopening after release.
-/// Returns `(None, None)` if initialization fails (app continues without history).
 /// Builds the Quack sharing config from environment lookups.
 ///
 /// Split from the environment read so it can be tested without mutating
@@ -178,13 +307,6 @@ fn build_share_config(
     token: Option<&str>,
     allow_other_hostname: Option<&str>,
 ) -> Option<ShareConfig> {
-    fn truthy(value: Option<&str>) -> bool {
-        matches!(
-            value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
-            Some("1" | "true" | "yes" | "on")
-        )
-    }
-
     if auto_start.is_none() && uri.is_none() && token.is_none() && allow_other_hostname.is_none() {
         return None;
     }
@@ -219,19 +341,104 @@ fn share_config_from_env() -> Option<ShareConfig> {
     )
 }
 
-fn init_storage(app: &tauri::App) -> (Option<StorageHandle>, Option<StorageConfig>) {
+/// Whether an env-var string spells "yes".
+fn truthy(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
+/// Reads the persisted storage mode, if one has been saved.
+fn load_storage_mode(app: &tauri::App) -> Option<storage_mode::StorageMode> {
+    let store = app.store(config_store_path()).ok()?;
+    let value = store.get(STORAGE_MODE_STORE_KEY)?;
+    match serde_json::from_value(value.clone()) {
+        Ok(mode) => Some(mode),
+        Err(e) => {
+            warn!("Ignoring unreadable stored storage mode: {e}");
+            None
+        }
+    }
+}
+
+/// Builds a storage mode from the environment, if remote mode is requested.
+fn storage_mode_from_env() -> Option<storage_mode::StorageMode> {
+    remote_config_from_env().map(|r| storage_mode::StorageMode::Remote {
+        uri: r.uri,
+        token: r.token,
+        disable_ssl: r.disable_ssl,
+    })
+}
+
+/// Builds a [`RemoteConfig`] from the environment, if remote mode is requested.
+///
+/// Mode is explicit configuration, never a runtime fallback: a client that
+/// "fell back" to opening the shared database locally while a daemon still held
+/// it would be a second exclusive-lock owner, which is how the file gets
+/// corrupted. Absent `ADSB_REMOTE_URI`, the app is embedded.
+fn remote_config_from_env() -> Option<adsb_data_engine::types::RemoteConfig> {
+    build_remote_config(
+        std::env::var("ADSB_REMOTE_URI").ok().as_deref(),
+        std::env::var("ADSB_REMOTE_TOKEN").ok().as_deref(),
+        std::env::var("ADSB_REMOTE_DISABLE_SSL").ok().as_deref(),
+    )
+}
+
+/// Pure form of [`remote_config_from_env`], so the rules are testable without
+/// mutating process environment.
+fn build_remote_config(
+    uri: Option<&str>,
+    token: Option<&str>,
+    disable_ssl: Option<&str>,
+) -> Option<adsb_data_engine::types::RemoteConfig> {
+    let uri = uri.map(str::trim).filter(|u| !u.is_empty())?;
+    Some(adsb_data_engine::types::RemoteConfig {
+        uri: uri.to_string(),
+        token: token
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(String::from),
+        disable_ssl: disable_ssl.map(|v| truthy(Some(v))),
+    })
+}
+
+/// Initialize DuckDB storage in the Tauri app data directory.
+///
+/// Returns `(handle, config)`. The config is kept for reopening after release.
+/// Returns `(None, None)` if initialization fails (app continues without history).
+fn init_storage(
+    app: &tauri::App,
+) -> (
+    Option<StorageHandle>,
+    Option<StorageConfig>,
+    storage_mode::StorageMode,
+) {
     let app_data_dir = match app.path().app_data_dir() {
         Ok(dir) => dir,
-        Err(_) => return (None, None),
+        Err(_) => return (None, None, storage_mode::StorageMode::default()),
     };
-    let db_path = app_data_dir.join("adsb_history.db");
+    // Each stack owns a subdirectory, so a dev window and a prod window never
+    // open the same database. Unset ADSB_STACK keeps the historical layout.
+    let stack = stack_from_env();
+    let data_dir = stack_data_dir(&app_data_dir, stack.as_deref());
+    if let Some(name) = &stack {
+        // DuckDB does not create a missing parent, and the failure would be
+        // swallowed by the graceful-degradation arm below -- a window running
+        // real-time-only with no history and nothing pointing at the cause.
+        if let Err(e) = std::fs::create_dir_all(&data_dir) {
+            warn!("Could not create data directory for stack {name:?}: {e}");
+            return (None, None, storage_mode::StorageMode::default());
+        }
+        info!("Stack: {name} (data in {})", data_dir.display());
+    }
 
-    let config = StorageConfig {
-        db_path: Some(db_path.clone()),
-        source_id: "desktop".to_string(),
-        gap_threshold_ms: 3_600_000,
-        share: share_config_from_env(),
-    };
+    // A stored choice wins; the environment only seeds the mode the first time.
+    let mode = storage_mode::resolve_mode(load_storage_mode(app), storage_mode_from_env());
+    info!("Storage mode: {}", mode.label());
+
+    let config = mode.to_storage_config(&data_dir, share_config_from_env());
+    let db_path = config.db_path.clone().unwrap_or_default();
 
     match StorageHandle::open(config.clone()) {
         Ok(handle) => {
@@ -240,12 +447,107 @@ fn init_storage(app: &tauri::App) -> (Option<StorageHandle>, Option<StorageConfi
                 StatusEventType::Feed,
                 StatusEventStatus::AppStart,
             ));
-            (Some(handle), Some(config))
+            (Some(handle), Some(config), mode)
         }
         Err(e) => {
             warn!("Storage init failed (continuing without history): {e}");
-            (None, Some(config))
+            (None, Some(config), mode)
         }
+    }
+}
+
+#[cfg(test)]
+mod stack_scope_tests {
+    use super::{stack_data_dir, stack_name, store_path};
+    use std::path::Path;
+
+    fn root() -> &'static Path {
+        Path::new("/data/com.adsb.aircraft-tracker")
+    }
+
+    #[test]
+    fn no_stack_keeps_todays_paths_exactly() {
+        // The compatibility guarantee. An existing install must not have its
+        // history and settings move out from under it.
+        assert_eq!(stack_data_dir(root(), None), root());
+        assert_eq!(store_path(None), "config.json");
+    }
+
+    #[test]
+    fn a_named_stack_gets_its_own_subdirectory() {
+        assert_eq!(stack_data_dir(root(), Some("prod")), root().join("prod"));
+        assert_eq!(store_path(Some("prod")), "prod/config.json");
+    }
+
+    #[test]
+    fn two_named_stacks_do_not_share_a_directory() {
+        assert_ne!(
+            stack_data_dir(root(), Some("prod")),
+            stack_data_dir(root(), Some("dev"))
+        );
+    }
+
+    #[test]
+    fn traversal_attempts_fall_back_to_the_root() {
+        // A directory scheme makes this load-bearing: without it, ADSB_STACK
+        // could place the database anywhere the process can write. Falling back
+        // to the root is the safe failure -- it degrades to today's behaviour
+        // rather than silently pointing two stacks at one file.
+        for bad in [
+            "../evil",
+            "../../etc",
+            "a/b",
+            "/absolute",
+            "..",
+            ".",
+            "with space",
+            "semi;colon",
+            "",
+            "   ",
+        ] {
+            assert_eq!(stack_name(Some(bad)), None, "{bad:?} must be rejected");
+            let resolved = stack_name(Some(bad));
+            assert_eq!(stack_data_dir(root(), resolved.as_deref()), root());
+        }
+    }
+
+    #[test]
+    fn ordinary_names_are_accepted() {
+        for good in ["prod", "dev", "lab-2", "my_stack", "A1"] {
+            assert_eq!(stack_name(Some(good)), Some(good.to_string()));
+        }
+    }
+
+    #[test]
+    fn whitespace_around_a_good_name_is_trimmed() {
+        // `STACK=prod ` out of a shell script should not become a directory
+        // called "prod ", which would silently be a *different* stack.
+        assert_eq!(stack_name(Some("  prod  ")), Some("prod".to_string()));
+    }
+
+    #[test]
+    fn an_unset_variable_is_the_default_stack() {
+        assert_eq!(stack_name(None), None);
+    }
+
+    #[test]
+    fn the_literal_name_default_is_the_default_stack() {
+        // scripts/stack.sh calls the unnamed stack "default" and passes
+        // STACK_NAME through verbatim, so the app receives ADSB_STACK=default.
+        // Treating that as a name put an existing install's 80 MB history in a
+        // `default/` subdirectory it had never used -- found by running it, not
+        // by the unit tests, which only ever asserted the None case.
+        for spelling in ["default", "DEFAULT", " Default "] {
+            assert_eq!(stack_name(Some(spelling)), None, "{spelling:?}");
+            assert_eq!(
+                stack_data_dir(root(), stack_name(Some(spelling)).as_deref()),
+                root()
+            );
+        }
+        assert_eq!(
+            store_path(stack_name(Some("default")).as_deref()),
+            "config.json"
+        );
     }
 }
 
@@ -297,5 +599,145 @@ mod tests {
         assert_eq!(cfg.uri, "quack:0.0.0.0:9500");
         assert!(cfg.allow_other_hostname);
         assert!(cfg.auto_start);
+    }
+}
+
+#[cfg(test)]
+mod remote_mode_tests {
+    use super::build_remote_config;
+
+    #[test]
+    fn absent_uri_means_embedded_mode() {
+        // Mode is explicit configuration. Without a URI the app owns its own
+        // database, exactly as before this feature existed.
+        assert!(build_remote_config(None, Some("tok"), None).is_none());
+    }
+
+    #[test]
+    fn a_blank_uri_is_treated_as_absent() {
+        // An empty env var is a common accident (`export ADSB_REMOTE_URI=`);
+        // it must not produce a remote config with a nonsense URI.
+        assert!(build_remote_config(Some("   "), None, None).is_none());
+    }
+
+    #[test]
+    fn a_uri_selects_remote_mode() {
+        let c = build_remote_config(Some("quack:pi.lan:9494"), Some("tok"), None).unwrap();
+        assert_eq!(c.uri, "quack:pi.lan:9494");
+        assert_eq!(c.token.as_deref(), Some("tok"));
+        assert_eq!(c.disable_ssl, None, "left to the host heuristic");
+    }
+
+    #[test]
+    fn a_blank_token_is_none_rather_than_an_empty_string() {
+        let c = build_remote_config(Some("quack:pi.lan:9494"), Some(""), None).unwrap();
+        assert!(
+            c.token.is_none(),
+            "an empty token would be sent as TOKEN ''"
+        );
+    }
+
+    #[test]
+    fn disable_ssl_accepts_the_usual_spellings_of_yes() {
+        for v in ["1", "true", "TRUE", "yes", "on"] {
+            let c = build_remote_config(Some("quack:pi.lan:9494"), None, Some(v)).unwrap();
+            assert_eq!(c.disable_ssl, Some(true), "{v:?}");
+        }
+        for v in ["0", "false", "no", "off", ""] {
+            let c = build_remote_config(Some("quack:pi.lan:9494"), None, Some(v)).unwrap();
+            assert_eq!(c.disable_ssl, Some(false), "{v:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod env_override_tests {
+    use super::apply_env_overrides;
+    use adsb_pulsar_client::{Config, SourceKind};
+
+    /// Stands in for the process environment.
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |k: &str| {
+            pairs
+                .iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    #[test]
+    fn nothing_set_leaves_the_stored_config_untouched() {
+        let stored = Config {
+            source_id: "from-store".into(),
+            mqtt_broker: "store.lan".into(),
+            ..Config::default()
+        };
+        let out = apply_env_overrides(stored.clone(), &env(&[]));
+        assert_eq!(out.source_id, "from-store");
+        assert_eq!(out.mqtt_broker, "store.lan");
+    }
+
+    #[test]
+    fn env_beats_the_stored_config() {
+        // Matches the precedence the CLI binaries already use. Without this the
+        // desktop silently ignores every ADSB_* var it advertises in --help.
+        let stored = Config {
+            mqtt_broker: "store.lan".into(),
+            ..Config::default()
+        };
+        let out = apply_env_overrides(stored, &env(&[("ADSB_MQTT_BROKER", "env.lan")]));
+        assert_eq!(out.mqtt_broker, "env.lan");
+    }
+
+    #[test]
+    fn source_kind_can_be_switched_from_the_environment() {
+        let stored = Config::default();
+        assert_eq!(stored.source_kind, SourceKind::Socket);
+        let out = apply_env_overrides(stored, &env(&[("ADSB_SOURCE_KIND", "mqtt")]));
+        assert_eq!(out.source_kind, SourceKind::Mqtt);
+    }
+
+    #[test]
+    fn an_unparseable_value_is_ignored_rather_than_fatal() {
+        // A typo in a launch script must not stop the app from starting.
+        let stored = Config::default();
+        let out = apply_env_overrides(
+            stored,
+            &env(&[
+                ("ADSB_SOURCE_KIND", "carrier-pigeon"),
+                ("ADSB_MQTT_PORT", "not-a-number"),
+            ]),
+        );
+        assert_eq!(out.source_kind, SourceKind::Socket);
+        assert_eq!(out.mqtt_port, 1883);
+    }
+
+    #[test]
+    fn a_blank_value_is_treated_as_unset() {
+        // `export ADSB_MQTT_BROKER=` is a common accident and must not blank
+        // out a working stored value.
+        let stored = Config {
+            mqtt_broker: "store.lan".into(),
+            ..Config::default()
+        };
+        let out = apply_env_overrides(stored, &env(&[("ADSB_MQTT_BROKER", "  ")]));
+        assert_eq!(out.mqtt_broker, "store.lan");
+    }
+
+    #[test]
+    fn socket_and_mqtt_endpoints_all_layer() {
+        let out = apply_env_overrides(
+            Config::default(),
+            &env(&[
+                ("ADSB_SOCKET_HOST", "10.0.0.9"),
+                ("ADSB_SOCKET_PORT", "30005"),
+                ("ADSB_MQTT_PORT", "1884"),
+                ("ADSB_MQTT_TOPIC", "adsb/other"),
+            ]),
+        );
+        assert_eq!(out.socket_host, "10.0.0.9");
+        assert_eq!(out.socket_port, 30005);
+        assert_eq!(out.mqtt_port, 1884);
+        assert_eq!(out.mqtt_topic, "adsb/other");
     }
 }

@@ -1,0 +1,54 @@
+[Unit]
+Description=ADS-B Data Server (MQTT -> DuckDB recorder)
+Documentation=file:///usr/local/share/doc/adsb/README.md
+After=network-online.target
+Wants=network-online.target
+# The feed reaches us through the broker, so start after it when co-located.
+After=mosquitto.service
+
+[Service]
+Type=simple
+User=adsb
+Group=adsb
+
+EnvironmentFile=-/etc/adsb/data-server.env
+ExecStart=/usr/local/bin/adsb-data-server --config /etc/adsb/data-server.toml
+
+Restart=always
+RestartSec=10
+# DuckDB replays the WAL on open; give a large database time to come up.
+TimeoutStartSec=120
+# A clean stop checkpoints the WAL. Killing it early is not corrupting, but it
+# leaves a WAL that is slow to replay next boot.
+TimeoutStopSec=60
+KillSignal=SIGTERM
+
+# DuckDB wants >=125 MB PER THREAD. This is NOT the feed client's 100M -- that
+# limit here would get the process OOM-killed on its first real query. Pin the
+# thread count to match (set `SET threads TO 2` upstream if you raise this).
+MemoryMax=512M
+MemoryHigh=384M
+# Recording is steady, low-rate work; queries are the spiky part.
+CPUQuota=80%
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+# The database, its WAL, and -- critically -- the DuckDB extension directory.
+# The `quack` extension is NOT statically linked into the bundled build: first
+# use downloads it from extensions.duckdb.org, so a read-only home means
+# sharing silently reports Unavailable.
+ReadWritePaths=/var/lib/adsb
+Environment="HOME=/var/lib/adsb"
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=adsb-data-server
+
+[Install]
+WantedBy=multi-user.target

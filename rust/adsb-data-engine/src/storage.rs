@@ -82,7 +82,12 @@ struct Storage {
     share_status: ShareStatus,
 }
 
-const SCHEMA_SQL: &str = r#"
+/// Tables recorded from a live feed. In remote mode these are not created at
+/// all -- views over the attached daemon's catalog take their place.
+/// Catalog alias for an attached remote daemon.
+const REMOTE_CATALOG: &str = "edge";
+
+const SCHEMA_OBSERVED_SQL: &str = r#"
     CREATE TABLE IF NOT EXISTS positions (
         hex_ident      TEXT    NOT NULL,
         callsign       TEXT,
@@ -139,6 +144,12 @@ const SCHEMA_SQL: &str = r#"
     CREATE INDEX IF NOT EXISTS idx_status_events_ts ON status_events (timestamp_ms);
     CREATE INDEX IF NOT EXISTS idx_status_events_type_ts ON status_events (event_type, timestamp_ms);
 
+"#;
+
+/// Tables this process owns in every mode: they are *authored* by the user,
+/// not recorded from a feed, so they stay local even when observed data comes
+/// from a remote daemon.
+const SCHEMA_AUTHORED_SQL: &str = r#"
     CREATE TABLE IF NOT EXISTS events_of_interest (
         id                  TEXT    PRIMARY KEY,
         title               TEXT    NOT NULL,
@@ -200,6 +211,7 @@ impl StorageHandle {
     /// If `config.db_path` is `None`, an in-memory database is created (useful for tests).
     /// If a file path is given, parent directories are created automatically.
     pub fn open(config: StorageConfig) -> Result<Self, StorageError> {
+        let is_remote = config.remote.is_some();
         let conn = match &config.db_path {
             Some(path) => {
                 if let Some(parent) = path.parent() {
@@ -210,7 +222,30 @@ impl StorageHandle {
             None => Connection::open_in_memory()?,
         };
 
-        conn.execute_batch(SCHEMA_SQL)?;
+        // Authored tables (scenarios, events of interest) are always local:
+        // they are written by whoever is using this app, not recorded from a
+        // feed.
+        conn.execute_batch(SCHEMA_AUTHORED_SQL)?;
+
+        match &config.remote {
+            // Embedded mode: this process owns everything.
+            None => conn.execute_batch(SCHEMA_OBSERVED_SQL)?,
+
+            // Remote mode: the daemon owns the observed tables. Attaching its
+            // catalog and creating views under the *same names* means every
+            // existing query works untouched -- `SELECT ... FROM positions`
+            // resolves to the remote table.
+            //
+            // Note the observed schema is deliberately NOT created here. If it
+            // were, the views could not take those names, and dropping real
+            // tables to make room would destroy a user's local history.
+            Some(remote) => {
+                share::load_extension(&conn)?;
+                conn.execute_batch(&share::attach_sql(remote, REMOTE_CATALOG))?;
+                conn.execute_batch(&share::remote_view_sql(REMOTE_CATALOG))?;
+                info!("Attached remote observed data at {}", remote.uri);
+            }
+        }
 
         info!(
             "Storage opened: {}",
@@ -234,10 +269,21 @@ impl StorageHandle {
             })),
         };
 
-        // One-time migration: populate flights table from existing positions
-        handle.bootstrap_flights_sync()?;
-        // Rebuild in-memory tracker from flights table
-        handle.rebuild_flight_tracker_sync()?;
+        // Both of these are ingest-side concerns, and both are skipped in
+        // remote mode.
+        //
+        // `bootstrap_flights_sync` INSERTs into `flights` by scanning
+        // `positions`. Against an attached catalog that is a write to tables
+        // the daemon owns -- and Quack rejects it outright with "Multiple
+        // streaming scans or streaming scans + CTAS / insert in the same
+        // query are not currently supported". The flight tracker is likewise
+        // only consulted when assigning flight_id during `insert_batch`, which
+        // a remote client never performs: the daemon does that, and its
+        // single-writer tracker is correct precisely because it is single.
+        if !is_remote {
+            handle.bootstrap_flights_sync()?;
+            handle.rebuild_flight_tracker_sync()?;
+        }
 
         // Sharing is a convenience, never a precondition for storage working.
         // A failure here (most likely: no network to fetch the `quack`
@@ -3236,6 +3282,7 @@ mod tests {
             source_id: "test".to_string(),
             gap_threshold_ms: 3_600_000,
             share: None,
+            remote: None,
         }
     }
 
@@ -3727,6 +3774,7 @@ mod tests {
             source_id: "my-receiver".to_string(),
             gap_threshold_ms: 3_600_000,
             share: None,
+            remote: None,
         };
         let handle = StorageHandle::open(config).unwrap();
 
@@ -4831,6 +4879,7 @@ mod tests {
             source_id: "test".to_string(),
             gap_threshold_ms: 3_600_000,
             share: None,
+            remote: None,
         };
         let handle = StorageHandle::open(config).unwrap();
         let positions = vec![sample_position(
@@ -5417,6 +5466,7 @@ mod tests {
             source_id: "test".to_string(),
             gap_threshold_ms: 900_000, // 15 minutes
             share: None,
+            remote: None,
         };
         let handle = StorageHandle::open(config).unwrap();
         // 3 positions: gap between 2nd and 3rd is 30 minutes

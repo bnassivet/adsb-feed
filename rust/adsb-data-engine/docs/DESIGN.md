@@ -419,3 +419,123 @@ dump1090 TCP stream (SBS-1 text)
           ▼
    Tauri commands → Frontend (React / Next.js)
 ```
+
+
+---
+
+## Ingest pipeline (`src/ingest.rs`)
+
+The parse → merge → throttle → persist path that turns a stream of raw SBS-1 lines into
+`AircraftPosition` batches.
+
+It lives in the data engine rather than in any one consumer because **two** processes need
+it and they must not drift: the Tauri desktop app and the headless `adsb-data-server` daemon
+on the Raspberry Pi. The only thing the two disagree about is what to do with a flushed
+batch — the desktop emits it to the webview, the daemon has already persisted it and
+discards it — so that single difference is abstracted behind `BatchSink`.
+
+```
+broadcast::Receiver<Vec<u8>>          IngestPipeline
+   raw SBS-1 lines          ─────►  parse ─► merge by hex_ident ─► flush every 500ms
+                                                                      │
+                                                    ┌─────────────────┴──────────────┐
+                                                    ▼                                ▼
+                                          DuckDB insert_batch                  BatchSink
+                                          + insert_raw_batch            EmitSink  |  NoopSink
+                                          (gated, non-fatal)            desktop   |  daemon
+```
+
+| Item | Purpose |
+|------|---------|
+| `IngestPipeline` | Owns the buffers and the flush loop; `run(rx, sink)` until the channel closes |
+| `IngestConfig` | `source_id`, `dump1090_tz`, `flush_interval` |
+| `BatchSink` | Receives each flushed batch. `NoopSink` provided for headless use |
+| `SharedStorage` | `Arc<RwLock<Option<StorageHandle>>>` — `None` means writes are silently skipped |
+| `merge_into_buffer` | Field-preserving merge across SBS-1 message subtypes |
+
+### Why the buffer merges rather than inserts
+
+SBS-1 splits one aircraft's state across message subtypes: MSG1 carries the callsign, MSG3
+the position, MSG4 the speed. A blind `HashMap::insert` would overwrite a MSG3's
+latitude/longitude with the `None`s of a MSG1 arriving later in the same flush window.
+`merge_into_buffer` keeps the best-known state per aircraft — which is why it is the most
+test-covered function in the module.
+
+### Design notes
+
+- **Persistence is non-fatal and gated.** `record_positions` / `record_raw` are
+  caller-owned `AtomicBool`s so a UI can toggle recording at runtime, and a `None` storage
+  handle (released or unavailable) silently drops the batch. The live feed must never stall
+  on the recorder.
+- **The sink is not gated by the recording toggles.** They gate DuckDB writes only; the
+  live UI feed continues regardless.
+- **Raw records are captured before position parsing**, so a line that fails to parse into a
+  position is still recoverable from the archive.
+- **Every raw record carries `source_id`.** The desktop previously wrote an empty string,
+  which makes receivers indistinguishable in a multi-node fleet.
+
+
+---
+
+## Remote mode (`StorageConfig::remote`)
+
+`StorageHandle::open` has two modes, chosen by explicit configuration:
+
+| Mode | `remote` | Observed tables | Authored tables |
+|---|---|---|---|
+| Embedded | `None` | local, owned by this process | local |
+| Remote | `Some(..)` | **views** over an attached daemon's catalog | local |
+
+*Observed* means `positions`, `raw_messages`, `flights`, `status_events` — data
+recorded from a live feed. *Authored* means `events_of_interest`, `scenarios`,
+`scenario_tracks` — written by whoever is using the app, so they stay local in
+both modes.
+
+### The view trick
+
+Remote mode runs:
+
+```sql
+ATTACH 'quack:pi.lan:9494' AS edge (TYPE quack, TOKEN '…', DISABLE_SSL true);
+CREATE OR REPLACE VIEW positions AS SELECT * FROM edge.positions;   -- and the rest
+```
+
+Because the views take the **same names** the queries already use, the entire
+read path works against a remote daemon **unmodified**. No query routing layer,
+no per-table dispatch, no changes to any of the existing query SQL.
+
+`SCHEMA_OBSERVED_SQL` is deliberately *not* executed in remote mode: if the real
+tables existed, the views could not take those names, and dropping them to make
+room would destroy a user's local history. For the same reason the desktop app
+uses a **separate file** (`adsb_local.db`) in remote mode and leaves
+`adsb_history.db` untouched.
+
+### Ingest bootstrap is skipped
+
+`bootstrap_flights_sync` INSERTs into `flights` by scanning `positions`. Against
+an attached catalog that is a write to tables the daemon owns — and Quack
+rejects it outright:
+
+```
+Not implemented Error: Multiple streaming scans or streaming scans + CTAS /
+insert in the same query are not currently supported
+```
+
+The flight tracker is likewise only consulted when assigning `flight_id` during
+`insert_batch`, which a remote client never performs. Both are skipped when
+`remote.is_some()`. This is the design doc's "server is the sole write
+authority" constraint showing up as a runtime error rather than a rule.
+
+### TLS posture
+
+The Quack server terminates no TLS, but the *client* defaults `DISABLE_SSL` to
+false for any non-local URI — i.e. it assumes HTTPS. `attach_sql` therefore sets
+`DISABLE_SSL true` for remote hosts. Needing that flag is the signal that a
+deployment is missing its reverse proxy. A token also grants full read **and**
+write on every table, so this is homelab-grade on a trusted LAN.
+
+### Verifying it
+
+`cargo run -p adsb-data-engine --example remote_probe -- quack:host:9494 TOKEN`
+opens storage in remote mode, reads through the views and confirms the local
+authored tables are still reachable.
