@@ -22,9 +22,18 @@ async-trait = { version = "0.1", optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["rustls"], optional = true }
 tokio = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
-# Reconnect/retry pacing and the MQTT client. `default-features = false` drops
+# Retry pacing shared with the feed client. `default-features = false` drops
 # clap and pulsar, so this crate never needs protoc.
 adsb-pulsar-client = { path = "../adsb-pulsar-client", default-features = false, features = ["mqtt"], optional = true }
+# Same version and feature set as adsb-pulsar-client: one copy in the build, and
+# no TLS stack for a plain-text LAN hop.
+rumqttc = { version = "0.25", default-features = false, optional = true }
+
+# CLI + layered config (optional, for the binary)
+clap = { version = "4.5", features = ["derive", "env"], optional = true }
+toml = { version = "0.8", optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
 
 [dev-dependencies]
 axum = "0.8"
@@ -33,18 +42,25 @@ tempfile = "3"
 tokio = { workspace = true, features = ["test-util"] }
 
 [features]
-default = ["service"]
+default = ["cli"]
 service = [
     "dep:async-trait",
     "dep:reqwest",
     "dep:tokio",
     "dep:tracing",
     "dep:adsb-pulsar-client",
+    "dep:rumqttc",
 ]
+cli = ["service", "dep:clap", "dep:toml", "dep:tracing-subscriber", "dep:anyhow"]
 
 [lib]
 name = "adsb_weather_server"
 path = "src/lib.rs"
+
+[[bin]]
+name = "adsb-weather-server"
+path = "src/main.rs"
+required-features = ["cli"]
 
 [[test]]
 name = "open_meteo_provider"

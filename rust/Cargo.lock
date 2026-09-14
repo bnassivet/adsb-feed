@@ -95,15 +95,20 @@ name = "adsb-weather-server"
 version = "0.1.0"
 dependencies = [
  "adsb-pulsar-client",
+ "anyhow",
  "async-trait",
  "axum",
+ "clap",
  "reqwest",
+ "rumqttc",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "toml 0.8.2",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

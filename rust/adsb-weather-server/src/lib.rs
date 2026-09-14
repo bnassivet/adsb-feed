@@ -16,6 +16,8 @@ pub mod open_meteo;
 #[cfg(feature = "service")]
 pub mod provider;
 #[cfg(feature = "service")]
+pub mod publisher;
+#[cfg(feature = "service")]
 pub mod refresh;
 pub mod snapshot;
 
