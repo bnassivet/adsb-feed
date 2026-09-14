@@ -105,6 +105,10 @@ pub struct AppState {
     pub record_positions: Arc<AtomicBool>,
     /// Whether to record raw SBS-1 messages to DuckDB (toggled at runtime)
     pub record_raw: Arc<AtomicBool>,
+    /// Last good weather snapshot from the MQTT aux topic. Lives here rather
+    /// than in the `FeedHandle` so it survives a feed restart: a stopped feed
+    /// still shows the last grid, which the UI marks stale by its age.
+    pub weather: crate::weather::SharedWeather,
 }
 
 impl AppState {
@@ -137,6 +141,7 @@ impl AppState {
             storage_mode: Mutex::new(storage_mode),
             record_positions: Arc::new(AtomicBool::new(true)),
             record_raw: Arc::new(AtomicBool::new(true)),
+            weather: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 }
@@ -275,5 +280,11 @@ mod tests {
         assert_eq!(json["is_running"], true);
         assert!(json.get("socket_status").is_some());
         assert!(json.get("pulsar_status").is_some());
+    }
+
+    #[test]
+    fn test_weather_starts_empty() {
+        let state = AppState::new(None);
+        assert!(state.weather.read().unwrap().is_none());
     }
 }

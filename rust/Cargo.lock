@@ -75,6 +75,7 @@ dependencies = [
  "adsb-data-engine",
  "adsb-data-server",
  "adsb-pulsar-client",
+ "adsb-weather-server",
  "axum",
  "chrono",
  "serde",

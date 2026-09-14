@@ -17,7 +17,10 @@ use adsb_data_engine::{
     TrajectoryQuery, UpdateEventOfInterest, UpdateScenario, UpdateScenarioTrack,
 };
 use adsb_pulsar_client::Config;
+use adsb_weather_server::WeatherSnapshot;
 use tauri_plugin_store::StoreExt;
+
+use crate::weather::WeatherAvailability;
 
 use crate::bridge::DesktopMetrics;
 use std::sync::Arc;
@@ -58,6 +61,7 @@ pub async fn start_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
         state.record_raw.clone(),
         recorder,
         Arc::clone(&state.connection_status),
+        Arc::clone(&state.weather),
     )?;
 
     // Record feed started event (non-fatal)
@@ -145,6 +149,25 @@ pub async fn stop_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
 pub fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, String> {
     let status = state.connection_status.lock().map_err(|e| e.to_string())?;
     Ok(status.clone())
+}
+
+/// The last good weather snapshot, for a UI that mounts after it arrived.
+///
+/// Snapshots are pushed as `adsb:weather` events, but a retained grid can land
+/// before the map has subscribed, and is otherwise not seen again until the
+/// next hourly fetch.
+#[tauri::command]
+pub fn get_weather_snapshot(state: State<'_, AppState>) -> Result<Option<WeatherSnapshot>, String> {
+    let held = state.weather.read().map_err(|e| e.to_string())?;
+    Ok(held.clone())
+}
+
+/// Whether the weather layer can have data, and if not, why.
+#[tauri::command]
+pub fn get_weather_availability(state: State<'_, AppState>) -> Result<WeatherAvailability, String> {
+    let source_kind = state.config.lock().map_err(|e| e.to_string())?.source_kind;
+    let has_snapshot = state.weather.read().map_err(|e| e.to_string())?.is_some();
+    Ok(crate::weather::availability(source_kind, has_snapshot))
 }
 
 /// The stack this instance was launched for, or `None` for the unnamed one.
