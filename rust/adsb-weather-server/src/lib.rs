@@ -10,6 +10,7 @@
 
 pub mod budget;
 pub mod grid;
+pub mod open_meteo;
 pub mod snapshot;
 
 pub use grid::{GridError, GridSpec};
