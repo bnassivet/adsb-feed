@@ -11,6 +11,8 @@
 pub mod budget;
 pub mod grid;
 pub mod open_meteo;
+#[cfg(feature = "service")]
+pub mod provider;
 pub mod snapshot;
 
 pub use grid::{GridError, GridSpec};

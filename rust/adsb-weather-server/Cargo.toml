@@ -12,6 +12,27 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
+# Service side (optional). A consumer that only needs the payload types -- the
+# desktop app -- depends on this crate with `default-features = false` and never
+# builds an HTTP client or a TLS stack.
+async-trait = { version = "0.1", optional = true }
+# rustls only: no OpenSSL to find on a Raspberry Pi image. `default-features =
+# false` also drops http2 and the system proxy lookup, neither of which a single
+# API endpoint needs.
+reqwest = { version = "0.13", default-features = false, features = ["rustls"], optional = true }
+
+[dev-dependencies]
+axum = "0.8"
+tokio = { workspace = true }
+
+[features]
+default = ["service"]
+service = ["dep:async-trait", "dep:reqwest"]
+
 [lib]
 name = "adsb_weather_server"
 path = "src/lib.rs"
+
+[[test]]
+name = "open_meteo_provider"
+required-features = ["service"]
