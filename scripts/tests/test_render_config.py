@@ -8,6 +8,7 @@ installed, the same way `make render` does.
 """
 import importlib.util
 import sys
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -189,6 +190,94 @@ class StackDbPathScoping(unittest.TestCase):
         cfg = dict(STACK, storage=dict(STACK["storage"], db_path="data/x.db"))
         rec = parse(rc.render_server(cfg, REPO / ".run" / "prod"))
         self.assertEqual(rec["db_path"], str(REPO / "data" / "x.db"))
+
+
+WEATHER_STACK = dict(
+    STACK,
+    weather={"enabled": True, "radius_nm": 250, "spacing_deg": 0.5,
+             "levels": [300, 250], "refresh_minutes": 90, "model": "icon_eu",
+             "cache_path": ".run/weather-cache.json"},
+)
+
+
+class WeatherContent(unittest.TestCase):
+    """The weather service shares identity, broker and position with the feed.
+
+    The same reason the feed and the recorder render from one file: a weather
+    service on another broker looks healthy and draws nothing, and one on
+    another receiver position draws winds over the wrong place.
+    """
+
+    def render(self, cfg=WEATHER_STACK, out=REPO / ".run"):
+        return parse(rc.render_weather(cfg, out))
+
+    def test_identity_and_broker_match_the_feed(self):
+        weather, feed = self.render(), parse(rc.render_feed(WEATHER_STACK))
+        self.assertEqual(weather["source_id"], feed["source_id"])
+        self.assertEqual(weather["mqtt_broker"], feed["mqtt_broker"])
+        self.assertEqual(weather["mqtt_port"], feed["mqtt_port"])
+
+    def test_receiver_position_is_the_feed_s(self):
+        weather = self.render()
+        self.assertAlmostEqual(weather["receiver_latitude"], 46.7)
+        self.assertAlmostEqual(weather["receiver_longitude"], -2.3)
+
+    def test_topic_is_derived_from_the_feed_topic_by_default(self):
+        # The stage carries over, so a dev weather service cannot publish into
+        # a prod desktop. The desktop derives the same topic from the same rule.
+        self.assertEqual(self.render()["mqtt_topic"], "adsb/dev/weather/grid")
+
+    def test_a_topic_without_the_sbs_suffix_gets_a_sibling(self):
+        cfg = dict(WEATHER_STACK, mqtt=dict(STACK["mqtt"], topic="legacy/raw"))
+        self.assertEqual(self.render(cfg)["mqtt_topic"], "legacy/raw/weather")
+
+    def test_explicit_topic_wins(self):
+        cfg = dict(WEATHER_STACK,
+                   weather=dict(WEATHER_STACK["weather"], topic="lab/wx"))
+        self.assertEqual(self.render(cfg)["mqtt_topic"], "lab/wx")
+
+    def test_grid_and_schedule_settings_pass_through(self):
+        weather = self.render()
+        self.assertEqual(weather["radius_nm"], 250)
+        self.assertEqual(weather["spacing_deg"], 0.5)
+        self.assertEqual(weather["levels"], [300, 250])
+        self.assertEqual(weather["refresh_minutes"], 90)
+        self.assertEqual(weather["model"], "icon_eu")
+
+    def test_cache_path_is_stack_scoped_like_the_database(self):
+        # Two stacks must not replay each other's grid after a restart.
+        self.assertEqual(self.render()["cache_path"],
+                         str(REPO / ".run" / "weather-cache.json"))
+        self.assertEqual(self.render(out=REPO / ".run" / "prod")["cache_path"],
+                         str(REPO / ".run" / "prod" / "weather-cache.json"))
+
+    def test_a_config_from_before_the_weather_layer_still_renders(self):
+        # Every adsb-stack.toml created before this feature has no [weather]
+        # section; `make render` must not start failing for all of them.
+        weather = parse(rc.render_weather(STACK, REPO / ".run"))
+        self.assertEqual(weather["mqtt_topic"], "adsb/dev/weather/grid")
+        self.assertEqual(weather["levels"], [850, 700, 500, 300, 250, 200])
+        self.assertEqual(weather["refresh_minutes"], 60)
+        self.assertEqual(weather["model"], "best_match")
+        self.assertEqual(weather["cache_path"],
+                         str(REPO / ".run" / "weather-cache.json"))
+
+    def test_render_stack_writes_weather_toml(self):
+        with tempfile.TemporaryDirectory() as d:
+            stack = Path(d) / "adsb-stack.toml"
+            stack.write_text(
+                '[receiver]\nid = "dev-laptop-dev"\nlatitude = 46.7\n'
+                'longitude = -2.3\n'
+                '[dump1090]\nhost = "127.0.0.1"\nport = 30003\n'
+                '[mqtt]\nhost = "localhost"\nport = 1883\n'
+                'topic = "adsb/dev/sbs/raw"\n'
+                '[storage]\ndb_path = ".run/adsb.db"\n'
+                '[pulsar]\nenabled = false\n'
+            )
+            out = Path(d) / "run"
+            self.assertEqual(rc.render_stack(stack, out), 0)
+            weather = tomllib.loads((out / "weather.toml").read_text())
+            self.assertEqual(weather["source_id"], "dev-laptop-dev")
 
 
 if __name__ == "__main__":

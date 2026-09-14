@@ -96,22 +96,28 @@ def render_feed(cfg: dict, out: Path = OUT) -> str:
     return HEADER + "\n" + body
 
 
+def run_scoped(path: str, out: Path) -> Path:
+    """Resolve a configured state path for this stack.
+
+    A relative path is resolved against the repo root so `make up` works from
+    anywhere and state lands in .run/ rather than $PWD.
+
+    `.run/<file>` is rewritten into THIS stack's run directory: two stacks both
+    saying ".run/adsb.db" must not end up sharing one DuckDB file, and DuckDB
+    takes an exclusive lock, so the second would simply fail to open.
+    """
+    p = Path(path)
+    if p.is_absolute():
+        return p
+    parts = p.parts
+    if parts and parts[0] == ".run":
+        return out.joinpath(*parts[1:])
+    return REPO / p
+
+
 def render_server(cfg: dict, out: Path = OUT) -> str:
     rx, m, s = cfg["receiver"], cfg["mqtt"], cfg["storage"]
-
-    # A relative db_path is resolved against the repo root so `make up` works
-    # from anywhere and the database lands in .run/ rather than $PWD.
-    #
-    # `.run/<file>` is rewritten into THIS stack's run directory: two stacks
-    # both saying ".run/adsb.db" must not end up sharing one DuckDB file, and
-    # DuckDB takes an exclusive lock, so the second would simply fail to open.
-    db_path = Path(s["db_path"])
-    if not db_path.is_absolute():
-        parts = db_path.parts
-        if parts and parts[0] == ".run":
-            db_path = out.joinpath(*parts[1:])
-        else:
-            db_path = REPO / db_path
+    db_path = run_scoped(s["db_path"], out)
 
     pairs = [
         ("source_id", rx["id"]),
@@ -130,6 +136,55 @@ def render_server(cfg: dict, out: Path = OUT) -> str:
     if s.get("share") and token:
         pairs.append(("share_token", token))
     return HEADER + "\n" + emit(pairs)
+
+
+# Levels fetched when [weather] names none: roughly FL050 up to FL390.
+WEATHER_LEVELS = [850, 700, 500, 300, 250, 200]
+
+
+def weather_topic(mqtt_topic: str) -> str:
+    """The weather topic that goes with a feed topic.
+
+    `adsb/<stage>/sbs/raw` becomes `adsb/<stage>/weather/grid`, so the stage
+    carries over and a dev service cannot publish into a prod desktop. Any other
+    topic gets a `/weather` sibling.
+
+    The desktop derives its subscription with the SAME rule
+    (`Config::weather_topic` in adsb-pulsar-client). Change both or neither: if
+    they disagree, the desktop subscribes to a topic nobody publishes to and
+    simply draws no weather.
+    """
+    suffix = "/sbs/raw"
+    if mqtt_topic.endswith(suffix):
+        return mqtt_topic[: -len(suffix)] + "/weather/grid"
+    return mqtt_topic + "/weather"
+
+
+def render_weather(cfg: dict, out: Path = OUT) -> str:
+    rx, m = cfg["receiver"], cfg["mqtt"]
+    # Every adsb-stack.toml written before the weather layer has no [weather]
+    # section, so every key falls back rather than raising.
+    w = cfg.get("weather", {})
+
+    pairs = [
+        ("source_id", rx["id"]),
+        ("mqtt_broker", m["host"]),
+        ("mqtt_port", m["port"]),
+        ("mqtt_topic", w.get("topic") or weather_topic(m["topic"])),
+        ("receiver_latitude", rx.get("latitude")),
+        ("receiver_longitude", rx.get("longitude")),
+        ("radius_nm", w.get("radius_nm", 300)),
+        ("spacing_deg", w.get("spacing_deg", 1.0)),
+        ("refresh_minutes", w.get("refresh_minutes", 60)),
+        ("model", w.get("model", "best_match")),
+        ("cache_path",
+         str(run_scoped(w.get("cache_path", ".run/weather-cache.json"), out))),
+    ]
+    body = emit(pairs)
+    # emit() writes scalars only; the level list is a TOML array.
+    levels = w.get("levels", WEATHER_LEVELS)
+    body += "levels = [{}]\n".format(", ".join(str(int(l)) for l in levels))
+    return HEADER + "\n" + body
 
 
 # --- fleet mode -------------------------------------------------------------
@@ -288,9 +343,12 @@ def render_stack(stack: Path, out: Path) -> int:
         cfg = tomllib.load(fh)
 
     out.mkdir(parents=True, exist_ok=True)
+    # weather.toml is rendered even when [weather] is disabled: it costs
+    # nothing, and `make up` is what decides whether the service starts.
     for name, text in (
         ("feed.toml", render_feed(cfg, out)),
         ("data-server.toml", render_server(cfg, out)),
+        ("weather.toml", render_weather(cfg, out)),
     ):
         (out / name).write_text(text)
         try:

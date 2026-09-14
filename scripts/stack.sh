@@ -318,6 +318,10 @@ owns_broker() {
   esac
 }
 
+# The weather service is opt-in: it needs outbound internet and spends a
+# rate-limited third-party quota. See [weather] in the template.
+weather_enabled() { [ "$(cfg weather enabled false)" = "true" ]; }
+
 # ---------------------------------------------------------------------------
 
 case "${1:-help}" in
@@ -435,7 +439,11 @@ doctor)
   fi
 
   echo "Binaries:"
-  for b in adsb-pulsar-client adsb-data-server; do
+  # The weather binary is only required when the service is enabled: a checkout
+  # built before it existed must not start failing doctor.
+  bins="adsb-pulsar-client adsb-data-server"
+  weather_enabled && bins="$bins adsb-weather-server"
+  for b in $bins; do
     if [ -x "$BIN/$b" ]; then echo "  ok      $b"
     else echo "  MISSING $b -- run: make build"; rc=1; fi
   done
@@ -465,7 +473,7 @@ doctor)
   # That storm produced 567k reconnects and a 144 MB log before it was noticed,
   # so it is worth naming rather than leaving to be discovered.
   echo "Duplicates:"
-  for proc in adsb-pulsar-client adsb-data-server; do
+  for proc in adsb-pulsar-client adsb-data-server adsb-weather-server; do
     # macOS pgrep has no -c; count lines instead.
     n=$(pgrep -f "target/release/$proc " 2>/dev/null | wc -l | tr -d " ")
     if [ "$n" -gt 1 ]; then
@@ -476,6 +484,37 @@ doctor)
       echo "  ok        $proc x$n"
     fi
   done
+
+  if [ -f "$STACK" ] && weather_enabled; then
+    echo "Weather:"
+    wid="$(cfg receiver id "")"
+    wtopic="$(cfg weather topic "")"
+    wstage="${wid##*-}"
+    if [ -z "$wtopic" ]; then
+      echo "  ok      topic derived from mqtt.topic ($(cfg mqtt topic ""))"
+    else
+      case "$wstage" in
+        dev|prod|staging|test)
+          if [ "${wtopic#*"$wstage"}" = "$wtopic" ]; then
+            echo "  WARN    weather.topic '$wtopic' does not carry the stage '$wstage' --"
+            echo "          a dev service could publish into a prod desktop"
+          else
+            echo "  ok      $wtopic"
+          fi
+          ;;
+        *) echo "  ok      $wtopic" ;;
+      esac
+    fi
+    # The site root, not the forecast endpoint: a health check must not spend
+    # the daily quota. Warning only -- the service runs on its cached grid.
+    if curl -s -m 5 -o /dev/null https://api.open-meteo.com/ 2>/dev/null; then
+      echo "  ok      api.open-meteo.com reachable"
+    else
+      echo "  WARN    no route to api.open-meteo.com -- the service will publish its"
+      echo "          cached grid, if any, and keep retrying"
+    fi
+    echo "  info    estimated Open-Meteo calls/day are logged at startup: make logs N=weather"
+  fi
 
   echo "Skills:"
   "$REPO/scripts/install-skills.sh" status 2>&1 | sed 's/^/  /'
@@ -574,6 +613,13 @@ up)
   echo "Feed:"
   start feed "$BIN/adsb-pulsar-client" --config "$RUN/feed.toml"
 
+  if weather_enabled; then
+    echo "Weather:"
+    # Unlike the feed, start order does not matter here: the snapshot is a
+    # retained message, so a subscriber that arrives later still receives it.
+    start weather "$BIN/adsb-weather-server" --config "$RUN/weather.toml"
+  fi
+
   if [ "${2-}" = "--agents" ] || [ "$(cfg agents enabled false)" = "true" ]; then
     echo "Agents:"
     # shellcheck disable=SC2046  # word splitting is the point: one VAR=x per line
@@ -608,6 +654,10 @@ client)
   mh="$(cfg mqtt host localhost)"
   mp="$(cfg mqtt port 1883)"
   mt="$(cfg mqtt topic adsb/sbs/raw)"
+  # Only an EXPLICIT weather topic is exported. Unset, the desktop derives it
+  # from the feed topic with the same rule render-config.py uses, so repeating
+  # that rule here would be a third copy to keep in step.
+  wt="$(cfg weather topic "")"
 
   case "$mh" in
     localhost|127.0.0.1)
@@ -621,7 +671,8 @@ client)
   start_desktop \
     "ADSB_REMOTE_URI=$uri" "ADSB_REMOTE_TOKEN=$tok" \
     "ADSB_SOURCE_KIND=mqtt" "ADSB_MQTT_BROKER=$mh" \
-    "ADSB_MQTT_PORT=$mp" "ADSB_MQTT_TOPIC=$mt" || exit 1
+    "ADSB_MQTT_PORT=$mp" "ADSB_MQTT_TOPIC=$mt" \
+    ${wt:+"ADSB_MQTT_WEATHER_TOPIC=$wt"} || exit 1
 
   echo "Agents:"
   # The agent defaults its tool server to :8787, which in the all-local stack
@@ -644,7 +695,9 @@ stop-desktop)
 
 down)
   # Reverse of start order: producers first, so the recorder sees the tail.
-  for n in desktop agent sim-agent feed mock data-server; do stop "$n"; done
+  # weather is stopped whether or not it is enabled now: it may have been
+  # started before [weather].enabled was turned off.
+  for n in desktop agent sim-agent weather feed mock data-server; do stop "$n"; done
   echo "Broker:"
   if owns_broker; then
     compose down 2>&1 | sed 's/^/  /'
@@ -688,7 +741,7 @@ reap)
 status)
   require_config
   http="$(cfg storage http_port 8787)"
-  for n in data-server feed mock desktop agent sim-agent; do
+  for n in data-server feed mock weather desktop agent sim-agent; do
     if running "$n"; then
       printf "  %-12s running (pid %s)\n" "$n" "$(cat "$(pidfile "$n")")"
     else

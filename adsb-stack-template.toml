@@ -83,6 +83,35 @@ enabled = false
 broker = "pulsar://localhost:6650"
 topic = "persistent://kradsb/adsb/sbs-topic"
 
+[weather]
+# Winds aloft and mean-sea-level pressure around the receiver, fetched from
+# Open-Meteo and published as ONE retained MQTT message. The desktop draws it as
+# a map layer when its live source is MQTT.
+#
+# Off by default: it needs outbound internet, and a node without an uplink would
+# only log retries. Open-Meteo's free tier is non-commercial and capped at
+# 10,000 calls/day, counted per grid point; the service logs its own estimate at
+# startup (`make logs N=weather`). These defaults use about 6,700.
+enabled = false
+# Leave unset to derive it from mqtt.topic: adsb/<stage>/sbs/raw becomes
+# adsb/<stage>/weather/grid. The desktop applies the same rule, so the two
+# cannot drift. Set it only to publish somewhere else on purpose.
+# topic = "adsb/dev/weather/grid"
+# The grid is centred on [receiver]. Longitude spacing widens with latitude, so
+# ±300 NM at 1° is 11 x 17 = 187 points at 47°N.
+radius_nm = 300
+spacing_deg = 1.0
+# hPa, roughly FL050 / FL100 / FL180 / FL300 / FL340 / FL390. Each level adds two
+# variables per point, and a request for more than 10 variables costs extra.
+levels = [850, 700, 500, 300, 250, 200]
+refresh_minutes = 60
+# best_match lets Open-Meteo choose. A specific model (see open-meteo.com/en/docs)
+# can be finer over one region.
+model = "best_match"
+# The last good grid survives restarts here, so a node whose uplink is down
+# still publishes something. Stack-scoped, like storage.db_path.
+cache_path = ".run/weather-cache.json"
+
 [agents]
 # `make up-agents` starts these. They need an LLM endpoint (see llm_base_url);
 # `make doctor` reports if it is unreachable.
