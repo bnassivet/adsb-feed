@@ -9,10 +9,14 @@
 //! payload shape alone.
 
 pub mod budget;
+#[cfg(feature = "service")]
+pub mod cache;
 pub mod grid;
 pub mod open_meteo;
 #[cfg(feature = "service")]
 pub mod provider;
+#[cfg(feature = "service")]
+pub mod refresh;
 pub mod snapshot;
 
 pub use grid::{GridError, GridSpec};
