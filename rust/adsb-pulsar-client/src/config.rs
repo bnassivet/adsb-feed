@@ -491,6 +491,20 @@ pub struct Config {
     #[serde(default = "default_mqtt_topic")]
     pub mqtt_topic: String,
 
+    /// MQTT topic carrying the retained weather snapshot. Empty derives it from
+    /// `mqtt_topic`; see [`Config::weather_topic`].
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "mqtt-weather-topic",
+            default_value = "",
+            env = "ADSB_MQTT_WEATHER_TOPIC",
+            help = "MQTT topic carrying weather snapshots (derived from mqtt_topic when empty)"
+        )
+    )]
+    #[serde(default)]
+    pub mqtt_weather_topic: String,
+
     /// MQTT client identifier. Empty derives it from `source_id`.
     ///
     /// Brokers disconnect an existing session when a second client connects
@@ -654,6 +668,7 @@ impl Default for Config {
             mqtt_broker: default_mqtt_broker(),
             mqtt_port: default_mqtt_port(),
             mqtt_topic: default_mqtt_topic(),
+            mqtt_weather_topic: String::new(),
             mqtt_client_id: String::new(),
             mqtt_qos: 0,
             heartbeat_timeout_secs: default_heartbeat_timeout_secs(),
@@ -794,6 +809,7 @@ impl Config {
             .as_integer()
             .map(|i| i as u16));
         overlay!("mqtt_topic", mqtt_topic, as_string);
+        overlay!("mqtt_weather_topic", mqtt_weather_topic, as_string);
         overlay!("mqtt_client_id", mqtt_client_id, as_string);
         overlay!("mqtt_qos", mqtt_qos, |v: &toml::Value| v
             .as_integer()
@@ -877,6 +893,26 @@ impl Config {
             &self.source_id
         } else {
             &self.mqtt_client_id
+        }
+    }
+
+    /// The weather topic to subscribe to alongside the SBS feed.
+    ///
+    /// An explicit `mqtt_weather_topic` wins. Otherwise it is derived from
+    /// `mqtt_topic`: `adsb/<stage>/sbs/raw` becomes `adsb/<stage>/weather/grid`,
+    /// and any other topic gets a `<topic>/weather` sibling.
+    ///
+    /// `scripts/render-config.py` (`weather_topic`) renders the weather
+    /// service's topic with the SAME rule. If the two disagree, the desktop
+    /// subscribes to a topic nobody publishes to and simply draws no weather.
+    pub fn weather_topic(&self) -> String {
+        let explicit = self.mqtt_weather_topic.trim();
+        if !explicit.is_empty() {
+            return explicit.to_string();
+        }
+        match self.mqtt_topic.strip_suffix("/sbs/raw") {
+            Some(prefix) => format!("{prefix}/weather/grid"),
+            None => format!("{}/weather", self.mqtt_topic),
         }
     }
 
@@ -1351,6 +1387,67 @@ mod tests {
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("mqtt_qos"), "got: {}", err);
     }
+
+    // --- Weather topic ---
+    //
+    // The rule must match `weather_topic` in scripts/render-config.py, pinned
+    // there by the WeatherContent tests with the same cases.
+
+    fn with_topic(topic: &str) -> Config {
+        Config {
+            mqtt_topic: topic.to_string(),
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn test_weather_topic_is_derived_from_a_staged_sbs_topic() {
+        assert_eq!(
+            with_topic("adsb/prod/sbs/raw").weather_topic(),
+            "adsb/prod/weather/grid"
+        );
+    }
+
+    #[test]
+    fn test_weather_topic_for_the_unstaged_default() {
+        assert_eq!(Config::default().weather_topic(), "adsb/weather/grid");
+    }
+
+    #[test]
+    fn test_weather_topic_without_the_sbs_suffix_is_a_sibling() {
+        assert_eq!(
+            with_topic("legacy/raw").weather_topic(),
+            "legacy/raw/weather"
+        );
+    }
+
+    #[test]
+    fn test_explicit_weather_topic_wins() {
+        let config = Config {
+            mqtt_weather_topic: "lab/wx".to_string(),
+            ..with_topic("adsb/dev/sbs/raw")
+        };
+        assert_eq!(config.weather_topic(), "lab/wx");
+    }
+
+    #[test]
+    fn test_blank_weather_topic_means_derive() {
+        // `export ADSB_MQTT_WEATHER_TOPIC=` is as easy an accident as its
+        // siblings, and must not produce a subscription to "".
+        let config = Config {
+            mqtt_weather_topic: "  ".to_string(),
+            ..with_topic("adsb/dev/sbs/raw")
+        };
+        assert_eq!(config.weather_topic(), "adsb/dev/weather/grid");
+    }
+
+    #[test]
+    fn test_weather_topic_deserializes_empty_when_missing() {
+        // Configs written before the weather layer existed must still load.
+        let json = serde_json::json!({ "source_id": "test" });
+        let config: Config = serde_json::from_value(json).unwrap();
+        assert_eq!(config.mqtt_weather_topic, "");
+    }
 }
 
 #[cfg(all(test, feature = "cli"))]
@@ -1497,6 +1594,13 @@ mod layering_tests {
         cfg.overlay_file(&file("socket_port = 30005"), &all_defaulted);
         assert_eq!(cfg.source_id, "kraspberryPi");
         assert_eq!(cfg.mqtt_topic, "adsb/sbs/raw");
+    }
+
+    #[test]
+    fn weather_topic_layers_from_the_file() {
+        let mut cfg = defaults();
+        cfg.overlay_file(&file("mqtt_weather_topic = 'lab/wx'"), &all_defaulted);
+        assert_eq!(cfg.weather_topic(), "lab/wx");
     }
 }
 

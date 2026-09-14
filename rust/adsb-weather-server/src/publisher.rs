@@ -266,4 +266,22 @@ mod tests {
     fn a_new_snapshot_waits_for_the_next_connack_while_offline() {
         assert!(!should_publish(Trigger::NewSnapshot, false, true));
     }
+
+    #[test]
+    fn subscribers_accept_what_this_publisher_can_send() {
+        // The subscriber (MqttSource, used by the desktop) lives in
+        // adsb-pulsar-client, which cannot depend on this crate. This is the one
+        // place both limits are visible, so the invariant is pinned here: a
+        // snapshot larger than the subscriber's limit breaks its connection on
+        // every reconnect, taking the live feed with it.
+        //
+        // Both sides are constants, so this is a const block: checked when the
+        // test target compiles, and impossible to skip by filtering tests.
+        const {
+            assert!(
+                adsb_pulsar_client::source::mqtt_source::MAX_INCOMING_PACKET_BYTES
+                    >= MAX_PACKET_BYTES
+            )
+        };
+    }
 }
