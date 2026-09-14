@@ -13,6 +13,16 @@ import { aircraftIconHtml } from "@/lib/aircraft-icon";
 import { haversineDistanceNm } from "@/lib/geo";
 import { orderTracksWithSelectedLast } from "@/lib/track-ordering";
 import { subsamplePositions } from "@/lib/subsample";
+import {
+  fieldsAt,
+  gridPoints,
+  levelLabel,
+  windAtPoint,
+  type WeatherLevel,
+  type WeatherSnapshot,
+} from "@/lib/weather";
+import { windBarbSvg } from "@/lib/wind-barb";
+import { formatWind } from "@/lib/wind-format";
 import { MapTileToggle } from "./MapTileToggle";
 
 import { CenterOnAntennaButton } from "./CenterOnAntennaButton";
@@ -259,6 +269,87 @@ function MapPickerLayer({ mode, onComplete, onCancel }: {
   return null;
 }
 
+/** Adds a credit line to the map's attribution control while mounted. */
+function MapAttribution({ text }: { text: string }) {
+  const map = useMap();
+  useEffect(() => {
+    // Attribution on the control, not the tile layer: a tile layer's
+    // attribution is fixed at creation, so changing it would reload the tiles.
+    const control = map.attributionControl;
+    if (!control) return;
+    control.addAttribution(text);
+    return () => {
+      control.removeAttribution(text);
+    };
+  }, [map, text]);
+  return null;
+}
+
+const BARB_SIZE = 32;
+
+/** Wind barbs at every grid point of a weather snapshot, for one level. */
+function WeatherBarbsLayer({
+  snapshot,
+  level,
+  theme,
+}: {
+  snapshot: WeatherSnapshot;
+  level: WeatherLevel;
+  theme: MapTheme;
+}) {
+  const color = theme === "dark" ? "#e2e8f0" : "#1e293b";
+
+  // Icons are rebuilt only when the snapshot, level or theme changes. The map
+  // re-renders about twice a second with live traffic, and a fresh divIcon
+  // object makes react-leaflet call setIcon on every one of ~190 markers.
+  const barbs = useMemo(() => {
+    const fields = fieldsAt(snapshot, level);
+    if (!fields) return [];
+    return gridPoints(snapshot).flatMap(({ lat, lon, index }) => {
+      const wind = windAtPoint(fields, index);
+      if (!wind) return [];
+      return [
+        {
+          key: `wx-${index}`,
+          position: [lat, lon] as [number, number],
+          wind,
+          mslp: snapshot.surface.mslp_hpa[index],
+          icon: L.divIcon({
+            html: windBarbSvg(wind, color, BARB_SIZE),
+            className: "",
+            iconSize: [BARB_SIZE, BARB_SIZE],
+            iconAnchor: [BARB_SIZE / 2, BARB_SIZE / 2],
+          }),
+        },
+      ];
+    });
+  }, [snapshot, level, color]);
+
+  return (
+    <>
+      <MapAttribution text={snapshot.attribution} />
+      {barbs.map((barb) => (
+        <Marker key={barb.key} position={barb.position} icon={barb.icon} keyboard={false}>
+          <Tooltip direction="top" offset={[0, -BARB_SIZE / 2]}>
+            <div style={{ fontSize: 11 }}>
+              <div style={{ fontWeight: 600, color: "#fff" }}>{levelLabel(level)}</div>
+              <div>
+                Wind: <span style={{ color: "#fff" }}>{formatWind(barb.wind)}</span>
+              </div>
+              <div>
+                MSL pressure:{" "}
+                <span style={{ color: "#fff" }}>
+                  {barb.mslp != null ? `${barb.mslp.toFixed(1)} hPa` : "N/A"}
+                </span>
+              </div>
+            </div>
+          </Tooltip>
+        </Marker>
+      ))}
+    </>
+  );
+}
+
 interface Props {
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];
@@ -286,6 +377,9 @@ interface Props {
   onMapPickComplete?: (result: MapPickResult) => void;
   onMapPickCancel?: () => void;
   onFlyToReady?: (fn: (lat: number, lng: number, zoom: number) => void) => void;
+  /** Weather snapshot to draw as wind barbs, or null to draw none. */
+  weather?: WeatherSnapshot | null;
+  weatherLevel?: WeatherLevel;
 }
 
 /** Build compact (single-line) tooltip for density cell. */
@@ -595,7 +689,7 @@ function DotsLayer({
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady }: Props) {
+export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250 }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
@@ -649,6 +743,9 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
 
         {/* Density hexagons — zoom-adaptive H3 resolution */}
         <DensityLayer showDensity={showDensity} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} receiverLocation={receiverLocation} theme={mapTheme} />
+
+        {/* Wind barbs from the weather snapshot — added before the traffic so aircraft draw on top */}
+        {weather && <WeatherBarbsLayer snapshot={weather} level={weatherLevel} theme={mapTheme} />}
 
         {/* History tracks — rendered first so active tracks layer on top */}
         {trajectoryStyle === "dots" && historyTracks.length > 0 && (

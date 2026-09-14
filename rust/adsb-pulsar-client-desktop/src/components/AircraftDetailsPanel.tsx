@@ -11,6 +11,8 @@ import {
 } from "@/lib/aircraft-details";
 import { timeAgo } from "@/lib/format";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
+import type { AircraftWind } from "@/lib/aircraft-wind";
+import { formatAlongTrack, formatCrosswind, formatWind } from "@/lib/wind-format";
 
 const MIN_PANEL_WIDTH = 200;
 const MAX_PANEL_WIDTH = 480;
@@ -31,6 +33,8 @@ interface Props {
   onWidthChange: (w: number) => void;
   isImported?: boolean;
   isDbHistory?: boolean;
+  /** Wind at the aircraft, when a current weather snapshot covers it. */
+  wind?: AircraftWind | null;
 }
 
 export function AircraftDetailsPanel({
@@ -41,6 +45,7 @@ export function AircraftDetailsPanel({
   onWidthChange,
   isImported = false,
   isDbHistory = false,
+  wind = null,
 }: Props) {
   if (track === null) return null;
 
@@ -52,6 +57,7 @@ export function AircraftDetailsPanel({
       onWidthChange={onWidthChange}
       isImported={isImported}
       isDbHistory={isDbHistory}
+      wind={wind}
     />
   ) : (
     <CollapsedStrip onToggle={onToggle} />
@@ -82,6 +88,7 @@ function ExpandedPanel({
   onWidthChange,
   isImported = false,
   isDbHistory = false,
+  wind = null,
 }: {
   track: AircraftTrack;
   width: number;
@@ -89,6 +96,7 @@ function ExpandedPanel({
   onWidthChange: (w: number) => void;
   isImported?: boolean;
   isDbHistory?: boolean;
+  wind?: AircraftWind | null;
 }) {
   const { resolvedTzName } = useDisplayTz();
   // Self-contained drag: listeners created on mousedown capture the start width/x and are removed
@@ -203,6 +211,21 @@ function ExpandedPanel({
             )}
           </Row>
         </div>
+
+        {/* Wind at the aircraft, from the weather snapshot */}
+        {wind && (
+          <div className="px-3 py-2 border-b border-slate-800 space-y-1">
+            <Row label="Wind">
+              <span>{formatWind(wind)}</span>
+            </Row>
+            <Row label="Along track">
+              <span>{formatAlongTrack(wind)}</span>
+            </Row>
+            <Row label="Crosswind">
+              <span>{formatCrosswind(wind)}</span>
+            </Row>
+          </div>
+        )}
 
         {/* Vertical tendency */}
         <div className="px-3 py-2 border-b border-slate-800">

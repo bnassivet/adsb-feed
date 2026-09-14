@@ -1,6 +1,7 @@
 "use client";
 import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventFilterMode } from "@/lib/types";
 import { RangeSlider } from "@/components/RangeSlider";
+import { WeatherControls, type WeatherControlsProps } from "@/components/WeatherControls";
 import type { ReactNode } from "react";
 
 interface Props {
@@ -46,6 +47,8 @@ interface Props {
   eventTimeRangeStart: number;
   eventTimeRangeEnd: number;
   onEventTimeRangeChange: (startMs: number, endMs: number) => void;
+  /** Weather layer controls. Optional: without them there is no weather section. */
+  weather?: WeatherControlsProps;
 }
 
 function msToDatetimeLocal(ms: number): string {
@@ -68,7 +71,7 @@ function Section({ title, defaultOpen, children }: { title: string; defaultOpen?
   );
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange, showEvents, onToggleEvents, eventsCount, eventFilterMode, onEventFilterModeChange, eventUpcomingDays, onEventUpcomingDaysChange, eventTimeRangeStart, eventTimeRangeEnd, onEventTimeRangeChange }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange, showEvents, onToggleEvents, eventsCount, eventFilterMode, onEventFilterModeChange, eventUpcomingDays, onEventUpcomingDaysChange, eventTimeRangeStart, eventTimeRangeEnd, onEventTimeRangeChange, weather }: Props) {
   return (
     <div className="flex flex-col gap-2 p-4">
 
@@ -312,6 +315,13 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
           </div>
         </div>
       </Section>
+
+      {/* ── Weather ── */}
+      {weather && (
+        <Section title="Weather">
+          <WeatherControls {...weather} />
+        </Section>
+      )}
 
       {/* ── Density Overlay ── */}
       <Section title="Density Overlay">

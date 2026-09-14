@@ -7,6 +7,9 @@ import { ConnectionStatusIndicator } from "@/components/ConnectionStatus";
 import { ResizeHandle } from "@/components/ResizeHandle";
 import { LeftPanel } from "@/components/LeftPanel";
 import { AircraftDetailsPanel } from "@/components/AircraftDetailsPanel";
+import { useWeatherSnapshot } from "@/hooks/useWeatherSnapshot";
+import { aircraftWind } from "@/lib/aircraft-wind";
+import { availableLevels, isStale, type WeatherLevel } from "@/lib/weather";
 import { DBHistoryPanel } from "@/components/DBHistoryPanel";
 import { DBHistoryContent } from "@/components/DBHistoryContent";
 import { AIChatPanel } from "@/components/AIChatPanel";
@@ -83,6 +86,17 @@ export default function Dashboard() {
   const [detailsPanelWidth, setDetailsPanelWidth] = useLocalStorage<number>("adsb-details-panel-width", 280);
   const [showHistory, setShowHistory] = useLocalStorage<boolean>("adsb-show-history", false);
   const [showDensity, setShowDensity] = useLocalStorage<boolean>("adsb-show-density", false);
+  // Weather layer: winds aloft from the MQTT weather topic.
+  const [showWeather, setShowWeather] = useLocalStorage<boolean>("adsb-show-weather", false);
+  const [weatherLevel, setWeatherLevel] = useLocalStorage<WeatherLevel>("adsb-weather-level", 250);
+  const weather = useWeatherSnapshot();
+  // Minute-resolution clock for staleness: the snapshot updates hourly, so
+  // re-rendering the page every second for this would be wasted work.
+  const [weatherClockMs, setWeatherClockMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setWeatherClockMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
   const [densityMetric, setDensityMetric] = useLocalStorage<DensityMetric>("adsb-density-metric", "positions");
   const [showSimulation, setShowSimulation] = useLocalStorage<boolean>("adsb-show-simulation", false);
   const [liveColorMode, setLiveColorMode] = useLocalStorage<AltitudeColorMode>("adsb-live-color-mode", "track");
@@ -1291,6 +1305,18 @@ export default function Dashboard() {
           eventTimeRangeStart={eventTimeRangeStart}
           eventTimeRangeEnd={eventTimeRangeEnd}
           onEventTimeRangeChange={handleEventTimeRangeChange}
+          weather={{
+            show: showWeather,
+            onToggle: () => setShowWeather((prev: boolean) => !prev),
+            level: weatherLevel,
+            onLevelChange: setWeatherLevel,
+            levels: weather.snapshot ? availableLevels(weather.snapshot) : [],
+            availability: weather.availability,
+            validTimeMs: weather.snapshot?.valid_time_ms ?? null,
+            stale: weather.snapshot ? isStale(weather.snapshot, weatherClockMs) : false,
+            nowMs: weatherClockMs,
+            attribution: weather.snapshot?.attribution ?? null,
+          }}
         />
 
         {/* Map + Table */}
@@ -1298,7 +1324,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} />
+              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={showWeather && weather.availability !== "unsupported_source" ? weather.snapshot : null} weatherLevel={weatherLevel} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel
@@ -1309,6 +1335,16 @@ export default function Dashboard() {
                 onWidthChange={setDetailsPanelWidth}
                 isImported={isImportedSelection}
                 isDbHistory={isDbHistorySelection}
+                /* Current winds describe live aircraft only: applied to an
+                   imported or DB-history track they would describe the wrong day. */
+                wind={
+                  !isImportedSelection &&
+                  !isDbHistorySelection &&
+                  weather.snapshot &&
+                  !isStale(weather.snapshot, weatherClockMs)
+                    ? aircraftWind(weather.snapshot, selectedTrack)
+                    : null
+                }
               />
             )}
             {/* DB History panel — docked mode (in flex row) */}
