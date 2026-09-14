@@ -40,6 +40,7 @@ import type {
   UpdateScenario,
   UpdateScenarioTrack,
 } from "./types";
+import type { WeatherAvailability, WeatherSnapshot } from "./weather";
 
 export async function startFeed(): Promise<void> {
   return invoke("start_feed");
@@ -60,6 +61,16 @@ export async function getMetrics(): Promise<MetricsSnapshot> {
 /** The stack this window was launched for (`ADSB_STACK`), or null if unnamed. */
 export async function getStack(): Promise<string | null> {
   return invoke("get_stack");
+}
+
+/** The last good weather snapshot, or null before one has arrived. */
+export async function getWeatherSnapshot(): Promise<WeatherSnapshot | null> {
+  return invoke("get_weather_snapshot");
+}
+
+/** Whether the weather layer can have data, and if not, why. */
+export async function getWeatherAvailability(): Promise<WeatherAvailability> {
+  return invoke("get_weather_availability");
 }
 
 export async function getConfig(): Promise<Config> {
