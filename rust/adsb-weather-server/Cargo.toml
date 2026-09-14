@@ -1,0 +1,17 @@
+[package]
+name = "adsb-weather-server"
+version = "0.1.0"
+edition = "2024"
+authors = ["bruno.nassivet@gmail.com"]
+description = "Weather service: gridded winds aloft and MSL pressure from Open-Meteo, published over MQTT"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[lib]
+name = "adsb_weather_server"
+path = "src/lib.rs"
