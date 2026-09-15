@@ -7,6 +7,7 @@
  * is struct-of-arrays and the hot path allocates nothing.
  */
 
+import type { MapTheme } from "./colors";
 import { fieldsAt, windAtPoint, type WeatherGrid, type WeatherLevel, type WeatherSnapshot } from "./weather";
 
 export interface GeoBounds {
@@ -63,6 +64,30 @@ const PX_PER_PARTICLE = 800;
 
 /** Upper edges of the colour buckets, kt. Six buckets: the last is open-ended. */
 export const SPEED_BUCKETS_KT = [20, 40, 60, 80, 100] as const;
+
+/**
+ * Particle stroke colour per speed bucket, slowest first. Shared by the
+ * particle layer and its legend, so the two cannot drift apart. Faster air is
+ * also more opaque.
+ */
+export const PARTICLE_COLORS: Record<MapTheme, readonly string[]> = {
+  dark: [
+    "rgba(186, 230, 253, 0.45)",
+    "rgba(125, 211, 252, 0.6)",
+    "rgba(56, 189, 248, 0.75)",
+    "rgba(250, 204, 21, 0.8)",
+    "rgba(251, 146, 60, 0.85)",
+    "rgba(244, 63, 94, 0.9)",
+  ],
+  light: [
+    "rgba(71, 85, 105, 0.45)",
+    "rgba(2, 132, 199, 0.6)",
+    "rgba(3, 105, 161, 0.75)",
+    "rgba(202, 138, 4, 0.8)",
+    "rgba(234, 88, 12, 0.85)",
+    "rgba(190, 18, 60, 0.9)",
+  ],
+};
 
 const DEG = Math.PI / 180;
 const GRID_EPS = 1e-9;
@@ -187,6 +212,14 @@ export function speedBucket(speedKt: number): number {
   let bucket = 0;
   while (bucket < SPEED_BUCKETS_KT.length && speedKt >= SPEED_BUCKETS_KT[bucket]) bucket++;
   return bucket;
+}
+
+/** A bucket's speed range for display, kt: `"<20"`, `"20–40"`, …, `"≥100"`. */
+export function speedBucketLabel(bucket: number): string {
+  const edges = SPEED_BUCKETS_KT;
+  if (bucket <= 0) return `<${edges[0]}`;
+  if (bucket >= edges.length) return `≥${edges[edges.length - 1]}`;
+  return `${edges[bucket - 1]}–${edges[bucket]}`;
 }
 
 function seed(p: Particles, i: number, bounds: GeoBounds, random: () => number): void {

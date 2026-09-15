@@ -28,6 +28,7 @@ import {
   degreesPerPixel,
   fieldBounds,
   intersectBounds,
+  PARTICLE_COLORS,
   particleCount,
   projectMercator,
   speedBucket,
@@ -40,6 +41,7 @@ import { MapTileToggle } from "./MapTileToggle";
 
 import { CenterOnAntennaButton } from "./CenterOnAntennaButton";
 import { AltitudeLegend } from "./AltitudeLegend";
+import { WindSpeedLegend } from "./WindSpeedLegend";
 
 /**
  * Per-leg colours for a generated route.
@@ -368,25 +370,6 @@ const PARTICLE_PANE = "weatherParticles";
 const PARTICLE_PX_PER_KT_S = 0.6;
 /** Opacity each frame keeps of the one before: sets the trail length. */
 const PARTICLE_TRAIL_KEEP = 0.92;
-/** Stroke colours per speed bucket: <20, 20-40, 40-60, 60-80, 80-100, >=100 kt. */
-const PARTICLE_COLORS: Record<MapTheme, readonly string[]> = {
-  dark: [
-    "rgba(186, 230, 253, 0.45)",
-    "rgba(125, 211, 252, 0.6)",
-    "rgba(56, 189, 248, 0.75)",
-    "rgba(250, 204, 21, 0.8)",
-    "rgba(251, 146, 60, 0.85)",
-    "rgba(244, 63, 94, 0.9)",
-  ],
-  light: [
-    "rgba(71, 85, 105, 0.45)",
-    "rgba(2, 132, 199, 0.6)",
-    "rgba(3, 105, 161, 0.75)",
-    "rgba(202, 138, 4, 0.8)",
-    "rgba(234, 88, 12, 0.85)",
-    "rgba(190, 18, 60, 0.9)",
-  ],
-};
 /** Bucket value for a particle that respawned this frame: nothing to draw. */
 const NO_SEGMENT = 255;
 
@@ -1180,6 +1163,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
       <MapTileToggle theme={mapTheme} onToggle={onToggleTheme} />
       <CenterOnAntennaButton onClick={handleCenterOnAntenna} disabled={!receiverLocation} />
       <AltitudeLegend theme={mapTheme} />
+      {weather && weatherParticles && <WindSpeedLegend theme={mapTheme} />}
     </div>
   );
 }

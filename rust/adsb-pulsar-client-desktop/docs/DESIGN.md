@@ -4493,6 +4493,7 @@ returns `available | waiting | unsupported_source`.
 | `MapInner` `WeatherBarbsLayer` | One barb per grid point, MSL pressure tooltip |
 | `lib/wind-particles.ts` | Field sampler, particle simulation, Mercator projection — pure, unit-tested |
 | `MapInner` `WindParticlesLayer` | Canvas particle animation for the selected level |
+| `components/WindSpeedLegend.tsx` | Particle colour key under the altitude legend, shown only while particles are drawn |
 
 **Interpolation.** Horizontally bilinear, on **u/v components** — averaging 350° and 010° as
 numbers gives 180°. Vertically linear in ln(p) between the two levels bracketing the
@@ -4528,6 +4529,9 @@ data `lib/weather.ts` already interpolates. The design, in the order a frame run
   backgrounded tab does not make particles jump when it resumes.
 - **Drawing.** Each frame fades the canvas with `destination-in` (keeping 92%), then strokes
   one path per speed bucket (<20, 20–40, … ≥100 kt): six draw calls, not one per particle.
+  Colours run pale blue → sky blue → yellow → orange → red, more opaque as speed rises.
+  `PARTICLE_COLORS` and `speedBucketLabel` live in `lib/wind-particles.ts` and feed both the
+  layer and `WindSpeedLegend`, so the key cannot drift from what is drawn.
   Every particle is projected every frame, so `projectMercator` reimplements EPSG:3857
   rather than calling `latLngToContainerPoint`, which allocates two objects per call.
 - **Map interaction.** The canvas sits in its own pane at z 450 — above tiles and density

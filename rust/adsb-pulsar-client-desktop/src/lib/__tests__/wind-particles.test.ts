@@ -9,7 +9,10 @@ import {
   MAX_PARTICLES,
   MAX_STEP_S,
   MIN_PARTICLES,
+  PARTICLE_COLORS,
   particleCount,
+  speedBucketLabel,
+  SPEED_BUCKETS_KT,
   projectMercator,
   sampleWind,
   speedBucket,
@@ -160,6 +163,24 @@ describe("sizing", () => {
     expect(speedBucket(99)).toBe(4);
     expect(speedBucket(100)).toBe(5);
     expect(speedBucket(250)).toBe(5);
+  });
+});
+
+describe("speed buckets for display", () => {
+  it("has one colour per bucket in each theme", () => {
+    expect(PARTICLE_COLORS.dark).toHaveLength(SPEED_BUCKETS_KT.length + 1);
+    expect(PARTICLE_COLORS.light).toHaveLength(SPEED_BUCKETS_KT.length + 1);
+  });
+
+  it("labels each bucket by its speed range", () => {
+    expect(speedBucketLabel(0)).toBe("<20");
+    expect(speedBucketLabel(1)).toBe("20–40");
+    expect(speedBucketLabel(4)).toBe("80–100");
+    expect(speedBucketLabel(5)).toBe("≥100");
+  });
+
+  it("labels agree with the bucket a speed falls in", () => {
+    expect(speedBucketLabel(speedBucket(65))).toBe("60–80");
   });
 });
 
