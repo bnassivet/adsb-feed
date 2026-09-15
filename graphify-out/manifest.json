@@ -75,8 +75,8 @@
     "semantic_hash": "4ae674cb9a5e6dc8c6afe2598c150776"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/next-env.d.ts": {
-    "mtime": 1789462739.7787335,
-    "ast_hash": "d0f8375ae1199dc7acd3977fc33b78b8",
+    "mtime": 1789464958.2026377,
+    "ast_hash": "2a74d3909800ca5467fa83b0ab4a4890",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/package.json": {
@@ -190,8 +190,8 @@
     "semantic_hash": "7be5aa3cf0104bf1d223624473c2fff8"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/app/page.tsx": {
-    "mtime": 1789418248.1295419,
-    "ast_hash": "81ec86e6c2fa15bca1481f74a6fb6b14",
+    "mtime": 1789464913.407922,
+    "ast_hash": "17247f46529a6b593033c57352137558",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/app/settings/page.tsx": {
@@ -255,13 +255,13 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/MapInner.tsx": {
-    "mtime": 1789418087.1635234,
-    "ast_hash": "e9d3dbfe77accc779aa4d01ead78529c",
+    "mtime": 1789465451.6086571,
+    "ast_hash": "3407316f7b9951d35f5f09744ec73d25",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/Map.tsx": {
-    "mtime": 1789418062.9218736,
-    "ast_hash": "b0c860065fff9bf552fe93108014fd4b",
+    "mtime": 1789464913.4048457,
+    "ast_hash": "ef79bcdc4cb1692c7cebadb581bf9b83",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/EventsOfInterestContent.tsx": {
@@ -800,13 +800,13 @@
     "semantic_hash": "97fc988eb0355c384bf254449c514899"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/DOCUMENTATION.md": {
-    "mtime": 1789463040.4649236,
-    "ast_hash": "274e61aa7d3abd89898ab29182aabe28",
+    "mtime": 1789465036.1463459,
+    "ast_hash": "cc9fe15cc2a631f2a483899f9253ffa3",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/DESIGN.md": {
-    "mtime": 1789462790.6139364,
-    "ast_hash": "46dee4c0349c21676b7502cf2c6be0bc",
+    "mtime": 1789465471.8258727,
+    "ast_hash": "af352f2ee99e6ab3b681735e99f7a1f1",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/2026-02-22-imported-tracks-selection-design.md": {
@@ -2475,8 +2475,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/QUICKSTART.md": {
-    "mtime": 1789463004.9327803,
-    "ast_hash": "e9babd36261609ed5d7d957b4c913bd0",
+    "mtime": 1789465015.3692524,
+    "ast_hash": "73d689ad33005abb1c91688508fdd03e",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/desktop_log.txt": {
@@ -10330,18 +10330,18 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/WeatherControls.tsx": {
-    "mtime": 1789417838.8539639,
-    "ast_hash": "5e63bc6bc2b86c31e43712ac2dfbec74",
+    "mtime": 1789464714.8780375,
+    "ast_hash": "5d37d2e55ab0fecd8116dacca6195474",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/__tests__/WeatherControls.test.tsx": {
-    "mtime": 1789417637.8884091,
-    "ast_hash": "f70a42eb394bf0e2726b3f16f5c09cdd",
+    "mtime": 1789464694.2833948,
+    "ast_hash": "cb083cba65daddfa68b62ec530090bf6",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/__tests__/Filters.weather.test.tsx": {
-    "mtime": 1789418200.8363,
-    "ast_hash": "568a99fb3f4fb45c13969fb20726525f",
+    "mtime": 1789464696.337879,
+    "ast_hash": "446d04cb0e3125d7d250e2d3f255fdb0",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/__tests__/AircraftDetailsPanel.wind.test.tsx": {
@@ -10490,8 +10490,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/2026-09-14-weather-layer-design.md": {
-    "mtime": 1789412910.5965705,
-    "ast_hash": "9793c4a00f15b72dd20f3607b5cac29f",
+    "mtime": 1789464556.5632913,
+    "ast_hash": "ffd77ade9143b6fe84d9627c42cfe642",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/.next-dev/dev/static/media/layers-2x.23wrxu3xxu9-i.png": {
@@ -10507,6 +10507,26 @@
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/.next-dev/dev/static/media/marker-icon.1le94j_pe_ih1.png": {
     "mtime": 1788104895.2010384,
     "ast_hash": "2273e3d8ad9264b7daa5bdbf8e6b47f8",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/wind-particles.ts": {
+    "mtime": 1789465433.900329,
+    "ast_hash": "aa37e9115cdfcf27cad24a6403e49ece",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/wind-particles.test.ts": {
+    "mtime": 1789465401.9496124,
+    "ast_hash": "7df0d194c358609f6d42e07520798349",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/WindSpeedLegend.tsx": {
+    "mtime": 1789465439.91516,
+    "ast_hash": "66ab62e2afb08cb42e67f031e718fdd5",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/__tests__/WindSpeedLegend.test.tsx": {
+    "mtime": 1789465442.730786,
+    "ast_hash": "5963ecf37717549e30b798fe7b9d4660",
     "semantic_hash": ""
   }
 }
