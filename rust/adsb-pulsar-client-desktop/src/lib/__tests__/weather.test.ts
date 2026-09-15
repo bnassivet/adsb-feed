@@ -11,9 +11,11 @@ import {
   isStale,
   levelLabel,
   pressureAltitudeToHpa,
+  resolveWeatherLevel,
   STALE_AFTER_MS,
   windAtPoint,
   windComponents,
+  windReport,
   type WeatherSnapshot,
   type WindFields,
 } from "../weather";
@@ -267,5 +269,76 @@ describe("describeValidity", () => {
   it("switches to hours past an hour and a half", () => {
     expect(describeValidity(0, 90 * MIN)).toBe("valid 2 h ago");
     expect(describeValidity(0, 4 * 60 * MIN)).toBe("valid 4 h ago");
+  });
+});
+
+describe("resolveWeatherLevel", () => {
+  const levels = [850, 250];
+
+  it("accepts the surface under its usual names", () => {
+    expect(resolveWeatherLevel("surface", levels)).toEqual({ level: "surface" });
+    expect(resolveWeatherLevel(" SFC ", levels)).toEqual({ level: "surface" });
+  });
+
+  it("accepts a pressure level with or without its unit", () => {
+    expect(resolveWeatherLevel("250", levels)).toEqual({ level: 250 });
+    expect(resolveWeatherLevel("250hPa", levels)).toEqual({ level: 250 });
+    expect(resolveWeatherLevel("850 hpa", levels)).toEqual({ level: 850 });
+  });
+
+  it("maps a flight level to the nearest level the snapshot carries", () => {
+    expect(resolveWeatherLevel("FL340", levels)).toEqual({ level: 250 });
+    expect(resolveWeatherLevel("fl 100", levels)).toEqual({ level: 850 });
+  });
+
+  it("refuses a pressure level the snapshot does not carry, naming the options", () => {
+    const result = resolveWeatherLevel("500", levels);
+    expect("error" in result && result.error).toMatch(/SFC/);
+    expect("error" in result && result.error).toMatch(/FL340 · 250 hPa/);
+  });
+
+  it("refuses input it cannot read, and a flight level with no levels to map to", () => {
+    expect(resolveWeatherLevel("banana", levels)).toHaveProperty("error");
+    expect(resolveWeatherLevel("FL340", [])).toHaveProperty("error");
+  });
+});
+
+describe("windReport", () => {
+  const NOW = 30 * 60_000;
+
+  it("reports the wind on a level, rounded, with its validity", () => {
+    expect(windReport(snapshot(), { lat: 46.5, lon: -2.5, level: 250 }, NOW)).toEqual({
+      fromDeg: 250,
+      speedKt: 100,
+      level: "FL340 · 250 hPa",
+      validity: "valid 30 min ago",
+      stale: false,
+    });
+  });
+
+  it("uses the altitude over the level when both are given", () => {
+    const report = windReport(snapshot(), { lat: 46.5, lon: -2.5, level: 250, altitudeFt: 0 }, NOW);
+    expect(report).toMatchObject({ fromDeg: 270, speedKt: 10, altitudeFt: 0, pressureHpa: 1013 });
+    expect(report).not.toHaveProperty("level");
+  });
+
+  it("defaults to the surface", () => {
+    expect(windReport(snapshot(), { lat: 46.5, lon: -2.5 }, NOW)).toMatchObject({ level: "SFC", speedKt: 10 });
+  });
+
+  it("adds head and crosswind components for a track", () => {
+    const into = windReport(snapshot(), { lat: 46.5, lon: -2.5, level: 850, trackDeg: 270 }, NOW);
+    expect(into).toMatchObject({ headwindKt: 20, crosswindKt: 0 });
+    const away = windReport(snapshot(), { lat: 46.5, lon: -2.5, level: 850, trackDeg: 90 }, NOW);
+    expect(away).toMatchObject({ headwindKt: -20, crosswindKt: 0 });
+  });
+
+  it("flags a stale snapshot", () => {
+    expect(windReport(snapshot(), { lat: 46.5, lon: -2.5 }, STALE_AFTER_MS + 1)).toMatchObject({ stale: true });
+  });
+
+  it("explains a position outside the grid or a level it does not carry", () => {
+    expect(windReport(snapshot(), { lat: 10, lon: 10 }, NOW)).toHaveProperty("error");
+    expect(windReport(snapshot(), { lat: 46.5, lon: -2.5, level: 500 }, NOW)).toHaveProperty("error");
   });
 });

@@ -351,3 +351,103 @@ export function describeValidity(validTimeMs: number, nowMs: number): string {
   const span = magnitude < 90 ? `${magnitude} min` : `${Math.round(magnitude / 60)} h`;
   return minutes > 0 ? `valid ${span} ago` : `valid in ${span}`;
 }
+
+/**
+ * A level as a person or a model writes it -- `"surface"`, `"SFC"`, `"250"`,
+ * `"250 hPa"`, `"FL340"` -- resolved against the levels a snapshot carries.
+ * A flight level maps to the nearest carried level; a pressure level must be
+ * carried exactly. The error names every valid option, so a chat model can
+ * correct itself.
+ */
+export function resolveWeatherLevel(
+  input: string,
+  levels: number[],
+): { level: WeatherLevel } | { error: string } {
+  const text = input.trim().toLowerCase().replace(/\s+/g, "");
+  const options = ["SFC", ...levels.map((l) => levelLabel(l))].join(", ");
+  if (text === "surface" || text === "sfc") return { level: "surface" };
+
+  const fl = /^fl(\d{1,3})$/.exec(text);
+  if (fl) {
+    if (levels.length === 0) return { error: `No pressure levels are available. Options: ${options}.` };
+    const target = Number(fl[1]);
+    const nearest = levels.reduce((best, l) =>
+      Math.abs(hpaToFlightLevel(l) - target) < Math.abs(hpaToFlightLevel(best) - target) ? l : best,
+    );
+    return { level: nearest };
+  }
+
+  const hpa = /^(\d{2,4})(hpa)?$/.exec(text);
+  if (hpa && levels.includes(Number(hpa[1]))) return { level: Number(hpa[1]) };
+  return { error: `Unknown or unavailable level "${input}". Options: ${options}.` };
+}
+
+export interface WindQuery {
+  lat: number;
+  lon: number;
+  /** Pressure altitude, ft. Takes precedence over `level`. */
+  altitudeFt?: number | null;
+  /** Level to read when no altitude is given. Defaults to the surface. */
+  level?: WeatherLevel;
+  /** Track over the ground, degrees true: adds head and crosswind components. */
+  trackDeg?: number | null;
+}
+
+/** Wind at a point, rounded for reading out -- the shape the chat tool returns. */
+export interface WindReport {
+  /** Direction the wind blows FROM, whole degrees true. */
+  fromDeg: number;
+  speedKt: number;
+  /** Set when read on a level. */
+  level?: string;
+  /** Set when read at an altitude. */
+  altitudeFt?: number;
+  pressureHpa?: number;
+  headwindKt?: number;
+  crosswindKt?: number;
+  validity: string;
+  stale: boolean;
+}
+
+/** Rounds, and turns -0 into 0 so a JSON reader never sees "-0". */
+function roundInt(value: number): number {
+  return Math.round(value) || 0;
+}
+
+/** The wind at a position, on a level or at an altitude, for display or chat. */
+export function windReport(
+  snapshot: WeatherSnapshot,
+  query: WindQuery,
+  nowMs: number,
+): WindReport | { error: string } {
+  const { lat, lon, trackDeg } = query;
+  const altitudeFt = query.altitudeFt != null && Number.isFinite(query.altitudeFt) ? query.altitudeFt : null;
+  const level = query.level ?? "surface";
+
+  if (altitudeFt === null && !fieldsAt(snapshot, level)) {
+    return { error: `The snapshot has no ${levelLabel(level)} level.` };
+  }
+  const wind =
+    altitudeFt !== null
+      ? interpolateWind(snapshot, lat, lon, altitudeFt)
+      : interpolateWindAtLevel(snapshot, level, lat, lon);
+  if (!wind) {
+    return { error: "No wind data there: the position is outside the weather grid, or the model has a gap." };
+  }
+
+  const report: WindReport = {
+    fromDeg: roundInt(wind.dirDeg) % 360,
+    speedKt: roundInt(wind.speedKt),
+    ...(altitudeFt !== null
+      ? { altitudeFt: roundInt(altitudeFt), pressureHpa: roundInt(pressureAltitudeToHpa(altitudeFt)) }
+      : { level: levelLabel(level) }),
+    validity: describeValidity(snapshot.valid_time_ms, nowMs),
+    stale: isStale(snapshot, nowMs),
+  };
+  if (trackDeg != null && Number.isFinite(trackDeg)) {
+    const { headwindKt, crosswindKt } = windComponents(wind, trackDeg);
+    report.headwindKt = roundInt(headwindKt);
+    report.crosswindKt = roundInt(crosswindKt);
+  }
+  return report;
+}
