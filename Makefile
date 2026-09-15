@@ -33,6 +33,9 @@ help:
 	@echo "  make client       desktop + agents only, no local broker/feed/recorder"
 	@echo "  make down         stop everything the stack started"
 	@echo "  make down-desktop stop just the desktop app"
+	@echo "  make up-weather   start just the weather service ([weather] enabled = true)"
+	@echo "  make down-weather stop just the weather service"
+	@echo "  make restart-weather  pick up an edited [weather]"
 	@echo "  make reap         kill orphans still holding the stack's ports"
 	@echo "  make status       what is running"
 	@echo "  make logs         tail all logs (make logs N=feed for one)"
@@ -83,6 +86,16 @@ up-desktop: up
 .PHONY: down-desktop
 down-desktop:
 	@$(SH) stop-desktop
+
+# The weather service on its own. `make up` already starts it when
+# [weather].enabled is true and `make down` always stops it; these change it
+# without restarting the stack. [weather] is read once at startup, so an edit
+# needs `restart-weather`. A recipe rather than prerequisites, so -j cannot run
+# the start before the stop.
+.PHONY: up-weather down-weather restart-weather
+up-weather:      ; @$(SH) weather
+down-weather:    ; @$(SH) stop-weather
+restart-weather: ; @$(SH) stop-weather && $(SH) weather
 
 .PHONY: reap
 reap: ; @$(SH) reap
@@ -144,6 +157,7 @@ edge-arm64 feed-arm64 server-arm64 feed-armv7 deploy:
 test-scripts:
 	@python3 scripts/tests/test_render_config.py
 	@bash scripts/tests/test_stack_paths.sh
+	@bash scripts/tests/test_stack_weather.sh
 
 # The full gate: the tooling tests, then the Rust workspace gate in rust/.
 .PHONY: ci

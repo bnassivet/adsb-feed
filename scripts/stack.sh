@@ -11,7 +11,8 @@ set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMPLATE="$REPO/adsb-stack-template.toml"
-BIN="$REPO/rust/target/release"
+# ADSB_BIN exists for the tooling tests, which run a fake binary.
+BIN="${ADSB_BIN:-$REPO/rust/target/release}"
 MOCK="$REPO/skills/run-adsb-desktop/mock_dump1090.py"
 COMPOSE="$REPO/infrastructure/mqtt/docker-compose.yml"
 
@@ -693,6 +694,39 @@ stop-desktop)
   stop desktop
   ;;
 
+weather)
+  # The weather service on its own. `up` already starts it when enabled; this
+  # is for picking up an edited [weather] (it is read once, at startup) or
+  # bringing it back after `stop-weather`, without touching the rest.
+  require_config
+  if ! weather_enabled; then
+    echo "error: [weather] enabled = false in ${STACK#"$REPO"/}." >&2
+    echo "  Off by default: it needs outbound internet and spends a rate-limited" >&2
+    echo "  Open-Meteo quota. Set enabled = true there, then run this again." >&2
+    exit 1
+  fi
+  if [ ! -x "$BIN/adsb-weather-server" ]; then
+    echo "error: $BIN/adsb-weather-server is not built -- run: make build" >&2
+    exit 1
+  fi
+  render
+  echo "Weather:"
+  # Not fatal: the service retries the broker with backoff, and the snapshot is
+  # retained, so it publishes whenever the broker does appear.
+  if owns_broker && ! port_busy "$(cfg mqtt port 1883)"; then
+    echo "  note: no broker on :$(cfg mqtt port 1883) yet -- it will retry until one is up (make up)"
+  fi
+  start weather "$BIN/adsb-weather-server" --config "$RUN/weather.toml"
+  echo "  watch it with: make logs N=weather"
+  ;;
+
+stop-weather)
+  # Whether or not [weather] is enabled now: it may have been started before
+  # enabled was turned off -- the same reason `down` always stops it.
+  echo "Weather:"
+  stop weather
+  ;;
+
 down)
   # Reverse of start order: producers first, so the recorder sees the tail.
   # weather is stopped whether or not it is enabled now: it may have been
@@ -793,6 +827,8 @@ usage: stack.sh <command>
   desktop      start the desktop app (backgrounded; make logs N=desktop)
   client       desktop + agents ONLY, attached to [remote] -- no local stack
   stop-desktop stop just the desktop app
+  weather      start just the weather service (needs [weather] enabled = true)
+  stop-weather stop just the weather service
   down      stop everything this script started
   reap      kill whatever still holds the stack's ports (orphans)
   status    what is running
