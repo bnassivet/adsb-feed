@@ -648,6 +648,52 @@ assert `"available"`. The happy-path test cannot fail on this bug.
 
 ---
 
+### Pattern 12: Canvas Animation Layer — Pure Core, Imperative Shell
+
+**Use case**: something that redraws every animation frame on the map — here
+`WindParticlesLayer`, ~2,500 wind particles at 60 fps.
+
+```typescript
+// lib/wind-particles.ts — pure, struct-of-arrays, allocates nothing per frame
+stepParticles(particles, field, bounds, { dtS, pxPerKtS, degPerPx });
+
+// MapInner.tsx — all mutable frame state lives inside one effect
+useEffect(() => {
+  const canvas = L.DomUtil.create("canvas", "", pane);
+  let particles: Particles | null = null;
+  let frame = 0;
+  const tick = (now: number) => { stepParticles(/* ... */); draw(); frame = requestAnimationFrame(tick); };
+  const stop = () => { cancelAnimationFrame(frame); particles = null; ctx.clearRect(/* ... */); };
+  const reset = () => { stop(); /* resize, re-anchor, re-seed */ frame = requestAnimationFrame(tick); };
+  map.on("movestart zoomstart", stop);
+  map.on("moveend resize", reset);
+  reset();
+  return () => { map.off(/* ... */); cancelAnimationFrame(frame); canvas.remove(); };
+}, [map, snapshot, level, theme]);
+```
+
+**Why not React state**: a frame loop in `useState` re-renders the whole map sixty times a
+second. Keep per-frame state in closure variables inside the effect; React only decides
+*whether* the layer exists and with which inputs.
+
+**Rules**:
+- Put the maths in `src/lib/` as pure functions over typed arrays, with injectable
+  `random`, so motion, respawn and clamping are unit-tested — `MapInner` is not.
+- No allocation on the hot path: write results into a caller-owned `out` array
+  (`sampleWind`, `projectMercator`) instead of returning `{ x, y }` or calling Leaflet
+  helpers that build `LatLng`/`Point` objects per call.
+- Clamp `dt`. `requestAnimationFrame` stops in a background tab; the first frame back
+  must not advance the simulation by minutes.
+- Flag discontinuities. A respawned particle has no previous screen position — draw
+  nothing for it that frame, or every respawn is a line across the map.
+- Batch draw calls by style: one `stroke()` per colour, not per element.
+- Clear on `movestart`/`zoomstart`, rebuild on `moveend`: pixels drawn in a pane drift
+  with the map during a pan and are wrong after a zoom.
+- Give the canvas its own pane with `pointer-events: none`, placed below the marker pane,
+  so it never swallows clicks or tooltips.
+
+---
+
 ### Pattern 7: Agent Tool Registration (AG-UI)
 
 When adding a new capability the AI assistant can use, the **first decision is which

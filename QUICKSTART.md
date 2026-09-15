@@ -216,7 +216,8 @@ listening on localhost only).
 ## 6. Weather layer
 
 Winds aloft and mean-sea-level pressure around the receiver, drawn on the map as
-wind barbs, with the wind each selected aircraft is flying through. Data comes
+wind barbs and/or animated particles, with the wind each selected aircraft is
+flying through. Data comes
 from Open-Meteo; design detail in `DESIGN.md` → Weather Layer.
 
 ```toml
@@ -234,7 +235,8 @@ connection, so a socket session has no weather layer (the controls say so).
 `make up-desktop` does not change the source; launch with
 `ADSB_SOURCE_KIND=mqtt scripts/stack.sh desktop`, or set **Settings → Connection
 → Feed Source** to MQTT. Then press Start, open **Weather** in the left panel,
-tick **Winds aloft** and pick a level.
+tick **Winds aloft** and pick a level. **Barbs** and **Particles** switch the two
+displays independently; particles are off by default.
 
 Check the bus without the app:
 

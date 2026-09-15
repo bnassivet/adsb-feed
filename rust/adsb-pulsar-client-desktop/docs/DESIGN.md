@@ -4489,8 +4489,10 @@ returns `available | waiting | unsupported_source`.
 | `lib/aircraft-wind.ts` | Wind and components for a tracked aircraft |
 | `lib/wind-format.ts` | `070° / 20 kt`, `85 kt headwind`, `49 kt from the left` |
 | `hooks/useWeatherSnapshot.ts` | Hydrate, `adsb:weather`, re-check availability on `adsb:status` |
-| `components/WeatherControls.tsx` | Toggle, level picker, validity, stale badge, credit |
+| `components/WeatherControls.tsx` | Toggle, level picker, Barbs / Particles display toggles, validity, stale badge, credit |
 | `MapInner` `WeatherBarbsLayer` | One barb per grid point, MSL pressure tooltip |
+| `lib/wind-particles.ts` | Field sampler, particle simulation, Mercator projection — pure, unit-tested |
+| `MapInner` `WindParticlesLayer` | Canvas particle animation for the selected level |
 
 **Interpolation.** Horizontally bilinear, on **u/v components** — averaging 350° and 010° as
 numbers gives 180°. Vertically linear in ln(p) between the two levels bracketing the
@@ -4504,6 +4506,41 @@ tropopause (36,089 ft) and exponential above it — the power law alone is ~3 hP
 and theme: the map re-renders about twice a second with live traffic, and a fresh `divIcon`
 makes react-leaflet call `setIcon` on all ~190 markers. The Open-Meteo credit is added to
 Leaflet's attribution control, not the tile layer, whose attribution is fixed at creation.
+It is mounted whenever barbs **or** particles are drawn — either one shows the data.
+
+**Particles.** Barbs and particles are independent toggles under "Winds aloft"
+(`adsb-weather-barbs`, default on; `adsb-weather-particles`, default off — a continuous
+animation is opt-in). A custom canvas layer, not `leaflet-velocity`: that plugin has been
+unmaintained since 2023, patches the global `L`, and wants GRIB-JSON — a second conversion of
+data `lib/weather.ts` already interpolates. The design, in the order a frame runs:
+
+- **Field.** `createWindField` converts one level to u/v typed arrays once per snapshot and
+  level; `sampleWind` interpolates bilinearly with no allocation. A cell with a missing
+  corner is no wind, as for barbs.
+- **Motion.** Particles live in geographic coordinates and move at a constant **screen**
+  speed of 0.6 px/s per knot at every zoom — true wind speed would be invisible (100 kt is
+  about 0.0005°/s). On Web Mercator a pixel spans `cos φ` times as many degrees of latitude
+  as of longitude, so `Δlat` carries that factor and motion is isotropic on screen.
+- **Respawn.** A particle is re-seeded when it ages out (2–5 s), reaches missing data, or
+  leaves the visible part of the grid, and is flagged `reborn` so no segment is drawn for it
+  that frame — otherwise each respawn would streak a line across the map. Initial ages are
+  staggered so the whole layer does not blink in step. Frame gaps are clamped to 0.1 s, so a
+  backgrounded tab does not make particles jump when it resumes.
+- **Drawing.** Each frame fades the canvas with `destination-in` (keeping 92%), then strokes
+  one path per speed bucket (<20, 20–40, … ≥100 kt): six draw calls, not one per particle.
+  Every particle is projected every frame, so `projectMercator` reimplements EPSG:3857
+  rather than calling `latLngToContainerPoint`, which allocates two objects per call.
+- **Map interaction.** The canvas sits in its own pane at z 450 — above tiles and density
+  hexagons, below every marker, `pointer-events: none` so barb tooltips and aircraft clicks
+  still work. It is cleared on `movestart`/`zoomstart` and re-anchored, resized for
+  `devicePixelRatio` and re-seeded on `moveend`/`resize`: positions are geographic but trails
+  are pixels, and would smear across a moving map. The population (300–2,500) is sized to the
+  screen area the grid actually covers.
+
+Known limits: 8-bit alpha rounding leaves trails a residual opacity of a few levels out of 255
+rather than fading to exactly zero, which is standard for this technique and barely visible.
+View bounds that cross the antimeridian are not handled; a ±300 NM receiver grid does not
+reach it in practice.
 
 **Per-aircraft wind.** The details panel shows the wind at the aircraft's pressure altitude
 with head/tail and crosswind components along its track — for **live** selections only
@@ -4559,6 +4596,8 @@ instant.
 | `adsb-pulsar-client/src/source/mqtt_source.rs` | `with_aux_topic`, `route_publish`, packet limit |
 | `adsb-pulsar-client/src/config.rs` | `mqtt_weather_topic`, `weather_topic()` |
 | `src-tauri/src/weather.rs` | Relay, availability |
+| `src/lib/weather.ts`, `src/lib/wind-particles.ts` | Interpolation; particle field and simulation |
+| `src/components/MapInner.tsx` | `WeatherBarbsLayer`, `WindParticlesLayer` |
 | `scripts/render-config.py`, `scripts/stack.sh` | `[weather]` rendering, start/stop/doctor |
 
 ---
