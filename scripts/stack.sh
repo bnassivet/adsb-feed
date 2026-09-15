@@ -323,6 +323,24 @@ owns_broker() {
 # rate-limited third-party quota. See [weather] in the template.
 weather_enabled() { [ "$(cfg weather enabled false)" = "true" ]; }
 
+# The desktop's live-plane broker and topic, from THIS stack, one VAR=value per
+# line. Env beats the app's stored settings on every launch; without these a
+# desktop keeps whatever topic it stored last -- one from before topics carried
+# a stage, say -- and reads a topic nobody publishes to. Weather shows it first:
+# the weather topic is derived from the feed topic, so the layer waits forever.
+#
+# Not ADSB_SOURCE_KIND: exporting it would override Settings -> Feed Source on
+# every launch and make that toggle look dead. `client` adds it explicitly.
+desktop_live_env() {
+  echo "ADSB_MQTT_BROKER=$(cfg mqtt host localhost)"
+  echo "ADSB_MQTT_PORT=$(cfg mqtt port 1883)"
+  echo "ADSB_MQTT_TOPIC=$(cfg mqtt topic adsb/sbs/raw)"
+  # Only an EXPLICIT weather topic. Unset, the desktop derives it from the feed
+  # topic by the same rule render-config.py uses; a copy here would be a third.
+  local wt; wt="$(cfg weather topic "")"
+  [ -z "$wt" ] || echo "ADSB_MQTT_WEATHER_TOPIC=$wt"
+}
+
 # ---------------------------------------------------------------------------
 
 case "${1:-help}" in
@@ -333,6 +351,14 @@ tauri-config)
   # `make tauri-config STACK=prod` shows what the desktop is actually launched
   # with -- a CSP or port problem is invisible otherwise.
   tauri_config_override
+  ;;
+
+desktop-env)
+  # The live-plane environment the desktop is launched with. Same reason as
+  # tauri-config: testable, and `make desktop-env` answers "which topic will
+  # the app actually subscribe to?"
+  require_config
+  desktop_live_env
   ;;
 
 paths)
@@ -640,7 +666,8 @@ desktop)
   # Backgrounded with a PID file like everything else, so `down` can stop it.
   # `tauri dev` is a process tree -- next dev, cargo, the app binary -- which
   # is why start/stop work on process groups.
-  start_desktop || exit 1
+  # shellcheck disable=SC2046  # word splitting is the point: one VAR=x per line
+  start_desktop $(desktop_live_env) || exit 1
   echo "  watch it with: make logs N=desktop"
   ;;
 
@@ -655,10 +682,6 @@ client)
   mh="$(cfg mqtt host localhost)"
   mp="$(cfg mqtt port 1883)"
   mt="$(cfg mqtt topic adsb/sbs/raw)"
-  # Only an EXPLICIT weather topic is exported. Unset, the desktop derives it
-  # from the feed topic with the same rule render-config.py uses, so repeating
-  # that rule here would be a third copy to keep in step.
-  wt="$(cfg weather topic "")"
 
   case "$mh" in
     localhost|127.0.0.1)
@@ -668,12 +691,12 @@ client)
 
   echo "Desktop (remote: $uri, live: mqtt://$mh:$mp/$mt):"
   # Both planes, explicitly. History is seeded on FIRST launch only; the live
-  # source is applied every launch. See QUICKSTART.md topology 4.
+  # source is applied every launch. See QUICKSTART.md topology 4. Unlike
+  # `desktop`, a client forces the MQTT source: it has no dump1090 to read.
+  # shellcheck disable=SC2046  # word splitting is the point: one VAR=x per line
   start_desktop \
     "ADSB_REMOTE_URI=$uri" "ADSB_REMOTE_TOKEN=$tok" \
-    "ADSB_SOURCE_KIND=mqtt" "ADSB_MQTT_BROKER=$mh" \
-    "ADSB_MQTT_PORT=$mp" "ADSB_MQTT_TOPIC=$mt" \
-    ${wt:+"ADSB_MQTT_WEATHER_TOPIC=$wt"} || exit 1
+    "ADSB_SOURCE_KIND=mqtt" $(desktop_live_env) || exit 1
 
   echo "Agents:"
   # The agent defaults its tool server to :8787, which in the all-local stack
@@ -825,6 +848,7 @@ usage: stack.sh <command>
   doctor    preflight: binaries, docker, ports, skills, LLM
   up        broker -> recorder -> feed (add --agents for the AI agents)
   desktop      start the desktop app (backgrounded; make logs N=desktop)
+  desktop-env  the MQTT broker/topic the desktop is launched with
   client       desktop + agents ONLY, attached to [remote] -- no local stack
   stop-desktop stop just the desktop app
   weather      start just the weather service (needs [weather] enabled = true)

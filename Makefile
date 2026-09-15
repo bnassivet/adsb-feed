@@ -43,6 +43,7 @@ help:
 	@echo "  make render       regenerate .run/*.toml from adsb-stack.toml"
 	@echo "  make paths        which config and state dir this STACK resolves to"
 	@echo "  make tauri-config the desktop's tauri -c override for this STACK"
+	@echo "  make desktop-env  the MQTT broker/topic the desktop is launched with"
 	@echo "  make render-fleet F=deploy/prod.toml   render per-node fleet configs"
 	@echo ""
 	@echo "Build:"
@@ -62,9 +63,10 @@ help:
 .PHONY: config
 config: ; @$(SH) config
 
-.PHONY: doctor up up-agents down status logs verify render paths tauri-config
+.PHONY: doctor up up-agents down status logs verify render paths tauri-config desktop-env
 paths:   ; @$(SH) paths
 tauri-config: ; @$(SH) tauri-config
+desktop-env:  ; @$(SH) desktop-env
 doctor:  ; @$(SH) doctor
 up:      ; @$(SH) up
 up-agents: ; @$(SH) up --agents

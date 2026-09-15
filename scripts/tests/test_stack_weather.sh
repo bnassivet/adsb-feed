@@ -95,5 +95,41 @@ write_config false
 sh_ stop-weather >/dev/null; rc=$?
 check "exits zero" "0" "$rc"
 
+echo "the desktop is launched on this stack's MQTT topic"
+# Regression: `make up-desktop` passed no MQTT settings, so the desktop kept a
+# topic from its own stored config (adsb/sbs/raw, from before topics carried a
+# stage), derived adsb/weather/grid from it, and sat at "waiting for the weather
+# service" while the service published to adsb/dev/weather/grid.
+write_config true
+stack_value() { # stack_value <section> <key>
+  python3 -c 'import sys,tomllib; print(tomllib.load(open(sys.argv[1],"rb"))[sys.argv[2]][sys.argv[3]])' \
+    "$CONFIG" "$1" "$2"
+}
+env_out="$(sh_ desktop-env)"
+has() { grep -qx -- "$1" <<<"$env_out" && echo yes || echo no; }
+check "feed topic"  "yes" "$(has "ADSB_MQTT_TOPIC=$(stack_value mqtt topic)")"
+check "broker host" "yes" "$(has "ADSB_MQTT_BROKER=$(stack_value mqtt host)")"
+check "broker port" "yes" "$(has "ADSB_MQTT_PORT=$(stack_value mqtt port)")"
+# Unset, the desktop derives the weather topic from the feed topic by the same
+# rule as render-config.py; exporting a copy of that rule would be a third one.
+check "no weather topic when it is derived" "no" \
+  "$(grep -q '^ADSB_MQTT_WEATHER_TOPIC=' <<<"$env_out" && echo yes || echo no)"
+# Env beats the stored setting on every launch, so exporting the source kind
+# would make Settings -> Feed Source look dead.
+check "source kind left to the app's setting" "no" \
+  "$(grep -q '^ADSB_SOURCE_KIND=' <<<"$env_out" && echo yes || echo no)"
+
+python3 - "$CONFIG" <<'PY'
+import re, sys
+path = sys.argv[1]
+text = open(path).read()
+text, n = re.subn(r'(?m)^# topic = "adsb/dev/weather/grid"$', 'topic = "adsb/test/weather/custom"', text, count=1)
+assert n == 1, "template no longer carries the commented weather topic"
+open(path, "w").write(text)
+PY
+env_out="$(sh_ desktop-env)"
+check "an explicit weather topic is passed through" "yes" \
+  "$(has "ADSB_MQTT_WEATHER_TOPIC=adsb/test/weather/custom")"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "OK"; else echo "$fails failure(s)"; exit 1; fi
