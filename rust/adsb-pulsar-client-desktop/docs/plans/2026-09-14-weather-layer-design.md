@@ -106,6 +106,39 @@ exposing only the snapshot types, so the Tauri crate can depend on it with
 Spike `leaflet-velocity` against react-leaflet / React 19 / React Compiler; fall back to a
 custom canvas particle layer.
 
+**Decision (2026-09-15): custom canvas layer, no dependency.** `leaflet-velocity` 2.1.4 is
+unmaintained since March 2023, registers itself on the global `L`, ships no types, and wants
+GRIB-JSON (north-to-south rows, separate u/v records) — a second conversion of data we already
+interpolate correctly in `lib/weather.ts`. The grid is ~190 points; the particle maths is
+~150 lines and, written as pure functions, unit-testable, which the plugin would not be.
+
+| Piece | Role |
+|---|---|
+| `lib/wind-particles.ts` | Pure. `createWindField(snapshot, level)` precomputes u/v once (typed arrays, NaN = missing) and samples bilinearly without allocating; `fieldBounds`, `intersectBounds`; `createParticles` / `stepParticles` over struct-of-arrays state; `degreesPerPixel(zoom)`, `particleCount(w, h)`, `speedBucket(kt)` |
+| `WindParticlesLayer` (`MapInner.tsx`) | Imperative, via `useMap()`: a `<canvas>` in its own pane (z 450: above tiles and density, below every marker, `pointer-events: none`), `requestAnimationFrame` loop, trails by fading the previous frame with `destination-in` |
+| `WeatherControls` | Two display toggles under "Winds aloft": **Barbs** (default on) and **Particles** (default off — it is a continuous animation, so opt in). Persisted as `adsb-weather-barbs` / `adsb-weather-particles` |
+
+Motion model:
+
+- Particles live in **geographic** coordinates, so the pure step needs no projection. Speed is
+  a constant number of **screen pixels per knot per second** at every zoom (real wind speed
+  would be invisible — 100 kt is 0.0005°/s). One pixel is `D = 360 / (256·2^zoom)` degrees of
+  longitude, and `D·cos φ` degrees of latitude on Web Mercator, so
+  `Δlon = u·k·dt·D`, `Δlat = v·k·dt·D·cos φ` — isotropic on screen.
+- A particle is **re-seeded** (and draws no segment that frame, or it would streak across the
+  map) when it ages out, leaves the visible∩grid bounds, or reaches a cell with a missing
+  corner. Ages start randomised so particles don't all respawn on the same frame.
+- `dt` is clamped (0.1 s): after a backgrounded tab resumes, particles must not teleport.
+- Pan/zoom: clear and stop on `movestart`/`zoomstart`; on `moveend`/`zoomend`/`resize`,
+  re-anchor the canvas at the container origin, resize for `devicePixelRatio`, re-seed, resume.
+- Colours: 6 speed buckets (<20, 20–40, …, ≥100 kt), one `stroke()` per bucket per frame.
+
+Out of scope: antimeridian-crossing view bounds (a receiver-centred ±300 NM grid does not reach
+it in practice), `prefers-reduced-motion` (the toggle defaults off).
+
+Particle commits (TDD): (a) `lib/wind-particles.ts`; (b) `WeatherControls` display toggles;
+(c) `WindParticlesLayer` + page wiring; (d) docs.
+
 ## Build sequence (TDD, one red-green-refactor per commit)
 
 1. Crate skeleton + snapshot + grid + budget.
