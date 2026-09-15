@@ -10,6 +10,7 @@ import {
   MAX_STEP_S,
   MIN_PARTICLES,
   particleCount,
+  projectMercator,
   sampleWind,
   speedBucket,
   stepParticles,
@@ -159,6 +160,43 @@ describe("sizing", () => {
     expect(speedBucket(99)).toBe(4);
     expect(speedBucket(100)).toBe(5);
     expect(speedBucket(250)).toBe(5);
+  });
+});
+
+describe("projectMercator", () => {
+  it("puts (0, 0) at the centre of the zoom-0 world tile", () => {
+    const out = [0, 0];
+    projectMercator(0, 0, 0, out);
+
+    expect(out[0]).toBeCloseTo(128, 9);
+    expect(out[1]).toBeCloseTo(128, 9);
+  });
+
+  it("spans 256 x 2^zoom pixels of longitude", () => {
+    const out = [0, 0];
+    projectMercator(0, 180, 0, out);
+    expect(out[0]).toBeCloseTo(256, 9);
+    projectMercator(0, -180, 1, out);
+    expect(out[0]).toBeCloseTo(0, 9);
+    projectMercator(0, 90, 2, out);
+    expect(out[0]).toBeCloseTo(768, 9);
+  });
+
+  it("stretches latitude towards the poles, symmetric about the equator", () => {
+    const north = [0, 0];
+    const south = [0, 0];
+    projectMercator(45, 0, 0, north);
+    projectMercator(-45, 0, 0, south);
+
+    expect(north[1]).toBeCloseTo(92.09, 1);
+    expect(south[1]).toBeCloseTo(256 - north[1], 9);
+  });
+
+  it("clamps latitude at Web Mercator's limit, like Leaflet", () => {
+    const out = [0, 0];
+    projectMercator(89.9, 0, 0, out);
+
+    expect(out[1]).toBeCloseTo(0, 6);
   });
 });
 

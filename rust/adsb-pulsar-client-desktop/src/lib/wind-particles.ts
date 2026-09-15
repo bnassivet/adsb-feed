@@ -160,6 +160,22 @@ export function degreesPerPixel(zoom: number): number {
   return 360 / (256 * Math.pow(2, zoom));
 }
 
+/** Latitude where the Web Mercator world is square; Leaflet clamps to it too. */
+const MAX_MERCATOR_LAT = 85.0511287798;
+
+/**
+ * Web Mercator world pixel of a position at a zoom (256 px tiles), written
+ * into `out` as `[x, y]`, y growing southwards. Matches Leaflet's EPSG:3857
+ * `map.project`, without allocating a LatLng and a Point per call -- the
+ * particle layer projects every particle on every frame.
+ */
+export function projectMercator(lat: number, lon: number, zoom: number, out: number[] | Float64Array): void {
+  const scale = 256 * Math.pow(2, zoom);
+  const phi = Math.max(-MAX_MERCATOR_LAT, Math.min(MAX_MERCATOR_LAT, lat)) * DEG;
+  out[0] = ((lon + 180) / 360) * scale;
+  out[1] = (0.5 - Math.log(Math.tan(Math.PI / 4 + phi / 2)) / (2 * Math.PI)) * scale;
+}
+
 /** How many particles a canvas of this CSS size should carry. */
 export function particleCount(widthPx: number, heightPx: number): number {
   const n = Math.round((widthPx * heightPx) / PX_PER_PARTICLE);
