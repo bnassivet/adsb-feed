@@ -120,9 +120,9 @@ describe("useCopilotTools — display control tools", () => {
     renderHook(() => useCopilotTools(config));
   });
 
-  it("registers all 36 tools", () => {
-    // 26 display/query tools + 9 simulation-scenario tools + 1 weather tool.
-    expect(registeredTools.size).toBe(36);
+  it("registers all 37 tools", () => {
+    // 26 display/query tools + 9 simulation-scenario tools + 2 weather tools.
+    expect(registeredTools.size).toBe(37);
   });
 
   describe("simulation agent tools", () => {
@@ -306,6 +306,10 @@ describe("useCopilotTools — display control tools", () => {
   });
 
   describe("setLayerVisibility", () => {
+    it("sends weather requests to setWeatherLayer, which owns that layer", () => {
+      expect(registeredTools.get("setLayerVisibility")?.description).toMatch(/setWeatherLayer/);
+    });
+
     it("sets only provided layers", async () => {
       const result = JSON.parse(
         await getHandler("setLayerVisibility")({ history: true, density: true })

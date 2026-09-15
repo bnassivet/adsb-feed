@@ -57,6 +57,7 @@ import {
   isStale,
   levelLabel,
   resolveWeatherLevel,
+  windReport,
   type WeatherAvailability,
   type WeatherLevel,
   type WeatherSnapshot,
@@ -958,7 +959,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
   useSafeFrontendTool({
     name: "setLayerVisibility",
     description:
-      "Show or hide map layers. Only provided layers are changed; omitted layers keep their current state. Available layers: history, density, simulation, imported, receiver, events.",
+      "Show or hide map layers. Only provided layers are changed; omitted layers keep their current state. Available layers: history, density, simulation, imported, receiver, events. Weather and wind are not among them: use setWeatherLayer.",
     parameters: z.object({
       history: z.boolean().optional().describe("Show history trails"),
       density: z.boolean().optional().describe("Show density heatmap"),
@@ -1196,6 +1197,95 @@ export function useCopilotTools(config: DisplayToolsConfig) {
     render: (props) =>
       createElement(DisplaySettingCard, {
         setting: "Weather Layer",
+        status: toCardStatus(props.status),
+        result: props.result,
+      }),
+  });
+
+  useSafeFrontendTool({
+    name: "getWindAloft",
+    description:
+      "Read the wind from the weather model: direction it blows FROM (degrees true) and speed (knots). For an aircraft (hexIdent or callsign) it reads at the aircraft's own altitude and adds headwindKt/crosswindKt along its track (negative headwind = tailwind, negative crosswind = from the left). Otherwise it reads at a latitude/longitude, or over the receiver when no position is given, on the level shown on the map unless level or altitudeFt is given. Read-only: changes nothing on the map.",
+    parameters: z.object({
+      hexIdent: z.string().optional().describe("ICAO hex ident or callsign of a currently tracked aircraft"),
+      latitude: z.number().optional().describe("Latitude in degrees (with longitude)"),
+      longitude: z.number().optional().describe("Longitude in degrees (with latitude)"),
+      altitudeFt: z.number().optional().describe("Pressure altitude in feet; takes precedence over level"),
+      level: z
+        .string()
+        .optional()
+        .describe("'SFC', a pressure level such as '250 hPa', or a flight level such as 'FL340'"),
+    }),
+    handler: async (args: {
+      hexIdent?: string;
+      latitude?: number;
+      longitude?: number;
+      altitudeFt?: number;
+      level?: string;
+    }) => {
+      const current = configRef.current;
+      const weather = current.weather;
+      if (!weather) return JSON.stringify({ error: "Weather is unavailable in this view." });
+      if (weather.availability === "unsupported_source") {
+        return JSON.stringify({ error: WEATHER_NEEDS_MQTT });
+      }
+      const snapshot = weather.snapshot;
+      if (!snapshot) {
+        return JSON.stringify({
+          error: "No weather snapshot has arrived yet. The weather service publishes one when it connects, then hourly.",
+        });
+      }
+
+      let level = weather.level;
+      if (args.level !== undefined) {
+        const resolved = resolveWeatherLevel(args.level, availableLevels(snapshot));
+        if ("error" in resolved) return JSON.stringify(resolved);
+        level = resolved.level;
+      }
+
+      let lat: number;
+      let lon: number;
+      let altitudeFt = args.altitudeFt;
+      let trackDeg: number | null = null;
+      let identity: { hexIdent: string; callsign: string | null } | null = null;
+
+      if (args.hexIdent) {
+        const needle = args.hexIdent.trim().toUpperCase();
+        const found = current.tracks.find(
+          (t) => t.hex_ident.toUpperCase() === needle || (t.callsign ?? "").trim().toUpperCase() === needle,
+        );
+        if (!found) {
+          return JSON.stringify({ error: `Aircraft ${args.hexIdent} is not in the current tracks.` });
+        }
+        if (found.latitude == null || found.longitude == null) {
+          return JSON.stringify({ error: `Aircraft ${args.hexIdent} has no position yet.` });
+        }
+        lat = found.latitude;
+        lon = found.longitude;
+        // An explicit level means "what if it were up there", so the
+        // aircraft's own altitude only applies when neither was asked for.
+        altitudeFt ??= args.level === undefined ? (found.altitude ?? undefined) : undefined;
+        trackDeg = found.track ?? null;
+        identity = { hexIdent: found.hex_ident, callsign: found.callsign ?? null };
+      } else if (args.latitude !== undefined && args.longitude !== undefined) {
+        lat = args.latitude;
+        lon = args.longitude;
+      } else if (current.receiverLocation) {
+        lat = current.receiverLocation.lat;
+        lon = current.receiverLocation.lng;
+      } else {
+        return JSON.stringify({
+          error: "Give an aircraft or a latitude/longitude: no receiver location is configured.",
+        });
+      }
+
+      const report = windReport(snapshot, { lat, lon, altitudeFt, level, trackDeg }, Date.now());
+      if ("error" in report) return JSON.stringify(report);
+      return JSON.stringify({ ...identity, position: { lat, lng: lon }, ...report });
+    },
+    render: (props) =>
+      createElement(DisplaySettingCard, {
+        setting: "Wind",
         status: toCardStatus(props.status),
         result: props.result,
       }),

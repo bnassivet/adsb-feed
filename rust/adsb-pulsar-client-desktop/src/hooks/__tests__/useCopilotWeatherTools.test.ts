@@ -159,3 +159,82 @@ describe("setWeatherLayer", () => {
     expect(await call("setWeatherLayer", { enabled: true })).toHaveProperty("error");
   });
 });
+
+const AIRCRAFT = {
+  hex_ident: "A1B2C3",
+  callsign: "UAL123",
+  latitude: 46.5,
+  longitude: -2.5,
+  altitude: 34_000,
+  ground_speed: 450,
+  track: 270,
+  positions: [],
+  first_seen: 0,
+  last_seen: 0,
+  message_count: 1,
+};
+
+function renderWithTracks(weather: WeatherToolsConfig | undefined, tracks: unknown[]) {
+  registeredTools.clear();
+  const config = { ...makeConfig(weather), tracks } as DisplayToolsConfig;
+  renderHook(() => useCopilotTools(config));
+}
+
+describe("getWindAloft", () => {
+  it("reads the wind an aircraft flies through, with head and crosswind on its track", async () => {
+    renderWithTracks(makeWeather(), [AIRCRAFT]);
+
+    const result = await call("getWindAloft", { hexIdent: "ual123" });
+
+    // Wind from 250 at 100 kt on a 270 track: 20 degrees off the nose, from the left.
+    expect(result).toMatchObject({
+      hexIdent: "A1B2C3",
+      callsign: "UAL123",
+      fromDeg: 250,
+      speedKt: 100,
+      altitudeFt: 34_000,
+      headwindKt: 94,
+      crosswindKt: -34,
+    });
+  });
+
+  it("reads a point on the level shown on the map by default", async () => {
+    renderWithTracks(makeWeather({ level: 850 }), []);
+
+    const result = await call("getWindAloft", { latitude: 46.5, longitude: -2.5 });
+
+    expect(result).toMatchObject({ fromDeg: 270, speedKt: 20, level: "FL050 · 850 hPa" });
+  });
+
+  it("prefers an explicit level, and an altitude over any level", async () => {
+    renderWithTracks(makeWeather({ level: 850 }), []);
+
+    expect(await call("getWindAloft", { latitude: 46.5, longitude: -2.5, level: "FL340" })).toMatchObject({
+      speedKt: 100,
+    });
+    expect(
+      await call("getWindAloft", { latitude: 46.5, longitude: -2.5, level: "FL340", altitudeFt: 0 }),
+    ).toMatchObject({ speedKt: 10, altitudeFt: 0 });
+  });
+
+  it("reads the wind over the receiver when given no position", async () => {
+    renderWithTracks(makeWeather({ level: 850 }), []);
+
+    const result = await call("getWindAloft", {});
+
+    expect(result).toMatchObject({ position: { lat: 46.5, lng: -2.5 }, speedKt: 20 });
+  });
+
+  it("explains what it cannot answer", async () => {
+    renderWithTracks(makeWeather(), [AIRCRAFT]);
+    expect(await call("getWindAloft", { hexIdent: "ZZZ999" })).toHaveProperty("error");
+    expect(await call("getWindAloft", { latitude: 10, longitude: 10 })).toHaveProperty("error");
+    expect(await call("getWindAloft", { latitude: 46.5, longitude: -2.5, level: "500" })).toHaveProperty("error");
+
+    renderWithTracks(makeWeather({ availability: "waiting", snapshot: null }), []);
+    expect((await call("getWindAloft", {})).error).toMatch(/snapshot/i);
+
+    renderWithTracks(makeWeather({ availability: "unsupported_source", snapshot: null }), []);
+    expect((await call("getWindAloft", {})).error).toMatch(/MQTT/);
+  });
+});
