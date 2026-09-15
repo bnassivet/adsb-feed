@@ -4377,9 +4377,10 @@ MQTT message**. The desktop subscribes on the connection it already has for the 
 feed, draws wind barbs for a chosen pressure level, and shows the wind each selected
 aircraft is flying through.
 
-Scope is deliberately narrow: current conditions only (no forecast slider, no history),
-wind barbs plus a pressure tooltip (no isobars), MQTT only (no HTTP API), and no agent
-tools. Animated wind particles are a separate follow-up.
+Scope is deliberately narrow: current conditions only (no forecast slider, no history) and
+wind barbs plus a pressure tooltip (no isobars). Weather data only ever travels over MQTT;
+the one HTTP surface is the service's small control API (enable/disable), see *Control and
+status*. Animated particles and chat tools came later and have their own sections below.
 
 ```mermaid
 flowchart LR
@@ -4423,9 +4424,9 @@ Geopotential height was dropped to stay inside the budget (21 variables would re
 1013.25 hPa, which the ISA formula maps straight to hPa.
 
 **Refresh loop** (`refresh.rs`). Snapshots leave through a `watch` channel holding only the
-latest one. After a success it waits the refresh interval; after a failure it retries from
-1 minute doubling to 30, never longer than the interval; after a **429** it waits at least
-a full interval, because the quota is spent. A failed fetch **never clears the channel** —
+latest one. After a success it waits the refresh interval; after a failure it waits according to
+the failure's class — a network blip, a rate limit and a rejected request each get their own
+wait (see *Retry and rate limits*). A failed fetch **never clears the channel** —
 the consumer judges staleness from `valid_time_ms`. The wait sleeps to a fixed deadline, so a
 spurious shutdown notification cannot trigger an early, quota-spending fetch.
 
@@ -4439,6 +4440,126 @@ only when a new snapshot arrives: the broker runs with `persistence false`, so a
 restart erases the retained message and only the publisher can put it back. The republish
 comes from memory and costs no API call. Client id `<source_id>-weather`, distinct from the
 feed's and the recorder's.
+
+### Retry and rate limits
+
+Open-Meteo refuses in different ways, and each needs a different wait. The provider
+classifies every failure (`ProviderError::class`) by **HTTP status first, body second**:
+Open-Meteo sends the same `{"error": true, "reason": …}` body with a 400 and a 429. Until
+this was fixed, a real 429 decoded as a plain API rejection, `is_rate_limited()` returned
+false, and a spent quota was retried like a network blip — a test using a plain-text 429
+body hid it.
+
+| Class | Cause | Next attempt (`refresh::next_delay`) |
+|-------|-------|--------------------------------------|
+| Transient | Network error, timeout, 408, 5xx, a body that is not the API's | Exponential from 1 min, capped at the refresh interval; jitter shortens it by up to half |
+| Rate limited | 429 | Until the window named in the reason rolls over: minutely 60 s; hourly the next UTC hour; daily the next UTC midnight, but at most 6 h (the reset time is undocumented); unknown `max(refresh, 30 min)`. Never before `Retry-After`; hourly, daily and unknown never before a refresh. Jitter only lengthens it, by up to 10% |
+| Rejected | Any other 4xx, or an API rejection in a 200 | A full refresh interval, reported as `rejected` with the reason |
+
+Three more rules stop retries spending the quota:
+
+- **Not-before survives restarts.** A rate-limit deadline is written to `state_path` as
+  `not_before_ms` and honoured at startup and on re-enable, so `make restart-weather` after
+  a daily 429 does not ask again straight away. Any other outcome clears it.
+- **Partial fetches resume.** A grid is fetched in chunks of 50 locations. Chunks that
+  succeeded before a failure are kept for the same model hour, and the retry requests only
+  the missing ones; a retry in a later hour fetches everything again.
+- **Requests are paced.** A token bucket (`budget::TokenBucket`) spends at most 80% of the
+  600 calls/minute limit, charging each chunk its weighted cost before it is sent. The
+  default grid (~280 calls a refresh) never waits; a 0.5° grid (~1,100) is spread over
+  about 80 s. The startup budget log also warns when one refresh exceeds the hourly limit.
+
+### Control and status
+
+The service can be paused and resumed while it runs, and it reports what it is doing. The
+design is **CQRS**: commands and status travel on different paths, and every piece of state
+has exactly one writer.
+
+```mermaid
+flowchart LR
+    cmd["make weather-enable<br/>desktop switch"] -->|"PUT /v1/enabled"| control
+
+    subgraph svc["adsb-weather-server"]
+        control["Control<br/><i>persist, desired</i>"]
+        refresh["Refresher<br/><i>reported</i>"]
+        proj["Projection<br/><i>WeatherStatus</i>"]
+        pub["Publisher"]
+        get["GET /v1/status"]
+    end
+
+    control -->|"desired"| refresh
+    control -->|"desired"| proj
+    refresh -->|"reported"| proj
+    proj --> pub
+    proj --> get
+    pub --> broker[("adsb/stage/weather/status<br/>adsb/stage/weather/availability")]
+    broker --> relay["Desktop relay<br/><i>only writer of the view</i>"] --> ui["Fetch weather switch"]
+```
+
+**Desired vs reported.** `WeatherStatus.enabled` is the operator's accepted, persisted
+setting; `state` — `idle | fetching | retrying | rate_limited | rejected | disabled` — is what
+the refresh loop is doing. A command appears in `enabled` at once and `state` follows when
+the loop acts. That gap is what the desktop shows as pending.
+
+**One writer each.** `Control` writes the desired setting: to `state_path` first, then to a
+`watch` channel, so a failed write returns 500 and changes nothing. The refresh loop writes
+the reported state. The projection joins the two and is the only writer of the status
+channel, which the publisher and `GET /v1/status` both read, so HTTP and MQTT cannot
+disagree. On the desktop, the MQTT relay is the only writer of the service view:
+`set_weather_service_enabled` returns nothing and never touches it.
+
+**Disabling** pauses fetching only. An in-flight fetch is cancelled; the last grid stays
+retained, is still republished on reconnect, and is marked stale by its age. **Re-enabling**
+never fetches before the deadline already pending — `max(now, pending, not_before)` — so
+toggling cannot buy an early fetch or skip a back-off, while a deadline that passed during
+the pause fires at once.
+
+**Topics.** Three retained siblings, all derived from the grid topic by
+`WeatherTopics::from_grid_topic`, which the service and the desktop both call:
+
+| Topic | Payload | Published |
+|-------|---------|-----------|
+| `…/weather/grid` | `WeatherSnapshot` | New snapshot; every ConnAck |
+| `…/weather/status` | `WeatherStatus`, versioned JSON | On change; every ConnAck |
+| `…/weather/availability` | `online` / `offline` | `online` on every ConnAck (birth); `offline` as the retained last will, and sent explicitly before a graceful disconnect |
+
+Liveness is kept off the status topic on purpose. A last will is fixed at CONNECT, so a will
+carrying a full status would overwrite the real one with fields frozen at connect time. With
+the split, a crash leaves `offline` beside the last real status: "offline, was paused".
+
+**HTTP API** (`api.rs` contract, `api_server.rs`, `api_client.rs`):
+
+| Route | Answers |
+|-------|---------|
+| `GET /v1/status` | 200, `WeatherStatus` |
+| `PUT /v1/enabled` `{"enabled": bool}` | 202 `{"enabled": bool}`: accepted and persisted, not yet acted on. 400 for a bad body; 500 `{"error"}` when the setting cannot be saved |
+| `GET /v1/openapi.json` | The OpenAPI document for the routes above |
+| `GET /swagger-ui/` | Swagger UI over that document (feature `swagger-ui`, part of the default `cli` build) |
+
+The OpenAPI document is **generated, not written**. utoipa derives the schemas from the
+contract types — behind an `openapi` feature, so the desktop's `client` build never compiles
+it — and utoipa-axum's `OpenApiRouter` registers each route from the same `#[utoipa::path]`
+attribute that documents it, so routing and documentation cannot diverge. `tests/openapi.rs`
+pins what that does not: the document lists exactly the contract's routes, every documented
+operation is routed, and schema field names and enum strings equal what serde writes. The
+Swagger UI assets are `vendored`, so building needs no network (offline and arm64 Docker
+builds).
+
+Commands use HTTP rather than an MQTT command topic: the caller gets a synchronous error, a
+retained command cannot replay on every reconnect, and the desktop stays subscribe-only on
+the broker. The API has **no authentication**. It binds `127.0.0.1` by default
+(`[weather] http_bind`; `http_port = 8789`, `0` disables it) and logs a warning when bound
+anywhere else.
+
+**Desktop.** The *Fetch weather* switch sits under *Winds aloft*, separate from drawing the
+layer. The command goes through Rust (`set_weather_service_enabled` → `api_client`), so the
+webview CSP stays closed. The URL is `ADSB_WEATHER_API_URL`, which `make up-desktop` and
+`make client` export, else the broker's host on port 8789; a desktop on another machine also
+needs `http_bind = "0.0.0.0"` on the node. `useWeatherSnapshot` keeps the requested setting
+pending until the status topic reports it, and gives up after 10 s with *No confirmation
+from the weather service*.
+
+Operators: `make weather-status | weather-enable | weather-disable`.
 
 ### The 10 KiB trap
 
@@ -4456,8 +4577,9 @@ drops below the publisher's.
 ### Desktop: a second topic on the live connection
 
 `MqttSource::with_aux_topic` adds a subscription on the existing connection and hands each
-payload over **whole**, through a `watch` channel. `route_publish` checks the SBS topic
-first, the aux topic second and ignores anything else, so the SBS path is byte-for-byte
+payload over **whole**, through one `watch` channel per topic — the grid, the service
+status and its availability each get their own. `route_publish` checks the SBS topic
+first, then the aux topics, and ignores anything else, so the SBS path is byte-for-byte
 unchanged and a JSON document can never reach the line splitter. An aux topic equal to the
 SBS topic stays SBS and is not subscribed twice. `Connected` status follows the SBS
 subscription only.
@@ -4484,12 +4606,12 @@ returns `available | waiting | unsupported_source`.
 
 | Piece | Role |
 |-------|------|
-| `lib/weather.ts` | Types, ISA pressure altitude, interpolation, components, barb parts, staleness |
+| `lib/weather.ts` | Types, ISA pressure altitude, interpolation, components, barb parts, staleness; the service status line and switch state |
 | `lib/wind-barb.ts` | SVG barb geometry, unit-tested because `MapInner` is not |
 | `lib/aircraft-wind.ts` | Wind and components for a tracked aircraft |
 | `lib/wind-format.ts` | `070° / 20 kt`, `85 kt headwind`, `49 kt from the left` |
-| `hooks/useWeatherSnapshot.ts` | Hydrate, `adsb:weather`, re-check availability on `adsb:status` |
-| `components/WeatherControls.tsx` | Toggle, level picker, Barbs / Particles display toggles, validity, stale badge, credit |
+| `hooks/useWeatherSnapshot.ts` | Hydrate, `adsb:weather`, re-check availability on `adsb:status`; the service view from `adsb:weather-service`, and the pending enable/disable request |
+| `components/WeatherControls.tsx` | Toggle, level picker, Barbs / Particles display toggles, validity, stale badge, credit; the *Fetch weather* switch and service status |
 | `MapInner` `WeatherBarbsLayer` | One barb per grid point, MSL pressure tooltip |
 | `lib/wind-particles.ts` | Field sampler, particle simulation, Mercator projection — pure, unit-tested |
 | `MapInner` `WindParticlesLayer` | Canvas particle animation for the selected level |

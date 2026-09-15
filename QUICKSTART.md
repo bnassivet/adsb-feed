@@ -242,17 +242,37 @@ forever — its log line `Subscribed to MQTT topic` shows which. Then press Star
 tick **Winds aloft** and pick a level. **Barbs** and **Particles** switch the two
 displays independently; particles are off by default.
 
+**Pausing the service.** Fetching can be paused without stopping anything, to
+save the Open-Meteo quota for instance. The last grid stays on the map (badged
+stale as it ages), and a pause survives restarts.
+
+```bash
+make weather-status      # what it is doing: up to date, retrying, rate limited, paused
+make weather-disable     # pause fetching; make weather-enable resumes it
+```
+
+The desktop's **Fetch weather** switch, under **Winds aloft**, does the same and
+shows the service's status line; it settles only once the service confirms. Both
+use the service's control API on `127.0.0.1:8789` (`[weather] http_port`),
+browsable at `http://127.0.0.1:8789/swagger-ui/` (OpenAPI document:
+`/v1/openapi.json`). A
+desktop on another machine needs `http_bind = "0.0.0.0"` in that node's
+`[weather]` — the API has no authentication, so only on a trusted LAN.
+
 Check the bus without the app:
 
 ```bash
 docker exec adsb-mqtt mosquitto_sub -t adsb/dev/weather/grid -C 1 | head -c 300
+docker exec adsb-mqtt mosquitto_sub -t 'adsb/dev/weather/+' -v -C 3 | cut -c 1-200   # grid, status, availability
 ```
 
 The snapshot is **retained**, so a subscriber that arrives later gets it at once,
 and it is republished whenever the broker restarts. The free tier is
-non-commercial and capped at 10,000 calls/day, counted per grid point: shrinking
-`spacing_deg` or `refresh_minutes` raises the count fast, and the service warns
-above 8,000. The last good grid is kept in `.run/weather-cache.json`, and the
+non-commercial and capped at 10,000 calls/day, 5,000/hour and 600/minute,
+counted per grid point: shrinking `spacing_deg` or `refresh_minutes` raises the
+count fast, and the service warns above 8,000 a day. It paces its requests under
+the per-minute limit, and when it does hit a limit it waits for that limit's
+window to pass instead of retrying into it — `make weather-status` says which. The last good grid is kept in `.run/weather-cache.json`, and the
 layer is badged **stale** once it is more than three hours old.
 
 ## Where things are

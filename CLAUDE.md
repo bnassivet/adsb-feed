@@ -56,6 +56,15 @@ its live-feed connection, so weather needs `source_kind = mqtt`. Any client that
 subscribes to it needs a packet limit above rumqttc's 10 KiB default, or the
 retained message becomes a reconnect storm. See DESIGN.md → Weather Layer.
 
+Beside the grid, the weather service publishes retained `status` and
+`availability` (`online`, or `offline` as its last will), all three derived by
+`WeatherTopics::from_grid_topic`, which both ends call. It takes enable/disable
+over HTTP (`[weather] http_port`, loopback by default, no auth), documented by a
+generated OpenAPI document at `/v1/openapi.json` with Swagger UI at `/swagger-ui/`. Commands never
+write status: the desktop's *Fetch weather* switch sends `PUT /v1/enabled` and
+waits for the status topic to confirm. `make weather-status | weather-enable |
+weather-disable`. DESIGN.md → Control and status.
+
 The desktop therefore has two independently configured planes: `source_kind`
 (`socket` | `mqtt`) for live aircraft, and the storage mode (embedded | remote)
 for history. Env wins every launch for the first, first launch only for the
