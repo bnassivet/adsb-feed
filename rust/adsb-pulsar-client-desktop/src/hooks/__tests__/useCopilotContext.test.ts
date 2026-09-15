@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { useCopilotContext, type CopilotContextConfig } from "../useCopilotContext";
+import type { WeatherSnapshot } from "@/lib/weather";
 
 // Capture all readables from useAgentContext calls
 const registeredReadables = new Map<string, unknown>();
@@ -118,5 +119,83 @@ describe("useCopilotContext", () => {
     ) as { selected: string[]; lastSelected: string | null };
     expect(v.selected).toEqual([]);
     expect(v.lastSelected).toBeNull();
+  });
+
+  describe("weather layer", () => {
+    const WEATHER = "Weather layer (winds aloft): availability, what it draws, and how current the data is";
+
+    function snapshot(validTimeMs: number): WeatherSnapshot {
+      return {
+        version: 1,
+        source: "open-meteo",
+        attribution: "Weather data by Open-Meteo.com (CC BY 4.0)",
+        model: "best_match",
+        fetched_at_ms: validTimeMs,
+        valid_time_ms: validTimeMs,
+        grid: { lat0: 46, lon0: -3, dlat: 1, dlon: 1, nlat: 1, nlon: 1 },
+        surface: { wind_dir_deg: [270], wind_speed_kt: [10], mslp_hpa: [1013] },
+        levels: { "250": { wind_dir_deg: [250], wind_speed_kt: [100] } },
+      };
+    }
+
+    function weatherContext(weather: CopilotContextConfig["weather"]) {
+      registeredReadables.clear();
+      renderHook(() => useCopilotContext(makeConfig({ weather })));
+      return registeredReadables.get(WEATHER);
+    }
+
+    it("describes what the layer draws and how current it is", () => {
+      const value = weatherContext({
+        snapshot: snapshot(Date.now()),
+        availability: "available",
+        show: true,
+        level: 250,
+        showBarbs: true,
+        showParticles: false,
+        nowMs: Date.now(),
+      });
+
+      expect(value).toMatchObject({
+        availability: "available",
+        shown: true,
+        level: "FL340 · 250 hPa",
+        barbs: true,
+        particles: false,
+        stale: false,
+      });
+      expect((value as { validity: string }).validity).toMatch(/valid/);
+    });
+
+    it("says it is waiting before the first snapshot", () => {
+      const value = weatherContext({
+        snapshot: null,
+        availability: "waiting",
+        show: false,
+        level: "surface",
+        showBarbs: true,
+        showParticles: false,
+        nowMs: Date.now(),
+      });
+
+      expect((value as { validity: string }).validity).toMatch(/waiting/i);
+    });
+
+    it("explains an unsupported live source instead of describing the layer", () => {
+      const value = weatherContext({
+        snapshot: null,
+        availability: "unsupported_source",
+        show: true,
+        level: 250,
+        showBarbs: true,
+        showParticles: true,
+        nowMs: Date.now(),
+      });
+
+      expect(value).toMatch(/MQTT/);
+    });
+
+    it("is registered even when the page provides no weather", () => {
+      expect(weatherContext(undefined)).toBe("unavailable in this view");
+    });
   });
 });

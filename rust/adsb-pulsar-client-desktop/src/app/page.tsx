@@ -511,6 +511,18 @@ export default function Dashboard() {
     activeFilters,
     setActiveFilters,
     flyTo,
+    weather: {
+      snapshot: weather.snapshot,
+      availability: weather.availability,
+      show: showWeather,
+      level: weatherLevel,
+      showBarbs: showWeatherBarbs,
+      showParticles: showWeatherParticles,
+      setShowWeather,
+      setWeatherLevel,
+      setShowWeatherBarbs,
+      setShowWeatherParticles,
+    },
   });
 
   const metrics = useMetrics();
@@ -725,6 +737,15 @@ export default function Dashboard() {
     receiverLocation: simReceiverLocation,
     agentSimulatedCount: agentSimulatedTracks.length,
     storageStatus,
+    weather: {
+      snapshot: weather.snapshot,
+      availability: weather.availability,
+      show: showWeather,
+      level: weatherLevel,
+      showBarbs: showWeatherBarbs,
+      showParticles: showWeatherParticles,
+      nowMs: weatherClockMs,
+    },
   });
 
   const visibleHistory = useMemo(() => {

@@ -16,6 +16,46 @@ import type {
   Filters,
   StorageAvailability,
 } from "@/lib/types";
+import {
+  describeValidity,
+  isStale,
+  levelLabel,
+  type WeatherAvailability,
+  type WeatherLevel,
+  type WeatherSnapshot,
+} from "@/lib/weather";
+
+/** The weather layer as the agent should see it. */
+export interface CopilotWeatherContext {
+  snapshot: WeatherSnapshot | null;
+  availability: WeatherAvailability;
+  show: boolean;
+  level: WeatherLevel;
+  showBarbs: boolean;
+  showParticles: boolean;
+  /** The page's weather clock: reading Date.now() here would be impure. */
+  nowMs: number;
+}
+
+function weatherValue(weather: CopilotWeatherContext | undefined) {
+  if (!weather) return "unavailable in this view";
+  const { nowMs } = weather;
+  if (weather.availability === "unsupported_source") {
+    return "unsupported: weather arrives over the MQTT live source, and the app is reading dump1090 directly";
+  }
+  const { snapshot } = weather;
+  return {
+    availability: weather.availability,
+    shown: weather.show,
+    level: levelLabel(weather.level),
+    barbs: weather.showBarbs,
+    particles: weather.showParticles,
+    validity: snapshot
+      ? describeValidity(snapshot.valid_time_ms, nowMs)
+      : "waiting for the first weather snapshot",
+    stale: snapshot ? isStale(snapshot, nowMs) : false,
+  };
+}
 
 export interface CopilotContextConfig {
   connectionStatus: string;
@@ -37,6 +77,8 @@ export interface CopilotContextConfig {
   receiverLocation: { lat: number; lng: number } | null;
   /** How many agent-generated simulated aircraft are currently playing. */
   agentSimulatedCount: number;
+  /** The weather layer. Absent when the page does not provide one. */
+  weather?: CopilotWeatherContext;
 }
 
 export function useCopilotContext(config: CopilotContextConfig) {
@@ -105,6 +147,12 @@ export function useCopilotContext(config: CopilotContextConfig) {
   useAgentContext({
     description: "Number of agent-generated simulated aircraft currently on the map",
     value: config.agentSimulatedCount,
+  });
+
+  useAgentContext({
+    description:
+      "Weather layer (winds aloft): availability, what it draws, and how current the data is",
+    value: weatherValue(config.weather),
   });
 
 }
