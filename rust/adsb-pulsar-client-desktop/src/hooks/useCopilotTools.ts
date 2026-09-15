@@ -51,6 +51,46 @@ import type {
   ScenarioTrack,
 } from "@/lib/types";
 import { trackKey } from "@/lib/types";
+import {
+  availableLevels,
+  describeValidity,
+  isStale,
+  levelLabel,
+  resolveWeatherLevel,
+  type WeatherAvailability,
+  type WeatherLevel,
+  type WeatherSnapshot,
+} from "@/lib/weather";
+
+/**
+ * The weather layer's state and setters, supplied by page.tsx.
+ *
+ * Optional on `DisplayToolsConfig` for the same reason as `scenarios`: the
+ * weather tools report weather as unavailable rather than throwing.
+ */
+export interface WeatherToolsConfig {
+  snapshot: WeatherSnapshot | null;
+  availability: WeatherAvailability;
+  show: boolean;
+  level: WeatherLevel;
+  showBarbs: boolean;
+  showParticles: boolean;
+  setShowWeather: (v: boolean) => void;
+  setWeatherLevel: (v: WeatherLevel) => void;
+  setShowWeatherBarbs: (v: boolean) => void;
+  setShowWeatherParticles: (v: boolean) => void;
+}
+
+const WEATHER_NEEDS_MQTT =
+  "Weather is not available: it arrives over the MQTT live source, and the app is reading " +
+  "dump1090 directly. Switch Settings → Connection → Feed Source to MQTT subscription.";
+
+/** How current the held snapshot is, as the chat should read it out. */
+function weatherValidity(snapshot: WeatherSnapshot | null, nowMs: number): string {
+  if (!snapshot) return "waiting for the first weather snapshot";
+  const validity = describeValidity(snapshot.valid_time_ms, nowMs);
+  return isStale(snapshot, nowMs) ? `${validity} (stale)` : validity;
+}
 
 /**
  * The scenario CRUD surface, supplied by `useScenarios`.
@@ -135,6 +175,8 @@ export interface DisplayToolsConfig {
   flyTo: (lat: number, lng: number, zoom: number) => void;
   /** Saved simulation scenarios. Absent when the scenario layer is not mounted. */
   scenarios?: ScenarioToolsConfig;
+  /** The weather layer. Absent when the page does not provide one. */
+  weather?: WeatherToolsConfig;
 }
 
 /** Map CopilotKit ToolCallStatus strings to our card status prop. */
@@ -1091,6 +1133,69 @@ export function useCopilotTools(config: DisplayToolsConfig) {
     render: (props) =>
       createElement(DisplaySettingCard, {
         setting: "Event Filter",
+        status: toCardStatus(props.status),
+        result: props.result,
+      }),
+  });
+
+  // --- Weather tools ---
+  //
+  // The snapshot lives in the frontend (Tauri state -> useWeatherSnapshot);
+  // the agent's tool server has no weather, so these are client tools.
+
+  useSafeFrontendTool({
+    name: "setWeatherLayer",
+    description:
+      "Show or hide the weather layer (winds aloft from a weather model) and choose what it draws: the level, wind barbs, and animated wind particles coloured by speed. Only provided fields change. This is the only tool that controls weather or wind on the map; to read wind values use getWindAloft.",
+    parameters: z.object({
+      enabled: z.boolean().optional().describe("Show (true) or hide (false) the weather layer"),
+      level: z
+        .string()
+        .optional()
+        .describe(
+          "'SFC' for the surface, a pressure level such as '250 hPa', or a flight level such as 'FL340' (mapped to the nearest level available)",
+        ),
+      barbs: z.boolean().optional().describe("Draw wind barbs at the grid points"),
+      particles: z.boolean().optional().describe("Animate particles that move with the wind"),
+    }),
+    handler: async (args: { enabled?: boolean; level?: string; barbs?: boolean; particles?: boolean }) => {
+      const weather = configRef.current.weather;
+      if (!weather) return JSON.stringify({ error: "Weather is unavailable in this view." });
+      if (weather.availability === "unsupported_source") {
+        return JSON.stringify({ error: WEATHER_NEEDS_MQTT });
+      }
+
+      // Validate everything before applying anything: a bad level must not
+      // leave the layer half-changed.
+      let level = weather.level;
+      if (args.level !== undefined) {
+        const levels = weather.snapshot ? availableLevels(weather.snapshot) : [];
+        const resolved = resolveWeatherLevel(args.level, levels);
+        if ("error" in resolved) return JSON.stringify(resolved);
+        level = resolved.level;
+      }
+
+      const barbs = args.barbs ?? weather.showBarbs;
+      const particles = args.particles ?? weather.showParticles;
+      // Asking for barbs or particles with the layer off would visibly do nothing.
+      const shown = args.enabled ?? (args.barbs === true || args.particles === true ? true : weather.show);
+
+      if (args.enabled !== undefined || shown !== weather.show) weather.setShowWeather(shown);
+      if (args.level !== undefined) weather.setWeatherLevel(level);
+      if (args.barbs !== undefined) weather.setShowWeatherBarbs(barbs);
+      if (args.particles !== undefined) weather.setShowWeatherParticles(particles);
+
+      return JSON.stringify({
+        shown,
+        level: levelLabel(level),
+        barbs,
+        particles,
+        validity: weatherValidity(weather.snapshot, Date.now()),
+      });
+    },
+    render: (props) =>
+      createElement(DisplaySettingCard, {
+        setting: "Weather Layer",
         status: toCardStatus(props.status),
         result: props.result,
       }),
