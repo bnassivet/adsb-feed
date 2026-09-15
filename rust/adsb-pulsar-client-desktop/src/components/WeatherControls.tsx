@@ -9,6 +9,12 @@ export interface WeatherControlsProps {
   /** The level whose winds the layer draws. */
   level: WeatherLevel;
   onLevelChange: (level: WeatherLevel) => void;
+  /** Wind barbs at the grid points. */
+  showBarbs: boolean;
+  onToggleBarbs: () => void;
+  /** Animated particles following the wind. */
+  showParticles: boolean;
+  onToggleParticles: () => void;
   /** Pressure levels in the held snapshot, lowest altitude first. */
   levels: number[];
   availability: WeatherAvailability;
@@ -26,6 +32,10 @@ export function WeatherControls({
   onToggle,
   level,
   onLevelChange,
+  showBarbs,
+  onToggleBarbs,
+  showParticles,
+  onToggleParticles,
   levels,
   availability,
   validTimeMs,
@@ -79,6 +89,22 @@ export function WeatherControls({
                 </button>
               );
             })}
+          </div>
+
+          <div className="flex gap-3">
+            <label className="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer select-none">
+              <input type="checkbox" checked={showBarbs} onChange={onToggleBarbs} className="accent-sky-500" />
+              <span>Barbs</span>
+            </label>
+            <label className="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showParticles}
+                onChange={onToggleParticles}
+                className="accent-sky-500"
+              />
+              <span>Particles</span>
+            </label>
           </div>
 
           {validTimeMs != null && (

@@ -89,6 +89,9 @@ export default function Dashboard() {
   // Weather layer: winds aloft from the MQTT weather topic.
   const [showWeather, setShowWeather] = useLocalStorage<boolean>("adsb-show-weather", false);
   const [weatherLevel, setWeatherLevel] = useLocalStorage<WeatherLevel>("adsb-weather-level", 250);
+  // Particles are a continuous animation, so they are opt-in.
+  const [showWeatherBarbs, setShowWeatherBarbs] = useLocalStorage<boolean>("adsb-weather-barbs", true);
+  const [showWeatherParticles, setShowWeatherParticles] = useLocalStorage<boolean>("adsb-weather-particles", false);
   const weather = useWeatherSnapshot();
   // Minute-resolution clock for staleness: the snapshot updates hourly, so
   // re-rendering the page every second for this would be wasted work.
@@ -1310,6 +1313,10 @@ export default function Dashboard() {
             onToggle: () => setShowWeather((prev: boolean) => !prev),
             level: weatherLevel,
             onLevelChange: setWeatherLevel,
+            showBarbs: showWeatherBarbs,
+            onToggleBarbs: () => setShowWeatherBarbs((prev: boolean) => !prev),
+            showParticles: showWeatherParticles,
+            onToggleParticles: () => setShowWeatherParticles((prev: boolean) => !prev),
             levels: weather.snapshot ? availableLevels(weather.snapshot) : [],
             availability: weather.availability,
             validTimeMs: weather.snapshot?.valid_time_ms ?? null,

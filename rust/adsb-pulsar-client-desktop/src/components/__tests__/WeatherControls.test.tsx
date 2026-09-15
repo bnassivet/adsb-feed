@@ -11,6 +11,10 @@ function props(overrides: Partial<WeatherControlsProps> = {}): WeatherControlsPr
     onToggle: vi.fn(),
     level: 250,
     onLevelChange: vi.fn(),
+    showBarbs: true,
+    onToggleBarbs: vi.fn(),
+    showParticles: false,
+    onToggleParticles: vi.fn(),
     levels: [850, 700, 500, 300, 250, 200],
     availability: "available",
     validTimeMs: 0,
@@ -100,5 +104,37 @@ describe("WeatherControls", () => {
     render(<WeatherControls {...props()} />);
 
     expect(screen.getByText(/open-meteo/i)).toBeInTheDocument();
+  });
+
+  it("offers barbs and particles as independent display toggles", () => {
+    render(<WeatherControls {...props({ showBarbs: true, showParticles: false })} />);
+
+    expect(screen.getByRole("checkbox", { name: /barbs/i })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /particles/i })).not.toBeChecked();
+  });
+
+  it("reports a barbs toggle", async () => {
+    const onToggleBarbs = vi.fn();
+    render(<WeatherControls {...props({ onToggleBarbs })} />);
+
+    await userEvent.setup().click(screen.getByRole("checkbox", { name: /barbs/i }));
+
+    expect(onToggleBarbs).toHaveBeenCalledOnce();
+  });
+
+  it("reports a particles toggle", async () => {
+    const onToggleParticles = vi.fn();
+    render(<WeatherControls {...props({ onToggleParticles })} />);
+
+    await userEvent.setup().click(screen.getByRole("checkbox", { name: /particles/i }));
+
+    expect(onToggleParticles).toHaveBeenCalledOnce();
+  });
+
+  it("hides the display toggles while the layer is off", () => {
+    render(<WeatherControls {...props({ show: false })} />);
+
+    expect(screen.queryByRole("checkbox", { name: /barbs/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /particles/i })).not.toBeInTheDocument();
   });
 });
