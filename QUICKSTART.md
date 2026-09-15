@@ -233,9 +233,12 @@ make restart-weather     # after editing [weather]; down-weather / up-weather ru
 
 **The desktop must be on the MQTT source** — weather travels on the broker
 connection, so a socket session has no weather layer (the controls say so).
-`make up-desktop` does not change the source; launch with
-`ADSB_SOURCE_KIND=mqtt scripts/stack.sh desktop`, or set **Settings → Connection
-→ Feed Source** to MQTT. Then press Start, open **Weather** in the left panel,
+`make up-desktop` passes this stack's broker and topic (`make desktop-env`) but
+does not change the source; launch with `ADSB_SOURCE_KIND=mqtt scripts/stack.sh
+desktop`, or set **Settings → Connection → Feed Source** to MQTT. A desktop
+launched *without* `make` keeps the topic it stored last; if that predates the
+stage in topic names it subscribes to `adsb/weather/grid` and the layer waits
+forever — its log line `Subscribed to MQTT topic` shows which. Then press Start, open **Weather** in the left panel,
 tick **Winds aloft** and pick a level. **Barbs** and **Particles** switch the two
 displays independently; particles are off by default.
 

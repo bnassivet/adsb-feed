@@ -129,10 +129,20 @@ They are configured separately and can disagree. An empty live map with a
 working DB History panel means the history plane is pointed at the remote node
 and the live plane is not.
 
-`make up-desktop` points neither plane anywhere. Locally the desktop reads
+`make up-desktop` does not choose the source. Locally the desktop reads
 dump1090 on `:30003` directly — the same socket the feed client uses, one hop
 less for the same data. The MQTT path is still exercised, by the recorder, which
-is what `make verify` proves. To put the desktop itself on the broker:
+is what `make verify` proves.
+
+It **does** pass this stack's broker, port and topic (`make desktop-env` shows
+them), because the app otherwise keeps whatever topic it stored last. A store
+from before topics carried a stage subscribes to `adsb/sbs/raw` and derives
+`adsb/weather/grid` from it — the map stays empty and the weather layer says
+*waiting for the weather service* while the service publishes happily to
+`adsb/dev/weather/grid`. If a desktop launched by hand shows that, check its
+log for `Subscribed to MQTT topic`.
+
+To put the desktop itself on the broker:
 
 ```bash
 cd rust/adsb-pulsar-client-desktop

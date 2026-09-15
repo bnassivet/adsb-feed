@@ -4606,6 +4606,13 @@ stays the one switch for spending quota, and says `make build` when the binary i
 a broker that is not up yet is only a note, since the service retries and the snapshot is
 retained. `scripts/tests/test_stack_weather.sh` covers all of it against a fake binary.
 
+`make up-desktop` exports the stack's `ADSB_MQTT_BROKER` / `_PORT` / `_TOPIC` (and an explicit
+weather topic only), which the app applies over its stored config on every launch. It used to
+export none: a desktop whose store predated staged topics subscribed to `adsb/sbs/raw`, derived
+`adsb/weather/grid`, and showed "waiting for the weather service" while the service published to
+`adsb/dev/weather/grid`. The source kind is still not exported — that would override Settings →
+Feed Source on every launch.
+
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `enabled` | `false` | `make up` starts the service. Off by default: needs internet and spends a third-party quota |
