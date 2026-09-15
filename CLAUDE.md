@@ -47,6 +47,14 @@ is an optional *extra* fan-out leg for the Spark/Delta pipeline
 (`pulsar.enabled = true`), never a replacement — the crate name predates the
 split. History travels separately, over Quack (DuckDB attached across HTTP).
 
+A second topic rides the same bus. The weather service (`[weather]`, off by
+default) publishes one **retained** snapshot to `adsb/<stage>/weather/grid`,
+derived from the feed topic by the same rule in `render-config.py` and
+`Config::weather_topic` — change both or neither. The desktop subscribes to it on
+its live-feed connection, so weather needs `source_kind = mqtt`. Any client that
+subscribes to it needs a packet limit above rumqttc's 10 KiB default, or the
+retained message becomes a reconnect storm. See DESIGN.md → Weather Layer.
+
 The desktop therefore has two independently configured planes: `source_kind`
 (`socket` | `mqtt`) for live aircraft, and the storage mode (embedded | remote)
 for history. Env wins every launch for the first, first launch only for the

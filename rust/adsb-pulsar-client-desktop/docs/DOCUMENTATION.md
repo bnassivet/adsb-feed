@@ -584,6 +584,70 @@ revealed every other hidden live aircraft.
 
 ---
 
+### Pattern 10: Stable Leaflet Icons in a Busy Map
+
+**Use case**: many markers whose look changes rarely, on a map that re-renders often —
+`MapInner` re-renders about twice a second with live traffic.
+
+```typescript
+// MapInner.tsx — WeatherBarbsLayer
+const barbs = useMemo(
+  () => gridPoints(snapshot).map((p) => ({
+    ...p,
+    icon: L.divIcon({ html: windBarbSvg(windAt(p), color, 32), className: "" }),
+  })),
+  [snapshot, level, color],   // NOT every render
+);
+return barbs.map((b) => <Marker key={b.key} position={[b.lat, b.lon]} icon={b.icon} />);
+```
+
+**The trap**: react-leaflet calls `setIcon` whenever the `icon` prop changes *identity*,
+and `L.divIcon(...)` inline in render is a new object every time. With ~190 weather barbs
+that is ~380 DOM rebuilds a second for data that changes hourly — invisible in tests,
+expensive on a Pi-class machine.
+
+**Rules**:
+- Build icons in a `useMemo` keyed on what the glyph actually depends on.
+- Keep the glyph itself (`windBarbSvg`) a pure function in `src/lib/`, so the geometry is
+  tested even though `MapInner` is not.
+- Credits for an overlay go on `map.attributionControl` (add on mount, remove on
+  unmount). A tile layer's `attribution` is fixed at creation; changing it means
+  remounting — and reloading — every tile.
+
+---
+
+### Pattern 11: Hydrate-then-Subscribe with Race-Safe Derived State
+
+**Use case**: a hook that needs a value the backend may already hold *and* every later
+update — here `useWeatherSnapshot`: `invoke` on mount, then `adsb:weather` events.
+
+```typescript
+useEffect(() => {
+  getWeatherSnapshot()
+    .then((held) => { if (held) setSnapshot((current) => current ?? held); })
+    .catch(() => {});
+  getWeatherAvailability().then(setReported).catch(() => {});
+}, []);
+useTauriEvent<WeatherSnapshot>("adsb:weather", setSnapshot);
+
+// Derived, not stored: the two answers and the event stream arrive in any order.
+const availability = snapshot && reported === "waiting" ? "available" : reported;
+```
+
+**Why the functional update**: the mount-time answer can land *after* an event already
+delivered something newer. `current ?? held` only fills an empty slot, so a slow hydrate
+never overwrites fresher data.
+
+**Why derive availability**: storing it means whichever response arrives last wins, so a
+late `"waiting"` would label a snapshot that is already on the map. Deriving during
+render makes the order irrelevant. Upgrade only the state the data actually proves —
+`"unsupported_source"` is never upgraded by a snapshot left over from an earlier session.
+
+**Test it with the out-of-order case**: mock `"waiting"` alongside a held snapshot and
+assert `"available"`. The happy-path test cannot fail on this bug.
+
+---
+
 ### Pattern 7: Agent Tool Registration (AG-UI)
 
 When adding a new capability the AI assistant can use, the **first decision is which

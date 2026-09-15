@@ -4362,6 +4362,207 @@ See [`QUICKSTART.md`](../../../QUICKSTART.md) for the three supported topologies
 
 ---
 
+## Weather Layer
+
+### Overview
+
+The map showed traffic but not the air it flies through. An aircraft at FL340 can ride a
+150 kt jet stream while the surface is calm, and SBS-1 carries only ground speed and track
+— no airspeed, no heading — so wind **cannot be derived from our own feed**. It has to
+come from a weather model.
+
+`adsb-weather-server` fetches gridded winds aloft and mean-sea-level pressure around the
+receiver from [Open-Meteo](https://open-meteo.com) and publishes them as **one retained
+MQTT message**. The desktop subscribes on the connection it already has for the live
+feed, draws wind barbs for a chosen pressure level, and shows the wind each selected
+aircraft is flying through.
+
+Scope is deliberately narrow: current conditions only (no forecast slider, no history),
+wind barbs plus a pressure tooltip (no isobars), MQTT only (no HTTP API), and no agent
+tools. Animated wind particles are a separate follow-up.
+
+```mermaid
+flowchart LR
+    om["Open-Meteo<br/><i>hourly, per grid point</i>"]
+
+    subgraph svc["adsb-weather-server"]
+        refresh["Refresher<br/><i>schedule, retry, cache</i>"]
+        pub["Publisher<br/><i>retained, QoS 1</i>"]
+    end
+
+    broker[("Mosquitto<br/><i>adsb/stage/weather/grid</i>")]
+
+    subgraph desk["Desktop"]
+        src["MqttSource<br/><i>aux topic</i>"]
+        relay["weather.rs<br/><i>validate, hold last good</i>"]
+        ui["Map barbs, controls,<br/>aircraft wind row"]
+    end
+
+    om -->|"HTTPS"| refresh --> pub --> broker --> src --> relay -->|"adsb:weather"| ui
+```
+
+### The service
+
+**Grid.** A regular lat/lon grid centred on `[receiver]`, the centre snapped to a multiple
+of the spacing so a slightly edited receiver position keeps the same points. Longitude
+spacing widens by 1/cos(latitude): at 47°N, ±300 NM at 1° is 11 rows × 17 columns =
+**187 points**. Rows are clipped at the poles, columns wrap at the antimeridian.
+
+**Open-Meteo facts the design rests on:**
+
+| Fact | Consequence |
+|------|-------------|
+| Pressure-level variables exist only under `hourly=`, not `current=` | Request `past_hours=1&forecast_hours=2`, pick the hour nearest now — a short forecast in the second half of each hour |
+| Several locations come back as a JSON array; one location is a bare object; a rejection is `{"error":true,"reason":…}` | An untagged enum with the error variant **first**, so the API's reason survives |
+| Free tier: 10,000 calls/day, non-commercial, CC BY 4.0 | Budget computed and logged at startup; attribution shown on the map |
+| Each location counts as a call; more than 10 variables costs fractionally more | 187 points × 15 variables (1.5 calls) × 24 = **~6,732 calls/day** |
+| Default `cell_selection` is `land` | `nearest`, or a grid point over the Bay of Biscay is moved ashore |
+
+Geopotential height was dropped to stay inside the budget (21 variables would reach
+~8,300 calls/day). It is not needed: SBS-1 altitude is a *pressure* altitude referenced to
+1013.25 hPa, which the ISA formula maps straight to hPa.
+
+**Refresh loop** (`refresh.rs`). Snapshots leave through a `watch` channel holding only the
+latest one. After a success it waits the refresh interval; after a failure it retries from
+1 minute doubling to 30, never longer than the interval; after a **429** it waits at least
+a full interval, because the quota is spent. A failed fetch **never clears the channel** —
+the consumer judges staleness from `valid_time_ms`. The wait sleeps to a fixed deadline, so a
+spurious shutdown notification cannot trigger an early, quota-spending fetch.
+
+**Cache** (`cache.rs`). The last good snapshot is written atomically (temp file + rename)
+and replayed on start, so a node whose uplink is down still publishes something. A cache
+written for a different grid or level set is ignored rather than drawn over the wrong area.
+
+**Publisher** (`publisher.rs`). One retained message, **QoS 1** — unlike the SBS feed, one
+message an hour is the only copy on the bus. It is republished on **every ConnAck**, not
+only when a new snapshot arrives: the broker runs with `persistence false`, so a broker
+restart erases the retained message and only the publisher can put it back. The republish
+comes from memory and costs no API call. Client id `<source_id>-weather`, distinct from the
+feed's and the recorder's.
+
+### The 10 KiB trap
+
+rumqttc caps packets at **10 KiB in both directions** by default, and a default-grid
+snapshot is ~16 KB. On the publisher that fails the publish. On a **subscriber** it is worse:
+an oversized incoming packet fails the event loop, the client reconnects, the broker
+re-delivers the retained message, and it fails again — a reconnect storm on the same
+connection as the live SBS feed.
+
+Both ends are raised to 1 MiB (`MAX_PACKET_BYTES`, `MAX_INCOMING_PACKET_BYTES`). Only
+`adsb-weather-server` can see both constants — it depends on `adsb-pulsar-client`, not the
+reverse — so a `const { assert!(…) }` there fails the build if the subscriber limit ever
+drops below the publisher's.
+
+### Desktop: a second topic on the live connection
+
+`MqttSource::with_aux_topic` adds a subscription on the existing connection and hands each
+payload over **whole**, through a `watch` channel. `route_publish` checks the SBS topic
+first, the aux topic second and ignores anything else, so the SBS path is byte-for-byte
+unchanged and a JSON document can never reach the line splitter. An aux topic equal to the
+SBS topic stays SBS and is not subscribed twice. `Connected` status follows the SBS
+subscription only.
+
+Consequently **weather is available only when `source_kind = mqtt`**; a socket session has
+no weather layer and the controls say so.
+
+**Topic derivation — one rule, two places.** Unset, the weather topic is derived from the
+feed topic: `adsb/<stage>/sbs/raw` → `adsb/<stage>/weather/grid`, any other topic →
+`<topic>/weather`. `scripts/render-config.py` (`weather_topic`) renders the service's topic
+and `Config::weather_topic` derives the desktop's subscription with the same rule, each
+pinned by tests with the same cases. If they disagreed the desktop would subscribe to a
+topic nobody publishes to and silently draw nothing. `ADSB_MQTT_WEATHER_TOPIC` overrides it.
+
+**Relay** (`src-tauri/src/weather.rs`). Payloads are validated in Rust — version and array
+lengths — before the webview sees them. A different valid snapshot replaces the held one
+and is emitted as `adsb:weather`; an identical one (every reconnect re-delivers the
+retained message) is ignored; anything malformed is logged and the last good snapshot
+stays. The snapshot lives in `AppState`, not the `FeedHandle`, so it survives a feed
+restart. `get_weather_snapshot` serves a late-mounting UI; `get_weather_availability`
+returns `available | waiting | unsupported_source`.
+
+### Frontend
+
+| Piece | Role |
+|-------|------|
+| `lib/weather.ts` | Types, ISA pressure altitude, interpolation, components, barb parts, staleness |
+| `lib/wind-barb.ts` | SVG barb geometry, unit-tested because `MapInner` is not |
+| `lib/aircraft-wind.ts` | Wind and components for a tracked aircraft |
+| `lib/wind-format.ts` | `070° / 20 kt`, `85 kt headwind`, `49 kt from the left` |
+| `hooks/useWeatherSnapshot.ts` | Hydrate, `adsb:weather`, re-check availability on `adsb:status` |
+| `components/WeatherControls.tsx` | Toggle, level picker, validity, stale badge, credit |
+| `MapInner` `WeatherBarbsLayer` | One barb per grid point, MSL pressure tooltip |
+
+**Interpolation.** Horizontally bilinear, on **u/v components** — averaging 350° and 010° as
+numbers gives 180°. Vertically linear in ln(p) between the two levels bracketing the
+aircraft's pressure, with the surface as a level at 1013.25 hPa. Above the top level
+(200 hPa ≈ FL390) its wind is held down to 150 hPa (≈ FL450) rather than extrapolated, since
+FL410 traffic is common; above that the wind is unknown. ISA is a power law below the
+tropopause (36,089 ft) and exponential above it — the power law alone is ~3 hPa off at FL450.
+
+**Rendering.** Barbs point into the wind with northern-hemisphere feathers: 50 kt pennants,
+10 kt lines, a 5 kt half line, a circle when calm. Icons are memoised per snapshot, level
+and theme: the map re-renders about twice a second with live traffic, and a fresh `divIcon`
+makes react-leaflet call `setIcon` on all ~190 markers. The Open-Meteo credit is added to
+Leaflet's attribution control, not the tile layer, whose attribution is fixed at creation.
+
+**Per-aircraft wind.** The details panel shows the wind at the aircraft's pressure altitude
+with head/tail and crosswind components along its track — for **live** selections only
+(current winds would describe the wrong day for imported or DB-history tracks), not on the
+ground, and not once the snapshot is stale (older than 3 hours).
+
+**Availability race.** On mount the snapshot and availability requests race each other and
+the event stream. A late `waiting` never hides a held snapshot; `unsupported_source` is never
+upgraded by one left over from an earlier MQTT session. A hydrate answer only fills an empty
+slot, so it cannot overwrite a newer snapshot that arrived as an event.
+
+### Configuration
+
+`[weather]` in `adsb-stack.toml`, rendered to `.run/weather.toml`. Configs created before
+this section existed still render, with every key defaulted.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `enabled` | `false` | `make up` starts the service. Off by default: needs internet and spends a third-party quota |
+| `topic` | derived | See topic derivation above |
+| `radius_nm` | `300` | Grid radius around the receiver |
+| `spacing_deg` | `1.0` | Grid spacing |
+| `levels` | `[850, 700, 500, 300, 250, 200]` | hPa; each adds two variables per point |
+| `refresh_minutes` | `60` | Model data updates hourly |
+| `model` | `best_match` | Open-Meteo model name; validated as a plain identifier because it goes into the URL unencoded |
+| `cache_path` | `.run/weather-cache.json` | Stack-scoped, like `storage.db_path` |
+
+`make doctor` requires the binary only when enabled, counts duplicate instances, checks the
+topic carries the stage, and reaches the Open-Meteo **site root** — not the forecast API,
+which would spend quota on every health check. Receiver position, broker and `source_id`
+come from `[receiver]` and `[mqtt]`, shared with the feed.
+
+### Verified end to end
+
+On the default stack (2026-09-15): the service fetched 187 points from the live API and
+published a 16,048-byte retained snapshot, which a fresh subscriber received with every
+value present at the surface and all six levels. `docker restart` of the broker was
+followed two seconds later by a republish from memory — still a single API fetch — and a
+fresh subscriber received the snapshot again, while the recorder re-subscribed in the same
+instant.
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `adsb-weather-server/src/grid.rs` | Receiver-centred grid |
+| `adsb-weather-server/src/budget.rs` | Open-Meteo daily call estimate |
+| `adsb-weather-server/src/snapshot.rs` | Wire contract + validation |
+| `adsb-weather-server/src/open_meteo.rs` | Request building, response decoding |
+| `adsb-weather-server/src/provider.rs` | `WeatherProvider` trait, `OpenMeteoProvider` |
+| `adsb-weather-server/src/refresh.rs`, `cache.rs` | Schedule, retry, last-good cache |
+| `adsb-weather-server/src/publisher.rs` | Retained publish, republish per ConnAck |
+| `adsb-pulsar-client/src/source/mqtt_source.rs` | `with_aux_topic`, `route_publish`, packet limit |
+| `adsb-pulsar-client/src/config.rs` | `mqtt_weather_topic`, `weather_topic()` |
+| `src-tauri/src/weather.rs` | Relay, availability |
+| `scripts/render-config.py`, `scripts/stack.sh` | `[weather]` rendering, start/stop/doctor |
+
+---
+
 ## Conclusion
 
 The ADS-B Aircraft Tracker desktop application demonstrates a modern, performant architecture:
@@ -4380,4 +4581,4 @@ This design prioritizes developer experience (hot reload, TypeScript, TDD), user
 
 ---
 
-*Last updated: August 2026 — Added a **System Architecture (C4 Model)** view — three Mermaid diagrams drawn to C4 conventions (Level 1 Context, Level 2 Container, Level 3 Component), with C4 palette, element-type and technology annotations, and dashed edges for optional dependencies, plus a component inventory table and trust/process boundaries, refreshed the table of contents to match the document's 27 sections, added `tool_server.rs`/`tool_service.rs` to the backend directory tree and component diagram, documented the `adsb-simulation-agent` A2A service on `:8300`, and normalized `adsb-agent/` paths. Previous: simulation scenarios (scenario builder, descriptions, panel layout, trajectory visibility). Previous: AI Agent & AG-UI integration (CopilotKit chat panel, LangGraph ReAct agent on `:8000`, loopback Tauri tool server on `:8787`, server/client tool-plane split, ambient `useCopilotContext` readables, `useCopilotTools`, voice input via Voxtral / LFM2.5-Audio with auto-send). Previous: status event audit trail, Arrow IPC query pipeline, storage management (release/reclaim/export/swap/import), section-aware track visibility, analysis mode, config persistence, `adsb-data-engine` workspace crate, DB History panel.*
+*Last updated: September 2026 — Added the **Weather Layer**: `adsb-weather-server` (Open-Meteo winds aloft and MSL pressure on a receiver-centred grid, published as a retained MQTT message and republished per ConnAck), the desktop's aux-topic subscription on the live-feed connection, the rumqttc 10 KiB packet trap, u/v and ln(p) interpolation, wind barbs and per-aircraft wind. Previous: Added a **System Architecture (C4 Model)** view — three Mermaid diagrams drawn to C4 conventions (Level 1 Context, Level 2 Container, Level 3 Component), with C4 palette, element-type and technology annotations, and dashed edges for optional dependencies, plus a component inventory table and trust/process boundaries, refreshed the table of contents to match the document's 27 sections, added `tool_server.rs`/`tool_service.rs` to the backend directory tree and component diagram, documented the `adsb-simulation-agent` A2A service on `:8300`, and normalized `adsb-agent/` paths. Previous: simulation scenarios (scenario builder, descriptions, panel layout, trajectory visibility). Previous: AI Agent & AG-UI integration (CopilotKit chat panel, LangGraph ReAct agent on `:8000`, loopback Tauri tool server on `:8787`, server/client tool-plane split, ambient `useCopilotContext` readables, `useCopilotTools`, voice input via Voxtral / LFM2.5-Audio with auto-send). Previous: status event audit trail, Arrow IPC query pipeline, storage management (release/reclaim/export/swap/import), section-aware track visibility, analysis mode, config persistence, `adsb-data-engine` workspace crate, DB History panel.*

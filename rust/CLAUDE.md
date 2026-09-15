@@ -10,6 +10,7 @@ Cargo workspace containing the ADS-B feed client library, adsd-data-engine and T
 | `adsb-pulsar-client-desktop-lib` | `adsb-pulsar-client-desktop/src-tauri/` | Tauri v2 desktop app backend |
 | `adsb-data-engine` | `adsb-data-engine/` | Shared SBS-1 parser, ingest pipeline, and DuckDB persistent storage for historical queries |
 | `adsb-data-server` | `adsb-data-server/` | Headless recorder: MQTT ingest → DuckDB, Quack sharing, read-only HTTP query API. Also the home of `tool_service`/`server` (moved out of the Tauri crate) so desktop, agent and daemon answer queries identically |
+| `adsb-weather-server` | `adsb-weather-server/` | Weather service: Open-Meteo winds aloft + MSL pressure on a receiver-centred grid, published as one **retained** MQTT message and republished on every ConnAck. `default-features = false` builds the payload types only (no reqwest/TLS) — that is what the desktop depends on. The `service` feature pulls reqwest with rustls/aws-lc-rs, which compiles C, so expect a slower arm64 build. See `DESIGN.md` → Weather Layer |
 
 ## Non-Cargo Component
 

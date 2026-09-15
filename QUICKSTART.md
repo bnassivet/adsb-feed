@@ -213,6 +213,42 @@ See `deploy/README.md` for the full convention and `rust/docs/DEPLOYMENT.md` for
 the node setup, including configuring mosquitto (`apt install` alone leaves it
 listening on localhost only).
 
+## 6. Weather layer
+
+Winds aloft and mean-sea-level pressure around the receiver, drawn on the map as
+wind barbs, with the wind each selected aircraft is flying through. Data comes
+from Open-Meteo; design detail in `DESIGN.md` → Weather Layer.
+
+```toml
+[weather]
+enabled = true     # off by default: needs outbound internet
+```
+
+```bash
+make up                  # ... starts adsb-weather-server after the feed
+make logs N=weather      # logs its Open-Meteo calls/day estimate (~6,700 by default)
+```
+
+**The desktop must be on the MQTT source** — weather travels on the broker
+connection, so a socket session has no weather layer (the controls say so).
+`make up-desktop` does not change the source; launch with
+`ADSB_SOURCE_KIND=mqtt scripts/stack.sh desktop`, or set **Settings → Connection
+→ Feed Source** to MQTT. Then press Start, open **Weather** in the left panel,
+tick **Winds aloft** and pick a level.
+
+Check the bus without the app:
+
+```bash
+docker exec adsb-mqtt mosquitto_sub -t adsb/dev/weather/grid -C 1 | head -c 300
+```
+
+The snapshot is **retained**, so a subscriber that arrives later gets it at once,
+and it is republished whenever the broker restarts. The free tier is
+non-commercial and capped at 10,000 calls/day, counted per grid point: shrinking
+`spacing_deg` or `refresh_minutes` raises the count fast, and the service warns
+above 8,000. The last good grid is kept in `.run/weather-cache.json`, and the
+layer is badged **stale** once it is more than three hours old.
+
 ## Where things are
 
 | Path | What |
