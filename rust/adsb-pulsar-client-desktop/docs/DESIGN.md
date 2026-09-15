@@ -4003,7 +4003,7 @@ The agent partitions every tool into one of two planes (`SERVER_TOOL_NAMES` in
 | Plane | Executed by | Examples | Why |
 |-------|-------------|----------|-----|
 | **Server tools** | Agent loop, via Tauri tool server (`:8787`) — except `getCurrentDateTime`, resolved locally | `getStorageStats`, `getAircraftSummary`, `getFlightSummary`, `getTrajectory`, `getTimeDistribution`, `getHourlyHeatmap`, `getEventsOfInterest` | Read-only DuckDB queries. Chaining them in-loop lets the agent gather data and reason over multiple hops **without** a frontend round-trip per call. |
-| **Client tools** | Frontend, via AG-UI round-trip | `selectAircraft`, `panMapTo`, `setFilters`, `setMapTheme`, `setActiveMode`, `toggleSidebar`, `setLayerVisibility`, `setColorMode`, `setDensityConfig`, `setEventFilter`, `toggleDemoFlights`, `searchLiveFlights`, `startFeed`, `stopFeed`, `createEventOfInterest` | UI mutations and state changes. Keeping these client-side preserves **user-in-the-loop** control and direct access to live React state. |
+| **Client tools** | Frontend, via AG-UI round-trip | `selectAircraft`, `panMapTo`, `setFilters`, `setMapTheme`, `setActiveMode`, `toggleSidebar`, `setLayerVisibility`, `setColorMode`, `setDensityConfig`, `setEventFilter`, `toggleDemoFlights`, `searchLiveFlights`, `startFeed`, `stopFeed`, `createEventOfInterest`, `setWeatherLayer`, `getWindAloft` | UI mutations and state changes. Keeping these client-side preserves **user-in-the-loop** control and direct access to live React state. |
 
 The `route()` function loops back into the agent **only when every pending tool call is
 server-side**. As soon as one client tool is requested, the graph hits `END` and
@@ -4556,6 +4556,44 @@ the event stream. A late `waiting` never hides a held snapshot; `unsupported_sou
 upgraded by one left over from an earlier MQTT session. A hydrate answer only fills an empty
 slot, so it cannot overwrite a newer snapshot that arrived as an event.
 
+### Chat control
+
+The chat can drive the layer and read the wind. Both tools are **client tools**
+(`useCopilotTools.ts`): the snapshot lives in the frontend, and the Tauri tool server the
+agent's server tools call has no weather. Plan:
+`docs/plans/2026-09-15-weather-copilot-tools.md`.
+
+| Tool | Does |
+|------|------|
+| `setWeatherLayer` | `enabled`, `level`, `barbs`, `particles` — only given fields change |
+| `getWindAloft` | Wind for a tracked aircraft (at its altitude, plus head/crosswind on its track), a lat/lon, or the receiver; on the level shown unless `level` or `altitudeFt` is given |
+
+- **Levels are text.** `"SFC"`, `"250 hPa"` and `"FL340"` go through
+  `resolveWeatherLevel`: a flight level maps to the nearest carried level, a pressure level
+  must be carried exactly, and the error lists every option so the model can retry. A
+  `"surface" | number` union would reach the model as an `anyOf` schema, which local models
+  fill badly.
+- **Validate, then apply.** A bad level changes nothing — not even an `enabled: true`
+  in the same call. Asking for barbs or particles also turns the layer on; otherwise the call
+  would succeed and visibly do nothing.
+- **An unsupported source is refused, not ignored**, with the fix (switch the feed source to
+  MQTT) in the message — the chat equivalent of the disabled checkbox. Before the first
+  snapshot the layer can still be enabled; it reports that it is waiting.
+- **An explicit level wins over the aircraft's altitude.** "Wind at FL340 for UAL123" is a
+  what-if; with neither given, the aircraft's own altitude is used.
+- **One owner per verb.** `setLayerVisibility` says weather is not one of its layers, and a
+  prompt guideline routes display changes to `setWeatherLayer` and wind questions to
+  `getWindAloft` — the same kind of description collision that once sent "start simulated
+  flights" to `toggleDemoFlights`.
+- **Ambient context.** A "Weather layer (winds aloft)" readable tells the agent on every turn
+  whether weather is available, what is drawn and how current it is. It takes the page's
+  `weatherClockMs`; calling `Date.now()` during render is impure under the React Compiler.
+
+`windReport` rounds to whole degrees and knots and normalises `-0`, so the model quotes
+clean numbers. The Python `tools.py` fallback list mirrors both schemas;
+`tests/test_weather_tools.py` pins the routing prose and that neither tool is in
+`SERVER_TOOL_NAMES`.
+
 ### Configuration
 
 `[weather]` in `adsb-stack.toml`, rendered to `.run/weather.toml`. Configs created before
@@ -4602,6 +4640,8 @@ instant.
 | `src-tauri/src/weather.rs` | Relay, availability |
 | `src/lib/weather.ts`, `src/lib/wind-particles.ts` | Interpolation; particle field and simulation |
 | `src/components/MapInner.tsx` | `WeatherBarbsLayer`, `WindParticlesLayer` |
+| `src/hooks/useCopilotTools.ts`, `src/hooks/useCopilotContext.ts` | `setWeatherLayer`, `getWindAloft`, weather readable |
+| `adsb-agent/src/adsb_agent/tools.py`, `prompt_sections.yaml` | Fallback schemas, routing guideline |
 | `scripts/render-config.py`, `scripts/stack.sh` | `[weather]` rendering, start/stop/doctor |
 
 ---

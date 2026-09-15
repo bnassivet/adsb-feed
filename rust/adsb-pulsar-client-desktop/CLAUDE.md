@@ -370,6 +370,19 @@ frontend tool (as `createEventOfInterest` does) so it passes through a UI layer
 that can confirm it. `scenario_writes_are_not_reachable_from_the_tool_server`
 pins that boundary.
 
+### Weather chat tools
+
+`setWeatherLayer` and `getWindAloft` are **client tools**, not server tools: the
+snapshot lives in the frontend (`useWeatherSnapshot`) and the Tauri tool server
+has no weather. Levels travel as **text** (`"SFC"`, `"250 hPa"`, `"FL340"`) and
+are resolved by `resolveWeatherLevel` — a `"surface" | number` union becomes an
+`anyOf` schema that local models fill badly. `setLayerVisibility` deliberately
+says weather is not one of its layers, so one tool owns each verb (the
+toggleDemoFlights lesson again). The weather readable in `useCopilotContext`
+takes the page's `weatherClockMs` rather than calling `Date.now()` in render,
+which the React Compiler flags as impure. Design: `docs/DESIGN.md` → Weather
+Layer → Chat control.
+
 ### Agent trajectory playback
 
 Three pieces, deliberately separated so the logic is testable without React:
