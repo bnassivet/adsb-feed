@@ -228,6 +228,7 @@ enabled = true     # off by default: needs outbound internet
 ```bash
 make up                  # ... starts adsb-weather-server after the feed
 make logs N=weather      # logs its Open-Meteo calls/day estimate (~6,700 by default)
+make restart-weather     # after editing [weather]; down-weather / up-weather run it alone
 ```
 
 **The desktop must be on the MQTT source** — weather travels on the broker

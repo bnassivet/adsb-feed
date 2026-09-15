@@ -26,6 +26,7 @@ make paths  STACK=prod     # which files does this resolve to?
 |---|---|
 | `make up` | broker → recorder → feed |
 | `make up-desktop` | ...and the desktop app |
+| `make up-weather` | the weather service alone (`[weather] enabled = true`); `down-weather`, `restart-weather` after editing `[weather]` |
 | `make up-agents` | ...and the AI agents |
 | `make client` | desktop + agents ONLY — for a machine whose data lives elsewhere |
 

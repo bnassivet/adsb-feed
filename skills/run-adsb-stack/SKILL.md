@@ -56,6 +56,8 @@ make down        # stops EVERYTHING it started, including the desktop
 |---|---|
 | `make up-desktop` | stack + the desktop app, backgrounded (`make logs N=desktop`) |
 | `make down-desktop` | stop just the desktop |
+| `make up-weather` | start just the weather service — refuses unless `[weather] enabled = true`, and says `make build` if the binary is missing |
+| `make down-weather` / `make restart-weather` | stop it / pick up an edited `[weather]`, which is only read at startup |
 | `make up-agents` | stack + adsb-agent and adsb-simulation-agent |
 | `make reap` | kill whatever still holds the stack's ports (orphans) |
 | `make remote` | desktop only, pointed at a data server elsewhere |

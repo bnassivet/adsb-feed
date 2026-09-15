@@ -4599,6 +4599,13 @@ clean numbers. The Python `tools.py` fallback list mirrors both schemas;
 `[weather]` in `adsb-stack.toml`, rendered to `.run/weather.toml`. Configs created before
 this section existed still render, with every key defaulted.
 
+`make up` starts the service when enabled and `make down` always stops it. `make up-weather`,
+`down-weather` and `restart-weather` run it alone — the last to pick up an edited `[weather]`,
+which is read once at startup. `up-weather` refuses unless `enabled = true`, so the config
+stays the one switch for spending quota, and says `make build` when the binary is missing;
+a broker that is not up yet is only a note, since the service retries and the snapshot is
+retained. `scripts/tests/test_stack_weather.sh` covers all of it against a fake binary.
+
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `enabled` | `false` | `make up` starts the service. Off by default: needs internet and spends a third-party quota |
