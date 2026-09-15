@@ -5,10 +5,12 @@
 //! and "not given anywhere" is a validation error rather than a silent 0,0.
 
 use adsb_weather_server::GridSpec;
+use adsb_weather_server::api::DEFAULT_HTTP_PORT;
 use adsb_weather_server::open_meteo::DEFAULT_BASE_URL;
 use anyhow::{Context, bail};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 use std::path::PathBuf;
 
 /// Pressure levels Open-Meteo serves, hPa.
@@ -112,6 +114,25 @@ pub struct WeatherConfig {
     #[serde(default)]
     pub cache_path: Option<PathBuf>,
 
+    /// Control API port (enable/disable, status). 0 disables the API.
+    #[arg(long, env = "ADSB_WEATHER_HTTP_PORT", default_value = "8789")]
+    #[serde(default = "default_http_port")]
+    pub http_port: u16,
+
+    /// Address the control API binds. Loopback by default: the API has no
+    /// authentication, so reaching it from another machine is a deliberate
+    /// choice (`0.0.0.0` on a trusted LAN).
+    #[arg(long, env = "ADSB_WEATHER_HTTP_BIND", default_value = "127.0.0.1")]
+    #[serde(default = "default_http_bind")]
+    pub http_bind: String,
+
+    /// Where the enabled setting and any rate-limit deadline survive restarts.
+    /// Unset keeps them in memory: a reboot re-enables fetching and forgets a
+    /// rate limit.
+    #[arg(long, env = "ADSB_WEATHER_STATE_PATH")]
+    #[serde(default)]
+    pub state_path: Option<PathBuf>,
+
     /// Log level.
     #[arg(long, env = "ADSB_LOG_LEVEL", default_value = "info")]
     #[serde(default = "default_log_level")]
@@ -150,6 +171,12 @@ fn default_base_url() -> String {
 }
 fn default_log_level() -> String {
     "info".into()
+}
+fn default_http_port() -> u16 {
+    DEFAULT_HTTP_PORT
+}
+fn default_http_bind() -> String {
+    "127.0.0.1".into()
 }
 
 impl WeatherConfig {
@@ -230,6 +257,13 @@ impl WeatherConfig {
         overlay!("cache_path", cache_path, |v: &toml::Value| v
             .as_str()
             .map(|s| Some(PathBuf::from(s))));
+        overlay!("http_port", http_port, |v: &toml::Value| v
+            .as_integer()
+            .and_then(|i| u16::try_from(i).ok()));
+        overlay!("http_bind", http_bind, string);
+        overlay!("state_path", state_path, |v: &toml::Value| v
+            .as_str()
+            .map(|s| Some(PathBuf::from(s))));
         overlay!("log_level", log_level, string);
     }
 
@@ -266,7 +300,18 @@ impl WeatherConfig {
             );
         }
         self.grid()?;
+        self.http_bind_addr()?;
         Ok(())
+    }
+
+    /// The address the control API binds.
+    pub fn http_bind_addr(&self) -> anyhow::Result<IpAddr> {
+        self.http_bind.parse().with_context(|| {
+            format!(
+                "http_bind '{}' must be an IP address, e.g. 127.0.0.1 or 0.0.0.0",
+                self.http_bind
+            )
+        })
     }
 
     /// The sampling grid this configuration describes.
@@ -438,6 +483,48 @@ mod tests {
             ..located()
         };
         assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn the_control_api_is_loopback_only_by_default() {
+        let cfg = defaults();
+        assert_eq!(cfg.http_bind, "127.0.0.1");
+        assert!(cfg.http_bind_addr().unwrap().is_loopback());
+        assert_eq!(cfg.state_path, None);
+    }
+
+    #[test]
+    fn the_default_http_port_is_the_api_contract_port() {
+        // clap needs a string literal, the contract a number: pin them together.
+        assert_eq!(defaults().http_port, DEFAULT_HTTP_PORT);
+    }
+
+    #[test]
+    fn control_api_settings_come_from_the_file() {
+        let mut cfg = defaults();
+        cfg.overlay_file(
+            &file(
+                "http_port = 9000\nhttp_bind = '0.0.0.0'\n\
+                 state_path = '/var/lib/adsb/weather-state.json'",
+            ),
+            &all_defaulted,
+        );
+        assert_eq!(cfg.http_port, 9000);
+        assert_eq!(cfg.http_bind, "0.0.0.0");
+        assert_eq!(
+            cfg.state_path,
+            Some(PathBuf::from("/var/lib/adsb/weather-state.json"))
+        );
+    }
+
+    #[test]
+    fn an_http_bind_that_is_not_an_address_is_an_error() {
+        let cfg = WeatherConfig {
+            http_bind: "localhost".into(),
+            ..located()
+        };
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("http_bind"), "{err}");
     }
 
     #[test]

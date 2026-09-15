@@ -7,12 +7,21 @@
 //! Republished on **every** ConnAck, not only when a new snapshot arrives. The
 //! broker runs without persistence, so a broker restart erases the retained
 //! message; the only way to put it back is for this process to send it again.
+//!
+//! The same connection carries the service's control-plane topics, derived
+//! from the grid topic by [`WeatherTopics`]:
+//! - **status**: the retained [`WeatherStatus`], on change and on every ConnAck;
+//! - **availability**: `online` on every ConnAck (the birth message) and
+//!   `offline` as the retained last will, which the broker publishes if this
+//!   process dies. A graceful shutdown sends `offline` itself, because a clean
+//!   disconnect does not fire the will.
 
 use crate::snapshot::WeatherSnapshot;
+use crate::status::{AVAILABILITY_OFFLINE, AVAILABILITY_ONLINE, WeatherStatus, WeatherTopics};
 use adsb_pulsar_client::backoff::{
     Backoff, looks_like_id_collision, should_log, should_reset, was_short_lived,
 };
-use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS};
+use rumqttc::{AsyncClient, Event, EventLoop, Incoming, LastWill, MqttOptions, Outgoing, QoS};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
@@ -32,7 +41,13 @@ pub enum Trigger {
     ConnAck,
     /// The refresh loop produced a new snapshot.
     NewSnapshot,
+    /// The status projection changed.
+    NewStatus,
 }
+
+/// How long a graceful shutdown waits for `offline` and the disconnect to
+/// leave. Past it the broker's keep-alive timeout fires the will anyway.
+const OFFLINE_FLUSH: Duration = Duration::from_secs(2);
 
 /// MQTT publisher settings.
 #[derive(Debug, Clone)]
@@ -42,6 +57,28 @@ pub struct PublisherConfig {
     pub topic: String,
     pub client_id: String,
     pub keep_alive: Duration,
+}
+
+impl PublisherConfig {
+    /// The grid topic and the control-plane topics derived from it.
+    pub fn topics(&self) -> WeatherTopics {
+        WeatherTopics::from_grid_topic(&self.topic)
+    }
+}
+
+/// Connection options: keep-alive, the packet limit, and the last will that
+/// marks the service offline if this process goes away without saying so.
+pub fn mqtt_options(config: &PublisherConfig) -> MqttOptions {
+    let mut options = MqttOptions::new(&config.client_id, &config.broker, config.port);
+    options.set_keep_alive(config.keep_alive);
+    options.set_max_packet_size(MAX_PACKET_BYTES, MAX_PACKET_BYTES);
+    options.set_last_will(LastWill::new(
+        config.topics().availability,
+        AVAILABILITY_OFFLINE,
+        QoS::AtLeastOnce,
+        true,
+    ));
+    options
 }
 
 /// Client id for the weather publisher.
@@ -69,7 +106,21 @@ pub fn should_publish(trigger: Trigger, connected: bool, have_snapshot: bool) ->
         && match trigger {
             Trigger::ConnAck => true,
             Trigger::NewSnapshot => connected,
+            Trigger::NewStatus => false,
         }
+}
+
+/// Whether `trigger` should result in a status publish.
+///
+/// Same rules as the grid: every ConnAck (the retained copy may have died with
+/// the broker), and a change only while connected -- offline, the next
+/// ConnAck publishes whatever is current by then.
+pub fn should_publish_status(trigger: Trigger, connected: bool) -> bool {
+    match trigger {
+        Trigger::ConnAck => true,
+        Trigger::NewStatus => connected,
+        Trigger::NewSnapshot => false,
+    }
 }
 
 /// Runs the publisher until `shutdown` turns true or the snapshot channel
@@ -77,32 +128,31 @@ pub fn should_publish(trigger: Trigger, connected: bool, have_snapshot: bool) ->
 pub async fn run(
     config: PublisherConfig,
     mut snapshots: watch::Receiver<Option<WeatherSnapshot>>,
+    mut status: watch::Receiver<WeatherStatus>,
     mut shutdown: watch::Receiver<bool>,
 ) {
-    let mut options = MqttOptions::new(&config.client_id, &config.broker, config.port);
-    options.set_keep_alive(config.keep_alive);
-    options.set_max_packet_size(MAX_PACKET_BYTES, MAX_PACKET_BYTES);
-
-    let (client, mut eventloop) = AsyncClient::new(options, 16);
+    let topics = config.topics();
+    let (client, mut eventloop) = AsyncClient::new(mqtt_options(&config), 16);
     let broker = format!("{}:{}", config.broker, config.port);
     let backoff = Backoff::default();
     let mut attempt: u32 = 0;
     let mut connected = false;
     let mut connected_at: Option<Instant> = None;
     let mut short_lived: u32 = 0;
+    let mut status_open = true;
 
     loop {
         tokio::select! {
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow() {
-                    let _ = client.disconnect().await;
+                    go_offline(&client, &mut eventloop, &topics.availability, connected).await;
                     return;
                 }
             }
             changed = snapshots.changed() => {
                 if changed.is_err() {
                     // The refresh loop is gone; nothing more will ever arrive.
-                    let _ = client.disconnect().await;
+                    go_offline(&client, &mut eventloop, &topics.availability, connected).await;
                     return;
                 }
                 let have = snapshots.borrow().is_some();
@@ -110,11 +160,26 @@ pub async fn run(
                     publish_latest(&client, &config.topic, &snapshots).await;
                 }
             }
+            changed = status.changed(), if status_open => {
+                if changed.is_err() {
+                    // The projection is gone. The retained status stays as the
+                    // last word; the grid keeps flowing.
+                    status_open = false;
+                } else if should_publish_status(Trigger::NewStatus, connected) {
+                    publish_status(&client, &topics.status, &status).await;
+                }
+            }
             event = eventloop.poll() => match event {
                 Ok(Event::Incoming(Incoming::ConnAck(_))) => {
                     info!("Weather publisher connected to MQTT broker at {broker}");
                     connected = true;
                     connected_at = Some(Instant::now());
+                    // Birth first, so a subscriber never sees a fresh status
+                    // under a stale "offline".
+                    publish_retained(&client, &topics.availability, AVAILABILITY_ONLINE.as_bytes().to_vec()).await;
+                    if should_publish_status(Trigger::ConnAck, connected) {
+                        publish_status(&client, &topics.status, &status).await;
+                    }
                     let have = snapshots.borrow().is_some();
                     if should_publish(Trigger::ConnAck, connected, have) {
                         publish_latest(&client, &config.topic, &snapshots).await;
@@ -154,6 +219,57 @@ pub async fn run(
                 }
             }
         }
+    }
+}
+
+/// Publishes one small retained message at QoS 1, logging a failure.
+async fn publish_retained(client: &AsyncClient, topic: &str, payload: Vec<u8>) {
+    if let Err(e) = client.publish(topic, QoS::AtLeastOnce, true, payload).await {
+        warn!("Could not publish to '{topic}': {e}");
+    }
+}
+
+async fn publish_status(
+    client: &AsyncClient,
+    topic: &str,
+    status: &watch::Receiver<WeatherStatus>,
+) {
+    // Encode inside the borrow, publish outside it.
+    let payload = serde_json::to_vec(&*status.borrow());
+    match payload {
+        Ok(bytes) => {
+            debug!("Publishing weather status to '{topic}'");
+            publish_retained(client, topic, bytes).await;
+        }
+        Err(e) => warn!("Could not encode weather status: {e}"),
+    }
+}
+
+/// Says `offline` and disconnects, then drives the event loop until both have
+/// left. rumqttc only queues outgoing packets; nothing reaches the socket
+/// unless the event loop is polled, so returning straight after
+/// `disconnect()` would send neither.
+async fn go_offline(client: &AsyncClient, eventloop: &mut EventLoop, topic: &str, connected: bool) {
+    if connected {
+        publish_retained(client, topic, AVAILABILITY_OFFLINE.as_bytes().to_vec()).await;
+    }
+    let _ = client.disconnect().await;
+    if !connected {
+        return;
+    }
+    let flushed = tokio::time::timeout(OFFLINE_FLUSH, async {
+        loop {
+            match eventloop.poll().await {
+                Ok(Event::Outgoing(Outgoing::Disconnect)) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    })
+    .await;
+    if flushed.is_err() {
+        warn!(
+            "Weather publisher could not say 'offline' in time; the broker's last will covers it"
+        );
     }
 }
 
@@ -265,6 +381,59 @@ mod tests {
     #[test]
     fn a_new_snapshot_waits_for_the_next_connack_while_offline() {
         assert!(!should_publish(Trigger::NewSnapshot, false, true));
+    }
+
+    #[test]
+    fn a_new_status_does_not_republish_the_grid() {
+        assert!(!should_publish(Trigger::NewStatus, true, true));
+    }
+
+    #[test]
+    fn a_connack_republishes_the_status() {
+        assert!(should_publish_status(Trigger::ConnAck, true));
+    }
+
+    #[test]
+    fn a_new_status_is_published_while_connected() {
+        assert!(should_publish_status(Trigger::NewStatus, true));
+    }
+
+    #[test]
+    fn a_new_status_waits_for_the_next_connack_while_offline() {
+        assert!(!should_publish_status(Trigger::NewStatus, false));
+    }
+
+    #[test]
+    fn a_new_snapshot_does_not_republish_the_status() {
+        assert!(!should_publish_status(Trigger::NewSnapshot, true));
+    }
+
+    fn config() -> PublisherConfig {
+        PublisherConfig {
+            broker: "localhost".into(),
+            port: 1883,
+            topic: "adsb/dev/weather/grid".into(),
+            client_id: client_id("pi-roof-dev"),
+            keep_alive: Duration::from_secs(30),
+        }
+    }
+
+    #[test]
+    fn control_topics_are_siblings_of_the_grid_topic() {
+        let topics = config().topics();
+        assert_eq!(topics.status, "adsb/dev/weather/status");
+        assert_eq!(topics.availability, "adsb/dev/weather/availability");
+    }
+
+    #[test]
+    fn the_last_will_marks_the_service_offline() {
+        // Retained, or a desktop that connects after the crash would never
+        // learn the service is gone.
+        let will = mqtt_options(&config()).last_will().expect("a last will");
+        assert_eq!(will.topic, "adsb/dev/weather/availability");
+        assert_eq!(&will.message[..], AVAILABILITY_OFFLINE.as_bytes());
+        assert_eq!(will.qos, QoS::AtLeastOnce);
+        assert!(will.retain);
     }
 
     #[test]

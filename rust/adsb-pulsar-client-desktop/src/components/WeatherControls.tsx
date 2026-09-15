@@ -1,6 +1,23 @@
 "use client";
-import { describeValidity, levelLabel } from "@/lib/weather";
-import type { WeatherAvailability, WeatherLevel } from "@/lib/weather";
+import {
+  EMPTY_SERVICE_VIEW,
+  describeServiceStatus,
+  describeValidity,
+  levelLabel,
+  serviceToggleView,
+} from "@/lib/weather";
+import type {
+  ServiceTone,
+  WeatherAvailability,
+  WeatherLevel,
+  WeatherServiceView,
+} from "@/lib/weather";
+
+const TONE_CLASS: Record<ServiceTone, string> = {
+  ok: "text-slate-500",
+  warn: "text-amber-400",
+  error: "text-red-400",
+};
 
 export interface WeatherControlsProps {
   /** Whether the weather layer is drawn. */
@@ -24,6 +41,14 @@ export interface WeatherControlsProps {
   nowMs: number;
   /** Credit line the data licence requires, or null with no snapshot. */
   attribution: string | null;
+  /** What the weather service last reported. */
+  service?: WeatherServiceView;
+  /** A setting sent to the service and not yet reported back. */
+  pendingEnabled?: boolean | null;
+  /** Why the last enable/disable did not take. */
+  serviceError?: string | null;
+  /** Sends enable/disable to the service. Without it there is no switch. */
+  onServiceToggle?: (enabled: boolean) => void;
 }
 
 /** The weather layer's toggle, level picker and data status. */
@@ -42,9 +67,15 @@ export function WeatherControls({
   stale,
   nowMs,
   attribution,
+  service = EMPTY_SERVICE_VIEW,
+  pendingEnabled = null,
+  serviceError = null,
+  onServiceToggle,
 }: WeatherControlsProps) {
   const unsupported = availability === "unsupported_source";
   const options: WeatherLevel[] = ["surface", ...levels];
+  const toggle = onServiceToggle ? serviceToggleView(availability, service, pendingEnabled) : null;
+  const serviceLine = onServiceToggle ? describeServiceStatus(service, nowMs) : null;
 
   return (
     <div>
@@ -66,6 +97,37 @@ export function WeatherControls({
       )}
       {availability === "waiting" && (
         <p className="ml-5 mt-1 text-[11px] text-slate-500">Waiting for the weather service…</p>
+      )}
+
+      {toggle && onServiceToggle && !unsupported && (
+        <div className="ml-5 mt-1 flex flex-col gap-0.5">
+          <label className="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={toggle.checked}
+              disabled={toggle.disabled}
+              onChange={() => onServiceToggle(!toggle.checked)}
+              className="accent-sky-500"
+            />
+            <span>Fetch weather</span>
+            {toggle.pending && (
+              <span className="text-[10px] text-slate-500">
+                {toggle.checked ? "resuming…" : "pausing…"}
+              </span>
+            )}
+          </label>
+          {serviceLine && (
+            <p className={`text-[11px] ${TONE_CLASS[serviceLine.tone]}`}>{serviceLine.text}</p>
+          )}
+          {!serviceLine && toggle.reason && (
+            <p className="text-[11px] text-slate-500">{toggle.reason}</p>
+          )}
+          {serviceError && (
+            <p role="alert" className="text-[11px] text-red-400">
+              {serviceError}
+            </p>
+          )}
+        </div>
       )}
 
       {show && !unsupported && (

@@ -40,7 +40,7 @@ import type {
   UpdateScenario,
   UpdateScenarioTrack,
 } from "./types";
-import type { WeatherAvailability, WeatherSnapshot } from "./weather";
+import type { WeatherAvailability, WeatherServiceView, WeatherSnapshot } from "./weather";
 
 export async function startFeed(): Promise<void> {
   return invoke("start_feed");
@@ -71,6 +71,20 @@ export async function getWeatherSnapshot(): Promise<WeatherSnapshot | null> {
 /** Whether the weather layer can have data, and if not, why. */
 export async function getWeatherAvailability(): Promise<WeatherAvailability> {
   return invoke("get_weather_availability");
+}
+
+/** What the weather service last reported over MQTT (the query side). */
+export async function getWeatherService(): Promise<WeatherServiceView> {
+  return invoke("get_weather_service");
+}
+
+/**
+ * Asks the weather service to enable or disable fetching (the command side).
+ * Resolves when the service has accepted the setting -- not when it has acted
+ * on it: that arrives as an `adsb:weather-service` event.
+ */
+export async function setWeatherServiceEnabled(enabled: boolean): Promise<void> {
+  return invoke("set_weather_service_enabled", { enabled });
 }
 
 export async function getConfig(): Promise<Config> {

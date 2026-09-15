@@ -30,24 +30,38 @@ pub const MAX_INCOMING_PACKET_BYTES: usize = 1024 * 1024;
 pub enum Route {
     /// Raw SBS-1: split into lines and broadcast.
     Sbs,
-    /// The auxiliary topic (weather): delivered whole, never line-split.
-    Aux,
-    /// Neither: ignored.
+    /// An auxiliary topic, by its index in registration order: delivered
+    /// whole, never line-split.
+    Aux(usize),
+    /// None of them: ignored.
     Ignore,
 }
 
 /// Decides where a publish on `topic` goes.
 ///
-/// The SBS topic is checked first: if a hand-edited config makes the aux topic
-/// equal to it, the live feed keeps working and only the aux payload is lost.
-pub fn route_publish(topic: &str, sbs_topic: &str, aux_topic: Option<&str>) -> Route {
+/// The SBS topic is checked first, and before the aux topics are even looked
+/// at: this runs for every SBS publish, so that path must stay allocation-free
+/// -- hence an iterator rather than a slice built per call. If a hand-edited
+/// config makes an aux topic equal to the SBS topic, the live feed keeps
+/// working and only that aux payload is lost.
+pub fn route_publish<'a>(
+    topic: &str,
+    sbs_topic: &str,
+    aux_topics: impl IntoIterator<Item = &'a str>,
+) -> Route {
     if topic == sbs_topic {
-        Route::Sbs
-    } else if aux_topic == Some(topic) {
-        Route::Aux
-    } else {
-        Route::Ignore
+        return Route::Sbs;
     }
+    match aux_topics.into_iter().position(|aux| aux == topic) {
+        Some(index) => Route::Aux(index),
+        None => Route::Ignore,
+    }
+}
+
+/// An auxiliary topic and the channel its latest payload is kept in.
+struct AuxTopic {
+    topic: String,
+    tx: watch::Sender<Option<Vec<u8>>>,
 }
 
 /// A [`MessageSource`] backed by an MQTT subscription.
@@ -59,9 +73,9 @@ pub struct MqttSource {
     qos: QoS,
     keep_alive: Duration,
     message_tx: Option<broadcast::Sender<Vec<u8>>>,
-    /// Optional second topic on the same connection (the weather snapshot).
-    aux_topic: Option<String>,
-    aux_tx: Option<watch::Sender<Option<Vec<u8>>>>,
+    /// Further topics on the same connection (the weather service's grid,
+    /// status and availability), in registration order.
+    aux: Vec<AuxTopic>,
     status_tx: watch::Sender<SourceStatus>,
     status_rx: watch::Receiver<SourceStatus>,
     shutdown_tx: watch::Sender<bool>,
@@ -89,8 +103,7 @@ impl MqttSource {
             },
             keep_alive: config.socket_timeout(),
             message_tx: None,
-            aux_topic: None,
-            aux_tx: None,
+            aux: Vec::new(),
             status_tx,
             status_rx,
             shutdown_tx,
@@ -111,20 +124,19 @@ impl MqttSource {
     /// Also subscribes to `topic` on the same connection, delivering each
     /// payload whole through the returned watch channel (latest wins).
     ///
-    /// Built for the retained weather snapshot: a JSON document rather than
-    /// SBS-1, so it must never reach the line splitter or the SBS broadcast,
-    /// and only the newest one matters. Calling it again replaces the topic and
-    /// hands out another receiver on the same channel.
+    /// Built for retained documents -- the weather grid, and the weather
+    /// service's status and availability: never SBS-1, so they must never
+    /// reach the line splitter or the SBS broadcast, and only the newest one
+    /// matters. Each topic gets its own channel; asking for a topic already
+    /// registered hands out another receiver on that topic's channel.
     pub fn with_aux_topic(&mut self, topic: impl Into<String>) -> watch::Receiver<Option<Vec<u8>>> {
-        self.aux_topic = Some(topic.into());
-        match &self.aux_tx {
-            Some(tx) => tx.subscribe(),
-            None => {
-                let (tx, rx) = watch::channel(None);
-                self.aux_tx = Some(tx);
-                rx
-            }
+        let topic = topic.into();
+        if let Some(existing) = self.aux.iter().find(|aux| aux.topic == topic) {
+            return existing.tx.subscribe();
         }
+        let (tx, rx) = watch::channel(None);
+        self.aux.push(AuxTopic { topic, tx });
+        rx
     }
 
     /// Every topic this source subscribes to on connect, SBS first.
@@ -133,7 +145,12 @@ impl MqttSource {
     /// already treats it as SBS.
     pub fn topics(&self) -> Vec<&str> {
         std::iter::once(self.topic.as_str())
-            .chain(self.aux_topic.as_deref().filter(|aux| *aux != self.topic))
+            .chain(
+                self.aux
+                    .iter()
+                    .map(|aux| aux.topic.as_str())
+                    .filter(|aux| *aux != self.topic),
+            )
             .collect()
     }
 
@@ -217,7 +234,7 @@ impl MessageSource for MqttSource {
                             match route_publish(
                                 &publish.topic,
                                 &self.topic,
-                                self.aux_topic.as_deref(),
+                                self.aux.iter().map(|aux| aux.topic.as_str()),
                             ) {
                                 Route::Sbs => {
                                     for line in split_lines(&publish.payload) {
@@ -227,12 +244,12 @@ impl MessageSource for MqttSource {
                                         let _ = tx.send(line);
                                     }
                                 }
-                                Route::Aux => {
-                                    if let Some(aux_tx) = &self.aux_tx {
-                                        // Latest wins; send_replace stores it
-                                        // even before anyone is watching.
-                                        aux_tx.send_replace(Some(publish.payload.to_vec()));
-                                    }
+                                Route::Aux(index) => {
+                                    // Latest wins; send_replace stores it
+                                    // even before anyone is watching.
+                                    self.aux[index]
+                                        .tx
+                                        .send_replace(Some(publish.payload.to_vec()));
                                 }
                                 Route::Ignore => {}
                             }
@@ -366,9 +383,46 @@ mod tests {
         assert_eq!(route_publish(SBS, SBS, Some(WEATHER)), Route::Sbs);
     }
 
+    const STATUS: &str = "adsb/dev/weather/status";
+    const AVAILABILITY: &str = "adsb/dev/weather/availability";
+
     #[test]
     fn test_aux_topic_is_delivered_whole() {
-        assert_eq!(route_publish(WEATHER, SBS, Some(WEATHER)), Route::Aux);
+        assert_eq!(route_publish(WEATHER, SBS, Some(WEATHER)), Route::Aux(0));
+    }
+
+    #[test]
+    fn test_each_aux_topic_routes_to_its_own_index() {
+        let aux = [WEATHER, STATUS, AVAILABILITY];
+        assert_eq!(route_publish(WEATHER, SBS, aux), Route::Aux(0));
+        assert_eq!(route_publish(STATUS, SBS, aux), Route::Aux(1));
+        assert_eq!(route_publish(AVAILABILITY, SBS, aux), Route::Aux(2));
+        assert_eq!(route_publish(SBS, SBS, aux), Route::Sbs);
+    }
+
+    #[test]
+    fn test_several_aux_topics_are_each_subscribed_once() {
+        let config = mqtt_config();
+        let mut source = MqttSource::new(&config);
+        let _w = source.with_aux_topic(WEATHER);
+        let _s = source.with_aux_topic(STATUS);
+        let _w_again = source.with_aux_topic(WEATHER);
+        assert_eq!(
+            source.topics(),
+            vec![config.mqtt_topic.as_str(), WEATHER, STATUS]
+        );
+    }
+
+    #[test]
+    fn test_each_aux_topic_has_its_own_channel() {
+        // A status payload must never land in the weather grid's channel.
+        let mut source = MqttSource::new(&mqtt_config());
+        let weather = source.with_aux_topic(WEATHER);
+        let status = source.with_aux_topic(STATUS);
+
+        source.aux[1].tx.send_replace(Some(b"status".to_vec()));
+        assert_eq!(status.borrow().as_deref(), Some(&b"status"[..]));
+        assert!(weather.borrow().is_none());
     }
 
     #[test]
@@ -418,7 +472,7 @@ mod tests {
         let mut source = MqttSource::new(&mqtt_config());
         let rx_a = source.with_aux_topic(WEATHER);
         let rx_b = source.with_aux_topic(WEATHER);
-        assert_eq!(source.aux_tx.as_ref().unwrap().receiver_count(), 2);
+        assert_eq!(source.aux[0].tx.receiver_count(), 2);
         assert_eq!(
             source.topics().len(),
             2,

@@ -36,6 +36,9 @@ help:
 	@echo "  make up-weather   start just the weather service ([weather] enabled = true)"
 	@echo "  make down-weather stop just the weather service"
 	@echo "  make restart-weather  pick up an edited [weather]"
+	@echo "  make weather-status   what the weather service is doing (control API)"
+	@echo "  make weather-enable   resume fetching weather (persisted)"
+	@echo "  make weather-disable  pause fetching; the last grid stays on the map"
 	@echo "  make reap         kill orphans still holding the stack's ports"
 	@echo "  make status       what is running"
 	@echo "  make logs         tail all logs (make logs N=feed for one)"
@@ -98,6 +101,13 @@ down-desktop:
 up-weather:      ; @$(SH) weather
 down-weather:    ; @$(SH) stop-weather
 restart-weather: ; @$(SH) stop-weather && $(SH) weather
+
+# Runtime control of a running weather service, through its control API. A
+# disable is persisted (state_path) and survives restart-weather.
+.PHONY: weather-status weather-enable weather-disable
+weather-status:  ; @$(SH) weather-status
+weather-enable:  ; @$(SH) weather-enable
+weather-disable: ; @$(SH) weather-disable
 
 .PHONY: reap
 reap: ; @$(SH) reap

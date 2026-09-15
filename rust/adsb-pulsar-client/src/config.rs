@@ -505,6 +505,22 @@ pub struct Config {
     #[serde(default)]
     pub mqtt_weather_topic: String,
 
+    /// Base URL of the weather service's control API, e.g.
+    /// `http://pi-roof:8789`. Empty means the MQTT broker's host on the
+    /// default port; the consumer derives it, since the port belongs to the
+    /// weather service.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "weather-api-url",
+            default_value = "",
+            env = "ADSB_WEATHER_API_URL",
+            help = "Weather service control API (derived from mqtt_broker when empty)"
+        )
+    )]
+    #[serde(default)]
+    pub weather_api_url: String,
+
     /// MQTT client identifier. Empty derives it from `source_id`.
     ///
     /// Brokers disconnect an existing session when a second client connects
@@ -669,6 +685,7 @@ impl Default for Config {
             mqtt_port: default_mqtt_port(),
             mqtt_topic: default_mqtt_topic(),
             mqtt_weather_topic: String::new(),
+            weather_api_url: String::new(),
             mqtt_client_id: String::new(),
             mqtt_qos: 0,
             heartbeat_timeout_secs: default_heartbeat_timeout_secs(),
@@ -810,6 +827,7 @@ impl Config {
             .map(|i| i as u16));
         overlay!("mqtt_topic", mqtt_topic, as_string);
         overlay!("mqtt_weather_topic", mqtt_weather_topic, as_string);
+        overlay!("weather_api_url", weather_api_url, as_string);
         overlay!("mqtt_client_id", mqtt_client_id, as_string);
         overlay!("mqtt_qos", mqtt_qos, |v: &toml::Value| v
             .as_integer()
@@ -1594,6 +1612,20 @@ mod layering_tests {
         cfg.overlay_file(&file("socket_port = 30005"), &all_defaulted);
         assert_eq!(cfg.source_id, "kraspberryPi");
         assert_eq!(cfg.mqtt_topic, "adsb/sbs/raw");
+    }
+
+    #[test]
+    fn weather_api_url_layers_from_the_file() {
+        let mut cfg = Config::default();
+        assert_eq!(
+            cfg.weather_api_url, "",
+            "empty by default: derived by the consumer"
+        );
+        cfg.overlay_file(
+            &file("weather_api_url = 'http://pi-roof:8789'"),
+            &all_defaulted,
+        );
+        assert_eq!(cfg.weather_api_url, "http://pi-roof:8789");
     }
 
     #[test]

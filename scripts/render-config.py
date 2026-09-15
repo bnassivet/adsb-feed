@@ -179,6 +179,13 @@ def render_weather(cfg: dict, out: Path = OUT) -> str:
         ("model", w.get("model", "best_match")),
         ("cache_path",
          str(run_scoped(w.get("cache_path", ".run/weather-cache.json"), out))),
+        # The control API. Loopback unless the operator opens it: no auth.
+        ("http_port", w.get("http_port", 8789)),
+        ("http_bind", w.get("http_bind", "127.0.0.1")),
+        # Stack-scoped for the same reason as the cache: a disable in one stack
+        # must not pause another stack's service.
+        ("state_path",
+         str(run_scoped(w.get("state_path", ".run/weather-state.json"), out))),
     ]
     body = emit(pairs)
     # emit() writes scalars only; the level list is a TOML array.

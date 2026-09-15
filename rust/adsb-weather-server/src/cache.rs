@@ -28,18 +28,23 @@ pub fn load(path: &Path) -> Result<Option<WeatherSnapshot>, CacheError> {
     }
 }
 
-/// Writes `snapshot` atomically: a temporary file next to the target, then a
-/// rename. A crash mid-write leaves the previous cache intact rather than a
-/// truncated file that fails to parse on the next start.
+/// Writes `snapshot` atomically; see [`write_atomic`].
 pub fn save(path: &Path, snapshot: &WeatherSnapshot) -> Result<(), CacheError> {
+    let bytes = serde_json::to_vec(snapshot).map_err(SnapshotError::from)?;
+    write_atomic(path, &bytes)?;
+    Ok(())
+}
+
+/// Writes `bytes` to `path` atomically: a temporary file next to the target,
+/// then a rename. A crash mid-write leaves the previous file intact rather
+/// than a truncated one that fails to parse on the next start.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)?;
     }
-    let bytes = serde_json::to_vec(snapshot).map_err(SnapshotError::from)?;
     let tmp = temp_path(path);
     std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)?;
-    Ok(())
+    std::fs::rename(&tmp, path)
 }
 
 /// The temporary file `save` writes before renaming.

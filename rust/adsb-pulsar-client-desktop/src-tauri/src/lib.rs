@@ -197,6 +197,8 @@ pub fn run() {
             commands::set_storage_mode,
             commands::get_weather_snapshot,
             commands::get_weather_availability,
+            commands::get_weather_service,
+            commands::set_weather_service_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -281,6 +283,11 @@ fn apply_env_overrides(mut config: Config, get: &dyn Fn(&str) -> Option<String>)
     // client` exports it only when [weather].topic is set explicitly.
     if let Some(v) = var("ADSB_MQTT_WEATHER_TOPIC") {
         config.mqtt_weather_topic = v;
+    }
+    // The weather service's control API, for the "Fetch weather" switch.
+    // `make up-desktop` and `make client` export it from this stack's config.
+    if let Some(v) = var("ADSB_WEATHER_API_URL") {
+        config.weather_api_url = v;
     }
 
     config
@@ -761,6 +768,15 @@ mod env_override_tests {
             ]),
         );
         assert_eq!(out.weather_topic(), "lab/wx");
+    }
+
+    #[test]
+    fn weather_api_url_layers_from_the_environment() {
+        let out = apply_env_overrides(
+            Config::default(),
+            &env(&[("ADSB_WEATHER_API_URL", "http://pi-roof:8789")]),
+        );
+        assert_eq!(out.weather_api_url, "http://pi-roof:8789");
     }
 
     #[test]

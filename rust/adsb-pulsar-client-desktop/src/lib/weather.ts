@@ -41,6 +41,45 @@ export interface WeatherSnapshot {
 /** Mirrors the Rust `WeatherAvailability` (serde snake_case). */
 export type WeatherAvailability = "available" | "waiting" | "unsupported_source";
 
+/** Mirrors adsb-weather-server's `ServiceState`: what the service is doing. */
+export type WeatherServiceState =
+  | "idle"
+  | "fetching"
+  | "retrying"
+  | "rate_limited"
+  | "rejected"
+  | "disabled";
+
+/** Mirrors adsb-weather-server's `RateLimitScope`. */
+export type RateLimitScope = "minutely" | "hourly" | "daily" | "unknown";
+
+/** Mirrors adsb-weather-server's `WeatherStatus`, published on the status topic. */
+export interface WeatherServiceStatus {
+  version: number;
+  /** Desired: the operator's accepted, persisted setting. */
+  enabled: boolean;
+  /** Reported: what the service is doing about it. */
+  state: WeatherServiceState;
+  consecutive_failures: number;
+  rate_limit: RateLimitScope | null;
+  last_success_ms: number | null;
+  last_error: string | null;
+  next_fetch_ms: number | null;
+  snapshot_valid_time_ms: number | null;
+  updated_at_ms: number;
+}
+
+/** The service's MQTT birth / last-will payload. */
+export type WeatherServiceAvailability = "online" | "offline";
+
+/** Mirrors the desktop's `WeatherServiceView`: what the service last reported. */
+export interface WeatherServiceView {
+  status: WeatherServiceStatus | null;
+  availability: WeatherServiceAvailability | null;
+}
+
+export const EMPTY_SERVICE_VIEW: WeatherServiceView = { status: null, availability: null };
+
 /** `"surface"` or a pressure level in hPa. */
 export type WeatherLevel = "surface" | number;
 
@@ -350,6 +389,139 @@ export function describeValidity(validTimeMs: number, nowMs: number): string {
   if (magnitude < 1) return "valid now";
   const span = magnitude < 90 ? `${magnitude} min` : `${Math.round(magnitude / 60)} h`;
   return minutes > 0 ? `valid ${span} ago` : `valid in ${span}`;
+}
+
+/** `"now"`, `"in 25 min"`, `"in 6 h"`: relative, so it reads the same in every timezone. */
+function describeWait(atMs: number, nowMs: number): string {
+  const minutes = Math.round((atMs - nowMs) / 60_000);
+  if (minutes < 1) return "now";
+  return minutes < 90 ? `in ${minutes} min` : `in ${Math.round(minutes / 60)} h`;
+}
+
+const STATE_WORDS: Record<WeatherServiceState, string> = {
+  idle: "up to date",
+  fetching: "fetching",
+  retrying: "retrying",
+  rate_limited: "rate limited",
+  rejected: "rejected",
+  disabled: "paused",
+};
+
+const LIMIT_WORDS: Record<RateLimitScope, string> = {
+  minutely: "per-minute",
+  hourly: "hourly",
+  daily: "daily",
+  unknown: "request",
+};
+
+export type ServiceTone = "ok" | "warn" | "error";
+
+export interface ServiceLine {
+  text: string;
+  tone: ServiceTone;
+}
+
+/**
+ * One line saying what the weather service is doing, or null when nothing has
+ * been heard from it. Built only from what the service published: the desktop
+ * never guesses at its schedule.
+ *
+ * Every line names who acts -- the service, or Open-Meteo. The desktop fetches
+ * nothing itself; it hears the service over MQTT, so a bare "Fetching paused"
+ * would read as if the app had stopped receiving.
+ */
+export function describeServiceStatus(view: WeatherServiceView, nowMs: number): ServiceLine | null {
+  const { status, availability } = view;
+  if (availability === "offline") {
+    return {
+      text: status
+        ? `Weather service offline (was ${STATE_WORDS[status.state]})`
+        : "Weather service offline",
+      tone: "error",
+    };
+  }
+  if (!status) return null;
+
+  const next = status.next_fetch_ms != null ? describeWait(status.next_fetch_ms, nowMs) : null;
+  switch (status.state) {
+    case "disabled":
+      return {
+        text: "Service paused: not fetching from Open-Meteo · map keeps its last grid",
+        tone: "warn",
+      };
+    case "fetching":
+      return { text: "Service fetching from Open-Meteo…", tone: "ok" };
+    case "idle":
+      return {
+        text: next ? `Service up to date · next Open-Meteo fetch ${next}` : "Service up to date",
+        tone: "ok",
+      };
+    case "retrying":
+      return {
+        text: `Open-Meteo fetch failing (${status.consecutive_failures}×)${
+          next ? ` · service retries ${next}` : ""
+        }`,
+        tone: "warn",
+      };
+    case "rate_limited":
+      return {
+        text: `Open-Meteo ${LIMIT_WORDS[status.rate_limit ?? "unknown"]} limit reached${
+          next ? ` · service retries ${next}` : ""
+        }`,
+        tone: "warn",
+      };
+    case "rejected":
+      return {
+        text: `Open-Meteo rejected the service's request: ${status.last_error ?? "no reason given"}`,
+        tone: "error",
+      };
+  }
+}
+
+export interface ServiceToggleView {
+  checked: boolean;
+  disabled: boolean;
+  /** A setting was sent and the service has not reported it yet. */
+  pending: boolean;
+  /** Why the switch cannot be used, when that is not already on screen. */
+  reason: string | null;
+}
+
+/**
+ * The "Fetch weather" switch.
+ *
+ * Checked follows the service's reported setting, or the requested one while
+ * a command is pending -- so the switch moves at once, but settles only when
+ * the service says so. It cannot be used without a status to act on, or while
+ * the service is offline, or while a command is still pending.
+ */
+export function serviceToggleView(
+  availability: WeatherAvailability,
+  view: WeatherServiceView,
+  pendingEnabled: boolean | null,
+): ServiceToggleView {
+  if (availability === "unsupported_source") {
+    return { checked: false, disabled: true, pending: false, reason: null };
+  }
+  const { status } = view;
+  if (!status) {
+    return {
+      checked: false,
+      disabled: true,
+      pending: false,
+      reason: "No status from the weather service yet",
+    };
+  }
+  if (view.availability === "offline") {
+    return { checked: status.enabled, disabled: true, pending: false, reason: null };
+  }
+  const pending = pendingEnabled !== null && pendingEnabled !== status.enabled;
+  return {
+    checked: pending ? (pendingEnabled as boolean) : status.enabled,
+    disabled: pending,
+    pending,
+    reason: null,
+  };
 }
 
 /**

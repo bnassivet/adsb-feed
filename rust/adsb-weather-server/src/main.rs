@@ -1,9 +1,14 @@
 //! ADS-B weather service entry point.
 
+use adsb_weather_server::api_server::{self, ApiState};
 use adsb_weather_server::budget::{self, BudgetVerdict};
+use adsb_weather_server::control::Control;
+use adsb_weather_server::projection;
 use adsb_weather_server::provider::OpenMeteoProvider;
 use adsb_weather_server::publisher::{self, PublisherConfig};
-use adsb_weather_server::refresh::Refresher;
+use adsb_weather_server::refresh::{self, Refresher, ReportedState};
+use adsb_weather_server::state_file::StateStore;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 use tracing::{error, info, warn};
@@ -55,20 +60,70 @@ async fn run(cfg: WeatherConfig) -> anyhow::Result<()> {
     let grid = cfg.grid()?;
     report_budget(&cfg, grid.len());
 
+    // The durable control state: the operator's setting and any rate-limit
+    // deadline. Unreadable is not fatal -- the defaults are safe enough, and
+    // the next change rewrites the file -- but it must be visible.
+    let (store, store_error) = StateStore::open(cfg.state_path.clone());
+    if let Some(e) = store_error {
+        warn!("{e}; starting enabled with no rate-limit deadline");
+    }
+    if !store.is_persistent() {
+        warn!(
+            "state_path is not set: enable/disable and rate-limit deadlines will not survive a restart"
+        );
+    }
+    let store = Arc::new(store);
+    let control = Arc::new(Control::new(store.clone()));
+    if !control.enabled() {
+        info!(
+            "Weather fetching is disabled (persisted setting); enable it through the control API"
+        );
+    }
+
     let provider = OpenMeteoProvider::new(&cfg.base_url, &cfg.model)?;
     let mut refresher = Refresher::new(
         provider,
         grid,
         cfg.levels.clone(),
         Duration::from_secs(u64::from(cfg.refresh_minutes) * 60),
-    );
+    )
+    .with_desired(control.subscribe())
+    .with_state_store(store);
     if let Some(path) = cfg.cache_path.clone() {
         refresher = refresher.with_cache(path);
     }
 
     let (snapshot_tx, snapshot_rx) = watch::channel(None);
+    let (reported_tx, reported_rx) = watch::channel(ReportedState::default());
+    let (status_tx, status_rx) = watch::channel(projection::project(
+        control.enabled(),
+        &ReportedState::default(),
+        refresh::system_clock_ms(),
+    ));
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
+    let projection = tokio::spawn(projection::run(
+        control.subscribe(),
+        reported_rx,
+        status_tx,
+        shutdown_rx.clone(),
+        refresh::system_clock_ms,
+    ));
+    let api = (cfg.http_port > 0).then(|| {
+        tokio::spawn(api_server::serve(
+            // Validated at startup.
+            cfg.http_bind_addr().expect("http_bind was validated"),
+            cfg.http_port,
+            ApiState {
+                control: control.clone(),
+                status: status_rx.clone(),
+            },
+            shutdown_rx.clone(),
+        ))
+    });
+    if api.is_none() {
+        info!("Weather control API disabled (http_port = 0)");
+    }
     let publisher = tokio::spawn(publisher::run(
         PublisherConfig {
             broker: cfg.mqtt_broker.clone(),
@@ -78,14 +133,19 @@ async fn run(cfg: WeatherConfig) -> anyhow::Result<()> {
             keep_alive: Duration::from_secs(30),
         },
         snapshot_rx,
+        status_rx,
         shutdown_rx.clone(),
     ));
-    let refresh = tokio::spawn(refresher.run(snapshot_tx, shutdown_rx));
+    let refresh = tokio::spawn(refresher.run(snapshot_tx, reported_tx, shutdown_rx));
 
     shutdown_signal().await;
     info!("Shutdown signal received, stopping gracefully...");
     let _ = shutdown_tx.send(true);
-    let _ = tokio::join!(refresh, publisher);
+    // The publisher goes last in spirit: it says "offline" on its way out.
+    let _ = tokio::join!(refresh, projection, publisher);
+    if let Some(api) = api {
+        let _ = api.await;
+    }
     Ok(())
 }
 
@@ -98,6 +158,26 @@ fn report_budget(cfg: &WeatherConfig, points: usize) {
         "{points} grid points x {variables} variables every {} min = ~{daily:.0} Open-Meteo calls/day",
         cfg.refresh_minutes
     );
+    // The daily total can look fine while a single refresh still trips a
+    // shorter window. Over the hourly limit every refresh fails; over the
+    // per-minute allowance the provider paces itself, which is only worth
+    // knowing because the grid then takes longer to arrive.
+    let per_refresh = budget::calls_per_refresh(points, variables);
+    let pacing = budget::estimated_pacing(per_refresh);
+    if per_refresh > budget::HOURLY_LIMIT {
+        warn!(
+            "One refresh is ~{per_refresh:.0} Open-Meteo calls, over the {:.0}/hour limit: \
+             every refresh will be rate limited. Increase spacing_deg or fetch fewer levels",
+            budget::HOURLY_LIMIT
+        );
+    } else if !pacing.is_zero() {
+        info!(
+            "One refresh is ~{per_refresh:.0} Open-Meteo calls, more than the per-minute \
+             allowance: requests are spread over ~{} s",
+            pacing.as_secs()
+        );
+    }
+
     match budget::verdict(daily) {
         BudgetVerdict::Ok => info!("{summary}"),
         BudgetVerdict::Warn => warn!(

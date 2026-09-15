@@ -13,6 +13,8 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMPLATE="$REPO/adsb-stack-template.toml"
 # ADSB_BIN exists for the tooling tests, which run a fake binary.
 BIN="${ADSB_BIN:-$REPO/rust/target/release}"
+# ADSB_CURL likewise: the tests answer the weather control API with a fake.
+CURL="${ADSB_CURL:-curl}"
 MOCK="$REPO/skills/run-adsb-desktop/mock_dump1090.py"
 COMPOSE="$REPO/infrastructure/mqtt/docker-compose.yml"
 
@@ -173,6 +175,9 @@ stack_ports() {
   echo "$(desktop_tool_port) $(desktop_dev_port)"
   [ "$(cfg agents enabled false)" = "true" ] && \
     echo "$(cfg agents agent_port 8000) $(cfg agents sim_agent_port 8300)"
+  # The weather control API exists only while the service does.
+  weather_enabled && [ "$(cfg weather http_port 8789)" != "0" ] && \
+    echo "$(cfg weather http_port 8789)"
 }
 
 render() { python3 "$REPO/scripts/render-config.py" "$STACK" "$RUN"; }
@@ -339,6 +344,10 @@ desktop_live_env() {
   # topic by the same rule render-config.py uses; a copy here would be a third.
   local wt; wt="$(cfg weather topic "")"
   [ -z "$wt" ] || echo "ADSB_MQTT_WEATHER_TOPIC=$wt"
+  # The weather service's control API, for the desktop's "Fetch weather"
+  # switch. Same host as the broker: the service runs beside it. A desktop on
+  # another machine also needs [weather] http_bind opened on that host.
+  echo "ADSB_WEATHER_API_URL=http://$(cfg mqtt host localhost):$(cfg weather http_port 8789)"
 }
 
 # ---------------------------------------------------------------------------
@@ -750,6 +759,40 @@ stop-weather)
   stop weather
   ;;
 
+weather-status|weather-enable|weather-disable)
+  # Runtime control through the service's own API, always on 127.0.0.1: this
+  # script runs where the stack runs. An enable/disable reply only says the
+  # setting was accepted; weather-status shows what the service did about it.
+  require_config
+  port="$(cfg weather http_port 8789)"
+  if [ "$port" = "0" ]; then
+    echo "error: the weather control API is disabled ([weather] http_port = 0)." >&2
+    exit 1
+  fi
+  url="http://127.0.0.1:$port"
+  json='content-type: application/json'
+  case "$1" in
+    weather-status)  args=("$url/v1/status") ;;
+    weather-enable)  args=(-X PUT -H "$json" -d '{"enabled":true}' "$url/v1/enabled") ;;
+    weather-disable) args=(-X PUT -H "$json" -d '{"enabled":false}' "$url/v1/enabled") ;;
+  esac
+  # Keep the HTTP status: a 500 (the setting could not be saved) is not the
+  # same problem as nothing listening.
+  if ! reply="$("$CURL" -sS --max-time 5 -w '\n%{http_code}' "${args[@]}" 2>&1)"; then
+    echo "error: no weather control API on $url -- is the weather service running? (make up-weather)" >&2
+    echo "  $reply" >&2
+    exit 1
+  fi
+  code="${reply##*$'\n'}"
+  body="${reply%$'\n'*}"
+  printf '%s\n' "$body" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$body"
+  case "$code" in
+    2??) [ "$1" = weather-status ] || \
+           echo "accepted -- the service reports what it did in: make weather-status" ;;
+    *)   echo "error: HTTP $code from $url" >&2; exit 1 ;;
+  esac
+  ;;
+
 down)
   # Reverse of start order: producers first, so the recorder sees the tail.
   # weather is stopped whether or not it is enabled now: it may have been
@@ -853,6 +896,9 @@ usage: stack.sh <command>
   stop-desktop stop just the desktop app
   weather      start just the weather service (needs [weather] enabled = true)
   stop-weather stop just the weather service
+  weather-status   what the weather service is doing (its control API)
+  weather-enable   resume fetching weather (persisted)
+  weather-disable  pause fetching; the last grid stays published
   down      stop everything this script started
   reap      kill whatever still holds the stack's ports (orphans)
   status    what is running

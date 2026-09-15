@@ -251,6 +251,25 @@ class WeatherContent(unittest.TestCase):
         self.assertEqual(self.render(out=REPO / ".run" / "prod")["cache_path"],
                          str(REPO / ".run" / "prod" / "weather-cache.json"))
 
+    def test_the_control_api_is_loopback_by_default(self):
+        # No authentication: only an explicit http_bind opens it to the LAN.
+        weather = parse(rc.render_weather(STACK, REPO / ".run"))
+        self.assertEqual(weather["http_port"], 8789)
+        self.assertEqual(weather["http_bind"], "127.0.0.1")
+
+    def test_control_api_settings_render_when_given(self):
+        cfg = {**STACK, "weather": {"http_port": 9000, "http_bind": "0.0.0.0"}}
+        weather = parse(rc.render_weather(cfg, REPO / ".run"))
+        self.assertEqual(weather["http_port"], 9000)
+        self.assertEqual(weather["http_bind"], "0.0.0.0")
+
+    def test_state_path_is_stack_scoped_like_the_cache(self):
+        # A disable in the dev stack must not pause the prod stack's service.
+        self.assertEqual(self.render()["state_path"],
+                         str(REPO / ".run" / "weather-state.json"))
+        self.assertEqual(self.render(out=REPO / ".run" / "prod")["state_path"],
+                         str(REPO / ".run" / "prod" / "weather-state.json"))
+
     def test_a_config_from_before_the_weather_layer_still_renders(self):
         # Every adsb-stack.toml created before this feature has no [weather]
         # section; `make render` must not start failing for all of them.

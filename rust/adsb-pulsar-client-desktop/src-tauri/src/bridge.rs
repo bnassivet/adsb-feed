@@ -7,7 +7,7 @@
 use crate::state::{
     ConnectionStatus, FeedHandle, SharedConnectionStatus, SharedStorage, StatusResponse,
 };
-use crate::weather::{SharedWeather, relay_weather};
+use crate::weather::{SharedWeather, SharedWeatherService, relay_weather, relay_weather_service};
 use adsb_data_engine::{
     AircraftPosition, BatchSink, IngestConfig, IngestPipeline, StatusEvent, StatusEventStatus,
     StatusEventType,
@@ -17,6 +17,7 @@ use adsb_pulsar_client::source::mqtt_source::MqttSource;
 use adsb_pulsar_client::source::socket_source::SocketSource;
 use adsb_pulsar_client::source::{Liveness, LivenessPolicy, MessageSource, SourceStatus};
 use adsb_pulsar_client::{Config, Metrics, SourceKind};
+use adsb_weather_server::status::WeatherTopics;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter};
@@ -63,6 +64,7 @@ pub fn start_feed(
     recorder: StatusEventRecorder,
     connection_status: SharedConnectionStatus,
     weather_state: SharedWeather,
+    weather_service: SharedWeatherService,
 ) -> Result<FeedHandle, String> {
     let test_mode = config.test_mode;
     let dump1090_tz = config.dump1090_tz.clone();
@@ -78,6 +80,7 @@ pub fn start_feed(
     // the metrics bar reads. An MQTT subscriber has no socket of its own to
     // report on, so it gets a fresh (zeroed) handle rather than a wrong one.
     let mut weather_rx = None;
+    let mut service_rx = None;
     let (mut source, metrics): (Box<dyn MessageSource>, Metrics) = match source_kind {
         SourceKind::Socket => {
             let s = SocketSource::with_forwarders(config, vec![Box::new(NoopForwarder)])
@@ -89,7 +92,14 @@ pub fn start_feed(
             let mut s = MqttSource::new(&config);
             // Weather rides the same broker connection. Only an MQTT source has
             // one, so a socket session has no weather layer at all.
-            weather_rx = Some(s.with_aux_topic(config.weather_topic()));
+            // The service's status and availability are siblings of the grid
+            // topic, derived by the rule the service itself uses.
+            let topics = WeatherTopics::from_grid_topic(&config.weather_topic());
+            weather_rx = Some(s.with_aux_topic(topics.grid));
+            service_rx = Some((
+                s.with_aux_topic(topics.status),
+                s.with_aux_topic(topics.availability),
+            ));
             (Box::new(s), Metrics::new())
         }
     };
@@ -118,8 +128,10 @@ pub fn start_feed(
     let (alive_tx, alive_rx_metrics) = tokio::sync::watch::channel(true);
     let alive_rx_watchdog = alive_tx.subscribe();
     let alive_rx_weather = alive_tx.subscribe();
+    let alive_rx_service = alive_tx.subscribe();
 
     let app_for_weather = app.clone();
+    let app_for_service = app.clone();
     let app_for_client = app.clone();
     let app_for_messages = app.clone();
     let app_for_metrics = app.clone();
@@ -277,8 +289,21 @@ pub fn start_feed(
         ))
     });
 
+    // Task 6 (MQTT only): the weather service's status and availability. The
+    // only writer of the service view; the enable/disable command never is.
+    let service_task = service_rx.map(|(status, availability)| {
+        tokio::spawn(relay_weather_service(
+            app_for_service,
+            status,
+            availability,
+            weather_service,
+            alive_rx_service,
+        ))
+    });
+
     let mut task_handles = vec![client_task, message_task, metrics_task, watchdog_task];
     task_handles.extend(weather_task);
+    task_handles.extend(service_task);
 
     Ok(FeedHandle {
         metrics,

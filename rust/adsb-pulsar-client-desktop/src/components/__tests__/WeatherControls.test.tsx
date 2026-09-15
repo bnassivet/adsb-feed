@@ -2,8 +2,28 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { WeatherControls, type WeatherControlsProps } from "../WeatherControls";
+import type { WeatherServiceStatus, WeatherServiceView } from "@/lib/weather";
 
 const MIN = 60_000;
+
+function service(overrides: Partial<WeatherServiceStatus> = {}): WeatherServiceView {
+  return {
+    status: {
+      version: 1,
+      enabled: true,
+      state: "idle",
+      consecutive_failures: 0,
+      rate_limit: null,
+      last_success_ms: 0,
+      last_error: null,
+      next_fetch_ms: null,
+      snapshot_valid_time_ms: 0,
+      updated_at_ms: 0,
+      ...overrides,
+    },
+    availability: "online",
+  };
+}
 
 function props(overrides: Partial<WeatherControlsProps> = {}): WeatherControlsProps {
   return {
@@ -136,5 +156,103 @@ describe("WeatherControls", () => {
 
     expect(screen.queryByRole("checkbox", { name: /barbs/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: /particles/i })).not.toBeInTheDocument();
+  });
+
+  describe("the Fetch weather switch", () => {
+    it("is absent without a command handler", () => {
+      render(<WeatherControls {...props({ service: service() })} />);
+
+      expect(screen.queryByRole("checkbox", { name: /fetch weather/i })).not.toBeInTheDocument();
+    });
+
+    it("follows the service's reported setting", () => {
+      render(
+        <WeatherControls
+          {...props({ service: service({ enabled: false, state: "disabled" }), onServiceToggle: vi.fn() })}
+        />,
+      );
+
+      expect(screen.getByRole("checkbox", { name: /fetch weather/i })).not.toBeChecked();
+      expect(screen.getByText(/paused/i)).toBeInTheDocument();
+    });
+
+    it("sends the opposite of the current setting", async () => {
+      const onServiceToggle = vi.fn();
+      render(<WeatherControls {...props({ service: service(), onServiceToggle })} />);
+
+      await userEvent.setup().click(screen.getByRole("checkbox", { name: /fetch weather/i }));
+
+      expect(onServiceToggle).toHaveBeenCalledWith(false);
+    });
+
+    it("stays locked and says so while a request is pending", () => {
+      render(
+        <WeatherControls
+          {...props({ service: service({ enabled: true }), pendingEnabled: false, onServiceToggle: vi.fn() })}
+        />,
+      );
+
+      const toggle = screen.getByRole("checkbox", { name: /fetch weather/i });
+      expect(toggle).toBeDisabled();
+      expect(toggle).not.toBeChecked();
+      expect(screen.getByText(/pausing/i)).toBeInTheDocument();
+    });
+
+    it("cannot command an offline service, and says it is offline", () => {
+      render(
+        <WeatherControls
+          {...props({
+            service: { ...service(), availability: "offline" },
+            onServiceToggle: vi.fn(),
+          })}
+        />,
+      );
+
+      expect(screen.getByRole("checkbox", { name: /fetch weather/i })).toBeDisabled();
+      expect(screen.getByText(/weather service offline/i)).toBeInTheDocument();
+    });
+
+    it("names the rate limit the service ran into", () => {
+      render(
+        <WeatherControls
+          {...props({
+            service: service({ state: "rate_limited", rate_limit: "daily" }),
+            onServiceToggle: vi.fn(),
+          })}
+        />,
+      );
+
+      expect(screen.getByText(/daily limit reached/i)).toBeInTheDocument();
+    });
+
+    it("shows why a command did not take", () => {
+      render(
+        <WeatherControls
+          {...props({
+            service: service(),
+            serviceError: "weather service at http://pi-roof:8789 is unreachable",
+            onServiceToggle: vi.fn(),
+          })}
+        />,
+      );
+
+      expect(screen.getByRole("alert")).toHaveTextContent(/unreachable/);
+    });
+
+    it("is not offered when the live source is not MQTT", () => {
+      render(
+        <WeatherControls
+          {...props({
+            availability: "unsupported_source",
+            validTimeMs: null,
+            attribution: null,
+            service: service(),
+            onServiceToggle: vi.fn(),
+          })}
+        />,
+      );
+
+      expect(screen.queryByRole("checkbox", { name: /fetch weather/i })).not.toBeInTheDocument();
+    });
   });
 });

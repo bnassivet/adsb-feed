@@ -18,9 +18,10 @@ use adsb_data_engine::{
 };
 use adsb_pulsar_client::Config;
 use adsb_weather_server::WeatherSnapshot;
+use adsb_weather_server::api_client::ApiClient;
 use tauri_plugin_store::StoreExt;
 
-use crate::weather::WeatherAvailability;
+use crate::weather::{WeatherAvailability, WeatherServiceView};
 
 use crate::bridge::DesktopMetrics;
 use std::sync::Arc;
@@ -62,6 +63,7 @@ pub async fn start_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
         recorder,
         Arc::clone(&state.connection_status),
         Arc::clone(&state.weather),
+        Arc::clone(&state.weather_service),
     )?;
 
     // Record feed started event (non-fatal)
@@ -168,6 +170,37 @@ pub fn get_weather_availability(state: State<'_, AppState>) -> Result<WeatherAva
     let source_kind = state.config.lock().map_err(|e| e.to_string())?.source_kind;
     let has_snapshot = state.weather.read().map_err(|e| e.to_string())?.is_some();
     Ok(crate::weather::availability(source_kind, has_snapshot))
+}
+
+/// What the weather service last reported over MQTT: its status, and whether
+/// it is online. The query side -- the "Fetch weather" switch reads this.
+#[tauri::command]
+pub fn get_weather_service(state: State<'_, AppState>) -> Result<WeatherServiceView, String> {
+    let view = state.weather_service.read().map_err(|e| e.to_string())?;
+    Ok(view.clone())
+}
+
+/// Asks the weather service to enable or disable fetching: the command side.
+///
+/// Resolves once the service has accepted and persisted the setting. It
+/// deliberately changes nothing the desktop shows: the service reports the
+/// outcome on its status topic, and that is the only thing the UI reads.
+#[tauri::command]
+pub async fn set_weather_service_enabled(
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let url = {
+        let config = state.config.lock().map_err(|e| e.to_string())?;
+        crate::weather::weather_api_url(&config)
+    };
+    let client = ApiClient::new(url).map_err(|e| e.to_string())?;
+    client
+        .set_enabled(enabled)
+        .await
+        .map_err(|e| e.to_string())?;
+    info!("Weather service accepted enabled={enabled}");
+    Ok(())
 }
 
 /// The stack this instance was launched for, or `None` for the unnamed one.

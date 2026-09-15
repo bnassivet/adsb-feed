@@ -1,8 +1,8 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { clearMockResponses, emitMockEvent, mockInvokeResponse } from "@/test/mocks/tauri";
-import { useWeatherSnapshot } from "../useWeatherSnapshot";
-import type { WeatherSnapshot } from "@/lib/weather";
+import { CONFIRM_TIMEOUT_MS, useWeatherSnapshot } from "../useWeatherSnapshot";
+import type { WeatherServiceStatus, WeatherServiceView, WeatherSnapshot } from "@/lib/weather";
 
 function snapshot(validTimeMs: number): WeatherSnapshot {
   return {
@@ -133,5 +133,156 @@ describe("useWeatherSnapshot", () => {
     await waitFor(() => {
       expect(result.current.availability).toBe("unsupported_source");
     });
+  });
+});
+
+function serviceView(enabled: boolean): WeatherServiceView {
+  const status: WeatherServiceStatus = {
+    version: 1,
+    enabled,
+    state: enabled ? "idle" : "disabled",
+    consecutive_failures: 0,
+    rate_limit: null,
+    last_success_ms: null,
+    last_error: null,
+    next_fetch_ms: null,
+    snapshot_valid_time_ms: null,
+    updated_at_ms: 1,
+  };
+  return { status, availability: "online" };
+}
+
+describe("useWeatherSnapshot: the weather service", () => {
+  let sent: unknown[];
+
+  beforeEach(() => {
+    clearMockResponses();
+    sent = [];
+    mockInvokeResponse("get_weather_snapshot", null);
+    mockInvokeResponse("get_weather_availability", "available");
+    mockInvokeResponse("get_weather_service", serviceView(true));
+    mockInvokeResponse("set_weather_service_enabled", (args: unknown) => {
+      sent.push(args);
+      return null;
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("hydrates what the service last reported", async () => {
+    const { result } = renderHook(() => useWeatherSnapshot());
+    await waitFor(() => {
+      expect(result.current.service).toEqual(serviceView(true));
+    });
+    expect(result.current.pendingEnabled).toBeNull();
+  });
+
+  it("takes each adsb:weather-service event as the service's state", async () => {
+    const { result } = renderHook(() => useWeatherSnapshot());
+    await waitFor(() => expect(result.current.service.status).not.toBeNull());
+
+    act(() => {
+      emitMockEvent("adsb:weather-service", serviceView(false));
+    });
+    expect(result.current.service).toEqual(serviceView(false));
+  });
+
+  it("sends the desired setting as a command", async () => {
+    const { result } = renderHook(() => useWeatherSnapshot());
+    await waitFor(() => expect(result.current.service.status).not.toBeNull());
+
+    await act(async () => {
+      result.current.setServiceEnabled(false);
+    });
+    expect(sent).toEqual([{ enabled: false }]);
+  });
+
+  it("stays pending after the command succeeds, until the service reports it", async () => {
+    const { result } = renderHook(() => useWeatherSnapshot());
+    await waitFor(() => expect(result.current.service.status).not.toBeNull());
+
+    await act(async () => {
+      result.current.setServiceEnabled(false);
+    });
+    // Accepted is not done: the status still says enabled.
+    expect(result.current.pendingEnabled).toBe(false);
+    expect(result.current.service.status?.enabled).toBe(true);
+
+    act(() => {
+      emitMockEvent("adsb:weather-service", serviceView(false));
+    });
+    expect(result.current.pendingEnabled).toBeNull();
+  });
+
+  it("does not treat a change made elsewhere as pending", async () => {
+    const { result } = renderHook(() => useWeatherSnapshot());
+    await waitFor(() => expect(result.current.service.status).not.toBeNull());
+    await act(async () => {
+      result.current.setServiceEnabled(false);
+    });
+    act(() => {
+      emitMockEvent("adsb:weather-service", serviceView(false));
+    });
+
+    // Someone runs `make weather-enable`.
+    act(() => {
+      emitMockEvent("adsb:weather-service", serviceView(true));
+    });
+    expect(result.current.pendingEnabled).toBeNull();
+    expect(result.current.service.status?.enabled).toBe(true);
+  });
+
+  it("clears pending and reports the reason when the command fails", async () => {
+    mockInvokeResponse("set_weather_service_enabled", () => {
+      throw "weather service at http://pi-roof:8789/v1/enabled is unreachable";
+    });
+    const { result } = renderHook(() => useWeatherSnapshot());
+    await waitFor(() => expect(result.current.service.status).not.toBeNull());
+
+    await act(async () => {
+      result.current.setServiceEnabled(false);
+    });
+
+    await waitFor(() => expect(result.current.pendingEnabled).toBeNull());
+    expect(result.current.serviceError).toMatch(/unreachable/);
+  });
+
+  it("gives up waiting for confirmation after a timeout", async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useWeatherSnapshot());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    await act(async () => {
+      result.current.setServiceEnabled(false);
+    });
+    expect(result.current.pendingEnabled).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONFIRM_TIMEOUT_MS);
+    });
+    expect(result.current.pendingEnabled).toBeNull();
+    expect(result.current.serviceError).toMatch(/no confirmation/i);
+  });
+
+  it("clears a previous error when a new command is sent", async () => {
+    mockInvokeResponse("set_weather_service_enabled", () => {
+      throw "HTTP 500";
+    });
+    const { result } = renderHook(() => useWeatherSnapshot());
+    await waitFor(() => expect(result.current.service.status).not.toBeNull());
+    await act(async () => {
+      result.current.setServiceEnabled(false);
+    });
+    await waitFor(() => expect(result.current.serviceError).not.toBeNull());
+
+    mockInvokeResponse("set_weather_service_enabled", () => null);
+    await act(async () => {
+      result.current.setServiceEnabled(false);
+    });
+    expect(result.current.serviceError).toBeNull();
   });
 });

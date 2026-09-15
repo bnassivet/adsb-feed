@@ -28,6 +28,17 @@ adsb-pulsar-client = { path = "../adsb-pulsar-client", default-features = false,
 # Same version and feature set as adsb-pulsar-client: one copy in the build, and
 # no TLS stack for a plain-text LAN hop.
 rumqttc = { version = "0.25", default-features = false, optional = true }
+# Retry jitter. Dependency-free, and already in the lockfile through tempfile.
+fastrand = { version = "2", optional = true }
+# Control API server (enable/disable, status). Same major as adsb-data-server.
+axum = { version = "0.8", optional = true }
+# The control API's OpenAPI document, generated from the handlers and the
+# contract types rather than written by hand, so it cannot drift from them.
+utoipa = { version = "5", optional = true }
+utoipa-axum = { version = "0.2", optional = true }
+# Swagger UI. `vendored`: the UI assets come from a crate instead of a download
+# in build.rs, so offline and arm64 Docker builds keep working.
+utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"], optional = true }
 
 # CLI + layered config (optional, for the binary)
 clap = { version = "4.5", features = ["derive", "env"], optional = true }
@@ -42,7 +53,10 @@ tempfile = "3"
 tokio = { workspace = true, features = ["test-util"] }
 
 [features]
-default = ["cli"]
+# `client` is a default so `cargo test --workspace` runs the control API's
+# integration tests, which drive the server through it. The desktop builds with
+# `default-features = false` and picks `client` alone.
+default = ["cli", "client"]
 service = [
     "dep:async-trait",
     "dep:reqwest",
@@ -50,8 +64,18 @@ service = [
     "dep:tracing",
     "dep:adsb-pulsar-client",
     "dep:rumqttc",
+    "dep:fastrand",
 ]
-cli = ["service", "dep:clap", "dep:toml", "dep:tracing-subscriber", "dep:anyhow"]
+# OpenAPI schemas on the contract types. Kept apart from `client`, so the
+# desktop never compiles utoipa.
+openapi = ["dep:utoipa"]
+# The control API server, with its OpenAPI document at /v1/openapi.json.
+http-api = ["service", "openapi", "dep:axum", "dep:utoipa-axum"]
+# Swagger UI at /swagger-ui/, over the same document.
+swagger-ui = ["http-api", "dep:utoipa-swagger-ui"]
+# A client for the control API and nothing else: what the desktop builds.
+client = ["dep:reqwest"]
+cli = ["service", "http-api", "swagger-ui", "dep:clap", "dep:toml", "dep:tracing-subscriber", "dep:anyhow"]
 
 [lib]
 name = "adsb_weather_server"
@@ -65,3 +89,11 @@ required-features = ["cli"]
 [[test]]
 name = "open_meteo_provider"
 required-features = ["service"]
+
+[[test]]
+name = "control_api"
+required-features = ["http-api", "client"]
+
+[[test]]
+name = "openapi"
+required-features = ["swagger-ui", "client"]

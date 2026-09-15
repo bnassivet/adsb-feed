@@ -1344,6 +1344,10 @@ export default function Dashboard() {
             stale: weather.snapshot ? isStale(weather.snapshot, weatherClockMs) : false,
             nowMs: weatherClockMs,
             attribution: weather.snapshot?.attribution ?? null,
+            service: weather.service,
+            pendingEnabled: weather.pendingEnabled,
+            serviceError: weather.serviceError,
+            onServiceToggle: weather.setServiceEnabled,
           }}
         />
 

@@ -6,8 +6,20 @@
 //! 1.5 calls). A grid refreshed hourly can reach the limit without any single
 //! request looking large, so the estimate is computed and logged up front.
 
+use std::time::Duration;
+
 /// Open-Meteo free tier, calls per day.
 pub const FREE_DAILY_LIMIT: f64 = 10_000.0;
+
+/// Open-Meteo free tier, calls per minute.
+pub const MINUTELY_LIMIT: f64 = 600.0;
+
+/// Open-Meteo free tier, calls per hour.
+pub const HOURLY_LIMIT: f64 = 5_000.0;
+
+/// Share of the per-minute limit the pacer spends. The limit is per IP, so the
+/// headroom is for anything else behind the same uplink calling the API.
+pub const PACE_FRACTION: f64 = 0.8;
 
 /// Above this the service warns: retries and restarts need headroom.
 pub const WARN_DAILY_CALLS: f64 = 8_000.0;
@@ -44,6 +56,75 @@ pub fn call_weight(variables: usize) -> f64 {
 pub fn estimated_daily_calls(points: usize, variables: usize, refresh_minutes: u32) -> f64 {
     let refreshes_per_day = 1440.0 / refresh_minutes.max(1) as f64;
     points as f64 * call_weight(variables) * refreshes_per_day
+}
+
+/// Calls one refresh of the whole grid costs.
+pub fn calls_per_refresh(points: usize, variables: usize) -> f64 {
+    points as f64 * call_weight(variables)
+}
+
+/// How long pacing stretches one refresh that starts with a full bucket:
+/// zero while it fits in the per-minute allowance.
+pub fn estimated_pacing(calls: f64) -> Duration {
+    let bucket = TokenBucket::open_meteo_minutely();
+    let excess = (calls - bucket.capacity).max(0.0);
+    Duration::from_secs_f64(excess / bucket.per_second)
+}
+
+/// A token bucket counted in Open-Meteo calls.
+///
+/// Pure: the caller supplies a monotonic `now`, so the arithmetic is tested
+/// without a clock and the provider decides how to sleep.
+#[derive(Debug, Clone)]
+pub struct TokenBucket {
+    capacity: f64,
+    per_second: f64,
+    tokens: f64,
+    /// When `tokens` was last accounted for. Can be ahead of the caller's
+    /// `now` while a reservation is still waiting.
+    updated: Duration,
+}
+
+impl TokenBucket {
+    /// A full bucket of `capacity` calls, refilled at `per_second`.
+    pub fn new(capacity: f64, per_second: f64) -> Self {
+        Self {
+            capacity,
+            per_second,
+            tokens: capacity,
+            updated: Duration::ZERO,
+        }
+    }
+
+    /// [`PACE_FRACTION`] of Open-Meteo's per-minute limit, refilled evenly.
+    pub fn open_meteo_minutely() -> Self {
+        let capacity = MINUTELY_LIMIT * PACE_FRACTION;
+        Self::new(capacity, capacity / 60.0)
+    }
+
+    /// Reserves `cost` calls at `now` and returns how long to wait before
+    /// spending them.
+    ///
+    /// A cost above capacity waits for a full bucket and then overdraws it,
+    /// which pushes later reservations back, rather than never being allowed.
+    /// Reservations made without waiting queue behind each other.
+    pub fn reserve(&mut self, cost: f64, now: Duration) -> Duration {
+        if now > self.updated {
+            let elapsed = (now - self.updated).as_secs_f64();
+            self.tokens = (self.tokens + elapsed * self.per_second).min(self.capacity);
+            self.updated = now;
+        }
+        let needed = cost.min(self.capacity);
+        let refill = if self.tokens >= needed {
+            Duration::ZERO
+        } else {
+            Duration::from_secs_f64((needed - self.tokens) / self.per_second)
+        };
+        let ready_at = self.updated + refill;
+        self.tokens += refill.as_secs_f64() * self.per_second - cost;
+        self.updated = ready_at;
+        ready_at.saturating_sub(now)
+    }
 }
 
 /// Classifies a daily estimate.
@@ -107,5 +188,73 @@ mod tests {
         assert_eq!(verdict(WARN_DAILY_CALLS + 1.0), BudgetVerdict::Warn);
         assert_eq!(verdict(FREE_DAILY_LIMIT), BudgetVerdict::Warn);
         assert_eq!(verdict(FREE_DAILY_LIMIT + 1.0), BudgetVerdict::OverLimit);
+    }
+
+    // --- pacing -------------------------------------------------------------
+
+    const S: fn(u64) -> Duration = Duration::from_secs;
+
+    #[test]
+    fn a_full_bucket_spends_without_waiting() {
+        let mut bucket = TokenBucket::new(10.0, 1.0);
+        assert_eq!(bucket.reserve(4.0, S(0)), Duration::ZERO);
+        assert_eq!(bucket.reserve(6.0, S(0)), Duration::ZERO);
+        assert_eq!(bucket.reserve(1.0, S(0)), S(1));
+    }
+
+    #[test]
+    fn tokens_refill_over_time() {
+        let mut bucket = TokenBucket::new(10.0, 1.0);
+        bucket.reserve(10.0, S(0));
+        // Two seconds later there are two tokens; five are needed.
+        assert_eq!(bucket.reserve(5.0, S(2)), S(3));
+    }
+
+    #[test]
+    fn a_refill_never_exceeds_capacity() {
+        let mut bucket = TokenBucket::new(10.0, 1.0);
+        bucket.reserve(10.0, S(0));
+        assert_eq!(bucket.reserve(10.0, S(1000)), Duration::ZERO);
+        assert_eq!(bucket.reserve(1.0, S(1000)), S(1));
+    }
+
+    #[test]
+    fn a_cost_above_capacity_waits_for_a_full_bucket_then_overdraws() {
+        let mut bucket = TokenBucket::new(10.0, 1.0);
+        bucket.reserve(5.0, S(0));
+        // Five tokens left; a full bucket is five seconds away.
+        assert_eq!(bucket.reserve(15.0, S(0)), S(5));
+        // Overdrawn to -5 at t=5: one more token is six seconds after that.
+        assert_eq!(bucket.reserve(1.0, S(5)), S(6));
+    }
+
+    #[test]
+    fn reservations_made_without_waiting_queue_behind_each_other() {
+        let mut bucket = TokenBucket::new(1.0, 1.0);
+        assert_eq!(bucket.reserve(1.0, S(0)), Duration::ZERO);
+        assert_eq!(bucket.reserve(1.0, S(0)), S(1));
+        assert_eq!(bucket.reserve(1.0, S(0)), S(2));
+    }
+
+    #[test]
+    fn the_open_meteo_pacer_spends_80_percent_of_the_minutely_limit() {
+        let mut bucket = TokenBucket::open_meteo_minutely();
+        assert_eq!(bucket.reserve(480.0, S(0)), Duration::ZERO);
+        // 480 calls a minute refill at 8 a second.
+        assert_eq!(bucket.reserve(8.0, S(0)), S(1));
+    }
+
+    #[test]
+    fn the_default_grid_needs_no_pacing() {
+        let calls = calls_per_refresh(187, variables_per_location(6));
+        assert!((calls - 280.5).abs() < 1e-9, "got {calls}");
+        assert_eq!(estimated_pacing(calls), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_fine_grid_is_spread_over_more_than_a_minute() {
+        // 750 points at 0.5 degrees: 1125 calls, 645 over the allowance, at 8/s.
+        let calls = calls_per_refresh(750, variables_per_location(6));
+        assert_eq!(estimated_pacing(calls), Duration::from_secs_f64(80.625));
     }
 }

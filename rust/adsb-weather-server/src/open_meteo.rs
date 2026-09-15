@@ -8,10 +8,13 @@
 //!   a short hourly window is requested and the hour nearest "now" is picked.
 //! - Several locations in one request come back as a JSON **array**, one
 //!   object per location in request order; a single location is a bare object.
-//! - A rejected request is `{"error": true, "reason": "..."}` with HTTP 400.
+//! - A refused request is `{"error": true, "reason": "..."}`: HTTP 400 for a
+//!   malformed one, HTTP 429 when a request limit is exceeded. The status, not
+//!   the body, says which.
 
 use crate::grid::GridSpec;
 use crate::snapshot::{LevelFields, SNAPSHOT_VERSION, SurfaceFields, WeatherSnapshot};
+use crate::status::RateLimitScope;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 
@@ -116,6 +119,24 @@ pub fn parse_body(bytes: &[u8]) -> Result<Vec<LocationResponse>, OpenMeteoError>
         Body::Error { reason } => Err(OpenMeteoError::Api(reason)),
         Body::Many(locations) => Ok(locations),
         Body::One(location) => Ok(vec![location]),
+    }
+}
+
+/// The request limit a rate-limit refusal names.
+///
+/// Open-Meteo says it in prose ("Minutely API request limit exceeded. Please
+/// try again in one minute."), so this is best effort. Anything unrecognised
+/// is `Unknown`, which the refresh loop treats the most cautiously.
+pub fn rate_limit_scope(reason: &str) -> RateLimitScope {
+    let reason = reason.to_ascii_lowercase();
+    if reason.contains("daily") {
+        RateLimitScope::Daily
+    } else if reason.contains("hourly") {
+        RateLimitScope::Hourly
+    } else if reason.contains("minutely") {
+        RateLimitScope::Minutely
+    } else {
+        RateLimitScope::Unknown
     }
 }
 
@@ -335,6 +356,35 @@ mod tests {
             parse_body(b"<html>502</html>"),
             Err(OpenMeteoError::Json(_))
         ));
+    }
+
+    #[test]
+    fn a_rate_limit_reason_names_its_window() {
+        assert_eq!(
+            rate_limit_scope(
+                "Minutely API request limit exceeded. Please try again in one minute."
+            ),
+            RateLimitScope::Minutely
+        );
+        assert_eq!(
+            rate_limit_scope(
+                "Hourly API request limit exceeded. Please try again in the next hour."
+            ),
+            RateLimitScope::Hourly
+        );
+        assert_eq!(
+            rate_limit_scope("Daily API request limit exceeded. Please try again tomorrow."),
+            RateLimitScope::Daily
+        );
+    }
+
+    #[test]
+    fn an_unrecognised_rate_limit_reason_is_unknown() {
+        assert_eq!(
+            rate_limit_scope("Too many requests"),
+            RateLimitScope::Unknown
+        );
+        assert_eq!(rate_limit_scope(""), RateLimitScope::Unknown);
     }
 
     #[test]
