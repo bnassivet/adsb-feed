@@ -413,7 +413,8 @@ TOOLS: list[dict] = [
             "name": "setLayerVisibility",
             "description": (
                 "Show or hide map layers. Only provided layers are changed; "
-                "omitted layers keep their current state."
+                "omitted layers keep their current state. Weather and wind are "
+                "not among them: use setWeatherLayer."
             ),
             "parameters": {
                 "type": "object",
@@ -519,6 +520,86 @@ TOOLS: list[dict] = [
                     "timeRangeEndMs": {
                         "type": "integer",
                         "description": "End of time range (ms epoch)",
+                    },
+                },
+            },
+        },
+    },
+    # --- Weather (executed client-side: the snapshot lives in the desktop app) ---
+    {
+        "type": "function",
+        "function": {
+            "name": "setWeatherLayer",
+            "description": (
+                "Show or hide the weather layer (winds aloft from a weather model) "
+                "and choose what it draws: the level, wind barbs, and animated wind "
+                "particles coloured by speed. Only provided fields change. This is "
+                "the only tool that controls weather or wind on the map; to read "
+                "wind values use getWindAloft."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "Show (true) or hide (false) the weather layer",
+                    },
+                    "level": {
+                        "type": "string",
+                        "description": (
+                            "'SFC' for the surface, a pressure level such as '250 hPa', "
+                            "or a flight level such as 'FL340' (mapped to the nearest "
+                            "level available)"
+                        ),
+                    },
+                    "barbs": {
+                        "type": "boolean",
+                        "description": "Draw wind barbs at the grid points",
+                    },
+                    "particles": {
+                        "type": "boolean",
+                        "description": "Animate particles that move with the wind",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "getWindAloft",
+            "description": (
+                "Read the wind from the weather model: direction it blows FROM "
+                "(degrees true) and speed (knots). For an aircraft (hexIdent or "
+                "callsign) it reads at the aircraft's own altitude and adds "
+                "headwindKt/crosswindKt along its track (negative headwind = "
+                "tailwind, negative crosswind = from the left). Otherwise it reads "
+                "at a latitude/longitude, or over the receiver when no position is "
+                "given, on the level shown on the map unless level or altitudeFt is "
+                "given. Read-only: changes nothing on the map."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "hexIdent": {
+                        "type": "string",
+                        "description": "ICAO hex ident or callsign of a currently tracked aircraft",
+                    },
+                    "latitude": {
+                        "type": "number",
+                        "description": "Latitude in degrees (with longitude)",
+                    },
+                    "longitude": {
+                        "type": "number",
+                        "description": "Longitude in degrees (with latitude)",
+                    },
+                    "altitudeFt": {
+                        "type": "number",
+                        "description": "Pressure altitude in feet; takes precedence over level",
+                    },
+                    "level": {
+                        "type": "string",
+                        "description": "'SFC', a pressure level such as '250 hPa', or a flight level such as 'FL340'",
                     },
                 },
             },
