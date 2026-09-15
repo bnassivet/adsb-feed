@@ -805,8 +805,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/DESIGN.md": {
-    "mtime": 1789469549.668404,
-    "ast_hash": "41b850594032821aa06020a261973478",
+    "mtime": 1789470320.7578542,
+    "ast_hash": "c2a95f3bc7a310e85fcdf242cc989a99",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/2026-02-22-imported-tracks-selection-design.md": {
@@ -2430,8 +2430,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/scripts/stack.sh": {
-    "mtime": 1789469532.353334,
-    "ast_hash": "38f326f070812a39e83638d4d64a3b57",
+    "mtime": 1789470284.3637292,
+    "ast_hash": "01102b7d7509f24b951764526e3c88a2",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/skills/run-adsb-desktop/driver.sh": {
@@ -2475,8 +2475,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/QUICKSTART.md": {
-    "mtime": 1789469545.4156113,
-    "ast_hash": "eb140813e66708d8df76f792c40f6010",
+    "mtime": 1789470316.5964098,
+    "ast_hash": "582e13ad5d44ab8e44112220fe664f94",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/desktop_log.txt": {
@@ -2495,8 +2495,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/skills/run-adsb-stack/SKILL.md": {
-    "mtime": 1789469543.3608358,
-    "ast_hash": "9640e4482f7321510ce460775048e068",
+    "mtime": 1789470303.4928448,
+    "ast_hash": "32cf0bc9cf075bf42fb42176309263cf",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/skills/run-adsb-desktop/SKILL.md": {
@@ -10545,8 +10545,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/scripts/tests/test_stack_weather.sh": {
-    "mtime": 1789469573.268973,
-    "ast_hash": "d8f571bf506c7297f75b00bd5115b2e7",
+    "mtime": 1789470234.487909,
+    "ast_hash": "231b1e27dc88dfe9a24636a4b5ca30e8",
     "semantic_hash": ""
   }
 }
