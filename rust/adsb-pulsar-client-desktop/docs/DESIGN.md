@@ -4782,6 +4782,111 @@ instant.
 
 ---
 
+## Observability (Prometheus)
+
+Every long-lived service in the stack exposes a Prometheus endpoint. Before
+this, the telemetry existed but was trapped: the feed client kept excellent
+counters and wrote them to one log line every 10 s; the recorder could report
+storage statistics only to whoever `POST`ed to its tool endpoint; the weather
+service published a status projection, which is a state, not a time series.
+Answering "is the feed flowing, is the recorder growing, did weather get rate
+limited overnight" meant reading logs on each host.
+
+| Service | Endpoint | Port |
+|---|---|---|
+| Feed client | `/metrics` | `[metrics] feed_port` (8790) — its own listener |
+| Data server | `/metrics` | `[storage] http_port` (8787) — shared |
+| Weather service | `/metrics` | `[weather] http_port` (8789) — shared |
+| adsb-agent | `/metrics` | 8000 |
+| adsb-simulation-agent | `/metrics` | 8300 |
+
+Only the feed client needed a port of its own; everything else rides a listener
+it already had. That is why there is exactly one new config setting.
+
+### The desktop is deliberately not a scrape target
+
+`adsb-data-server`'s `server::router` is embedded by the desktop app for its own
+agent tool server, so adding `/metrics` there would have made the Tauri app a
+scrape target by accident. It is not one: it is a GUI on a laptop, Prometheus
+has no idea when it is running, and its DuckDB file is a *different database*
+from the recorder's — so its numbers would silently mix two stores in one graph.
+
+The exclusion is structural rather than conventional. `/metrics` lives on
+`router_with_metrics`/`serve_with_metrics`, and the desktop takes both
+`adsb-data-server` and `adsb-pulsar-client` with `default-features = false`, so
+nothing in that build enables the `metrics` feature at all.
+`tests/metrics_http.rs` pins it with a test that fails if `/metrics` ever
+appears on the plain router.
+
+If desktop metrics are ever wanted — `bridge.rs` already owns a `Metrics` — the
+honest mechanism is Prometheus `file_sd` or a push gateway, not a scrape target
+that is down most of the time.
+
+### Identity is one series, not a label on everything
+
+Three kinds of identity, three homes:
+
+1. **Which stack a target belongs to** is a *target label* (`stack`,
+   `component`) in `prometheus.yml`. The scraper already knows what it was
+   pointed at, and it can be relabelled without redeploying. Baking it into the
+   process would create two sources of truth that disagree the first time
+   someone runs `STACK=prod` with a copied config.
+2. **Identity only the process knows** — `source_id`, version, stage — is one
+   always-`1` gauge, `adsb_build_info`, joined at query time:
+   `rate(...) * on(instance) group_left(source_id) adsb_build_info`. As a label
+   on all ~30 series it would be bytes on every scrape, cardinality in the
+   database, and series churn the day a receiver is renamed.
+3. **Real dimensions** (`state`, `scope`, `tool`, `outcome`) are labels, but
+   only ever bounded sets. Never a hex ident, a callsign, a topic, or an error
+   string — `last_error` stays in the status API, which is built for it.
+
+### Three choices worth keeping
+
+**The weather state is a state *set*.** `ServiceState` becomes one series per
+variant with exactly one at `1`, not a gauge holding `0..5`. It is
+self-describing, it alerts on a name
+(`adsb_weather_state{state="rate_limited"} == 1 for 30m`) rather than a magic
+number, and inserting a variant cannot silently change what an existing alert
+means. The label functions match exhaustively, so a new variant fails to
+compile instead of being exported as an old one.
+
+**Recorder statistics are cached, never queried per scrape.** `get_stats` runs
+several full-table aggregates under the same lock the ingest path holds, so a
+scrape-time query would make Prometheus's cadence — plus every retry, every
+human hitting `/metrics`, every second scraper — cost recorded messages. A
+15 s refresher feeds the endpoint, and the staleness is *exported*
+(`stats_age_seconds`, `stats_query_duration_seconds`) rather than hidden.
+
+**Absent is not zero.** Optional timestamps are omitted when they have no
+value. A recorder with no rows has no oldest record; exporting `0` would plot a
+row from 1970 and make `time() - oldest` a plausible-looking 56 years.
+
+### Reaching host processes from a container
+
+The services are native processes; Prometheus runs in Docker. It reaches them
+through `host.docker.internal`, mapped to `host-gateway` so one target string
+works on Docker Desktop and Linux alike.
+
+**That path is not loopback**, which forces a real choice. On a development
+machine only services bound beyond `127.0.0.1` are scrapeable: the feed client's
+`[metrics] feed_bind` can be opened safely because the endpoint carries counters
+and nothing else, while the recorder (loopback hardcoded) and the weather
+service show as DOWN — and opening weather's port would also expose its
+unauthenticated `PUT /v1/enabled`.
+
+On a Raspberry Pi the answer is better: `infrastructure/docker-compose.pi.yml`
+puts Prometheus on the host network, every target becomes `localhost`, and
+**nothing has to be opened at all**.
+
+### Grafana
+
+`make monitoring` starts Prometheus and Grafana without Pulsar, which now sits
+behind a compose profile. Dashboards (`adsb-pipeline`, `adsb-recorder`,
+`adsb-weather`, `adsb-agents`) are tracked JSON, mounted read-only with
+`allowUiUpdates: false` — an edit made in the UI would otherwise become the
+source of truth and vanish on the next restart. Grafana keeps `:3000`, which is
+why the Next dev server moved to `:3200`.
+
 ## Conclusion
 
 The ADS-B Aircraft Tracker desktop application demonstrates a modern, performant architecture:
