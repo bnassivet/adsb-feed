@@ -136,9 +136,14 @@ state_path = ".run/weather-state.json"
 # Start Prometheus and Grafana with `make monitoring`.
 feed_port = 8790
 # Counters only -- no secrets, no control -- but still a listener with no
-# authentication. Loopback keeps it to this machine. Prometheus in Docker
-# cannot reach loopback on the host, so scraping the feed from the bundled
-# monitoring stack needs "0.0.0.0" here; on a Raspberry Pi prefer
+# authentication, so it stays on loopback.
+#
+# Loopback is enough for `make monitoring` on macOS and Windows: Docker Desktop
+# proxies host.docker.internal through to the host's 127.0.0.1, so a
+# loopback-bound endpoint is scraped fine (measured -- the recorder and weather
+# targets come up on 127.0.0.1 too). Where the Docker host is LINUX,
+# host-gateway is a real bridge address that cannot reach host loopback, and a
+# target would need "0.0.0.0" here -- but on a Raspberry Pi prefer
 # infrastructure/docker-compose.pi.yml, which puts Prometheus on the host
 # network so nothing has to be opened at all.
 feed_bind = "127.0.0.1"
