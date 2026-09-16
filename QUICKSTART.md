@@ -58,7 +58,7 @@ all keyed by the name. **Ports are not** — set them in the second stack's own
 reports what still collides.
 
 The desktop app can run twice — set `[desktop].dev_port` and
-`[desktop].tool_port` (`:3000` and `:8788` are the defaults) and the rest
+`[desktop].tool_port` (`:3200` and `:8788` are the defaults) and the rest
 follows. Each instance keeps its **own DuckDB and
 settings** in `<app-data>/<stack>/`, so dev and prod history never mix, and talks
 to its own stack's agent. A named stack builds into `rust/target-desktop-<name>`,
@@ -139,7 +139,7 @@ Give the prod stack its own ports — nothing derives them:
 
 | | dev | prod |
 |---|---|---|
-| `[desktop].dev_port` / `tool_port` | 3000 / 8788 | 3010 / 8798 |
+| `[desktop].dev_port` / `tool_port` | 3200 / 8788 | 3210 / 8798 |
 | `[agents].agent_port` / `sim_agent_port` | 8000 / 8300 | 8010 / 8310 |
 | `[storage].http_port` | 8787 | 8797 |
 | `[receiver].id` | `<host>-dev` | `<host>-prod` — and **not** the fleet's id |
@@ -296,11 +296,14 @@ layer is badged **stale** once it is more than three hours old.
 | 30003 | dump1090 (real or mock) |
 | 8787 | Data server query API |
 | 8788 | Desktop tool server — separate port so it does not collide with 8787 |
-| 3010 / 8798 | A second stack's desktop (`[desktop].dev_port` / `tool_port`) |
+| 3210 / 8798 | A second stack's desktop (`[desktop].dev_port` / `tool_port`) |
 | 8010 / 8310 | A second stack's agents |
 | 8797 / 9495 | A second stack's data server and Quack |
 | 9494 | Quack (DuckDB over HTTP) |
-| 3000 | Desktop dev server — **collides with Grafana** in the Pulsar stack |
+| 3200 | Desktop dev server (`[desktop].dev_port`) |
+| 3000 | Grafana (`make monitoring`) |
+| 8790 | Feed client `/metrics` (`[metrics].feed_port`) |
+| 9090 | Prometheus (`make monitoring`) |
 | 8000 / 8300 | adsb-agent / adsb-simulation-agent |
 
 Nothing derives a second stack's ports — set them in that stack's own config

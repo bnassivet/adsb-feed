@@ -4,7 +4,7 @@
   "productName": "ADS-B Aircraft Tracker",
   "version": "0.1.0",
   "build": {
-    "devUrl": "http://localhost:3000",
+    "devUrl": "http://localhost:3200",
     "frontendDist": "../out",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"

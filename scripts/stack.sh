@@ -121,7 +121,7 @@ running() { # running <name>
 # Why this matters: `uv run python -m adsb_agent` forks python, and
 # `npm run tauri dev` is a whole tree (next dev, cargo, the app binary).
 # Signalling only the pid we recorded orphans the children, still holding their
-# ports -- which is how a stale dev server ends up squatting on :3000 and
+# ports -- which is how a stale dev server ends up squatting on :3200 and
 # failing the next launch with EADDRINUSE.
 #
 # perl is invoked DIRECTLY, never through a shell function. Wrapped in a
@@ -214,7 +214,7 @@ sim_agent_env() {
 
 # The desktop is single-instance, for now.
 #
-# Two would need more than a free port: the Next dev server is pinned to :3000
+# Two would need more than a free port: the Next dev server is pinned to :3200
 # in both tauri.conf.json (devUrl) and package.json, and -- the harder half --
 # both instances would resolve the same Tauri app-data directory from the same
 # bundle identifier, so they would share one settings store and one DuckDB
@@ -227,13 +227,13 @@ sim_agent_env() {
 # for that to be safe; three are set here, and the fourth -- the app's DuckDB
 # and settings directory -- is ADSB_STACK, handled inside the app itself:
 #
-#   dev port   :3000 is pinned in tauri.conf.json and package.json
+#   dev port   :3200 is pinned in tauri.conf.json and package.json
 #   CSP        connect-src pins the agent's port; a different one is BLOCKED
 #              with nothing but a console message to show for it
 #   agent URL  two frontend call sites used to hardcode :8000, so a second
 #              window would have queried the FIRST stack's data
 
-desktop_dev_port() { cfg desktop dev_port 3000; }
+desktop_dev_port() { cfg desktop dev_port 3200; }
 
 # The feed client's Prometheus port; 0 disables it. Every other service serves
 # /metrics on a port it already has, so this is the only one to track.
@@ -259,7 +259,11 @@ agent_base_url() { echo "http://localhost:$(cfg agents agent_port 8000)"; }
 tauri_config_override() {
   dev="$(desktop_dev_port)"
   ap="$(cfg agents agent_port 8000)"
-  if [ "$dev" = "3000" ] && [ "$ap" = "8000" ]; then return 0; fi
+  # Must match tauri.conf.json and package.json EXACTLY. If it does not, the
+  # default stack runs the committed config while this believes it is running
+  # the configured one -- and the difference shows up only as a dev server on
+  # the wrong port.
+  if [ "$dev" = "3200" ] && [ "$ap" = "8000" ]; then return 0; fi
   python3 "$REPO/scripts/tauri-dev-config.py" "$dev" "$ap"
 }
 
@@ -499,8 +503,9 @@ doctor)
   else echo "  MISSING docker daemon -- needed for the MQTT broker"; rc=1; fi
 
   echo "Ports:"
-  # The desktop's dev port is worth watching because Grafana in
-  # infrastructure/docker-compose.yml wants :3000 too -- they cannot both run.
+  # The desktop moved to :3200 so Grafana can keep :3000 -- they used to
+  # collide, and could not both run. A config still saying 3000 is warned
+  # about below.
   #
   # The MQTT port is only OURS to bind when the broker is local. With a broker
   # on a Pi, a local :1883 belongs to some other stack, and reporting it BUSY
@@ -514,6 +519,14 @@ doctor)
   for p in $ports; do
     if port_busy "$p"; then echo "  BUSY    $p"; else echo "  free    $p"; fi
   done
+  # adsb-stack.toml is gitignored, so an existing one still says 3000 and keeps
+  # colliding with Grafana exactly as it always did. It is not broken -- the
+  # override path handles it -- but nothing else would ever mention it.
+  if [ "$(desktop_dev_port)" = "3000" ]; then
+    echo "  WARN    [desktop] dev_port is 3000, which Grafana owns"
+    echo "          (infrastructure/docker-compose.yml). The new default is"
+    echo "          3200 -- see adsb-stack-template.toml."
+  fi
   owns_broker || echo "  remote  $(cfg mqtt host) mqtt -- no local broker for this stack"
 
   # Duplicate feeds share one MQTT client id and evict each other in a loop.
@@ -834,7 +847,7 @@ down)
 
 reap)
   # Last resort for orphans a previous run left behind -- typically a `tauri
-  # dev` tree killed with Ctrl-C, whose next dev server keeps :3000 and makes
+  # dev` tree killed with Ctrl-C, whose next dev server keeps :3200 and makes
   # the next `make up-desktop` fail with EADDRINUSE.
   require_config
   found=0

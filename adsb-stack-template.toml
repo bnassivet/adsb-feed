@@ -164,11 +164,14 @@ llm_base_url = "http://localhost:5010/gateway/mlflow/v1"
 mlflow_uri = "http://localhost:5010"
 
 [desktop]
-# The Next dev server. Pinned to 3000 in tauri.conf.json, so a SECOND stack
-# running its desktop at the same time needs a different one here -- and gets a
-# matching CSP entry automatically, without which its agent calls are blocked
-# with nothing but a console message.
-dev_port = 3000
+# The Next dev server. Pinned to 3200 in tauri.conf.json AND package.json, so a
+# SECOND stack running its desktop at the same time needs a different one here
+# -- and gets a matching CSP entry automatically, without which its agent calls
+# are blocked with nothing but a console message.
+#
+# 3200, not Next's usual 3000: Grafana owns :3000 in
+# infrastructure/docker-compose.yml, and the two used to collide.
+dev_port = 3200
 
 # The desktop's OWN read-only tool server for the agent, serving its own
 # storage. Must not collide with storage.http_port above, which the data server
