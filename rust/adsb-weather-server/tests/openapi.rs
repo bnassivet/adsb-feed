@@ -5,8 +5,10 @@
 //! documented operation is really served, and its schemas say what serde
 //! actually writes.
 
-use adsb_weather_server::api::{ENABLED_PATH, OPENAPI_PATH, STATUS_PATH, SWAGGER_UI_PATH};
-use adsb_weather_server::api_server::{ApiState, router};
+use adsb_weather_server::api::{
+    ENABLED_PATH, METRICS_PATH, OPENAPI_PATH, STATUS_PATH, SWAGGER_UI_PATH,
+};
+use adsb_weather_server::api_server::{ApiState, router_with_metrics};
 use adsb_weather_server::control::Control;
 use adsb_weather_server::projection::project;
 use adsb_weather_server::refresh::ReportedState;
@@ -28,7 +30,7 @@ async fn server() -> Server {
     let control = Arc::new(Control::new(Arc::new(StateStore::in_memory())));
     let (status_tx, status) =
         watch::channel(project(control.enabled(), &ReportedState::default(), 1));
-    let app = router(ApiState { control, status });
+    let app = router_with_metrics(ApiState { control, status }, "pi-dev");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -228,6 +230,27 @@ async fn every_documented_operation_is_routed() {
             "{method} {path} is documented but answers {status}"
         );
     }
+}
+
+#[tokio::test]
+async fn the_metrics_endpoint_is_served_but_not_documented() {
+    // Both halves matter, which is why they are asserted together. /metrics is
+    // real (a scraper finds it), and it is absent from the document (the
+    // document describes the versioned JSON contract a client is generated
+    // from -- a text/plain scrape surface has no business in it, and
+    // `it_documents_exactly_the_contract_routes` would start lying).
+    let server = server().await;
+
+    let (status, content_type, body) = get(&format!("{}{METRICS_PATH}", server.url)).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(content_type.starts_with("text/plain"), "{content_type}");
+
+    let doc = document(&server).await;
+    assert!(
+        doc["paths"].get(METRICS_PATH).is_none(),
+        "{METRICS_PATH} must not be in the document: {}",
+        doc["paths"]
+    );
 }
 
 #[tokio::test]

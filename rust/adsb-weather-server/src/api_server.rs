@@ -142,6 +142,38 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
     documented_routes().1
 }
 
+/// What the `/metrics` handler needs: this service's identity, and the same
+/// status projection the control API serves.
+///
+/// Its own state, deliberately. [`ApiState`] is constructed literally by the
+/// control-API tests, and the metrics endpoint shares nothing with the control
+/// handlers beyond the status channel it clones from them.
+#[cfg(feature = "metrics")]
+#[derive(Clone)]
+pub struct MetricsState {
+    /// This crate's version, for `adsb_build_info`.
+    pub version: String,
+    /// The receiver id, whose suffix supplies the `stage` label.
+    pub source_id: String,
+    /// The query side, shared with `GET /v1/status`.
+    pub status: watch::Receiver<WeatherStatus>,
+}
+
+#[cfg(feature = "metrics")]
+async fn get_metrics(State(state): State<MetricsState>) -> impl IntoResponse {
+    // Cloned rather than held: a `watch` borrow guard must not be alive across
+    // an await, and rendering is cheap enough not to care.
+    let status = state.status.borrow().clone();
+    let body = crate::metrics_export::render(&state.version, &state.source_id, &status);
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            adsb_pulsar_client::metrics_export::content_type(),
+        )],
+        body,
+    )
+}
+
 /// The API's routes, its OpenAPI document and, with the `swagger-ui` feature,
 /// Swagger UI (used by [`serve`] and by tests).
 pub fn router(state: ApiState) -> Router {
@@ -164,11 +196,38 @@ pub fn router(state: ApiState) -> Router {
     routes.with_state(state)
 }
 
+/// [`router`] plus the Prometheus endpoint at [`crate::api::METRICS_PATH`].
+///
+/// The metrics route is merged **after** the documented routes are split out,
+/// so it never enters the OpenAPI document. That is deliberate: the document
+/// describes the versioned JSON control contract the desktop compiles a client
+/// against, and `/metrics` answers `text/plain` to a scraper that would never
+/// read it. `tests/openapi.rs` pins both halves of that.
+#[cfg(feature = "metrics")]
+pub fn router_with_metrics(state: ApiState, source_id: impl Into<String>) -> Router {
+    let metrics = MetricsState {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        source_id: source_id.into(),
+        status: state.status.clone(),
+    };
+    router(state).merge(
+        Router::new()
+            .route(crate::api::METRICS_PATH, axum::routing::get(get_metrics))
+            .with_state(metrics),
+    )
+}
+
 /// Binds `bind:port` and serves until `shutdown` turns true.
 ///
 /// A bind failure is logged, not fatal: the service keeps fetching and
 /// publishing, only remote control is lost.
-pub async fn serve(bind: IpAddr, port: u16, state: ApiState, mut shutdown: watch::Receiver<bool>) {
+pub async fn serve(
+    bind: IpAddr,
+    port: u16,
+    state: ApiState,
+    source_id: String,
+    mut shutdown: watch::Receiver<bool>,
+) {
     let addr = SocketAddr::new(bind, port);
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => listener,
@@ -194,6 +253,24 @@ pub async fn serve(bind: IpAddr, port: u16, state: ApiState, mut shutdown: watch
         crate::api::SWAGGER_UI_PATH
     );
 
+    #[cfg(feature = "metrics")]
+    info!(
+        "Weather metrics at http://{addr}{}",
+        crate::api::METRICS_PATH
+    );
+
+    // The endpoint has to be on the *served* router, not only the one the
+    // tests build: with `router` here, /metrics passed every test and 404'd in
+    // production.
+    #[cfg(feature = "metrics")]
+    let app = router_with_metrics(state, source_id);
+    #[cfg(not(feature = "metrics"))]
+    let app = {
+        // Only the metrics endpoint needs the identity.
+        let _ = source_id;
+        router(state)
+    };
+
     let stopped = async move {
         while shutdown.changed().await.is_ok() {
             if *shutdown.borrow() {
@@ -201,7 +278,7 @@ pub async fn serve(bind: IpAddr, port: u16, state: ApiState, mut shutdown: watch
             }
         }
     };
-    if let Err(e) = axum::serve(listener, router(state))
+    if let Err(e) = axum::serve(listener, app)
         .with_graceful_shutdown(stopped)
         .await
     {

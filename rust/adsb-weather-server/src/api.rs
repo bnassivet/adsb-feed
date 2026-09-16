@@ -26,6 +26,15 @@ pub const OPENAPI_PATH: &str = "/v1/openapi.json";
 /// Swagger UI over [`OPENAPI_PATH`]; the page is `SWAGGER_UI_PATH` + `/`.
 pub const SWAGGER_UI_PATH: &str = "/swagger-ui";
 
+/// `GET`: the Prometheus exposition.
+///
+/// Deliberately **not** under `/v1/`. It is Prometheus's well-known default,
+/// so every scrape job can omit `metrics_path`, and its contract is the
+/// exposition format rather than this crate's JSON control API -- the two
+/// version independently. For the same reason it is not in the OpenAPI
+/// document: see [`crate::api_server::router_with_metrics`].
+pub const METRICS_PATH: &str = "/metrics";
+
 /// The body of a `PUT` to [`ENABLED_PATH`], and of its `202` reply.
 ///
 /// A desired state, not a toggle: sending it twice is the same as once.
@@ -60,6 +69,14 @@ mod tests {
     fn a_setting_without_the_field_is_rejected() {
         // An empty body must not silently mean "disable".
         assert!(serde_json::from_str::<EnabledSetting>("{}").is_err());
+    }
+
+    #[test]
+    fn the_metrics_path_is_deliberately_unversioned() {
+        // Prometheus's well-known default, so scrape configs need no
+        // metrics_path. It does not move with the control API's version.
+        assert_eq!(METRICS_PATH, "/metrics");
+        assert!(!METRICS_PATH.starts_with("/v1/"));
     }
 
     #[test]

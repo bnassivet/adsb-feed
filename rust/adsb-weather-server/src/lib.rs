@@ -19,6 +19,8 @@ pub mod cache;
 #[cfg(feature = "service")]
 pub mod control;
 pub mod grid;
+#[cfg(feature = "metrics")]
+pub mod metrics_export;
 pub mod open_meteo;
 #[cfg(feature = "service")]
 pub mod projection;

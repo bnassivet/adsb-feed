@@ -118,6 +118,8 @@ async fn run(cfg: WeatherConfig) -> anyhow::Result<()> {
                 control: control.clone(),
                 status: status_rx.clone(),
             },
+            // Identity for `adsb_build_info` on the metrics endpoint.
+            cfg.source_id.clone(),
             shutdown_rx.clone(),
         ))
     });
