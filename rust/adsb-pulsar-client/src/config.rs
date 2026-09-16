@@ -211,6 +211,32 @@ pub struct Config {
     #[serde(default = "default_socket_port")]
     pub socket_port: u16,
 
+    /// Prometheus metrics port. 0 disables the endpoint.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "metrics-port",
+            default_value = "0",
+            env = "ADSB_METRICS_PORT",
+            help = "Serve Prometheus metrics on this port; 0 disables"
+        )
+    )]
+    #[serde(default = "default_metrics_port")]
+    pub metrics_port: u16,
+
+    /// Address the metrics endpoint binds.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "metrics-bind",
+            default_value = "127.0.0.1",
+            env = "ADSB_METRICS_BIND",
+            help = "Address the metrics endpoint binds (127.0.0.1 or 0.0.0.0)"
+        )
+    )]
+    #[serde(default = "default_metrics_bind")]
+    pub metrics_bind: String,
+
     /// Pulsar broker URL
     #[cfg_attr(
         feature = "cli",
@@ -584,6 +610,14 @@ fn default_socket_host() -> String {
 fn default_socket_port() -> u16 {
     30003
 }
+/// Off unless asked for: a binary invoked with no config file must not open a
+/// listening socket. The stack file is what turns it on.
+fn default_metrics_port() -> u16 {
+    0
+}
+fn default_metrics_bind() -> String {
+    "127.0.0.1".to_string()
+}
 fn default_mqtt_broker() -> String {
     "localhost".to_string()
 }
@@ -663,6 +697,8 @@ impl Default for Config {
             source_id: default_source_id(),
             socket_host: default_socket_host(),
             socket_port: default_socket_port(),
+            metrics_port: default_metrics_port(),
+            metrics_bind: default_metrics_bind(),
             pulsar_broker: default_pulsar_broker(),
             pulsar_topic: default_pulsar_topic(),
             recv_buffer_size: default_recv_buffer_size(),
@@ -698,6 +734,15 @@ impl Default for Config {
 }
 
 impl Config {
+    /// The address the metrics endpoint binds, or `None` when `metrics_bind`
+    /// is not an IP address.
+    ///
+    /// Deliberately not a hostname: binding is not name resolution, and
+    /// "localhost" resolving to two families is a silent half-bind.
+    pub fn metrics_bind_addr(&self) -> Option<std::net::IpAddr> {
+        self.metrics_bind.parse().ok()
+    }
+
     /// Validates all configuration parameters.
     ///
     /// Checks for:
@@ -705,10 +750,20 @@ impl Config {
     /// - Valid Pulsar broker URL format (only when Pulsar forwarder is selected)
     /// - Valid connection mode string
     /// - Non-zero buffer sizes
+    /// - Valid `metrics_bind` address, but only when the endpoint is enabled
     pub fn validate(&self) -> Result<()> {
         // Validate source_id
         if self.source_id.trim().is_empty() {
             return Err(ClientError::Config("source_id cannot be empty".into()));
+        }
+
+        // Only when the endpoint is on: an unused setting must never block
+        // startup, the same rule the forwarder validation above follows.
+        if self.metrics_port > 0 && self.metrics_bind_addr().is_none() {
+            return Err(ClientError::Config(format!(
+                "metrics_bind '{}' must be an IP address, e.g. 127.0.0.1 or 0.0.0.0",
+                self.metrics_bind
+            )));
         }
 
         // Validate Pulsar broker URL only when Pulsar forwarder is configured
@@ -848,6 +903,10 @@ impl Config {
             heartbeat_timeout_secs,
             |v: &toml::Value| v.as_integer().map(|i| i as u64)
         );
+        overlay!("metrics_port", metrics_port, |v: &toml::Value| v
+            .as_integer()
+            .and_then(|i| u16::try_from(i).ok()));
+        overlay!("metrics_bind", metrics_bind, as_string);
 
         // Receiver location is `arg(skip)`: file-only, with no flag or env
         // fallback, so the file is the ONLY way to set it.
@@ -1014,6 +1073,64 @@ mod tests {
     #[test]
     fn test_default_config_is_valid() {
         assert!(Config::default().validate().is_ok());
+    }
+
+    #[test]
+    fn test_metrics_are_off_by_default() {
+        // A binary invoked with no config file must not open a socket.
+        let config = Config::default();
+        assert_eq!(config.metrics_port, 0);
+        assert_eq!(config.metrics_bind, "127.0.0.1");
+    }
+
+    #[test]
+    #[cfg(feature = "cli")]
+    fn test_metrics_port_and_bind_come_from_the_file() {
+        // The regression guard for a missing `overlay!` line. Without one the
+        // rendered .run/feed.toml value is ignored with no error and no log --
+        // the endpoint simply never appears, and nothing says why.
+        let mut config = Config::default();
+        let file: toml::Value =
+            toml::from_str("metrics_port = 8790\nmetrics_bind = '0.0.0.0'").unwrap();
+        config.overlay_file(&file, &|_| true);
+
+        assert_eq!(config.metrics_port, 8790);
+        assert_eq!(config.metrics_bind, "0.0.0.0");
+    }
+
+    #[test]
+    #[cfg(feature = "cli")]
+    fn test_an_explicit_metrics_port_beats_the_file() {
+        let mut config = Config::default();
+        config.metrics_port = 9999;
+        let file: toml::Value = toml::from_str("metrics_port = 8790").unwrap();
+        // "metrics_port" was set explicitly, so the file must not win.
+        config.overlay_file(&file, &|id| id != "metrics_port");
+
+        assert_eq!(config.metrics_port, 9999);
+    }
+
+    #[test]
+    fn test_a_metrics_bind_that_is_not_an_address_is_an_error() {
+        let config = Config {
+            metrics_port: 8790,
+            metrics_bind: "localhost".to_string(),
+            ..Config::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("metrics_bind"), "{err}");
+    }
+
+    #[test]
+    fn test_a_bad_metrics_bind_is_ignored_while_the_endpoint_is_off() {
+        // An unused setting must never stop an edge node from booting, the
+        // same rule the Pulsar and MQTT validation follow.
+        let config = Config {
+            metrics_port: 0,
+            metrics_bind: "nonsense".to_string(),
+            ..Config::default()
+        };
+        assert!(config.validate().is_ok());
     }
 
     #[test]

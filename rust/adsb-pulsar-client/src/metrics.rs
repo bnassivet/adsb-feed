@@ -60,6 +60,15 @@ struct MetricsInner {
     reconnection_attempts: AtomicU64,
     /// Number of messages received from socket (all lines including heartbeats)
     messages_received: AtomicU64,
+    /// Milliseconds after `start_time` at which the last heartbeat or data
+    /// line arrived.
+    ///
+    /// An offset from the monotonic start rather than a wall-clock instant:
+    /// this is stored once per line, at up to 50k lines/second, so it must not
+    /// cost a `SystemTime` syscall. Zero means "process start", which is also
+    /// what `ConnectionMonitor` assumes when it is constructed — a client that
+    /// has only just started has not yet missed anything.
+    last_meaningful_ms: AtomicU64,
     /// Start time for throughput calculation
     start_time: Instant,
 }
@@ -88,6 +97,7 @@ impl Metrics {
                 retry_queue_size: AtomicU64::new(0),
                 reconnection_attempts: AtomicU64::new(0),
                 messages_received: AtomicU64::new(0),
+                last_meaningful_ms: AtomicU64::new(0),
                 start_time: Instant::now(),
             }),
         }
@@ -183,6 +193,32 @@ impl Metrics {
     /// Get messages received count (all TCP lines including heartbeats)
     pub fn messages_received(&self) -> u64 {
         self.inner.messages_received.load(Ordering::Relaxed)
+    }
+
+    /// Records that a heartbeat or data line arrived.
+    ///
+    /// Call it for every meaningful line, heartbeats included: this is the
+    /// input to [`Self::since_last_meaningful_message`], which is what
+    /// distinguishes a quiet sky from a dead feed.
+    pub fn mark_meaningful_message(&self) {
+        let ms = self.inner.start_time.elapsed().as_millis() as u64;
+        self.inner.last_meaningful_ms.store(ms, Ordering::Relaxed);
+    }
+
+    /// Time since the last heartbeat or data line.
+    ///
+    /// The single most operationally useful number this client produces: a
+    /// feed that is connected but silent looks perfectly healthy by every
+    /// other measure. Mirrors
+    /// [`ConnectionMonitor::since_last_meaningful_message`](crate::connection_monitor::ConnectionMonitor::since_last_meaningful_message),
+    /// but readable from a metrics handle rather than from inside the client.
+    pub fn since_last_meaningful_message(&self) -> std::time::Duration {
+        let now_ms = self.inner.start_time.elapsed().as_millis() as u64;
+        let last_ms = self.inner.last_meaningful_ms.load(Ordering::Relaxed);
+        // Saturating: the two loads are not atomic together, so `last` can be
+        // a hair ahead of `now`. That is a zero-length silence, not a wrap to
+        // 584 million years.
+        std::time::Duration::from_millis(now_ms.saturating_sub(last_ms))
     }
 
     /// Get elapsed time since start
@@ -438,6 +474,44 @@ mod tests {
         assert!(value.get("reconnection_attempts").is_some());
         assert!(value.get("elapsed_secs").is_some());
         assert!(value.get("throughput_msg_per_sec").is_some());
+    }
+
+    #[test]
+    fn test_a_new_client_has_not_missed_anything() {
+        // Zero means "process start", matching ConnectionMonitor::new, so a
+        // client that has just started does not look like a dead feed.
+        let m = Metrics::new();
+        assert!(m.since_last_meaningful_message() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn test_marking_a_message_resets_the_silence() {
+        let m = Metrics::new();
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        let before = m.since_last_meaningful_message();
+        assert!(before >= std::time::Duration::from_millis(20), "{before:?}");
+
+        m.mark_meaningful_message();
+        assert!(m.since_last_meaningful_message() < before);
+    }
+
+    #[test]
+    fn test_silence_grows_while_nothing_arrives() {
+        let m = Metrics::new();
+        m.mark_meaningful_message();
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        assert!(m.since_last_meaningful_message() >= std::time::Duration::from_millis(20));
+    }
+
+    #[test]
+    fn test_silence_is_shared_across_clones() {
+        // The metrics server holds a clone; marks made by the client must be
+        // visible through it.
+        let m = Metrics::new();
+        let observer = m.clone();
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        m.mark_meaningful_message();
+        assert!(observer.since_last_meaningful_message() < std::time::Duration::from_millis(20));
     }
 
     #[test]

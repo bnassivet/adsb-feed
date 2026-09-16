@@ -353,6 +353,10 @@ impl ADSBFeedClient {
                             for message in &messages {
                                 self.metrics.inc_messages_received();
                                 self.connection_monitor.classify_line(message);
+                                // Heartbeats count: the question this answers
+                                // is "is the link alive", not "is anything
+                                // flying".
+                                self.metrics.mark_meaningful_message();
                             }
                             for message in messages {
                                 self.forward_message(message).await?;

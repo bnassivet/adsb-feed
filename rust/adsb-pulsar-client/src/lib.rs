@@ -62,6 +62,8 @@ pub mod forwarder;
 pub mod metrics;
 #[cfg(feature = "metrics")]
 pub mod metrics_export;
+#[cfg(feature = "metrics")]
+pub mod metrics_server;
 pub mod source;
 
 // Re-export main types for convenience

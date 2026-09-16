@@ -115,7 +115,32 @@ fn build_forwarders(config: &Config) -> Result<Vec<Box<dyn MessageForwarder>>, C
 /// Runs the client with graceful shutdown handling.
 async fn run_client(config: Config) -> adsb_pulsar_client::error::Result<()> {
     let forwarders = build_forwarders(&config)?;
+
+    // Read before `config` is moved into the client.
+    #[cfg(feature = "metrics")]
+    let metrics_endpoint = (
+        config.metrics_port,
+        config.metrics_bind_addr(),
+        config.source_id.clone(),
+    );
+
     let mut client = ADSBFeedClient::new(config, forwarders)?;
+
+    // The endpoint is a bystander: it shares the client's metrics handle and
+    // never touches the forwarding path, so losing it costs observability and
+    // nothing else.
+    #[cfg(feature = "metrics")]
+    if let (port, Some(bind), source_id) = metrics_endpoint
+        && port > 0
+    {
+        tokio::spawn(adsb_pulsar_client::metrics_server::serve(
+            bind,
+            port,
+            client.metrics(),
+            env!("CARGO_PKG_VERSION").to_string(),
+            source_id,
+        ));
+    }
 
     // Setup graceful shutdown handler
     let shutdown = setup_shutdown_handler();

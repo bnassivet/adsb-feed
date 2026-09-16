@@ -23,7 +23,7 @@
 //!   * on(instance) group_left(source_id) adsb_build_info
 //! ```
 
-use prometheus::{Encoder, Gauge, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
+use prometheus::{Encoder, Gauge, IntCounter, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
 
 /// The Prometheus text exposition content type, including its version
 /// parameter.
@@ -84,6 +84,18 @@ impl Exporter {
         let gauge = IntGauge::new(name, help).expect("static metric definition");
         gauge.set(value);
         self.register(Box::new(gauge));
+    }
+
+    /// Register a **counter** holding one fixed total.
+    ///
+    /// Not interchangeable with a gauge. The two differ in `# TYPE`, and
+    /// `rate()`/`increase()` are only meaningful over a counter — exporting a
+    /// monotonic total as a gauge silently loses reset detection, so a process
+    /// restart would read as a plunge to zero rather than a new counter run.
+    pub fn counter(&self, name: &str, help: &str, total: u64) {
+        let counter = IntCounter::new(name, help).expect("static metric definition");
+        counter.inc_by(total);
+        self.register(Box::new(counter));
     }
 
     /// Register a floating-point gauge holding one fixed value.
@@ -231,6 +243,29 @@ mod tests {
         let exporter = Exporter::new("feed", "0.1.0", "dev-laptop-dev");
         exporter.timestamp_seconds("adsb_feed_start_time_seconds", "Start.", None);
         assert!(!exporter.encode().contains("adsb_feed_start_time_seconds"));
+    }
+
+    #[test]
+    fn a_counter_is_typed_as_a_counter_not_a_gauge() {
+        // The type is what makes rate() legitimate and reset detection work.
+        let exporter = Exporter::new("feed", "0.1.0", "dev-laptop-dev");
+        exporter.counter("adsb_feed_messages_sent_total", "Sent.", 42);
+        let body = exporter.encode();
+
+        assert!(
+            body.contains("# TYPE adsb_feed_messages_sent_total counter"),
+            "{body}"
+        );
+        assert!(body.contains("adsb_feed_messages_sent_total 42"), "{body}");
+    }
+
+    #[test]
+    fn a_zero_counter_is_still_exported() {
+        // An absent series and a zero counter mean different things to rate();
+        // a feed that has sent nothing yet must still report that it exists.
+        let exporter = Exporter::new("feed", "0.1.0", "dev-laptop-dev");
+        exporter.counter("adsb_feed_errors_total", "Errors.", 0);
+        assert!(exporter.encode().contains("adsb_feed_errors_total 0"));
     }
 
     #[test]
