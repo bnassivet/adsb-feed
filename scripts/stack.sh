@@ -173,6 +173,7 @@ stack_ports() {
   owns_broker && echo "$(cfg mqtt port 1883)"
   echo "$(cfg dump1090 port 30003) $(cfg storage http_port 8787)"
   echo "$(desktop_tool_port) $(desktop_dev_port)"
+  [ "$(metrics_feed_port)" != "0" ] && echo "$(metrics_feed_port)"
   [ "$(cfg agents enabled false)" = "true" ] && \
     echo "$(cfg agents agent_port 8000) $(cfg agents sim_agent_port 8300)"
   # The weather control API exists only while the service does.
@@ -233,6 +234,15 @@ sim_agent_env() {
 #              window would have queried the FIRST stack's data
 
 desktop_dev_port() { cfg desktop dev_port 3000; }
+
+# The feed client's Prometheus port; 0 disables it. Every other service serves
+# /metrics on a port it already has, so this is the only one to track.
+#
+# A helper rather than a repeated `cfg` call because TWO lists want it --
+# stack_ports and doctor -- and those two are maintained separately. They have
+# already drifted once (doctor lists the agent ports unconditionally,
+# stack_ports only when agents are enabled); a third copy would not help.
+metrics_feed_port() { cfg metrics feed_port 0; }
 
 # The desktop's own tool server. [desktop].tool_port supersedes
 # [agents].desktop_tool_port, which described the desktop but lived under the
@@ -499,6 +509,7 @@ doctor)
   ports="$(cfg dump1090 port 30003) $(cfg storage http_port 8787)"
   ports="$ports $(desktop_tool_port) $(desktop_dev_port)"
   ports="$ports $(cfg agents agent_port 8000) $(cfg agents sim_agent_port 8300)"
+  [ "$(metrics_feed_port)" != "0" ] && ports="$ports $(metrics_feed_port)"
   owns_broker && ports="$(cfg mqtt port 1883) $ports"
   for p in $ports; do
     if port_busy "$p"; then echo "  BUSY    $p"; else echo "  free    $p"; fi

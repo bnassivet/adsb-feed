@@ -170,6 +170,7 @@ test-scripts:
 	@python3 scripts/tests/test_render_config.py
 	@bash scripts/tests/test_stack_paths.sh
 	@bash scripts/tests/test_stack_weather.sh
+	@bash scripts/tests/test_stack_metrics.sh
 
 # The full gate: the tooling tests, then the Rust workspace gate in rust/.
 .PHONY: ci

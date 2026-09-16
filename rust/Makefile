@@ -62,7 +62,7 @@ help:
 .PHONY: feed-arm64
 feed-arm64:
 	$(DOCKER_RUN) cargo build --release -p adsb-pulsar-client -j $(JOBS) \
-		--no-default-features --features cli,mqtt
+		--no-default-features --features cli,mqtt,metrics
 	@ls -la $(OUT)/adsb-pulsar-client
 
 # Pulsar needs protoc at build time, so this variant installs it first.
@@ -89,7 +89,7 @@ feed-armv7:
 		-v "$(CURDIR)":/work -w /work \
 		-e CARGO_TARGET_DIR=/work/target-linux-armv7 \
 		$(RUST_IMAGE) \
-		cargo build --release -p adsb-pulsar-client -j $(JOBS) --no-default-features --features cli,mqtt
+		cargo build --release -p adsb-pulsar-client -j $(JOBS) --no-default-features --features cli,mqtt,metrics
 	@ls -la target-linux-armv7/release/adsb-pulsar-client
 
 # Ships whichever binaries have been built: a feed-only node never builds the

@@ -127,6 +127,22 @@ http_bind = "127.0.0.1"
 # node disabled before a reboot stays disabled. Stack-scoped, like cache_path.
 state_path = ".run/weather-state.json"
 
+[metrics]
+# Prometheus scrape endpoints. The recorder, the weather service and the two
+# agents serve /metrics on ports they already have (storage.http_port 8787,
+# weather.http_port 8789, agents 8000/8300); only the feed client has no
+# listener of its own, so it gets one here. 0 disables it.
+#
+# Start Prometheus and Grafana with `make monitoring`.
+feed_port = 8790
+# Counters only -- no secrets, no control -- but still a listener with no
+# authentication. Loopback keeps it to this machine. Prometheus in Docker
+# cannot reach loopback on the host, so scraping the feed from the bundled
+# monitoring stack needs "0.0.0.0" here; on a Raspberry Pi prefer
+# infrastructure/docker-compose.pi.yml, which puts Prometheus on the host
+# network so nothing has to be opened at all.
+feed_bind = "127.0.0.1"
+
 [agents]
 # `make up-agents` starts these. They need an LLM endpoint (see llm_base_url);
 # `make doctor` reports if it is unreachable.

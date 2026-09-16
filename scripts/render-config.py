@@ -87,6 +87,15 @@ def render_feed(cfg: dict, out: Path = OUT) -> str:
             ("pulsar_broker", p["broker"]),
             ("pulsar_topic", p["topic"]),
         ])
+    # The feed client is the only service with no listener of its own, so it is
+    # the only one with a metrics port to configure. A missing section renders
+    # 0 = off, so every adsb-stack.toml written before this keeps rendering --
+    # and does not gain a listener nobody asked for.
+    mx = cfg.get("metrics", {})
+    body += "\n" + emit([
+        ("metrics_port", mx.get("feed_port", 0)),
+        ("metrics_bind", mx.get("feed_bind", "127.0.0.1")),
+    ])
     # arg(skip) fields: settable from the file only, never from a flag.
     body += "\n" + emit([
         ("receiver_latitude", rx.get("latitude")),
@@ -269,6 +278,11 @@ def render_fleet_feed(fleet: dict) -> str:
             ("pulsar_broker", pulsar["broker"]),
             ("pulsar_topic", pulsar["topic"]),
         ])
+    # Per node, not per fleet: one Pi may be scraped and another not.
+    body += "\n" + emit([
+        ("metrics_port", node.get("metrics_port", 0)),
+        ("metrics_bind", node.get("metrics_bind", "127.0.0.1")),
+    ])
     # arg(skip) fields: settable from the file only, never from a flag.
     body += "\n" + emit([
         ("receiver_latitude", site.get("latitude")),

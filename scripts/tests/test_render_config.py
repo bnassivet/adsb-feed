@@ -299,5 +299,55 @@ class WeatherContent(unittest.TestCase):
             self.assertEqual(weather["source_id"], "dev-laptop-dev")
 
 
+class MetricsContent(unittest.TestCase):
+    """The feed client's scrape endpoint.
+
+    Every other service serves /metrics on a port it already has, so this is
+    the only one the renderer carries -- and therefore the only one that can be
+    lost silently between adsb-stack.toml and .run/feed.toml.
+    """
+
+    def test_metrics_settings_reach_the_feed(self):
+        cfg = {**STACK, "metrics": {"feed_port": 8790, "feed_bind": "0.0.0.0"}}
+        feed = parse(rc.render_feed(cfg))
+        self.assertEqual(feed["metrics_port"], 8790)
+        self.assertEqual(feed["metrics_bind"], "0.0.0.0")
+
+    def test_a_config_from_before_the_metrics_section_renders_it_off(self):
+        # Every adsb-stack.toml created before this feature has no [metrics].
+        # They must keep rendering, and must not gain a listening socket that
+        # nobody asked for.
+        feed = parse(rc.render_feed(STACK))
+        self.assertEqual(feed["metrics_port"], 0)
+        self.assertEqual(feed["metrics_bind"], "127.0.0.1")
+
+    def test_the_fleet_feed_carries_its_own_node_s_port(self):
+        # Per node: one Pi may be scraped and another not.
+        f = dict(FLEET, nodes=dict(
+            FLEET["nodes"],
+            feed=dict(FLEET["nodes"]["feed"], metrics_port=8790,
+                      metrics_bind="0.0.0.0"),
+        ))
+        feed = parse(rc.render_fleet_feed(f))
+        self.assertEqual(feed["metrics_port"], 8790)
+        self.assertEqual(feed["metrics_bind"], "0.0.0.0")
+
+    def test_a_fleet_node_without_the_keys_renders_it_off(self):
+        self.assertEqual(parse(rc.render_fleet_feed(FLEET))["metrics_port"], 0)
+
+    def test_the_other_services_get_no_metrics_keys(self):
+        # The recorder and the weather service serve /metrics on the port they
+        # already have. A copy-paste of these lines into render_server or
+        # render_weather would add a setting that does nothing, and a second
+        # port for an operator to reserve and `doctor` to check for nothing.
+        cfg = {**STACK, "metrics": {"feed_port": 8790}}
+        recorder = parse(rc.render_server(cfg, REPO / ".run"))
+        weather = parse(rc.render_weather(cfg, REPO / ".run"))
+        self.assertNotIn("metrics_port", recorder)
+        self.assertNotIn("metrics_bind", recorder)
+        self.assertNotIn("metrics_port", weather)
+        self.assertNotIn("metrics_bind", weather)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

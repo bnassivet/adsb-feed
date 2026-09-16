@@ -52,6 +52,16 @@ host = "pi3.lan"
 dump1090_host = "127.0.0.1"     # dump1090 is on this same node
 dump1090_port = 30003
 
+# Prometheus scrape endpoint. 0 disables it.
+#
+# Loopback is the right default even here: a Prometheus running on this node in
+# Docker should use infrastructure/docker-compose.pi.yml, which joins the host
+# network and reaches 127.0.0.1 without anything being opened. Set "0.0.0.0"
+# only to scrape this Pi from another machine, and only on a trusted LAN --
+# there is no authentication.
+metrics_port = 8790
+metrics_bind = "127.0.0.1"
+
 [nodes.recorder]
 # adsb-data-server. aarch64/x86_64 ONLY -- DuckDB has no 32-bit ARM support.
 # When this host equals broker.host, the recorder is rendered to subscribe over
