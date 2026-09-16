@@ -43,6 +43,8 @@ help:
 	@echo "  make status       what is running"
 	@echo "  make logs         tail all logs (make logs N=feed for one)"
 	@echo "  make verify       confirm rows are actually being recorded"
+	@echo "  make monitoring   Prometheus :9090 + Grafana :3000 (no Pulsar)"
+	@echo "  make down-monitoring  stop them"
 	@echo "  make render       regenerate .run/*.toml from adsb-stack.toml"
 	@echo "  make paths        which config and state dir this STACK resolves to"
 	@echo "  make tauri-config the desktop's tauri -c override for this STACK"
@@ -171,6 +173,25 @@ test-scripts:
 	@bash scripts/tests/test_stack_paths.sh
 	@bash scripts/tests/test_stack_weather.sh
 	@bash scripts/tests/test_stack_metrics.sh
+
+# Prometheus + Grafana, WITHOUT the Pulsar analytics leg -- that is behind a
+# compose profile, so this no longer drags a standalone broker in just to look
+# at a graph.
+#
+# Not keyed by STACK: one Prometheus scrapes every stack, and which stack a
+# target belongs to is a label in infrastructure/prometheus/prometheus.yml.
+.PHONY: monitoring
+monitoring:
+	@docker compose -f infrastructure/docker-compose.yml up -d prometheus grafana
+	@echo "  Prometheus  http://localhost:9090/targets"
+	@echo "  Grafana     http://localhost:3000  (admin/admin)"
+	@echo ""
+	@echo "  On a Raspberry Pi, add -f infrastructure/docker-compose.pi.yml:"
+	@echo "  Prometheus joins the host network, so the services stay on loopback."
+
+.PHONY: down-monitoring
+down-monitoring:
+	@docker compose -f infrastructure/docker-compose.yml down
 
 # The full gate: the tooling tests, then the Rust workspace gate in rust/.
 .PHONY: ci

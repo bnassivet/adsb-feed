@@ -44,7 +44,48 @@ After starting the stack, services are available at:
 | **Pulsar Broker** | `pulsar://localhost:6650` | - | Producer/Consumer connections |
 | **Pulsar Admin API** | `http://localhost:8080` | - | Admin operations and metrics |
 | **Prometheus** | `http://localhost:9090` | - | Metrics queries and exploration |
-| **Grafana** | `http://localhost:3000` | `admin/admin` | Pulsar dashboards and visualization |
+| **Grafana** | `http://localhost:3000` | `admin/admin` | ADS-B dashboards, provisioned from `grafana/dashboards/` |
+
+Prometheus and Grafana start **without** Pulsar:
+
+```bash
+make monitoring          # or: docker compose up -d prometheus grafana
+make down-monitoring
+```
+
+Pulsar and its init container sit behind a compose profile
+(`--profile pulsar`), because the MQTT path needs no Pulsar at all and
+monitoring is useful on every stack.
+
+## Monitoring the ADS-B services
+
+The five first-party services each serve `/metrics`:
+
+| Service | Port | Notes |
+|---------|------|-------|
+| Feed client | 8790 | `[metrics].feed_port`; the only one with a port of its own |
+| Data server | 8787 | shares `[storage].http_port` |
+| Weather service | 8789 | shares `[weather].http_port` |
+| adsb-agent | 8000 | |
+| adsb-simulation-agent | 8300 | |
+
+They are **native host processes, not containers**, which is the whole
+difficulty. Prometheus reaches them via `host.docker.internal`, mapped to
+`host-gateway` so the same target string works on Docker Desktop and on Linux.
+
+**A container reaching the host that way is not loopback.** So on a development
+machine only the services bound beyond `127.0.0.1` are scrapeable: set
+`[metrics].feed_bind = "0.0.0.0"` for the feed, and expect the recorder and
+weather jobs to show as **DOWN** — the recorder's bind is hardcoded to loopback,
+and opening the weather service's port would also expose its unauthenticated
+`PUT /v1/enabled`. Both agents already bind `0.0.0.0`.
+
+On a Raspberry Pi, use the override instead, which puts Prometheus on the host
+network so every target is `localhost` and **nothing has to be opened**:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.pi.yml up -d prometheus grafana
+```
 
 ## Pre-configured Topics
 
@@ -58,8 +99,16 @@ The initialization container automatically creates:
 ```
 infrastructure/
 ├── docker-compose.yml       # Main Docker Compose configuration
+├── docker-compose.pi.yml    # Override: Prometheus on the host network (Pi)
 ├── prometheus/
-│   └── prometheus.yml       # Prometheus scrape configuration
+│   ├── prometheus.yml       # Scrape config (host.docker.internal targets)
+│   └── prometheus.pi.yml    # Scrape config for the host-network override
+├── grafana/
+│   ├── provisioning/
+│   │   ├── datasources/     # Prometheus datasource (uid adsb-prometheus)
+│   │   └── dashboards/      # Dashboard provider
+│   └── dashboards/          # The ADS-B dashboards themselves (tracked JSON)
+├── mqtt/                    # Mosquitto broker for the MQTT path
 ├── pulsar/                  # Pulsar setup scripts and monitoring (legacy)
 ├── kubernetes/              # Kubernetes manifests
 └── DockerCompose/           # Legacy Docker configurations
