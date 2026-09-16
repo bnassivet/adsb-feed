@@ -73,14 +73,23 @@ They are **native host processes, not containers**, which is the whole
 difficulty. Prometheus reaches them via `host.docker.internal`, mapped to
 `host-gateway` so the same target string works on Docker Desktop and on Linux.
 
-**A container reaching the host that way is not loopback.** So on a development
-machine only the services bound beyond `127.0.0.1` are scrapeable: set
-`[metrics].feed_bind = "0.0.0.0"` for the feed, and expect the recorder and
-weather jobs to show as **DOWN** — the recorder's bind is hardcoded to loopback,
-and opening the weather service's port would also expose its unauthenticated
-`PUT /v1/enabled`. Both agents already bind `0.0.0.0`.
+**Whether that reaches a loopback-bound service depends on the Docker host**,
+and the difference is easy to get wrong:
 
-On a Raspberry Pi, use the override instead, which puts Prometheus on the host
+- **macOS / Windows (Docker Desktop)** — `host.docker.internal` is proxied
+  through to the host's `127.0.0.1`. Every service can stay on loopback and all
+  five targets come up as they are. Verified: the recorder and the weather
+  service are bound to `127.0.0.1` only, and Prometheus scrapes both.
+- **Linux** — `host-gateway` is a real bridge address, and it cannot reach the
+  host's loopback. A service must either bind `0.0.0.0` or, better, Prometheus
+  must join the host network (below).
+
+Binding wider is not free. The feed client's endpoint is counters only, so
+opening it costs little; the weather service's port also carries an
+unauthenticated `PUT /v1/enabled`, and the data server's bind is hardcoded to
+loopback and cannot be opened at all.
+
+So on a Raspberry Pi, use the override, which puts Prometheus on the host
 network so every target is `localhost` and **nothing has to be opened**:
 
 ```bash

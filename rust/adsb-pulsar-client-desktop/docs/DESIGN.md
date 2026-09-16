@@ -4867,16 +4867,23 @@ The services are native processes; Prometheus runs in Docker. It reaches them
 through `host.docker.internal`, mapped to `host-gateway` so one target string
 works on Docker Desktop and Linux alike.
 
-**That path is not loopback**, which forces a real choice. On a development
-machine only services bound beyond `127.0.0.1` are scrapeable: the feed client's
-`[metrics] feed_bind` can be opened safely because the endpoint carries counters
-and nothing else, while the recorder (loopback hardcoded) and the weather
-service show as DOWN — and opening weather's port would also expose its
-unauthenticated `PUT /v1/enabled`.
+**Whether that reaches a loopback-bound service depends on the Docker host**,
+and the two cases behave differently enough to be worth stating:
 
-On a Raspberry Pi the answer is better: `infrastructure/docker-compose.pi.yml`
-puts Prometheus on the host network, every target becomes `localhost`, and
-**nothing has to be opened at all**.
+- On **Docker Desktop** (macOS, Windows) the name is proxied through to the
+  host's `127.0.0.1`, so every service stays on loopback and is still scraped.
+  This was measured, not assumed: the recorder and the weather service bind
+  `127.0.0.1` only, and both targets report UP.
+- On **Linux**, `host-gateway` is a real bridge address that cannot reach host
+  loopback, so a target there must bind `0.0.0.0` — or Prometheus must not be
+  in a bridge network at all.
+
+Which is why the Pi answer is the better one generally:
+`infrastructure/docker-compose.pi.yml` puts Prometheus on the host network,
+every target becomes `localhost`, and **nothing has to be opened**. That matters
+most for the weather service, whose port also carries an unauthenticated
+`PUT /v1/enabled`, and for the data server, whose bind is hardcoded to loopback
+and cannot be opened at all.
 
 ### Grafana
 
