@@ -21,6 +21,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from . import metrics
 from .agent_card import build_agent_card
 from .config import settings
 from .executor import SimulationAgentExecutor
@@ -128,10 +129,17 @@ def build_app(base_url: str | None = None, llm: Any | None = None) -> Starlette:
     async def health(_request):
         return JSONResponse({"status": "healthy", "service": agent_card.name})
 
+    # Named `metrics_endpoint`, not `metrics`, so it does not shadow the module.
+    async def metrics_endpoint(_request):
+        return Response(metrics.exposition(), media_type=metrics.CONTENT_TYPE)
+
+    metrics.init()
+
     routes = [
         *create_agent_card_routes(agent_card),
         *create_jsonrpc_routes(handler, RPC_URL),
         Route("/health", health, methods=["GET"]),
+        Route("/metrics", metrics_endpoint, methods=["GET"]),
     ]
     return Starlette(routes=routes, middleware=[Middleware(TracingContextMiddleware)])
 
