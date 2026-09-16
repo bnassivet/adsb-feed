@@ -21,6 +21,8 @@
 //! drift. This crate supplies the headless wiring — a source, a
 //! [`NoopSink`](adsb_data_engine::NoopSink), and the serving surfaces.
 
+#[cfg(feature = "metrics")]
+pub mod metrics_export;
 pub mod recorder;
 #[cfg(feature = "http-api")]
 pub mod server;

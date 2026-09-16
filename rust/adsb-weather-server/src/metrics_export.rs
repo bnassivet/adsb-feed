@@ -24,7 +24,6 @@
 
 use crate::status::{RateLimitScope, ServiceState, WeatherStatus};
 use adsb_pulsar_client::metrics_export::Exporter;
-use prometheus::{Gauge, IntGauge, IntGaugeVec, Opts, Registry};
 
 /// Every [`ServiceState`], so the exposition always carries the full set.
 pub const ALL_STATES: [ServiceState; 6] = [
@@ -75,115 +74,62 @@ fn scope_label(scope: RateLimitScope) -> &'static str {
 /// `version` and `source_id` become `adsb_build_info`; everything else is
 /// projected from `status`.
 pub fn render(version: &str, source_id: &str, status: &WeatherStatus) -> String {
-    // A registry per scrape. Every metric here is derived from `status`, so
+    // An exporter per scrape. Every metric here is derived from `status`, so
     // there is no counter to carry between scrapes -- and building it fresh is
     // what lets an absent field be an absent series rather than a zero.
     let exporter = Exporter::new("weather", version, source_id);
-    let registry = exporter.registry();
 
-    int_gauge(
-        registry,
+    exporter.int_gauge(
         "adsb_weather_enabled",
         "The desired setting: 1 when fetching is enabled.",
         i64::from(status.enabled),
     );
-    int_gauge(
-        registry,
+    exporter.int_gauge(
         "adsb_weather_consecutive_failures",
         "Consecutive failed fetches; zero after a success.",
         i64::from(status.consecutive_failures),
     );
-    int_gauge(
-        registry,
+    exporter.int_gauge(
         "adsb_weather_status_version",
         "Schema version of the status this was projected from.",
         i64::from(status.version),
     );
 
-    // A state set: every variant present, exactly one at 1.
-    let state = IntGaugeVec::new(
-        Opts::new(
-            "adsb_weather_state",
-            "What the refresh loop is doing; 1 on the current state.",
-        ),
-        &["state"],
-    )
-    .expect("static metric definition");
-    for variant in ALL_STATES {
-        state
-            .with_label_values(&[state_label(variant)])
-            .set(i64::from(variant == status.state));
-    }
-    registry
-        .register(Box::new(state))
-        .expect("each name is registered once");
+    exporter.gauge_set(
+        "adsb_weather_state",
+        "What the refresh loop is doing; 1 on the current state.",
+        "state",
+        &ALL_STATES.map(|variant| (state_label(variant), variant == status.state)),
+    );
+    exporter.gauge_set(
+        "adsb_weather_rate_limited",
+        "1 on the provider limit window the last fetch ran into, if any.",
+        "scope",
+        &ALL_SCOPES.map(|scope| (scope_label(scope), status.rate_limit == Some(scope))),
+    );
 
-    let rate_limited = IntGaugeVec::new(
-        Opts::new(
-            "adsb_weather_rate_limited",
-            "1 on the provider limit window the last fetch ran into, if any.",
-        ),
-        &["scope"],
-    )
-    .expect("static metric definition");
-    for scope in ALL_SCOPES {
-        rate_limited
-            .with_label_values(&[scope_label(scope)])
-            .set(i64::from(status.rate_limit == Some(scope)));
-    }
-    registry
-        .register(Box::new(rate_limited))
-        .expect("each name is registered once");
-
-    seconds(
-        registry,
+    exporter.timestamp_seconds(
         "adsb_weather_status_updated_timestamp_seconds",
         "When this status was produced.",
         Some(status.updated_at_ms),
     );
-    seconds(
-        registry,
+    exporter.timestamp_seconds(
         "adsb_weather_last_success_timestamp_seconds",
         "When the last fetch succeeded.",
         status.last_success_ms,
     );
-    seconds(
-        registry,
+    exporter.timestamp_seconds(
         "adsb_weather_next_fetch_timestamp_seconds",
         "When the next fetch is scheduled.",
         status.next_fetch_ms,
     );
-    seconds(
-        registry,
+    exporter.timestamp_seconds(
         "adsb_weather_snapshot_valid_timestamp_seconds",
         "Valid time of the grid currently published.",
         status.snapshot_valid_time_ms,
     );
 
     exporter.encode()
-}
-
-/// Register a plain integer gauge.
-fn int_gauge(registry: &Registry, name: &str, help: &str, value: i64) {
-    let gauge = IntGauge::new(name, help).expect("static metric definition");
-    gauge.set(value);
-    registry
-        .register(Box::new(gauge))
-        .expect("each name is registered once");
-}
-
-/// Register an epoch-milliseconds field as epoch **seconds** — or, when it is
-/// `None`, register nothing at all.
-///
-/// Seconds because that is the Prometheus convention and what `time() - x`
-/// expects; omitted because zero would be a lie (see the module docs).
-fn seconds(registry: &Registry, name: &str, help: &str, ms: Option<i64>) {
-    let Some(ms) = ms else { return };
-    let gauge = Gauge::new(name, help).expect("static metric definition");
-    gauge.set(ms as f64 / 1000.0);
-    registry
-        .register(Box::new(gauge))
-        .expect("each name is registered once");
 }
 
 #[cfg(test)]

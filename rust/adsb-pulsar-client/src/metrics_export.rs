@@ -23,7 +23,7 @@
 //!   * on(instance) group_left(source_id) adsb_build_info
 //! ```
 
-use prometheus::{Encoder, IntGaugeVec, Opts, Registry, TextEncoder};
+use prometheus::{Encoder, Gauge, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
 
 /// The Prometheus text exposition content type, including its version
 /// parameter.
@@ -77,6 +77,53 @@ impl Exporter {
     /// The registry, for a service to register its own metrics into.
     pub fn registry(&self) -> &Registry {
         &self.registry
+    }
+
+    /// Register an integer gauge holding one fixed value.
+    pub fn int_gauge(&self, name: &str, help: &str, value: i64) {
+        let gauge = IntGauge::new(name, help).expect("static metric definition");
+        gauge.set(value);
+        self.register(Box::new(gauge));
+    }
+
+    /// Register a floating-point gauge holding one fixed value.
+    pub fn gauge(&self, name: &str, help: &str, value: f64) {
+        let gauge = Gauge::new(name, help).expect("static metric definition");
+        gauge.set(value);
+        self.register(Box::new(gauge));
+    }
+
+    /// Register an epoch-**milliseconds** field as epoch **seconds** — or, when
+    /// it is `None`, register nothing at all.
+    ///
+    /// Seconds because that is the Prometheus convention and what `time() - x`
+    /// expects. Omitted rather than zeroed because absent and "1970" are
+    /// different facts: a recorder with no rows has no oldest record, and a
+    /// zero would make `time() - oldest` a plausible-looking 56 years.
+    pub fn timestamp_seconds(&self, name: &str, help: &str, ms: Option<i64>) {
+        let Some(ms) = ms else { return };
+        self.gauge(name, help, ms as f64 / 1000.0);
+    }
+
+    /// Register a **state set**: one series per `values` entry, carrying
+    /// `label`, with the matching one at `1` and the rest at `0`.
+    ///
+    /// Preferred over an enum-valued gauge because it is self-describing, it
+    /// alerts on a name rather than a magic number, and adding a member cannot
+    /// silently change what an existing alert means.
+    pub fn gauge_set(&self, name: &str, help: &str, label: &str, values: &[(&str, bool)]) {
+        let set =
+            IntGaugeVec::new(Opts::new(name, help), &[label]).expect("static metric definition");
+        for (value, active) in values {
+            set.with_label_values(&[value]).set(i64::from(*active));
+        }
+        self.register(Box::new(set));
+    }
+
+    fn register(&self, collector: Box<dyn prometheus::core::Collector>) {
+        self.registry
+            .register(collector)
+            .expect("each metric name is registered once per exporter");
     }
 
     /// Render the exposition body.
@@ -149,6 +196,68 @@ mod tests {
             .map(str::to_string)
             .collect();
         assert_eq!(metric_lines.len(), 1, "{metric_lines:?}");
+    }
+
+    #[test]
+    fn an_int_gauge_is_exposed_with_its_value() {
+        let exporter = Exporter::new("feed", "0.1.0", "dev-laptop-dev");
+        exporter.int_gauge("adsb_feed_retry_queue_messages", "Queued.", 7);
+        assert!(
+            exporter
+                .encode()
+                .contains("adsb_feed_retry_queue_messages 7")
+        );
+    }
+
+    #[test]
+    fn a_timestamp_is_converted_from_milliseconds_to_seconds() {
+        let exporter = Exporter::new("feed", "0.1.0", "dev-laptop-dev");
+        exporter.timestamp_seconds(
+            "adsb_feed_start_time_seconds",
+            "Start.",
+            Some(1_789_412_400_000),
+        );
+        assert!(
+            exporter
+                .encode()
+                .contains("adsb_feed_start_time_seconds 1789412400")
+        );
+    }
+
+    #[test]
+    fn an_absent_timestamp_registers_no_series_at_all() {
+        // Absent and "1970" are different facts. Zero would read as a real
+        // instant and make `time() - x` a plausible-looking 56 years.
+        let exporter = Exporter::new("feed", "0.1.0", "dev-laptop-dev");
+        exporter.timestamp_seconds("adsb_feed_start_time_seconds", "Start.", None);
+        assert!(!exporter.encode().contains("adsb_feed_start_time_seconds"));
+    }
+
+    #[test]
+    fn a_gauge_set_marks_one_member_and_zeroes_the_rest() {
+        let exporter = Exporter::new("weather", "0.1.0", "pi-prod");
+        exporter.gauge_set(
+            "adsb_weather_state",
+            "State.",
+            "state",
+            &[("idle", false), ("fetching", true), ("disabled", false)],
+        );
+        let body = exporter.encode();
+
+        assert!(
+            body.contains(r#"adsb_weather_state{state="fetching"} 1"#),
+            "{body}"
+        );
+        assert!(
+            body.contains(r#"adsb_weather_state{state="idle"} 0"#),
+            "{body}"
+        );
+        // Every member is present, so a member dropping to zero is visible
+        // rather than the series simply vanishing.
+        assert!(
+            body.contains(r#"adsb_weather_state{state="disabled"} 0"#),
+            "{body}"
+        );
     }
 
     #[test]

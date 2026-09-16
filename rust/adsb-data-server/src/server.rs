@@ -140,10 +140,56 @@ async fn handle(
 }
 
 /// Build the tool-server router (used by `spawn` and integration tests).
+///
+/// Deliberately **without** `/metrics`. The desktop app serves this same
+/// router from its embedded tool server, and it is not a scrape target: it is
+/// a GUI on a laptop, its DuckDB file is a different database from the
+/// recorder's, and Prometheus has no idea when it is running. Use
+/// [`router_with_metrics`] for the daemon.
 pub fn router(storage: SharedStorage) -> Router {
     Router::new()
         .route("/tools/{name}", post(handle))
         .with_state(storage)
+}
+
+/// What the `/metrics` handler needs: this recorder's identity and the cached
+/// storage statistics.
+#[cfg(feature = "metrics")]
+#[derive(Clone)]
+pub struct MetricsState {
+    /// This crate's version, for `adsb_build_info`.
+    pub version: String,
+    /// The receiver id, whose suffix supplies the `stage` label.
+    pub source_id: String,
+    /// Refreshed in the background; see [`crate::metrics_export`].
+    pub cache: crate::metrics_export::StatsCache,
+}
+
+#[cfg(feature = "metrics")]
+async fn handle_metrics(State(state): State<MetricsState>) -> impl axum::response::IntoResponse {
+    let cached = state.cache.snapshot();
+    let body = crate::metrics_export::render(&state.version, &state.source_id, cached.as_ref());
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            adsb_pulsar_client::metrics_export::content_type(),
+        )],
+        body,
+    )
+}
+
+/// [`router`] plus `/metrics`, for the daemon.
+///
+/// The two surfaces share one listener: the recorder already has a port, and
+/// giving the scrape endpoint its own would be another thing to configure, to
+/// check for collisions in `make doctor`, and to forget on one machine.
+#[cfg(feature = "metrics")]
+pub fn router_with_metrics(storage: SharedStorage, metrics: MetricsState) -> Router {
+    router(storage).merge(
+        Router::new()
+            .route("/metrics", axum::routing::get(handle_metrics))
+            .with_state(metrics),
+    )
 }
 
 /// The loopback tool server itself: bind, then serve until the task is dropped.
@@ -179,6 +225,30 @@ pub async fn serve(storage: SharedStorage, port: u16) {
 /// Use `tauri::async_runtime::spawn(serve(storage, port))` instead.
 pub fn spawn(storage: SharedStorage, port: u16) {
     tokio::spawn(serve(storage, port));
+}
+
+/// [`serve`], with `/metrics` on the same listener.
+#[cfg(feature = "metrics")]
+pub async fn serve_with_metrics(storage: SharedStorage, port: u16, metrics: MetricsState) {
+    let addr = format!("127.0.0.1:{port}");
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            warn!("Agent tool server: failed to bind {addr} (agent history tools disabled): {e}");
+            return;
+        }
+    };
+    info!("Agent tool server listening on http://{addr}");
+    info!("Recorder metrics at http://{addr}/metrics");
+    if let Err(e) = axum::serve(listener, router_with_metrics(storage, metrics)).await {
+        warn!("Agent tool server exited: {e}");
+    }
+}
+
+/// Convenience for callers already inside a tokio runtime (the daemon).
+#[cfg(feature = "metrics")]
+pub fn spawn_with_metrics(storage: SharedStorage, port: u16, metrics: MetricsState) {
+    tokio::spawn(serve_with_metrics(storage, port, metrics));
 }
 
 #[cfg(test)]

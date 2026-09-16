@@ -55,9 +55,29 @@ async fn run(cfg: ServerConfig) -> anyhow::Result<()> {
         report_sharing(&recorder).await;
     }
 
-    #[cfg(feature = "http-api")]
+    #[cfg(all(feature = "http-api", not(feature = "metrics")))]
     if cfg.http_port > 0 {
         adsb_data_server::server::spawn(recorder.storage(), cfg.http_port);
+    }
+
+    #[cfg(feature = "metrics")]
+    if cfg.http_port > 0 {
+        use adsb_data_server::metrics_export::{REFRESH_INTERVAL, StatsCache};
+        use adsb_data_server::server::MetricsState;
+
+        // The stats query contends with ingest, so it runs on its own cadence
+        // rather than once per scrape. See `metrics_export`.
+        let cache = StatsCache::new();
+        tokio::spawn(cache.clone().run(recorder.storage(), REFRESH_INTERVAL));
+        adsb_data_server::server::spawn_with_metrics(
+            recorder.storage(),
+            cfg.http_port,
+            MetricsState {
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                source_id: cfg.source_id.clone(),
+                cache,
+            },
+        );
     }
 
     // The MQTT subscriber lives in the feed client, which owns both ends of the

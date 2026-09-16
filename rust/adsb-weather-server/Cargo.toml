@@ -39,9 +39,6 @@ utoipa-axum = { version = "0.2", optional = true }
 # Swagger UI. `vendored`: the UI assets come from a crate instead of a download
 # in build.rs, so offline and arm64 Docker builds keep working.
 utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"], optional = true }
-# Prometheus exposition. `default-features = false` for the same reason as in
-# adsb-pulsar-client: the default `protobuf` feature pulls protobuf 2.x.
-prometheus = { version = "0.13", default-features = false, optional = true }
 
 # CLI + layered config (optional, for the binary)
 clap = { version = "4.5", features = ["derive", "env"], optional = true }
@@ -78,7 +75,9 @@ http-api = ["service", "openapi", "dep:axum", "dep:utoipa-axum"]
 swagger-ui = ["http-api", "dep:utoipa-swagger-ui"]
 # Prometheus exposition at /metrics, on the control API's own listener. The
 # desktop builds `client` alone and never compiles this.
-metrics = ["http-api", "adsb-pulsar-client/metrics", "dep:prometheus"]
+# No direct `prometheus` dependency: the projection is written entirely against
+# the shared Exporter helpers, which is the point of them.
+metrics = ["http-api", "adsb-pulsar-client/metrics"]
 # A client for the control API and nothing else: what the desktop builds.
 client = ["dep:reqwest"]
 cli = ["service", "http-api", "swagger-ui", "metrics", "dep:clap", "dep:toml", "dep:tracing-subscriber", "dep:anyhow"]
