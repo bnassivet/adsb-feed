@@ -60,6 +60,8 @@ pub mod connection_monitor;
 pub mod error;
 pub mod forwarder;
 pub mod metrics;
+#[cfg(feature = "metrics")]
+pub mod metrics_export;
 pub mod source;
 
 // Re-export main types for convenience
@@ -67,3 +69,5 @@ pub use client::ADSBFeedClient;
 pub use config::{Config, ConnectionMode, ForwarderKind, SourceKind};
 pub use error::{ClientError, Result};
 pub use metrics::{Metrics, MetricsSnapshot};
+#[cfg(feature = "metrics")]
+pub use metrics_export::Exporter;
