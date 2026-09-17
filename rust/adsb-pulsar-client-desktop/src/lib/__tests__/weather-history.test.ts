@@ -7,6 +7,7 @@ import {
   selectAircraftWind,
   selectMapWeather,
   tracksTimeSpan,
+  weatherTimesFor,
   type HistoricalWeatherEntry,
 } from "../weather-history";
 import { STALE_AFTER_MS } from "../weather";
@@ -365,5 +366,85 @@ describe("the snapshot cache", () => {
     lruPut(cache, 3, "c", 2);
     expect(lruGet(cache, 1)).toBe("a");
     expect(lruGet(cache, 2)).toBeUndefined();
+  });
+});
+
+describe("which instants weather is looked up at", () => {
+  const AT = 1_789_412_400_000;
+
+  const base = {
+    isLive: true,
+    analysisSpan: null,
+    browseEndMs: null,
+    selectedTrack: null,
+    isDbHistorySelection: false,
+    isImportedSelection: false,
+  };
+
+  it("looks nothing up for the map in live mode", () => {
+    // Live keeps taking whatever `adsb:weather` last pushed, untouched.
+    expect(weatherTimesFor({ ...base, isLive: true }).mapTimeMs).toBeNull();
+  });
+
+  it("follows the end of the tracks on screen in analysis mode", () => {
+    // Analysis has no window of its own -- its set is accumulated across
+    // several browses -- so the instant comes from the data actually shown.
+    const times = weatherTimesFor({
+      ...base,
+      isLive: false,
+      analysisSpan: { startMs: AT - 4 * HOUR, endMs: AT },
+      browseEndMs: AT - 48 * HOUR,
+    });
+    expect(times.mapTimeMs).toBe(AT);
+  });
+
+  it("falls back to the browsed window's end before any tracks are added", () => {
+    const times = weatherTimesFor({ ...base, isLive: false, browseEndMs: AT - 48 * HOUR });
+    expect(times.mapTimeMs).toBe(AT - 48 * HOUR);
+  });
+
+  it("has no instant at all before anything is browsed", () => {
+    expect(weatherTimesFor({ ...base, isLive: false }).mapTimeMs).toBeNull();
+  });
+
+  it("gives a live selection no recorded hour", () => {
+    const times = weatherTimesFor({ ...base, selectedTrack: track(AT - 60_000, AT) });
+    expect(times.aircraftTimeMs).toBeNull();
+  });
+
+  it("gives a DB-history selection its own last_seen even on the live map", () => {
+    // Deliberately NOT gated on isLive alone: a DB-history track loaded onto
+    // the live map is still historical and gets its own hour, while the live
+    // aircraft around it keep the live snapshot.
+    const times = weatherTimesFor({
+      ...base,
+      isLive: true,
+      selectedTrack: track(AT - 48 * HOUR, AT - 47 * HOUR),
+      isDbHistorySelection: true,
+    });
+    expect(times.aircraftTimeMs).toBe(AT - 47 * HOUR);
+  });
+
+  it("gives an imported selection its own last_seen", () => {
+    const times = weatherTimesFor({
+      ...base,
+      isLive: true,
+      selectedTrack: track(AT - 48 * HOUR, AT - 47 * HOUR),
+      isImportedSelection: true,
+    });
+    expect(times.aircraftTimeMs).toBe(AT - 47 * HOUR);
+  });
+
+  it("gives any selection in analysis mode its own last_seen", () => {
+    const times = weatherTimesFor({
+      ...base,
+      isLive: false,
+      selectedTrack: track(AT - 48 * HOUR, AT - 47 * HOUR),
+    });
+    expect(times.aircraftTimeMs).toBe(AT - 47 * HOUR);
+  });
+
+  it("looks nothing up when no aircraft is selected", () => {
+    expect(weatherTimesFor({ ...base, isLive: false }).aircraftTimeMs).toBeNull();
   });
 });

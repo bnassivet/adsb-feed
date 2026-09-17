@@ -149,6 +149,53 @@ export interface WeatherHistoryView {
   error: string | null;
 }
 
+/** What the page knows that decides which instants weather is looked up at. */
+export interface WeatherTimesArgs {
+  isLive: boolean;
+  /** The span of the analysis set, which has no browse window of its own. */
+  analysisSpan: TimeSpan | null;
+  /** The end of the last window browsed in the DB History panel. */
+  browseEndMs: number | null;
+  selectedTrack: AircraftTrack | null;
+  isDbHistorySelection: boolean;
+  isImportedSelection: boolean;
+}
+
+/** The two instants, each `null` when there is nothing to look up. */
+export interface WeatherTimes {
+  /** The hour the map draws. */
+  mapTimeMs: number | null;
+  /** The hour a selected aircraft's wind is read from. */
+  aircraftTimeMs: number | null;
+}
+
+/**
+ * Which instants the map and the selected aircraft ask for weather at.
+ *
+ * Pure, and tested, because `page.tsx` has none of its own — logic placed
+ * there is logic nobody can pin.
+ *
+ * Two rules worth stating. The map prefers the **analysis span over the
+ * browsed window**: analysis accumulates its set across several browses, so
+ * the last window requested can describe none of what is actually on screen.
+ * And the aircraft time is deliberately **not gated on `isLive` alone** — a
+ * DB-history or imported track loaded onto the live map is still historical
+ * and gets its own hour, while the live aircraft around it keep the live
+ * snapshot.
+ */
+export function weatherTimesFor(args: WeatherTimesArgs): WeatherTimes {
+  const mapTimeMs = args.isLive ? null : (args.analysisSpan?.endMs ?? args.browseEndMs ?? null);
+
+  const historicalSelection =
+    args.selectedTrack !== null &&
+    (!args.isLive || args.isDbHistorySelection || args.isImportedSelection);
+
+  return {
+    mapTimeMs,
+    aircraftTimeMs: historicalSelection ? (args.selectedTrack as AircraftTrack).last_seen : null,
+  };
+}
+
 /** A recorded snapshot, with how far its model hour is from what was asked for. */
 export interface HistoricalWeatherEntry {
   snapshot: WeatherSnapshot;

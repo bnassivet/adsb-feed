@@ -8,8 +8,15 @@ import { ResizeHandle } from "@/components/ResizeHandle";
 import { LeftPanel } from "@/components/LeftPanel";
 import { AircraftDetailsPanel } from "@/components/AircraftDetailsPanel";
 import { useWeatherSnapshot } from "@/hooks/useWeatherSnapshot";
-import { aircraftWind } from "@/lib/aircraft-wind";
-import { availableLevels, isStale, type WeatherLevel } from "@/lib/weather";
+import { useHistoricalWeather } from "@/hooks/useHistoricalWeather";
+import { availableLevels, isOffHour, isStale, type WeatherLevel } from "@/lib/weather";
+import {
+  selectAircraftWind,
+  selectMapWeather,
+  tracksTimeSpan,
+  weatherTimesFor,
+  type WeatherHistoryView,
+} from "@/lib/weather-history";
 import { DBHistoryPanel } from "@/components/DBHistoryPanel";
 import { DBHistoryContent } from "@/components/DBHistoryContent";
 import { AIChatPanel } from "@/components/AIChatPanel";
@@ -99,6 +106,15 @@ export default function Dashboard() {
   useEffect(() => {
     const id = setInterval(() => setWeatherClockMs(Date.now()), 60_000);
     return () => clearInterval(id);
+  }, []);
+  // The end of the last window browsed in the DB History panel. Weather in
+  // history mode is looked up at the time being VIEWED, not at now.
+  const [browseEndMs, setBrowseEndMs] = useState<number | null>(null);
+  // useCallback because DBHistoryContent's doBrowse lists onBrowse in its
+  // dependency array and is captured by six handlers -- an inline arrow would
+  // defeat that memoisation on every render.
+  const handleBrowse = useCallback((_startMs: number, endMs: number) => {
+    setBrowseEndMs(endMs);
   }, []);
   const [densityMetric, setDensityMetric] = useLocalStorage<DensityMetric>("adsb-density-metric", "positions");
   const [showSimulation, setShowSimulation] = useLocalStorage<boolean>("adsb-show-simulation", false);
@@ -892,6 +908,62 @@ export default function Dashboard() {
   const isImportedSelection = lastSelectedHexIdent ? importedKeysSet.has(lastSelectedHexIdent) : false;
   const isDbHistorySelection = lastSelectedHexIdent ? dbHistoryKeysSet.has(lastSelectedHexIdent) : false;
 
+  /* Which weather this view is asking about.
+   *
+   * Analysis accumulates its set across several browses, so its span outranks
+   * the last window requested; the map follows that, and each selected
+   * aircraft follows its own last_seen. Memoised because it is O(n) over
+   * thousands of tracks. */
+  const analysisSpan = useMemo(() => tracksTimeSpan(analysis), [analysis]);
+  const weatherTimes = weatherTimesFor({
+    isLive,
+    analysisSpan,
+    browseEndMs,
+    selectedTrack,
+    isDbHistorySelection,
+    isImportedSelection,
+  });
+  const recordedWeather = useHistoricalWeather(weatherTimes.mapTimeMs, weatherTimes.aircraftTimeMs);
+  /* Selects on MODE, never on "whichever snapshot happens to be non-null":
+   * the MQTT subscription keeps delivering while history is on screen, and a
+   * retained republish must not repaint week-old tracks with today's winds. */
+  const mapWeather = selectMapWeather({
+    isLive,
+    show: showWeather,
+    availability: weather.availability,
+    live: weather.snapshot,
+    liveNowMs: weatherClockMs,
+    recorded: recordedWeather.map.entry,
+    viewTimeMs: weatherTimes.mapTimeMs,
+  });
+  /* A DB-history or imported track is historical even on the live map, so it
+   * is routed to its own recorded hour while the live aircraft around it keep
+   * the live snapshot. This is the "live selections only" guard being lifted:
+   * it existed because historical weather did not, not because the question
+   * was wrong. */
+  const selectedWind = selectedTrack
+    ? selectAircraftWind({
+        track: selectedTrack,
+        isHistoricalSelection: !isLive || isDbHistorySelection || isImportedSelection,
+        live: weather.snapshot,
+        liveNowMs: weatherClockMs,
+        recorded: recordedWeather.aircraft.entry,
+      })
+    : null;
+  /* Its presence is what puts the controls in history mode, so it stays
+   * undefined while live and the live rendering is untouched. */
+  const weatherHistoryView: WeatherHistoryView | undefined = isLive
+    ? undefined
+    : {
+        status: recordedWeather.map.status,
+        validTimeMs: recordedWeather.map.entry?.validTimeMs ?? null,
+        atMs: weatherTimes.mapTimeMs,
+        offHour: recordedWeather.map.entry
+          ? isOffHour(recordedWeather.map.entry.snapshot, recordedWeather.map.entry.requestedMs)
+          : false,
+        error: recordedWeather.map.error,
+      };
+
   const densityTracks = useMemo(
     () => {
       if (!showDensity) return [];
@@ -1338,12 +1410,15 @@ export default function Dashboard() {
             onToggleBarbs: () => setShowWeatherBarbs((prev: boolean) => !prev),
             showParticles: showWeatherParticles,
             onToggleParticles: () => setShowWeatherParticles((prev: boolean) => !prev),
-            levels: weather.snapshot ? availableLevels(weather.snapshot) : [],
+            /* Levels and the credit line describe the snapshot actually drawn,
+               which in history mode is a recorded hour rather than the live one. */
+            levels: mapWeather.snapshot ? availableLevels(mapWeather.snapshot) : [],
             availability: weather.availability,
             validTimeMs: weather.snapshot?.valid_time_ms ?? null,
             stale: weather.snapshot ? isStale(weather.snapshot, weatherClockMs) : false,
             nowMs: weatherClockMs,
-            attribution: weather.snapshot?.attribution ?? null,
+            attribution: mapWeather.snapshot?.attribution ?? null,
+            history: weatherHistoryView,
             service: weather.service,
             pendingEnabled: weather.pendingEnabled,
             serviceError: weather.serviceError,
@@ -1356,7 +1431,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={showWeather && weather.availability !== "unsupported_source" ? weather.snapshot : null} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
+              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel
@@ -1367,16 +1442,9 @@ export default function Dashboard() {
                 onWidthChange={setDetailsPanelWidth}
                 isImported={isImportedSelection}
                 isDbHistory={isDbHistorySelection}
-                /* Current winds describe live aircraft only: applied to an
-                   imported or DB-history track they would describe the wrong day. */
-                wind={
-                  !isImportedSelection &&
-                  !isDbHistorySelection &&
-                  weather.snapshot &&
-                  !isStale(weather.snapshot, weatherClockMs)
-                    ? aircraftWind(weather.snapshot, selectedTrack)
-                    : null
-                }
+                /* Routed, not suppressed: an imported or DB-history track now
+                   gets the wind of the hour recorded nearest its own last_seen. */
+                wind={selectedWind}
               />
             )}
             {/* DB History panel — docked mode (in flex row) */}
@@ -1405,6 +1473,7 @@ export default function Dashboard() {
                   receiverLon={receiverLocation?.lng}
                   onAddToAnalysis={addAnalysisTracks}
                   onSwitchToAnalysis={() => setActiveMode("analysis")}
+                  onBrowse={handleBrowse}
                 />
               </DBHistoryPanel>
             )}
@@ -1550,6 +1619,7 @@ export default function Dashboard() {
             dbHistoryCount={dbHistory.length}
             receiverLat={receiverLocation?.lat}
             receiverLon={receiverLocation?.lng}
+            onBrowse={handleBrowse}
           />
         </DBHistoryPanel>
       )}
