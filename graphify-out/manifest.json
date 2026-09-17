@@ -140,8 +140,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/lib.rs": {
-    "mtime": 1789503197.0393107,
-    "ast_hash": "7b5bb714f1972dcdfb76290611b86bdb",
+    "mtime": 1789632493.0941763,
+    "ast_hash": "d208a0d5f7f23837a20c8dc6818574b6",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/commands.rs": {
@@ -805,8 +805,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/DESIGN.md": {
-    "mtime": 1789592809.5101058,
-    "ast_hash": "ace53ea177275641e354cb0b4cf1960f",
+    "mtime": 1789632710.1736834,
+    "ast_hash": "58624e97e1e543f4eeb5455d6a6720ad",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/2026-02-22-imported-tracks-selection-design.md": {
@@ -1620,9 +1620,9 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/__main__.py": {
-    "mtime": 1780965860.776059,
-    "ast_hash": "55cecb92ba25bae7e89847bee1e258af",
-    "semantic_hash": "55cecb92ba25bae7e89847bee1e258af"
+    "mtime": 1789632373.5494576,
+    "ast_hash": "711b108690e452894abbba6da6b50d82",
+    "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/src/adsb_agent/voice/audio_capture.py": {
     "mtime": 1780965860.777286,
@@ -1830,8 +1830,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/README.md": {
-    "mtime": 1789587725.7041986,
-    "ast_hash": "0ffddb978826a2b0e9856f07834274c7",
+    "mtime": 1789632706.4642432,
+    "ast_hash": "fabfdd4ef9ac66c38583b3ed6d381f8b",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/docker-compose.yml": {
@@ -2365,8 +2365,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-server/src/config.rs": {
-    "mtime": 1788135882.659184,
-    "ast_hash": "ed6bac3dda4e877a14c7c058aec38df1",
+    "mtime": 1789632460.9949548,
+    "ast_hash": "76643a0d788d6dd4703a37dbdf5b2264",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-server/src/lib.rs": {
@@ -2375,8 +2375,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-server/src/server.rs": {
-    "mtime": 1789584256.4033334,
-    "ast_hash": "e7bc837c87861454bdfcc4df41849a27",
+    "mtime": 1789632589.6749876,
+    "ast_hash": "3d55ae2aeead05bdb674f1aba73043be",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-server/src/tool_service.rs": {
@@ -2385,8 +2385,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-server/src/main.rs": {
-    "mtime": 1789584261.2972353,
-    "ast_hash": "40a356a36fe43921ee87039d76e91ca4",
+    "mtime": 1789632489.4662943,
+    "ast_hash": "9cd3993a03225294fbdf56b3834426f0",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src-tauri/src/storage_mode.rs": {
@@ -2425,13 +2425,13 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/scripts/render-config.py": {
-    "mtime": 1789586970.6907792,
-    "ast_hash": "63d9f665707faf61a4a8969332ce5e8a",
+    "mtime": 1789632494.761125,
+    "ast_hash": "e66b2624265571ff0fec37b4963abc30",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/scripts/stack.sh": {
-    "mtime": 1789587557.1218207,
-    "ast_hash": "c147acfeda2e7508e8426e36baa059ef",
+    "mtime": 1789632379.0298557,
+    "ast_hash": "068575035793770630ecb9f5221359c9",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/skills/run-adsb-desktop/driver.sh": {
@@ -2520,8 +2520,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/scripts/tests/test_render_config.py": {
-    "mtime": 1789586980.3446114,
-    "ast_hash": "3d606e60f6746b05f7a2c18f93abf817",
+    "mtime": 1789632503.2949448,
+    "ast_hash": "b9194fcb8deb4bfd7a3fe5dd6536270e",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/scripts/tests/test_stack_paths.sh": {
@@ -10485,8 +10485,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/.run/weather-cache.json": {
-    "mtime": 1789592144.72712,
-    "ast_hash": "1901c144ee2383184d87d12ebfa28521",
+    "mtime": 1789601140.9807389,
+    "ast_hash": "8e7be2a859a12b2797eb2ba47eb97da4",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/2026-09-14-weather-layer-design.md": {
@@ -10685,8 +10685,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/docker-compose.pi.yml": {
-    "mtime": 1789587659.8468413,
-    "ast_hash": "29fb6d510e0001afcad68cc2eaf4276e",
+    "mtime": 1789632740.5832932,
+    "ast_hash": "b445d28892a1ac89e8caf29d9a4fdbd7",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/grafana/provisioning/datasources/prometheus.yml": {
@@ -10702,6 +10702,11 @@
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/infrastructure/prometheus/prometheus.pi.yml": {
     "mtime": 1789587666.641006,
     "ast_hash": "1b484e9239beddd7473d650da636d6d0",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-agent/tests/test_entrypoint.py": {
+    "mtime": 1789632442.7985218,
+    "ast_hash": "600d232965f017d0c5ee91a9509e14a5",
     "semantic_hash": ""
   }
 }
