@@ -387,8 +387,51 @@ export function describeValidity(validTimeMs: number, nowMs: number): string {
   const minutes = Math.round((nowMs - validTimeMs) / 60_000);
   const magnitude = Math.abs(minutes);
   if (magnitude < 1) return "valid now";
-  const span = magnitude < 90 ? `${magnitude} min` : `${Math.round(magnitude / 60)} h`;
+  const span = formatSpan(magnitude);
   return minutes > 0 ? `valid ${span} ago` : `valid in ${span}`;
+}
+
+/** `"35 min"` / `"4 h"`: one span format, so the two validity lines agree. */
+function formatSpan(minutes: number): string {
+  return minutes < 90 ? `${minutes} min` : `${Math.round(minutes / 60)} h`;
+}
+
+/**
+ * How far a snapshot's model hour is from the instant being viewed, either way.
+ *
+ * Deliberately **not** [`isStale`], which is signed: an hour slightly in the
+ * future is the short forecast the service publishes for the back half of each
+ * hour, not staleness. Browsing recorded weather asks a different question —
+ * how close is the nearest recorded hour to the time on screen.
+ */
+export function snapshotOffsetMs(snapshot: WeatherSnapshot, atMs: number): number {
+  return Math.abs(atMs - snapshot.valid_time_ms);
+}
+
+/** Whether the nearest recorded hour is too far from the viewed time to trust. */
+export function isOffHour(
+  snapshot: WeatherSnapshot,
+  atMs: number,
+  toleranceMs: number = STALE_AFTER_MS,
+): boolean {
+  return snapshotOffsetMs(snapshot, atMs) > toleranceMs;
+}
+
+/**
+ * The recorded hour relative to the time being viewed:
+ * `"model hour matches this view"`, `"model hour 20 min earlier"`,
+ * `"model hour 40 min later"`.
+ *
+ * Avoids the word "valid" on purpose — in this module that means "relative to
+ * now", and two lines that read alike must not mean different things depending
+ * on which mode the map is in.
+ */
+export function describeRecordedValidity(validTimeMs: number, atMs: number): string {
+  const minutes = Math.round((atMs - validTimeMs) / 60_000);
+  const magnitude = Math.abs(minutes);
+  if (magnitude < 1) return "model hour matches this view";
+  const span = formatSpan(magnitude);
+  return minutes > 0 ? `model hour ${span} earlier` : `model hour ${span} later`;
 }
 
 /** `"now"`, `"in 25 min"`, `"in 6 h"`: relative, so it reads the same in every timezone. */

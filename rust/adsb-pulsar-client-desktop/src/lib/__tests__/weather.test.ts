@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   availableLevels,
   barbParts,
+  describeRecordedValidity,
   describeValidity,
+  isOffHour,
+  snapshotOffsetMs,
   fieldsAt,
   gridPoints,
   hpaToFlightLevel,
@@ -340,5 +343,41 @@ describe("windReport", () => {
   it("explains a position outside the grid or a level it does not carry", () => {
     expect(windReport(snapshot(), { lat: 10, lon: 10 }, NOW)).toHaveProperty("error");
     expect(windReport(snapshot(), { lat: 46.5, lon: -2.5, level: 500 }, NOW)).toHaveProperty("error");
+  });
+});
+
+describe("a recorded hour against the time being viewed", () => {
+  const AT = 1_789_412_400_000;
+  const MIN = 60_000;
+
+  it("measures a model hour after the viewed time as far as one before", () => {
+    // The fork from isStale, stated as a test. `isStale` is SIGNED on purpose:
+    // an hour slightly in the future is the short forecast the service picks,
+    // not staleness. History asks a different question -- how far away is the
+    // nearest recorded hour, in either direction.
+    const before = snapshot({ valid_time_ms: AT - 40 * MIN });
+    const after = snapshot({ valid_time_ms: AT + 40 * MIN });
+    expect(snapshotOffsetMs(before, AT)).toBe(40 * MIN);
+    expect(snapshotOffsetMs(after, AT)).toBe(40 * MIN);
+    expect(isStale(after, AT)).toBe(false);
+  });
+
+  it("is off-hour only past the tolerance", () => {
+    const near = snapshot({ valid_time_ms: AT - STALE_AFTER_MS + MIN });
+    const far = snapshot({ valid_time_ms: AT - STALE_AFTER_MS - MIN });
+    expect(isOffHour(near, AT)).toBe(false);
+    expect(isOffHour(far, AT)).toBe(true);
+  });
+
+  it("describes the hour relative to the view, not to now", () => {
+    // Deliberately not the word "valid": in this file that means "relative to
+    // now", and two strings that read alike must not mean different things.
+    expect(describeRecordedValidity(AT, AT)).toBe("model hour matches this view");
+    expect(describeRecordedValidity(AT - 20 * MIN, AT)).toBe("model hour 20 min earlier");
+    expect(describeRecordedValidity(AT + 40 * MIN, AT)).toBe("model hour 40 min later");
+  });
+
+  it("switches to hours for a wide gap, like describeValidity does", () => {
+    expect(describeRecordedValidity(AT - 4 * 60 * MIN, AT)).toBe("model hour 4 h earlier");
   });
 });
