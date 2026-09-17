@@ -53,7 +53,9 @@ import type {
 import { trackKey } from "@/lib/types";
 import {
   availableLevels,
+  describeRecordedValidity,
   describeValidity,
+  isOffHour,
   isStale,
   levelLabel,
   resolveWeatherLevel,
@@ -72,6 +74,13 @@ import {
 export interface WeatherToolsConfig {
   snapshot: WeatherSnapshot | null;
   availability: WeatherAvailability;
+  /**
+   * False while the view is showing recorded weather. Optional, defaulting to
+   * live, so a caller that omits it cannot silently change live behaviour.
+   */
+  isLive?: boolean;
+  /** The instant on screen while browsing; null while live. */
+  viewTimeMs?: number | null;
   show: boolean;
   level: WeatherLevel;
   showBarbs: boolean;
@@ -1162,7 +1171,9 @@ export function useCopilotTools(config: DisplayToolsConfig) {
     handler: async (args: { enabled?: boolean; level?: string; barbs?: boolean; particles?: boolean }) => {
       const weather = configRef.current.weather;
       if (!weather) return JSON.stringify({ error: "Weather is unavailable in this view." });
-      if (weather.availability === "unsupported_source") {
+      // Live-only: recorded weather comes out of DuckDB, not MQTT, so a socket
+      // session can still control the layer while browsing history.
+      if (weather.availability === "unsupported_source" && weather.isLive !== false) {
         return JSON.stringify({ error: WEATHER_NEEDS_MQTT });
       }
 
@@ -1226,13 +1237,18 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       const current = configRef.current;
       const weather = current.weather;
       if (!weather) return JSON.stringify({ error: "Weather is unavailable in this view." });
-      if (weather.availability === "unsupported_source") {
+      if (weather.availability === "unsupported_source" && weather.isLive !== false) {
         return JSON.stringify({ error: WEATHER_NEEDS_MQTT });
       }
       const snapshot = weather.snapshot;
       if (!snapshot) {
+        // "Has not arrived yet" is a live sentence: in history mode it invites
+        // the agent to wait for something that is never coming.
         return JSON.stringify({
-          error: "No weather snapshot has arrived yet. The weather service publishes one when it connects, then hourly.",
+          error:
+            weather.isLive === false
+              ? "No weather was recorded for the time being viewed."
+              : "No weather snapshot has arrived yet. The weather service publishes one when it connects, then hourly.",
         });
       }
 
@@ -1281,6 +1297,15 @@ export function useCopilotTools(config: DisplayToolsConfig) {
 
       const report = windReport(snapshot, { lat, lon, altitudeFt, level, trackDeg }, Date.now());
       if ("error" in report) return JSON.stringify(report);
+      /* windReport measures validity and staleness against the wall clock,
+         which is the right question for live weather and the wrong one for a
+         recorded hour -- it would hand the agent "valid 2 d ago, stale: true"
+         for a snapshot that describes the viewed time exactly. windReport
+         itself is left alone: its other callers are all live. */
+      if (weather.isLive === false && weather.viewTimeMs != null) {
+        report.validity = describeRecordedValidity(snapshot.valid_time_ms, weather.viewTimeMs);
+        report.stale = isOffHour(snapshot, weather.viewTimeMs);
+      }
       return JSON.stringify({ ...identity, position: { lat, lng: lon }, ...report });
     },
     render: (props) =>

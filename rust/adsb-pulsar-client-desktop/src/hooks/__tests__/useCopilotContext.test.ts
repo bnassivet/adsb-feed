@@ -40,6 +40,8 @@ function makeConfig(overrides: Partial<CopilotContextConfig> = {}): CopilotConte
       { hex_ident: "G7H8I9" } as never,
     ],
     storageStatus: "available",
+    receiverLocation: null,
+    agentSimulatedCount: 0,
     ...overrides,
   };
 }
@@ -196,6 +198,63 @@ describe("useCopilotContext", () => {
 
     it("is registered even when the page provides no weather", () => {
       expect(weatherContext(undefined)).toBe("unavailable in this view");
+    });
+
+    describe("while browsing recorded weather", () => {
+      const VIEW_MS = Date.now() - 48 * 3_600_000;
+
+      function browsing(overrides: Record<string, unknown> = {}) {
+        return weatherContext({
+          snapshot: snapshot(VIEW_MS - 20 * 60_000),
+          availability: "available",
+          show: true,
+          level: 250,
+          showBarbs: true,
+          showParticles: false,
+          nowMs: Date.now(),
+          isLive: false,
+          viewTimeMs: VIEW_MS,
+          ...overrides,
+        } as CopilotContextConfig["weather"]);
+      }
+
+      it("measures the hour against the time on screen, not against now", () => {
+        // `describeValidity` would say "valid 2 d ago", which reads as a fault
+        // rather than as the answer -- and the agent has no visual cue to
+        // correct it with.
+        expect((browsing() as { validity: string }).validity).toMatch(
+          /model hour 20 min earlier/,
+        );
+      });
+
+      it("says which mode it is describing", () => {
+        // The invariant: the agent sees what the map shows. Saying so
+        // explicitly beats leaving the LLM to infer it from the wording.
+        expect(browsing()).toMatchObject({ mode: "history" });
+      });
+
+      it("does not blame the live source when showing recorded weather", () => {
+        // The step-12 bug in prose, which is worse: text carries no visual cue
+        // that it is describing the wrong day. Recorded weather comes out of
+        // DuckDB, so a socket session can browse it.
+        const value = browsing({ availability: "unsupported_source" });
+        expect(JSON.stringify(value)).not.toMatch(/MQTT/i);
+        expect(value).toMatchObject({ mode: "history" });
+      });
+
+      it("still explains an unsupported source while live", () => {
+        // The live branch must not regress.
+        const value = weatherContext({
+          snapshot: null,
+          availability: "unsupported_source",
+          show: true,
+          level: 250,
+          showBarbs: true,
+          showParticles: false,
+          nowMs: Date.now(),
+        });
+        expect(value).toMatch(/MQTT/);
+      });
     });
   });
 });

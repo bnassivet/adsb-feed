@@ -476,70 +476,9 @@ export default function Dashboard() {
     flyToRef.current?.(lat, lng, zoom);
   }, []);
 
-  // CopilotKit — register frontend tools (after all state deps available)
-  useCopilotTools({
-    connectionStatus: copilotConnectionStatus,
-    mapTheme,
-    sidebarOpen,
-    activeMode,
-    showHistory,
-    showDensity,
-    showSimulation,
-    showImported,
-    receiverLocation: simReceiverLocation,
-    agentTrajectories,
-    setAgentTrajectories: applyChatTrajectories,
-    scenarios: scenarioToolsConfig,
-    showReceiver,
-    showEvents,
-    liveColorMode,
-    historyColorMode,
-    densityMetric,
-    densityTooltipMode,
-    densityAltitudeMin,
-    densityAltitudeMax,
-    eventFilterMode,
-    eventUpcomingDays,
-    eventTimeRangeStart,
-    eventTimeRangeEnd,
-    setMapTheme,
-    setSidebarOpen,
-    setActiveMode,
-    setShowHistory,
-    setShowDensity,
-    setShowSimulation,
-    setShowImported,
-    setShowReceiver,
-    setShowEvents,
-    setLiveColorMode,
-    setHistoryColorMode,
-    setDensityMetric,
-    setDensityTooltipMode,
-    setDensityAltitudeMin,
-    setDensityAltitudeMax,
-    setEventFilterMode,
-    setEventUpcomingDays,
-    setEventTimeRangeStart,
-    setEventTimeRangeEnd,
-    tracks: allTracks,
-    setSelectedHexIdents,
-    setLastSelectedHexIdent,
-    activeFilters,
-    setActiveFilters,
-    flyTo,
-    weather: {
-      snapshot: weather.snapshot,
-      availability: weather.availability,
-      show: showWeather,
-      level: weatherLevel,
-      showBarbs: showWeatherBarbs,
-      showParticles: showWeatherParticles,
-      setShowWeather,
-      setWeatherLevel,
-      setShowWeatherBarbs,
-      setShowWeatherParticles,
-    },
-  });
+  // CopilotKit registration lives below, after the weather derivation: the
+  // agent is told which weather the VIEW is about, and that is not known until
+  // the selection and the browsed span have been resolved.
 
   const metrics = useMetrics();
   const { recordPositions, recordRaw, toggleRecordPositions, toggleRecordRaw } = useRecordingState();
@@ -733,36 +672,6 @@ export default function Dashboard() {
       setIsImporting(false);
     }
   }, []);
-
-  // CopilotKit — provide live app state to the agent
-  useCopilotContext({
-    connectionStatus: copilotConnectionStatus,
-    mapTheme,
-    sidebarOpen,
-    activeMode,
-    showHistory,
-    showDensity,
-    showSimulation,
-    showImported,
-    showReceiver,
-    showEvents,
-    selectedHexIdents,
-    lastSelectedHexIdent,
-    activeFilters,
-    tracks: allTracks,
-    receiverLocation: simReceiverLocation,
-    agentSimulatedCount: agentSimulatedTracks.length,
-    storageStatus,
-    weather: {
-      snapshot: weather.snapshot,
-      availability: weather.availability,
-      show: showWeather,
-      level: weatherLevel,
-      showBarbs: showWeatherBarbs,
-      showParticles: showWeatherParticles,
-      nowMs: weatherClockMs,
-    },
-  });
 
   const visibleHistory = useMemo(() => {
     if (!showHistory) return [];
@@ -963,6 +872,119 @@ export default function Dashboard() {
           : false,
         error: recordedWeather.map.error,
       };
+  /* What the view is ABOUT, independent of whether the layer is drawn.
+     mapWeather.snapshot goes null when the layer is switched off, and the chat
+     tools must keep answering wind questions with the layer hidden -- they do
+     today, and tying them to the drawn snapshot would quietly break that. */
+  const viewWeatherSnapshot = isLive
+    ? weather.snapshot
+    : (recordedWeather.map.entry?.snapshot ?? null);
+
+  /* CopilotKit — register frontend tools and publish ambient state.
+   *
+   * Both calls sit here, below the weather derivation, because the invariant
+   * they serve is that the agent sees what the map shows: they need the
+   * view-selected snapshot and the instant it describes, neither of which is
+   * known until the selection and the browsed span are resolved. They stay
+   * unconditional, so hook order is stable across renders. */
+  useCopilotTools({
+    connectionStatus: copilotConnectionStatus,
+    mapTheme,
+    sidebarOpen,
+    activeMode,
+    showHistory,
+    showDensity,
+    showSimulation,
+    showImported,
+    receiverLocation: simReceiverLocation,
+    agentTrajectories,
+    setAgentTrajectories: applyChatTrajectories,
+    scenarios: scenarioToolsConfig,
+    showReceiver,
+    showEvents,
+    liveColorMode,
+    historyColorMode,
+    densityMetric,
+    densityTooltipMode,
+    densityAltitudeMin,
+    densityAltitudeMax,
+    eventFilterMode,
+    eventUpcomingDays,
+    eventTimeRangeStart,
+    eventTimeRangeEnd,
+    setMapTheme,
+    setSidebarOpen,
+    setActiveMode,
+    setShowHistory,
+    setShowDensity,
+    setShowSimulation,
+    setShowImported,
+    setShowReceiver,
+    setShowEvents,
+    setLiveColorMode,
+    setHistoryColorMode,
+    setDensityMetric,
+    setDensityTooltipMode,
+    setDensityAltitudeMin,
+    setDensityAltitudeMax,
+    setEventFilterMode,
+    setEventUpcomingDays,
+    setEventTimeRangeStart,
+    setEventTimeRangeEnd,
+    tracks: allTracks,
+    setSelectedHexIdents,
+    setLastSelectedHexIdent,
+    activeFilters,
+    setActiveFilters,
+    flyTo,
+    weather: {
+      // The weather the view is ABOUT, not the one drawn: the chat tools keep
+      // answering wind questions with the layer switched off.
+      snapshot: viewWeatherSnapshot,
+      availability: weather.availability,
+      isLive,
+      viewTimeMs: weatherTimes.mapTimeMs,
+      show: showWeather,
+      level: weatherLevel,
+      showBarbs: showWeatherBarbs,
+      showParticles: showWeatherParticles,
+      setShowWeather,
+      setWeatherLevel,
+      setShowWeatherBarbs,
+      setShowWeatherParticles,
+    },
+  });
+
+  useCopilotContext({
+    connectionStatus: copilotConnectionStatus,
+    mapTheme,
+    sidebarOpen,
+    activeMode,
+    showHistory,
+    showDensity,
+    showSimulation,
+    showImported,
+    showReceiver,
+    showEvents,
+    selectedHexIdents,
+    lastSelectedHexIdent,
+    activeFilters,
+    tracks: allTracks,
+    receiverLocation: simReceiverLocation,
+    agentSimulatedCount: agentSimulatedTracks.length,
+    storageStatus,
+    weather: {
+      snapshot: viewWeatherSnapshot,
+      availability: weather.availability,
+      isLive,
+      viewTimeMs: weatherTimes.mapTimeMs,
+      show: showWeather,
+      level: weatherLevel,
+      showBarbs: showWeatherBarbs,
+      showParticles: showWeatherParticles,
+      nowMs: weatherClockMs,
+    },
+  });
 
   const densityTracks = useMemo(
     () => {
@@ -1117,7 +1139,10 @@ export default function Dashboard() {
       else next.set(section, s);
       return next;
     });
-  }, []);
+    // A useState setter, so its identity is stable and naming it costs nothing.
+    // The React Compiler infers it as a dependency and refuses to preserve the
+    // memoization when the source array omits it.
+  }, [setHiddenSections]);
 
   /*
    * Simulated aircraft live in the "live" section like any other track, so the
@@ -1142,7 +1167,7 @@ export default function Dashboard() {
       else next.delete("live");
       return next;
     });
-  }, []);
+  }, [setHiddenSections]);
 
   const handleToggleGroupVisibility = useCallback((section: TrackSection, hexIdents: string[]) => {
     setHiddenSections(prev => {
@@ -1156,7 +1181,7 @@ export default function Dashboard() {
       }
       return next;
     });
-  }, []);
+  }, [setHiddenSections]);
 
   async function handleExport() {
     try {
