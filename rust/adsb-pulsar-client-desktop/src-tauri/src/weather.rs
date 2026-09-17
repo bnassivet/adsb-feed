@@ -155,6 +155,32 @@ pub enum WeatherUpdate {
     Rejected(String),
 }
 
+/// Wall clock in epoch milliseconds, for stamping when a row was received.
+///
+/// The one clock this process owns: if the weather host's clock is wrong, this
+/// is the column that reveals it.
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Whether this app should record the snapshots it receives.
+///
+/// The rule is "whoever records positions records weather". In embedded mode
+/// this app owns its database and records its own history, so the snapshot it
+/// has already received and validated is worth keeping — otherwise its history
+/// holds tracks with no air around them.
+///
+/// In remote mode it must **not**. `weather_snapshots` is one of
+/// [`adsb_data_engine::share::OBSERVED_TABLES`], so there the name resolves to a
+/// *view* over the daemon's catalog and the daemon is its single writer. An
+/// INSERT through that view would fail — every hour, logging every hour.
+pub fn records_weather(mode: &crate::storage_mode::StorageMode) -> bool {
+    matches!(mode, crate::storage_mode::StorageMode::Embedded)
+}
+
 /// Classifies the layer's state for the UI.
 pub fn availability(source_kind: SourceKind, has_snapshot: bool) -> WeatherAvailability {
     match (source_kind, has_snapshot) {
@@ -181,8 +207,11 @@ pub async fn relay_weather(
     app: AppHandle,
     mut payloads: watch::Receiver<Option<Vec<u8>>>,
     shared: SharedWeather,
+    storage: crate::state::SharedStorage,
+    storage_mode: crate::storage_mode::StorageMode,
     mut alive_rx: watch::Receiver<bool>,
 ) {
+    let record = records_weather(&storage_mode);
     loop {
         tokio::select! {
             changed = payloads.changed() => {
@@ -209,6 +238,26 @@ pub async fn relay_weather(
                             *held = Some((*snapshot).clone());
                         }
                         let _ = app.emit("adsb:weather", &snapshot);
+
+                        // Whoever records positions records weather. Non-fatal
+                        // and logged, like every other write on this path: a
+                        // failed insert must never cost the live layer.
+                        if record {
+                            let row = adsb_data_server::weather::record_from_snapshot(
+                                &snapshot, &payload, now_ms(),
+                            );
+                            let guard = storage.read().await;
+                            if let Some(ref s) = *guard {
+                                match s.insert_weather_snapshot(row).await {
+                                    Ok(true) => info!(
+                                        "Recorded weather snapshot for model hour {}",
+                                        snapshot.valid_time_ms
+                                    ),
+                                    Ok(false) => {}
+                                    Err(e) => warn!("Could not store weather snapshot: {e}"),
+                                }
+                            }
+                        }
                     }
                     WeatherUpdate::Unchanged => {}
                     WeatherUpdate::Rejected(reason) => {
@@ -306,6 +355,31 @@ mod tests {
 
     fn payload(snap: &WeatherSnapshot) -> Vec<u8> {
         serde_json::to_vec(snap).unwrap()
+    }
+
+    // --- who records weather -------------------------------------------------
+
+    use crate::storage_mode::StorageMode;
+
+    #[test]
+    fn embedded_mode_records_weather() {
+        // Whoever records positions records weather. In embedded mode this app
+        // owns its database, so the snapshot it already receives is worth
+        // keeping -- otherwise its history has tracks but no air around them.
+        assert!(records_weather(&StorageMode::Embedded));
+    }
+
+    #[test]
+    fn remote_mode_does_not_write_through_the_view() {
+        // `weather_snapshots` is in OBSERVED_TABLES, so in remote mode the name
+        // resolves to a VIEW over the daemon's catalog and the daemon is its
+        // writer. Without this gate the desktop would attempt an INSERT through
+        // a view every hour, and log the failure every hour.
+        assert!(!records_weather(&StorageMode::Remote {
+            uri: "quack:pi.lan:9494".into(),
+            token: None,
+            disable_ssl: None,
+        }));
     }
 
     #[test]

@@ -65,6 +65,7 @@ pub fn start_feed(
     connection_status: SharedConnectionStatus,
     weather_state: SharedWeather,
     weather_service: SharedWeatherService,
+    storage_mode: crate::storage_mode::StorageMode,
 ) -> Result<FeedHandle, String> {
     let test_mode = config.test_mode;
     let dump1090_tz = config.dump1090_tz.clone();
@@ -227,6 +228,10 @@ pub fn start_feed(
         // _alive_tx is dropped here, signaling background tasks to exit
     });
 
+    // Cloned before Task 2 takes ownership: the weather relay records to the
+    // same database in embedded mode, and `relay_messages` keeps the original.
+    let storage_for_weather = Arc::clone(&storage);
+
     // Task 2: Relay messages to frontend (throttled) + persist to DuckDB
     let message_task = tokio::spawn(async move {
         relay_messages(
@@ -285,6 +290,8 @@ pub fn start_feed(
             app_for_weather,
             rx,
             weather_state,
+            storage_for_weather,
+            storage_mode,
             alive_rx_weather,
         ))
     });

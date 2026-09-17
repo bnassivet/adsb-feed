@@ -64,6 +64,13 @@ pub async fn start_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
         Arc::clone(&state.connection_status),
         Arc::clone(&state.weather),
         Arc::clone(&state.weather_service),
+        // Cloned out of the mutex rather than held across the call: the mode is
+        // a small value and start_feed does real work.
+        state
+            .storage_mode
+            .lock()
+            .map(|m| m.clone())
+            .unwrap_or_default(),
     )?;
 
     // Record feed started event (non-fatal)
