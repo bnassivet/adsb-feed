@@ -63,6 +63,9 @@ pub struct StorageStats {
     pub flight_size_bytes: u64,
     pub status_event_count: u64,
     pub event_of_interest_count: u64,
+    /// Stored weather snapshots. No size estimate accompanies it: the existing
+    /// ones are heuristics, and a seventh invented number helps nobody.
+    pub weather_snapshot_count: u64,
 }
 
 /// A single raw SBS-1 message stored for audit/replay purposes.
@@ -83,6 +86,85 @@ pub struct RawMessageQuery {
     pub hex_ident: String,
     pub start_ms: i64,
     pub end_ms: i64,
+}
+
+/// One stored weather snapshot: metadata plus the payload exactly as received.
+///
+/// The payload is the raw JSON the weather service published, kept verbatim so
+/// a replay is byte-identical — no serde round-trip is allowed to reorder or
+/// reformat it. Everything above it is metadata lifted out of that payload so
+/// it can be filtered on in SQL without parsing 16 KB of grid per row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeatherSnapshotRecord {
+    pub source_id: String,
+    /// The model hour this data is valid for. Half the identity of a row.
+    pub valid_time_ms: i64,
+    /// When the weather service fetched it from the provider.
+    pub fetched_at_ms: i64,
+    /// When the recorder stored it. The only clock this process owns, and so
+    /// the only way to notice that the weather host's clock is wrong.
+    pub received_at_ms: i64,
+    /// Provider identifier, e.g. `"open-meteo"`.
+    pub source: String,
+    /// Weather model, e.g. `"best_match"`. Operator-settable, so it changes.
+    pub model: String,
+    /// Payload schema version, for when `SNAPSHOT_VERSION` bumps.
+    pub version: u32,
+    pub lat0: f64,
+    pub lon0: f64,
+    pub dlat: f64,
+    pub dlon: f64,
+    pub nlat: u32,
+    pub nlon: u32,
+    /// Pressure levels present, ascending and comma-separated: `"200,250,300"`.
+    pub levels: String,
+    /// The snapshot JSON, verbatim.
+    pub payload: String,
+}
+
+/// A stored weather snapshot without its payload.
+///
+/// The listing type. A snapshot is ~16 KB, so returning a page of them whole
+/// would hand a caller several hundred KB it almost never wants; `payload_bytes`
+/// tells it what it is choosing to skip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeatherSnapshotMeta {
+    pub source_id: String,
+    pub valid_time_ms: i64,
+    pub fetched_at_ms: i64,
+    pub received_at_ms: i64,
+    pub source: String,
+    pub model: String,
+    pub version: u32,
+    pub lat0: f64,
+    pub lon0: f64,
+    pub dlat: f64,
+    pub dlon: f64,
+    pub nlat: u32,
+    pub nlon: u32,
+    pub levels: String,
+    /// Size of the omitted payload, in bytes.
+    pub payload_bytes: i64,
+}
+
+/// Query parameters for listing weather snapshots.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WeatherSnapshotQuery {
+    pub start_ms: Option<i64>,
+    pub end_ms: Option<i64>,
+    /// Defaults to 24 — a day of hourly snapshots. Capped at 1000.
+    pub limit: Option<usize>,
+}
+
+/// Identifies one stored snapshot.
+///
+/// `source_id` is optional because a single-receiver node has only one, and
+/// requiring it there would be ceremony; where several receivers share a
+/// database it disambiguates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeatherSnapshotKey {
+    pub valid_time_ms: i64,
+    pub source_id: Option<String>,
 }
 
 /// A single bucket in a time distribution histogram.
@@ -181,6 +263,8 @@ pub struct TablePreview {
 pub struct ImportPreview {
     pub positions: TablePreview,
     pub raw_messages: TablePreview,
+    /// Timestamps here are model hours (`valid_time_ms`), not receipt times.
+    pub weather_snapshots: TablePreview,
 }
 
 /// Result of a database import operation.
@@ -188,6 +272,7 @@ pub struct ImportPreview {
 pub struct ImportResult {
     pub positions_imported: u64,
     pub raw_messages_imported: u64,
+    pub weather_snapshots_imported: u64,
 }
 
 /// Summary of a single flight segment within a time window.

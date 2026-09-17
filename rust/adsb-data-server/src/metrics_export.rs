@@ -156,6 +156,11 @@ pub fn render(version: &str, source_id: &str, cached: Option<&CachedStats>) -> S
         "User-created events of interest.",
         count(stats.event_of_interest_count),
     );
+    exporter.int_gauge(
+        "adsb_recorder_weather_snapshots_rows",
+        "Stored weather snapshots, one per model hour.",
+        count(stats.weather_snapshot_count),
+    );
 
     exporter.timestamp_seconds(
         "adsb_recorder_oldest_record_timestamp_seconds",
@@ -207,6 +212,7 @@ mod tests {
             flight_size_bytes: 3_000,
             status_event_count: 7,
             event_of_interest_count: 2,
+            weather_snapshot_count: 24,
         }
     }
 

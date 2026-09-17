@@ -15,7 +15,8 @@ use crate::types::{
     ScenarioWithTracks, ShareConfig, ShareInfo, ShareStatus, StatusEvent, StatusEventQuery,
     StorageConfig, StorageStats, TablePreview, TimeDistributionBucket, TimeDistributionMetric,
     TimeDistributionQuery, TrajectoryQuery, UpdateEventOfInterest, UpdateScenario,
-    UpdateScenarioTrack,
+    UpdateScenarioTrack, WeatherSnapshotKey, WeatherSnapshotMeta, WeatherSnapshotQuery,
+    WeatherSnapshotRecord,
 };
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
@@ -144,6 +145,27 @@ const SCHEMA_OBSERVED_SQL: &str = r#"
     CREATE INDEX IF NOT EXISTS idx_status_events_ts ON status_events (timestamp_ms);
     CREATE INDEX IF NOT EXISTS idx_status_events_type_ts ON status_events (event_type, timestamp_ms);
 
+    CREATE TABLE IF NOT EXISTS weather_snapshots (
+        source_id       TEXT    NOT NULL,
+        valid_time_ms   BIGINT  NOT NULL,
+        fetched_at_ms   BIGINT  NOT NULL,
+        received_at_ms  BIGINT  NOT NULL,
+        source          TEXT    NOT NULL,
+        model           TEXT    NOT NULL,
+        version         INTEGER NOT NULL,
+        lat0            DOUBLE  NOT NULL,
+        lon0            DOUBLE  NOT NULL,
+        dlat            DOUBLE  NOT NULL,
+        dlon            DOUBLE  NOT NULL,
+        nlat            INTEGER NOT NULL,
+        nlon            INTEGER NOT NULL,
+        levels          TEXT    NOT NULL,
+        payload         TEXT    NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_weather_snapshots_src_valid
+        ON weather_snapshots (source_id, valid_time_ms);
+
 "#;
 
 /// Tables this process owns in every mode: they are *authored* by the user,
@@ -242,7 +264,19 @@ impl StorageHandle {
             Some(remote) => {
                 share::load_extension(&conn)?;
                 conn.execute_batch(&share::attach_sql(remote, REMOTE_CATALOG))?;
-                conn.execute_batch(&share::remote_view_sql(REMOTE_CATALOG))?;
+                // Per table, and tolerant. A daemon older than this client
+                // simply does not have every table we know about, and DuckDB
+                // binds a view body at CREATE time -- so one missing table in a
+                // single batch would abort the open and leave the user with no
+                // remote history at all, rather than merely no weather.
+                for (table, sql) in share::remote_view_statements(REMOTE_CATALOG) {
+                    if let Err(e) = conn.execute_batch(&sql) {
+                        warn!(
+                            "Remote view for '{table}' unavailable ({e}); \
+                             continuing without it"
+                        );
+                    }
+                }
                 info!("Attached remote observed data at {}", remote.uri);
             }
         }
@@ -1248,6 +1282,17 @@ impl StorageHandle {
                     row.get(0)
                 })?;
 
+        // Tolerant on purpose. In remote mode this name is a view over the
+        // daemon's catalog, and a daemon older than this client has no such
+        // table -- an un-tolerant `?` here would take the whole statistics
+        // chain down, and `/metrics` with it, over one missing count.
+        let weather_count: i64 = storage
+            .conn
+            .query_row("SELECT COUNT(*) FROM weather_snapshots", [], |row| {
+                row.get(0)
+            })
+            .unwrap_or(0);
+
         // DuckDB database_size() returns a human-readable string for file-backed DBs.
         // For in-memory DBs it returns '0 bytes'. We approximate with row count * avg row size.
         let positions_size = (row_count as u64).saturating_mul(128);
@@ -1265,6 +1310,7 @@ impl StorageHandle {
             flight_size_bytes: flight_size,
             status_event_count: status_event_count as u64,
             event_of_interest_count: eoi_count as u64,
+            weather_snapshot_count: weather_count as u64,
         })
     }
 
@@ -1742,6 +1788,197 @@ impl StorageHandle {
 
         let count: i64 = stmt.query_row(params_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
+    }
+
+    // --- Weather snapshot methods ---
+
+    /// Store one weather snapshot unless this model hour is already recorded
+    /// (synchronous).
+    ///
+    /// Returns `true` when a row was written and `false` when it was already
+    /// there. "Already there" is the ordinary case, not an error: the weather
+    /// service publishes a *retained* message, so the broker re-delivers it on
+    /// every reconnect.
+    ///
+    /// Dedupe is an anti-join rather than `ON CONFLICT DO NOTHING`. The latter
+    /// works in this DuckDB build but needs a `PRIMARY KEY`/`UNIQUE` on the
+    /// conflict target -- and this schema has no migration path, so a key
+    /// committed today could never be widened. `import_database_sync` dedupes
+    /// the other observed tables the same way.
+    pub fn insert_weather_snapshot_sync(
+        &self,
+        record: &WeatherSnapshotRecord,
+    ) -> Result<bool, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        // A recorder writes its own identity, exactly as `insert_raw_batch_sync`
+        // does. Rows carrying another receiver's id arrive through import.
+        let source_id = storage.source_id.clone();
+
+        // 17 placeholders: DuckDB parameters are positional only, so the two
+        // key values are bound a second time for the NOT EXISTS clause.
+        let changed = storage.conn.execute(
+            "INSERT INTO weather_snapshots
+                 (source_id, valid_time_ms, fetched_at_ms, received_at_ms, source, model,
+                  version, lat0, lon0, dlat, dlon, nlat, nlon, levels, payload)
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM weather_snapshots w
+                 WHERE w.source_id = ? AND w.valid_time_ms = ?
+             )",
+            params![
+                source_id,
+                record.valid_time_ms,
+                record.fetched_at_ms,
+                record.received_at_ms,
+                record.source,
+                record.model,
+                record.version as i64,
+                record.lat0,
+                record.lon0,
+                record.dlat,
+                record.dlon,
+                record.nlat as i64,
+                record.nlon as i64,
+                record.levels,
+                record.payload,
+                source_id,
+                record.valid_time_ms,
+            ],
+        )?;
+
+        Ok(changed == 1)
+    }
+
+    /// Fetch one stored snapshot, with its payload (synchronous).
+    ///
+    /// `key.source_id` is optional: a single-receiver node has only one, and
+    /// requiring it there would be ceremony. Where a database holds several
+    /// (through import), it disambiguates.
+    pub fn get_weather_snapshot_sync(
+        &self,
+        key: &WeatherSnapshotKey,
+    ) -> Result<Option<WeatherSnapshotRecord>, StorageError> {
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let mut sql = String::from(
+            "SELECT source_id, valid_time_ms, fetched_at_ms, received_at_ms, source, model,
+                    version, lat0, lon0, dlat, dlon, nlat, nlon, levels, payload
+             FROM weather_snapshots WHERE valid_time_ms = ?",
+        );
+        let mut params_vec: Vec<Box<dyn duckdb::ToSql>> = vec![Box::new(key.valid_time_ms)];
+        if let Some(ref sid) = key.source_id {
+            sql.push_str(" AND source_id = ?");
+            params_vec.push(Box::new(sid.clone()));
+        }
+        // Without a source filter a multi-receiver database could match more
+        // than one row; the most recently received wins.
+        sql.push_str(" ORDER BY received_at_ms DESC LIMIT 1");
+
+        let mut stmt = storage.conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn duckdb::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let mut rows = stmt.query(params_refs.as_slice())?;
+
+        match rows.next()? {
+            Some(row) => Ok(Some(WeatherSnapshotRecord {
+                source_id: row.get(0)?,
+                valid_time_ms: row.get(1)?,
+                fetched_at_ms: row.get(2)?,
+                received_at_ms: row.get(3)?,
+                source: row.get(4)?,
+                model: row.get(5)?,
+                version: row.get::<_, i32>(6)? as u32,
+                lat0: row.get(7)?,
+                lon0: row.get(8)?,
+                dlat: row.get(9)?,
+                dlon: row.get(10)?,
+                nlat: row.get::<_, i32>(11)? as u32,
+                nlon: row.get::<_, i32>(12)? as u32,
+                levels: row.get(13)?,
+                payload: row.get(14)?,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    /// List stored snapshots, newest first, without their payloads
+    /// (synchronous).
+    ///
+    /// The payload is omitted deliberately: a snapshot is ~16 KB, so a page of
+    /// them whole would be several hundred KB a caller almost never wants.
+    /// `payload_bytes` says what is being skipped; `get_weather_snapshot_sync`
+    /// fetches one whole.
+    ///
+    /// `limit` defaults to 24 -- a day of hourly snapshots -- and is capped at
+    /// 1000.
+    pub fn query_weather_snapshots_sync(
+        &self,
+        query: &WeatherSnapshotQuery,
+    ) -> Result<Vec<WeatherSnapshotMeta>, StorageError> {
+        const DEFAULT_LIMIT: usize = 24;
+        const MAX_LIMIT: usize = 1000;
+
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let mut sql = String::from(
+            "SELECT source_id, valid_time_ms, fetched_at_ms, received_at_ms, source, model,
+                    version, lat0, lon0, dlat, dlon, nlat, nlon, levels, length(payload)
+             FROM weather_snapshots",
+        );
+        let mut conditions = Vec::new();
+        let mut params_vec: Vec<Box<dyn duckdb::ToSql>> = Vec::new();
+
+        if let Some(start) = query.start_ms {
+            conditions.push("valid_time_ms >= ?");
+            params_vec.push(Box::new(start));
+        }
+        if let Some(end) = query.end_ms {
+            conditions.push("valid_time_ms <= ?");
+            params_vec.push(Box::new(end));
+        }
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+
+        let limit = query.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+        sql.push_str(" ORDER BY valid_time_ms DESC LIMIT ?");
+        params_vec.push(Box::new(limit as i64));
+
+        let mut stmt = storage.conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn duckdb::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let mut rows = stmt.query(params_refs.as_slice())?;
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(WeatherSnapshotMeta {
+                source_id: row.get(0)?,
+                valid_time_ms: row.get(1)?,
+                fetched_at_ms: row.get(2)?,
+                received_at_ms: row.get(3)?,
+                source: row.get(4)?,
+                model: row.get(5)?,
+                version: row.get::<_, i32>(6)? as u32,
+                lat0: row.get(7)?,
+                lon0: row.get(8)?,
+                dlat: row.get(9)?,
+                dlon: row.get(10)?,
+                nlat: row.get::<_, i32>(11)? as u32,
+                nlon: row.get::<_, i32>(12)? as u32,
+                levels: row.get(13)?,
+                payload_bytes: row.get(14)?,
+            });
+        }
+        Ok(out)
     }
 
     // --- Status event methods ---
@@ -2582,6 +2819,40 @@ impl StorageHandle {
 
     // --- Async wrappers (Step 3) ---
 
+    /// Store one weather snapshot, deduped on the model hour (async via
+    /// spawn_blocking).
+    pub async fn insert_weather_snapshot(
+        &self,
+        record: WeatherSnapshotRecord,
+    ) -> Result<bool, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.insert_weather_snapshot_sync(&record))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Fetch one stored snapshot with its payload (async via spawn_blocking).
+    pub async fn get_weather_snapshot(
+        &self,
+        key: WeatherSnapshotKey,
+    ) -> Result<Option<WeatherSnapshotRecord>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.get_weather_snapshot_sync(&key))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// List stored snapshots without payloads (async via spawn_blocking).
+    pub async fn query_weather_snapshots(
+        &self,
+        query: WeatherSnapshotQuery,
+    ) -> Result<Vec<WeatherSnapshotMeta>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.query_weather_snapshots_sync(&query))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
     /// Batch insert parsed positions (async via spawn_blocking).
     pub async fn insert_batch(
         &self,
@@ -2824,6 +3095,7 @@ impl StorageHandle {
             "ATTACH '{}' AS export_db;
              CREATE TABLE export_db.positions AS SELECT * FROM positions;
              CREATE TABLE export_db.raw_messages AS SELECT * FROM raw_messages;
+             CREATE TABLE export_db.weather_snapshots AS SELECT * FROM weather_snapshots;
              DETACH export_db;",
             path_str
         ))?;
@@ -2859,11 +3131,16 @@ impl StorageHandle {
 
         let path_str = path.to_string_lossy().replace('\'', "''");
         Self::with_attached_db(&storage.conn, &path_str, |conn| {
-            let positions = Self::preview_table(conn, "positions")?;
-            let raw_messages = Self::preview_table(conn, "raw_messages")?;
+            let positions = Self::preview_table(conn, "positions", "timestamp_ms")?;
+            let raw_messages = Self::preview_table(conn, "raw_messages", "timestamp_ms")?;
+            // Weather is timed by the model hour it describes, not by when the
+            // row was written -- so its range is reported on `valid_time_ms`.
+            let weather_snapshots =
+                Self::preview_table(conn, "weather_snapshots", "valid_time_ms")?;
             Ok(ImportPreview {
                 positions,
                 raw_messages,
+                weather_snapshots,
             })
         })
     }
@@ -2926,14 +3203,33 @@ impl StorageHandle {
                 0
             };
 
+            // Same key the live insert path dedupes on, so importing a database
+            // that overlaps this one adds only the model hours it does not have.
+            let weather_snapshots_imported =
+                if Self::table_exists_in_schema(conn, "weather_snapshots")? {
+                    conn.execute(
+                        "INSERT INTO weather_snapshots
+                         SELECT iw.* FROM import_db.weather_snapshots iw
+                         WHERE NOT EXISTS (
+                             SELECT 1 FROM weather_snapshots w
+                             WHERE w.source_id = iw.source_id
+                               AND w.valid_time_ms = iw.valid_time_ms
+                         )",
+                        [],
+                    )? as u64
+                } else {
+                    0
+                };
+
             info!(
-                "Database imported: {} positions, {} raw messages",
-                positions_imported, raw_messages_imported
+                "Database imported: {} positions, {} raw messages, {} weather snapshots",
+                positions_imported, raw_messages_imported, weather_snapshots_imported
             );
 
             Ok(ImportResult {
                 positions_imported,
                 raw_messages_imported,
+                weather_snapshots_imported,
             })
         })
     }
@@ -3139,7 +3435,16 @@ impl StorageHandle {
     }
 
     /// Preview a single table from import_db (returns zero-count if table doesn't exist).
-    fn preview_table(conn: &Connection, table_name: &str) -> Result<TablePreview, StorageError> {
+    ///
+    /// `ts_col` names the table's time column. It was hardcoded to
+    /// `timestamp_ms`, which is right for the tables that record observations
+    /// but not for `weather_snapshots`, whose time is the model hour it
+    /// describes. Both names come from this file, never from user input.
+    fn preview_table(
+        conn: &Connection,
+        table_name: &str,
+        ts_col: &str,
+    ) -> Result<TablePreview, StorageError> {
         if !Self::table_exists_in_schema(conn, table_name)? {
             return Ok(TablePreview {
                 row_count: 0,
@@ -3148,10 +3453,7 @@ impl StorageHandle {
             });
         }
         let (count, min_ts, max_ts): (i64, Option<i64>, Option<i64>) = conn.query_row(
-            &format!(
-                "SELECT COUNT(*), MIN(timestamp_ms), MAX(timestamp_ms) FROM import_db.{}",
-                table_name
-            ),
+            &format!("SELECT COUNT(*), MIN({ts_col}), MAX({ts_col}) FROM import_db.{table_name}"),
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
@@ -3313,6 +3615,436 @@ mod tests {
         let handle = StorageHandle::open(test_config()).unwrap();
         let stats = handle.get_stats_sync().unwrap();
         assert_eq!(stats.row_count, 0);
+    }
+
+    fn sample_weather_record(valid_time_ms: i64) -> WeatherSnapshotRecord {
+        WeatherSnapshotRecord {
+            source_id: "test".to_string(),
+            valid_time_ms,
+            fetched_at_ms: valid_time_ms + 7 * 60_000,
+            received_at_ms: valid_time_ms + 8 * 60_000,
+            source: "open-meteo".to_string(),
+            model: "best_match".to_string(),
+            version: 1,
+            lat0: 46.0,
+            lon0: -3.0,
+            dlat: 1.0,
+            dlon: 1.0,
+            nlat: 2,
+            nlon: 3,
+            levels: "250,500,850".to_string(),
+            payload: r#"{"version":1,"source":"open-meteo"}"#.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_weather_snapshot_round_trips() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let rec = sample_weather_record(1_789_000_000_000);
+
+        assert!(
+            handle.insert_weather_snapshot_sync(&rec).unwrap(),
+            "a first insert must report that it stored the row"
+        );
+
+        let got = handle
+            .get_weather_snapshot_sync(&WeatherSnapshotKey {
+                valid_time_ms: rec.valid_time_ms,
+                source_id: None,
+            })
+            .unwrap()
+            .expect("the snapshot that was just stored");
+
+        assert_eq!(got.source_id, "test");
+        assert_eq!(got.valid_time_ms, rec.valid_time_ms);
+        assert_eq!(got.fetched_at_ms, rec.fetched_at_ms);
+        assert_eq!(got.received_at_ms, rec.received_at_ms);
+        assert_eq!(got.source, rec.source);
+        assert_eq!(got.model, rec.model);
+        assert_eq!(got.version, rec.version);
+        assert_eq!(got.lat0, rec.lat0);
+        assert_eq!(got.lon0, rec.lon0);
+        assert_eq!(got.dlat, rec.dlat);
+        assert_eq!(got.dlon, rec.dlon);
+        assert_eq!(got.nlat, rec.nlat);
+        assert_eq!(got.nlon, rec.nlon);
+        assert_eq!(got.levels, rec.levels);
+        // The whole point of the payload column: it comes back byte-identical,
+        // never a re-serialisation of a parsed struct.
+        assert_eq!(got.payload, rec.payload);
+    }
+
+    /// Rows in `weather_snapshots`, for the dedupe tests. `get_stats_sync` does
+    /// not count them yet, so go straight to the table.
+    fn weather_row_count(handle: &StorageHandle) -> i64 {
+        let storage = handle.inner.lock().unwrap();
+        storage
+            .conn
+            .query_row("SELECT COUNT(*) FROM weather_snapshots", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn the_same_model_hour_is_stored_once() {
+        // The weather service publishes a RETAINED message, so the broker
+        // re-delivers it on every reconnect. Storing it twice is the default
+        // failure, not an edge case.
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let rec = sample_weather_record(1_789_000_000_000);
+
+        assert!(handle.insert_weather_snapshot_sync(&rec).unwrap());
+        assert!(
+            !handle.insert_weather_snapshot_sync(&rec).unwrap(),
+            "a second insert of the same model hour must report that it stored nothing"
+        );
+        assert_eq!(weather_row_count(&handle), 1);
+    }
+
+    #[test]
+    fn a_refetched_hour_with_a_new_fetched_at_is_still_one_row() {
+        // The key is the model hour, not the payload and not the fetch time:
+        // a retry that lands the same hour later is the same weather.
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let first = sample_weather_record(1_789_000_000_000);
+        let refetched = WeatherSnapshotRecord {
+            fetched_at_ms: first.fetched_at_ms + 40 * 60_000,
+            received_at_ms: first.received_at_ms + 40 * 60_000,
+            payload: r#"{"version":1,"source":"open-meteo","note":"refetch"}"#.to_string(),
+            ..first.clone()
+        };
+
+        assert!(handle.insert_weather_snapshot_sync(&first).unwrap());
+        assert!(!handle.insert_weather_snapshot_sync(&refetched).unwrap());
+        assert_eq!(weather_row_count(&handle), 1);
+
+        // The row kept is the first one: the anti-join declines to write, it
+        // does not overwrite.
+        let got = handle
+            .get_weather_snapshot_sync(&WeatherSnapshotKey {
+                valid_time_ms: first.valid_time_ms,
+                source_id: None,
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(got.fetched_at_ms, first.fetched_at_ms);
+        assert_eq!(got.payload, first.payload);
+    }
+
+    #[test]
+    fn a_new_model_hour_is_a_new_row() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let first = sample_weather_record(1_789_000_000_000);
+        let next_hour = sample_weather_record(1_789_000_000_000 + 3_600_000);
+
+        assert!(handle.insert_weather_snapshot_sync(&first).unwrap());
+        assert!(handle.insert_weather_snapshot_sync(&next_hour).unwrap());
+        assert_eq!(weather_row_count(&handle), 2);
+    }
+
+    #[test]
+    fn the_configured_source_id_is_stamped_on_the_row() {
+        // A recorder writes its own identity, exactly as raw messages do, so a
+        // record claiming someone else's id cannot make the data lie about
+        // which receiver it came from.
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let rec = WeatherSnapshotRecord {
+            source_id: "somebody-else".to_string(),
+            ..sample_weather_record(1_789_000_000_000)
+        };
+
+        handle.insert_weather_snapshot_sync(&rec).unwrap();
+
+        let got = handle
+            .get_weather_snapshot_sync(&WeatherSnapshotKey {
+                valid_time_ms: rec.valid_time_ms,
+                source_id: Some("test".to_string()),
+            })
+            .unwrap()
+            .expect("stored under the configured source_id, not the record's");
+        assert_eq!(got.source_id, "test");
+    }
+
+    #[test]
+    fn an_absent_model_hour_is_none_not_an_error() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let got = handle
+            .get_weather_snapshot_sync(&WeatherSnapshotKey {
+                valid_time_ms: 1_789_000_000_000,
+                source_id: None,
+            })
+            .unwrap();
+        assert!(got.is_none());
+    }
+
+    #[test]
+    fn an_export_carries_weather_snapshots() {
+        // An export that silently dropped weather would be discovered only by
+        // whoever imported it months later and found the air missing.
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("exported.db");
+
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_weather_snapshot_sync(&sample_weather_record(1_789_000_000_000))
+            .unwrap();
+        handle.export_database_sync(&target).unwrap();
+
+        let exported = Connection::open(&target).unwrap();
+        let n: i64 = exported
+            .query_row("SELECT COUNT(*) FROM weather_snapshots", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "the export must carry weather snapshots");
+    }
+
+    #[test]
+    fn importing_the_same_snapshot_twice_adds_nothing() {
+        // Import dedupes on the same key the live insert path uses, so
+        // importing an overlapping database adds only the hours it has and we
+        // do not.
+        let dir = tempfile::tempdir().unwrap();
+        let source_path = dir.path().join("source.db");
+
+        // A database holding two model hours, built by exporting one.
+        let source = StorageHandle::open(test_config()).unwrap();
+        source
+            .insert_weather_snapshot_sync(&sample_weather_record(1_789_000_000_000))
+            .unwrap();
+        source
+            .insert_weather_snapshot_sync(&sample_weather_record(1_789_003_600_000))
+            .unwrap();
+        source.export_database_sync(&source_path).unwrap();
+
+        // A destination that already has the first of those hours.
+        let dest = StorageHandle::open(test_config()).unwrap();
+        dest.insert_weather_snapshot_sync(&sample_weather_record(1_789_000_000_000))
+            .unwrap();
+
+        let first = dest.import_database_sync(&source_path).unwrap();
+        assert_eq!(
+            first.weather_snapshots_imported, 1,
+            "only the hour the destination lacked"
+        );
+        assert_eq!(weather_row_count(&dest), 2);
+
+        // Importing the very same file again is a no-op.
+        let second = dest.import_database_sync(&source_path).unwrap();
+        assert_eq!(second.weather_snapshots_imported, 0);
+        assert_eq!(weather_row_count(&dest), 2);
+    }
+
+    #[test]
+    fn a_preview_reports_the_weather_model_hour_range() {
+        // preview_table hardcoded `timestamp_ms`; this table's time column is
+        // `valid_time_ms`, so an unparameterised preview would query a column
+        // that does not exist.
+        let dir = tempfile::tempdir().unwrap();
+        let source_path = dir.path().join("source.db");
+
+        let source = StorageHandle::open(test_config()).unwrap();
+        source
+            .insert_weather_snapshot_sync(&sample_weather_record(1_789_000_000_000))
+            .unwrap();
+        source
+            .insert_weather_snapshot_sync(&sample_weather_record(1_789_003_600_000))
+            .unwrap();
+        source.export_database_sync(&source_path).unwrap();
+
+        let dest = StorageHandle::open(test_config()).unwrap();
+        let preview = dest.preview_import_sync(&source_path).unwrap();
+
+        assert_eq!(preview.weather_snapshots.row_count, 2);
+        assert_eq!(
+            preview.weather_snapshots.oldest_timestamp_ms,
+            Some(1_789_000_000_000)
+        );
+        assert_eq!(
+            preview.weather_snapshots.newest_timestamp_ms,
+            Some(1_789_003_600_000)
+        );
+    }
+
+    #[test]
+    fn a_remote_catalog_missing_a_table_still_creates_the_others() {
+        // The trap this guards: a desktop newer than the daemon it attaches to.
+        // The daemon has no weather_snapshots, DuckDB binds a view body at
+        // CREATE time, and as a single batch that one failure aborts the open --
+        // costing the user every other view, not just weather.
+        //
+        // No Quack server needed: a plain DuckDB file attached under the same
+        // alias reproduces "a catalog that is missing a table" exactly.
+        let dir = tempfile::tempdir().unwrap();
+        let remote_path = dir.path().join("older-daemon.db");
+        {
+            let remote = Connection::open(&remote_path).unwrap();
+            // An older daemon: everything except weather_snapshots.
+            remote
+                .execute_batch(
+                    "CREATE TABLE positions (hex_ident TEXT);
+                     CREATE TABLE raw_messages (hex_ident TEXT);
+                     CREATE TABLE flights (flight_id TEXT);
+                     CREATE TABLE status_events (timestamp_ms BIGINT);",
+                )
+                .unwrap();
+        }
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(&format!(
+            "ATTACH '{}' AS edge (READ_ONLY);",
+            remote_path.display()
+        ))
+        .unwrap();
+
+        let mut created = Vec::new();
+        let mut skipped = Vec::new();
+        for (table, sql) in share::remote_view_statements("edge") {
+            match conn.execute_batch(&sql) {
+                Ok(()) => created.push(table),
+                Err(_) => skipped.push(table),
+            }
+        }
+
+        assert_eq!(
+            skipped,
+            vec!["weather_snapshots"],
+            "only the table the daemon lacks should be skipped"
+        );
+        assert_eq!(
+            created,
+            vec!["positions", "raw_messages", "flights", "status_events"],
+            "every table the daemon does have must still get its view"
+        );
+
+        // And the views that were created actually resolve.
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM positions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn stats_count_weather_snapshots() {
+        // "Is weather being recorded?" is the first thing an operator asks, and
+        // /metrics answers it from this count.
+        let handle = StorageHandle::open(test_config()).unwrap();
+        assert_eq!(handle.get_stats_sync().unwrap().weather_snapshot_count, 0);
+
+        handle
+            .insert_weather_snapshot_sync(&sample_weather_record(1_789_000_000_000))
+            .unwrap();
+        handle
+            .insert_weather_snapshot_sync(&sample_weather_record(1_789_003_600_000))
+            .unwrap();
+
+        assert_eq!(handle.get_stats_sync().unwrap().weather_snapshot_count, 2);
+    }
+
+    #[tokio::test]
+    async fn the_async_wrapper_stores_and_reads_a_snapshot() {
+        // The persist task and the tool API both go through the async wrappers,
+        // so the spawn_blocking hop is worth one test of its own.
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let rec = sample_weather_record(1_789_000_000_000);
+
+        assert!(handle.insert_weather_snapshot(rec.clone()).await.unwrap());
+        assert!(
+            !handle.insert_weather_snapshot(rec.clone()).await.unwrap(),
+            "dedupe holds across the async wrapper too"
+        );
+
+        let listed = handle
+            .query_weather_snapshots(WeatherSnapshotQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(listed.len(), 1);
+
+        let got = handle
+            .get_weather_snapshot(WeatherSnapshotKey {
+                valid_time_ms: rec.valid_time_ms,
+                source_id: None,
+            })
+            .await
+            .unwrap()
+            .expect("stored");
+        assert_eq!(got.payload, rec.payload);
+    }
+
+    #[test]
+    fn weather_snapshots_survive_the_retention_window() {
+        // A deliberate decision, not an oversight: `prune_sync` drops positions
+        // and raw messages, but weather is the slow-moving context that makes
+        // old flight data interpretable, and a year of it is ~140 MB. This test
+        // exists so that adding weather to the prune is a conscious act.
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let old = sample_weather_record(1_000_000_000_000);
+        handle.insert_weather_snapshot_sync(&old).unwrap();
+
+        // A cutoff far in the future: everything prunable is pruned.
+        handle.prune_sync(2_000_000_000_000).unwrap();
+
+        assert_eq!(
+            weather_row_count(&handle),
+            1,
+            "weather must outlive the retention window"
+        );
+    }
+
+    #[test]
+    fn snapshots_come_back_newest_first_within_the_window() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let base = 1_789_000_000_000;
+        for h in 0..3 {
+            handle
+                .insert_weather_snapshot_sync(&sample_weather_record(base + h * 3_600_000))
+                .unwrap();
+        }
+
+        let all = handle
+            .query_weather_snapshots_sync(&WeatherSnapshotQuery::default())
+            .unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].valid_time_ms, base + 2 * 3_600_000, "newest first");
+        assert_eq!(all[2].valid_time_ms, base);
+
+        let windowed = handle
+            .query_weather_snapshots_sync(&WeatherSnapshotQuery {
+                start_ms: Some(base + 3_600_000),
+                end_ms: None,
+                limit: None,
+            })
+            .unwrap();
+        assert_eq!(windowed.len(), 2, "start_ms is inclusive and filters");
+
+        let capped = handle
+            .query_weather_snapshots_sync(&WeatherSnapshotQuery {
+                start_ms: None,
+                end_ms: None,
+                limit: Some(2),
+            })
+            .unwrap();
+        assert_eq!(capped.len(), 2);
+        assert_eq!(
+            capped[0].valid_time_ms,
+            base + 2 * 3_600_000,
+            "a limit keeps the newest, not an arbitrary two"
+        );
+    }
+
+    #[test]
+    fn the_listing_does_not_carry_payloads() {
+        // A snapshot is ~16 KB. A page of them whole would hand a caller several
+        // hundred KB it almost never wants, so the listing reports the size
+        // instead of the content.
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let rec = sample_weather_record(1_789_000_000_000);
+        handle.insert_weather_snapshot_sync(&rec).unwrap();
+
+        let listed = handle
+            .query_weather_snapshots_sync(&WeatherSnapshotQuery::default())
+            .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].payload_bytes, rec.payload.len() as i64);
+        assert_eq!(listed[0].levels, rec.levels);
+        assert_eq!(listed[0].nlat, rec.nlat);
     }
 
     #[test]

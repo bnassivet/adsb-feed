@@ -42,7 +42,13 @@ fn sql_quote(value: &str) -> String {
 /// The complement -- `events_of_interest`, `scenarios`, `scenario_tracks` --
 /// are *authored* by whoever is using the app, so they stay in the local
 /// database even in remote mode.
-pub const OBSERVED_TABLES: [&str; 4] = ["positions", "raw_messages", "flights", "status_events"];
+pub const OBSERVED_TABLES: [&str; 5] = [
+    "positions",
+    "raw_messages",
+    "flights",
+    "status_events",
+    "weather_snapshots",
+];
 
 /// Whether a Quack URI names a local host.
 ///
@@ -90,11 +96,32 @@ pub fn attach_sql(config: &RemoteConfig, alias: &str) -> String {
 /// `positions`, `flights` and so on, so pointing those names at `edge.*` makes
 /// the whole read path work in remote mode without touching any query SQL.
 pub fn remote_view_sql(alias: &str) -> String {
-    OBSERVED_TABLES
-        .iter()
-        .map(|t| format!("CREATE OR REPLACE VIEW {t} AS SELECT * FROM {alias}.{t};"))
+    remote_view_statements(alias)
+        .into_iter()
+        .map(|(_, sql)| sql)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The same views, one statement per table, each labelled with its table.
+///
+/// `open()` uses this rather than the joined string so that one unavailable
+/// table does not cost the user every other one. DuckDB binds a view body at
+/// `CREATE VIEW` time, so a table the attached daemon does not have fails
+/// immediately -- and a daemon older than this client is exactly that case,
+/// every time an observed table is added here. Executed as one batch, that
+/// failure aborts `StorageHandle::open`, which does not degrade remote mode but
+/// ends it: no positions, no history, nothing.
+pub fn remote_view_statements(alias: &str) -> Vec<(&'static str, String)> {
+    OBSERVED_TABLES
+        .iter()
+        .map(|t| {
+            (
+                *t,
+                format!("CREATE OR REPLACE VIEW {t} AS SELECT * FROM {alias}.{t};"),
+            )
+        })
+        .collect()
 }
 
 /// Install and load the `quack` extension.
@@ -320,9 +347,42 @@ mod attach_tests {
     }
 
     #[test]
+    fn each_observed_table_gets_its_own_labelled_statement() {
+        // open() creates these one at a time so a table the daemon lacks costs
+        // only its own view. That is only possible if each statement arrives
+        // labelled with the table it belongs to.
+        let stmts = remote_view_statements("edge");
+        assert_eq!(stmts.len(), OBSERVED_TABLES.len());
+
+        for (table, sql) in &stmts {
+            assert!(
+                OBSERVED_TABLES.contains(table),
+                "{table} is not an observed table"
+            );
+            assert!(
+                sql.contains(&format!(
+                    "CREATE OR REPLACE VIEW {table} AS SELECT * FROM edge.{table}"
+                )),
+                "statement for {table} does not create its own view: {sql}"
+            );
+            // One statement, one table: a batch would defeat the whole point.
+            assert_eq!(sql.matches("CREATE OR REPLACE VIEW").count(), 1, "{sql}");
+        }
+    }
+
+    #[test]
     fn observed_views_cover_exactly_the_recorded_tables() {
         let sql = remote_view_sql("edge");
-        for t in ["positions", "raw_messages", "flights", "status_events"] {
+        // Weather is recorded from the feed like the rest of these, so a remote
+        // client must read it from the daemon that records it. Miss this and
+        // remote mode shows no weather at all, with no error anywhere.
+        for t in [
+            "positions",
+            "raw_messages",
+            "flights",
+            "status_events",
+            "weather_snapshots",
+        ] {
             assert!(
                 sql.contains(&format!(
                     "CREATE OR REPLACE VIEW {t} AS SELECT * FROM edge.{t}"
