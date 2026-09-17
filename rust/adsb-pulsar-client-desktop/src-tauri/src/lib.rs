@@ -136,6 +136,11 @@ pub fn run() {
             // with "there is no reactor running".
             tauri::async_runtime::spawn(adsb_data_server::server::serve(
                 std::sync::Arc::clone(&state.storage),
+                // Loopback, stated rather than assumed: this is a GUI's tool
+                // server for an agent on the same machine, and it has no
+                // authentication. The daemon's bind is configurable; this one
+                // is deliberately not.
+                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
                 tool_server_port,
             ));
 

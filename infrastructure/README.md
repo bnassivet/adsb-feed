@@ -84,10 +84,12 @@ and the difference is easy to get wrong:
   host's loopback. A service must either bind `0.0.0.0` or, better, Prometheus
   must join the host network (below).
 
-Binding wider is not free. The feed client's endpoint is counters only, so
-opening it costs little; the weather service's port also carries an
-unauthenticated `PUT /v1/enabled`, and the data server's bind is hardcoded to
-loopback and cannot be opened at all.
+Binding wider is not free, and costs differently per service. The feed client's
+endpoint is counters only, so `[metrics].feed_bind` is cheap to open. The data
+server's `[storage].http_bind` opens the read-only query API alongside
+`/metrics`. The weather service is the one to leave alone: its port also
+carries an unauthenticated `PUT /v1/enabled`, so opening it hands the LAN a
+switch for the weather layer.
 
 So on a Raspberry Pi, use the override, which puts Prometheus on the host
 network so every target is `localhost` and **nothing has to be opened**:

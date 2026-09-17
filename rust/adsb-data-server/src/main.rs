@@ -55,9 +55,20 @@ async fn run(cfg: ServerConfig) -> anyhow::Result<()> {
         report_sharing(&recorder).await;
     }
 
+    // A query-API setting must not stop a recorder from recording, so an
+    // unparseable bind falls back to loopback and says so.
+    #[cfg(feature = "http-api")]
+    let http_bind = cfg.http_bind_addr().unwrap_or_else(|| {
+        tracing::warn!(
+            "http_bind '{}' is not an IP address; falling back to 127.0.0.1",
+            cfg.http_bind
+        );
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+    });
+
     #[cfg(all(feature = "http-api", not(feature = "metrics")))]
     if cfg.http_port > 0 {
-        adsb_data_server::server::spawn(recorder.storage(), cfg.http_port);
+        adsb_data_server::server::spawn(recorder.storage(), http_bind, cfg.http_port);
     }
 
     #[cfg(feature = "metrics")]
@@ -71,6 +82,7 @@ async fn run(cfg: ServerConfig) -> anyhow::Result<()> {
         tokio::spawn(cache.clone().run(recorder.storage(), REFRESH_INTERVAL));
         adsb_data_server::server::spawn_with_metrics(
             recorder.storage(),
+            http_bind,
             cfg.http_port,
             MetricsState {
                 version: env!("CARGO_PKG_VERSION").to_string(),

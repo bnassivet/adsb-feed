@@ -138,6 +138,7 @@ def render_server(cfg: dict, out: Path = OUT) -> str:
         ("checkpoint_secs", s.get("checkpoint_secs", 300)),
         ("retention_hours", s.get("retention_hours", 0)),
         ("http_port", s.get("http_port", 8787)),
+        ("http_bind", s.get("http_bind", "127.0.0.1")),
         ("share", s.get("share", False)),
         ("share_uri", s.get("share_uri", "quack:0.0.0.0:9494")),
     ]

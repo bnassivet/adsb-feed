@@ -5,13 +5,15 @@
 #
 # Why a separate override rather than opening the services' binds:
 #
-# A container reaching the host through host-gateway is NOT loopback, so
-# scraping that way means every service has to listen beyond 127.0.0.1. For the
-# feed client that is merely a counters endpoint with no authentication. For the
-# weather service it is worse: the same port carries `PUT /v1/enabled`, also
-# unauthenticated, so anything on the LAN could pause the weather layer. And the
-# data server's bind is hardcoded to loopback, so it could not be scraped that
-# way at all.
+# On Linux a container reaching the host through host-gateway is NOT loopback,
+# so scraping that way means every service has to listen beyond 127.0.0.1.
+# Each of them can be told to ([metrics].feed_bind, [storage].http_bind,
+# [weather].http_bind), but they do not cost the same.
+#
+# The feed client's endpoint is counters and nothing else. The data server's
+# port also serves the read-only query API. The weather service is the one to
+# leave alone: the same port carries `PUT /v1/enabled`, unauthenticated, so
+# anything on the LAN could pause the weather layer.
 #
 # Putting Prometheus on the host network instead makes every target
 # `localhost:<port>` and nothing has to be opened. Linux only -- which is

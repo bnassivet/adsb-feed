@@ -299,6 +299,26 @@ class WeatherContent(unittest.TestCase):
             self.assertEqual(weather["source_id"], "dev-laptop-dev")
 
 
+class ServerBind(unittest.TestCase):
+    """The query API's bind address, which used to be hardcoded in Rust."""
+
+    def test_loopback_by_default(self):
+        # No authentication: only an explicit setting opens it.
+        recorder = parse(rc.render_server(STACK, REPO / ".run"))
+        self.assertEqual(recorder["http_bind"], "127.0.0.1")
+
+    def test_an_explicit_bind_reaches_the_recorder(self):
+        cfg = dict(STACK, storage=dict(STACK["storage"], http_bind="0.0.0.0"))
+        recorder = parse(rc.render_server(cfg, REPO / ".run"))
+        self.assertEqual(recorder["http_bind"], "0.0.0.0")
+
+    def test_a_config_from_before_the_setting_still_renders(self):
+        # Every existing adsb-stack.toml has no [storage].http_bind.
+        storage = {k: v for k, v in STACK["storage"].items() if k != "http_bind"}
+        recorder = parse(rc.render_server(dict(STACK, storage=storage), REPO / ".run"))
+        self.assertEqual(recorder["http_bind"], "127.0.0.1")
+
+
 class MetricsContent(unittest.TestCase):
     """The feed client's scrape endpoint.
 

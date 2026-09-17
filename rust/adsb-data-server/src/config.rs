@@ -83,6 +83,16 @@ pub struct ServerConfig {
     #[serde(default = "default_http_port")]
     pub http_port: u16,
 
+    /// Address the HTTP query API binds.
+    ///
+    /// Loopback by default: the API has no authentication, so reaching it from
+    /// another machine is a deliberate choice. It was hardcoded to 127.0.0.1,
+    /// which meant a Prometheus or an agent on another host could not reach it
+    /// at all and there was no way to say otherwise.
+    #[arg(long, env = "ADSB_HTTP_BIND", default_value = "127.0.0.1")]
+    #[serde(default = "default_http_bind")]
+    pub http_bind: String,
+
     /// Expose the database over Quack so other processes can ATTACH.
     #[arg(long, env = "ADSB_SHARE")]
     #[serde(default)]
@@ -130,6 +140,9 @@ fn default_checkpoint_secs() -> u64 {
 }
 fn default_http_port() -> u16 {
     8787
+}
+fn default_http_bind() -> String {
+    "127.0.0.1".into()
 }
 fn default_share_uri() -> String {
     "quack:0.0.0.0:9494".into()
@@ -210,6 +223,9 @@ impl ServerConfig {
         overlay!("http_port", http_port, |v: &toml::Value| v
             .as_integer()
             .map(|i| i as u16));
+        overlay!("http_bind", http_bind, |v: &toml::Value| v
+            .as_str()
+            .map(String::from));
         overlay!("share", share, |v: &toml::Value| v.as_bool());
         overlay!("share_uri", share_uri, |v: &toml::Value| v
             .as_str()
@@ -223,6 +239,15 @@ impl ServerConfig {
         {
             self.share_token = Some(t.to_string());
         }
+    }
+
+    /// The address the HTTP query API binds, or `None` when `http_bind` is not
+    /// an IP address.
+    ///
+    /// Deliberately not a hostname: binding is not name resolution, and
+    /// "localhost" resolving to two families is a silent half-bind.
+    pub fn http_bind_addr(&self) -> Option<std::net::IpAddr> {
+        self.http_bind.parse().ok()
     }
 
     /// Builds the storage configuration this daemon should open.
@@ -325,6 +350,40 @@ mod tests {
         );
         assert!(cfg.share);
         assert_eq!(cfg.share_token.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn the_query_api_is_loopback_by_default() {
+        // No authentication: only an explicit http_bind opens it.
+        let cfg = defaults();
+        assert_eq!(cfg.http_bind, "127.0.0.1");
+        assert!(cfg.http_bind_addr().expect("a valid address").is_loopback());
+    }
+
+    #[test]
+    fn http_bind_comes_from_the_file() {
+        // The overlay! regression guard: without that line the rendered
+        // data-server.toml value is ignored with no error and no log.
+        let mut cfg = defaults();
+        cfg.overlay_file(&file("http_bind = '0.0.0.0'"), &all_defaulted);
+        assert_eq!(cfg.http_bind, "0.0.0.0");
+        assert!(!cfg.http_bind_addr().expect("a valid address").is_loopback());
+    }
+
+    #[test]
+    fn an_explicit_http_bind_flag_beats_the_file() {
+        let mut cfg = ServerConfig::parse_from(["adsb-data-server", "--http-bind", "0.0.0.0"]);
+        cfg.overlay_file(&file("http_bind = '10.0.0.1'"), &explicit(&["http_bind"]));
+        assert_eq!(cfg.http_bind, "0.0.0.0");
+    }
+
+    #[test]
+    fn an_http_bind_that_is_not_an_address_is_none() {
+        // The caller falls back to loopback and says so, rather than failing to
+        // start a recorder over a query-API setting.
+        let mut cfg = defaults();
+        cfg.overlay_file(&file("http_bind = 'localhost'"), &all_defaulted);
+        assert!(cfg.http_bind_addr().is_none());
     }
 
     #[test]

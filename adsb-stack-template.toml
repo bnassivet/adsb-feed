@@ -60,8 +60,13 @@ qos = 0
 [storage]
 # Dev-local. The deployed Pi uses /var/lib/adsb/adsb.db via /etc/adsb/*.toml.
 db_path = ".run/adsb.db"
-# Read-only JSON query API. 0 disables.
+# Read-only JSON query API, and the recorder's /metrics. 0 disables both.
 http_port = 8787
+# No authentication, so it stays on this machine unless you say otherwise.
+# "0.0.0.0" is for reaching it from another host -- an agent or a Prometheus
+# elsewhere on a trusted LAN. On a Raspberry Pi prefer
+# infrastructure/docker-compose.pi.yml, which scrapes over loopback instead.
+http_bind = "127.0.0.1"
 # Expose the database over Quack so the desktop app (and duckdb CLI, webapp,
 # spark) can ATTACH while the recorder keeps writing.
 #

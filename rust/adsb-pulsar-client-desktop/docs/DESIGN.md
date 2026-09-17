@@ -4882,8 +4882,10 @@ Which is why the Pi answer is the better one generally:
 `infrastructure/docker-compose.pi.yml` puts Prometheus on the host network,
 every target becomes `localhost`, and **nothing has to be opened**. That matters
 most for the weather service, whose port also carries an unauthenticated
-`PUT /v1/enabled`, and for the data server, whose bind is hardcoded to loopback
-and cannot be opened at all.
+`PUT /v1/enabled` — opening it to scrape counters would hand the LAN a switch
+for the weather layer. The feed (`[metrics].feed_bind`) and the recorder
+(`[storage].http_bind`) can each be opened deliberately where that is the right
+trade; the weather service is the one where it is not.
 
 ### Grafana
 

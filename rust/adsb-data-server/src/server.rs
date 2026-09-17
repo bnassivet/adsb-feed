@@ -29,6 +29,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::net::{IpAddr, SocketAddr};
 use tracing::{info, warn};
 
 /// Args for `getAircraftSummary` / `getFlightSummary` — both take an optional
@@ -192,7 +193,35 @@ pub fn router_with_metrics(storage: SharedStorage, metrics: MetricsState) -> Rou
     )
 }
 
-/// The loopback tool server itself: bind, then serve until the task is dropped.
+/// Bind `bind:port`, logging what was bound and how widely.
+///
+/// `None` on failure: binding failure is non-fatal everywhere this is used —
+/// the process keeps running, and the agent simply gets connection errors and
+/// reports its history tools as unavailable.
+async fn bind_listener(bind: IpAddr, port: u16) -> Option<tokio::net::TcpListener> {
+    let addr = SocketAddr::new(bind, port);
+    match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => {
+            if bind.is_loopback() {
+                info!("Agent tool server listening on http://{addr}");
+            } else {
+                // Worth a warning rather than an info: this API has no
+                // authentication of any kind.
+                warn!(
+                    "Agent tool server listening on http://{addr}: reachable from the network, \
+                     with no authentication"
+                );
+            }
+            Some(listener)
+        }
+        Err(e) => {
+            warn!("Agent tool server: failed to bind {addr} (agent history tools disabled): {e}");
+            None
+        }
+    }
+}
+
+/// The tool server itself: bind, then serve until the task is dropped.
 ///
 /// Returns a future and spawns nothing, so **the caller chooses what drives
 /// it**. That matters because the two consumers have different runtimes: the
@@ -201,19 +230,12 @@ pub fn router_with_metrics(storage: SharedStorage, metrics: MetricsState) -> Rou
 /// own. Spawning here with `tokio::spawn` aborted the desktop app at launch
 /// with "there is no reactor running".
 ///
-/// Binds `127.0.0.1:<port>` only — never exposed off-host. Binding failure is
-/// non-fatal: the app keeps running, the agent simply gets connection errors
-/// and reports its history tools as unavailable.
-pub async fn serve(storage: SharedStorage, port: u16) {
-    let addr = format!("127.0.0.1:{port}");
-    let listener = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            warn!("Agent tool server: failed to bind {addr} (agent history tools disabled): {e}");
-            return;
-        }
+/// `bind` is explicit rather than hardcoded so the daemon can be configured;
+/// the desktop passes `Ipv4Addr::LOCALHOST` and means it.
+pub async fn serve(storage: SharedStorage, bind: IpAddr, port: u16) {
+    let Some(listener) = bind_listener(bind, port).await else {
+        return;
     };
-    info!("Agent tool server listening on http://{addr}");
     if let Err(e) = axum::serve(listener, router(storage)).await {
         warn!("Agent tool server exited: {e}");
     }
@@ -223,23 +245,25 @@ pub async fn serve(storage: SharedStorage, port: u16) {
 ///
 /// A Tauri app must NOT use this — it has no ambient runtime at setup time.
 /// Use `tauri::async_runtime::spawn(serve(storage, port))` instead.
-pub fn spawn(storage: SharedStorage, port: u16) {
-    tokio::spawn(serve(storage, port));
+pub fn spawn(storage: SharedStorage, bind: IpAddr, port: u16) {
+    tokio::spawn(serve(storage, bind, port));
 }
 
 /// [`serve`], with `/metrics` on the same listener.
 #[cfg(feature = "metrics")]
-pub async fn serve_with_metrics(storage: SharedStorage, port: u16, metrics: MetricsState) {
-    let addr = format!("127.0.0.1:{port}");
-    let listener = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            warn!("Agent tool server: failed to bind {addr} (agent history tools disabled): {e}");
-            return;
-        }
+pub async fn serve_with_metrics(
+    storage: SharedStorage,
+    bind: IpAddr,
+    port: u16,
+    metrics: MetricsState,
+) {
+    let Some(listener) = bind_listener(bind, port).await else {
+        return;
     };
-    info!("Agent tool server listening on http://{addr}");
-    info!("Recorder metrics at http://{addr}/metrics");
+    info!(
+        "Recorder metrics at http://{}/metrics",
+        SocketAddr::new(bind, port)
+    );
     if let Err(e) = axum::serve(listener, router_with_metrics(storage, metrics)).await {
         warn!("Agent tool server exited: {e}");
     }
@@ -247,8 +271,8 @@ pub async fn serve_with_metrics(storage: SharedStorage, port: u16, metrics: Metr
 
 /// Convenience for callers already inside a tokio runtime (the daemon).
 #[cfg(feature = "metrics")]
-pub fn spawn_with_metrics(storage: SharedStorage, port: u16, metrics: MetricsState) {
-    tokio::spawn(serve_with_metrics(storage, port, metrics));
+pub fn spawn_with_metrics(storage: SharedStorage, bind: IpAddr, port: u16, metrics: MetricsState) {
+    tokio::spawn(serve_with_metrics(storage, bind, port, metrics));
 }
 
 #[cfg(test)]
@@ -310,7 +334,7 @@ mod tests {
     #[test]
     fn serve_future_can_be_built_without_an_ambient_runtime() {
         let storage: SharedStorage = Arc::new(RwLock::new(None));
-        let fut = serve(storage, 0);
+        let fut = serve(storage, IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0);
         // Dropping it unpolled is fine; constructing it is what used to panic.
         drop(fut);
     }
