@@ -247,6 +247,78 @@ export interface PositionRecord {
 }
 
 /** Bounding box + time window query parameters. */
+/** Window and page size for listing recorded weather snapshots. */
+export interface WeatherSnapshotQuery {
+  start_ms?: number | null;
+  end_ms?: number | null;
+  /** Defaults to 24 — a day of hourly snapshots. Capped at 1000. */
+  limit?: number | null;
+}
+
+/**
+ * Identifies one recorded snapshot.
+ *
+ * `source_id` is optional: a single-receiver node has only one, and where a
+ * database holds several (through import) it disambiguates.
+ */
+export interface WeatherSnapshotKey {
+  valid_time_ms: number;
+  source_id?: string | null;
+}
+
+/**
+ * A recorded snapshot's metadata, without its payload.
+ *
+ * `levels` is a comma-separated string (`"200,250,300"`), **not** JSON — it is
+ * for filtering only. The levels the UI draws come from the parsed payload.
+ */
+export interface WeatherSnapshotMeta {
+  source_id: string;
+  /** The model hour this data describes. */
+  valid_time_ms: number;
+  /** When the weather service fetched it from the provider. */
+  fetched_at_ms: number;
+  /** When the recorder stored it — the only clock that process owns. */
+  received_at_ms: number;
+  source: string;
+  model: string;
+  /** Payload schema version. Reject anything unrecognised. */
+  version: number;
+  lat0: number;
+  lon0: number;
+  dlat: number;
+  dlon: number;
+  nlat: number;
+  nlon: number;
+  levels: string;
+  /** Size of the omitted payload, in bytes. */
+  payload_bytes: number;
+}
+
+/**
+ * A recorded snapshot with its payload: the published JSON, verbatim.
+ *
+ * `payload` is a string and carries no type guarantee — parse it through
+ * `parseRecordedSnapshot` rather than casting it to `WeatherSnapshot`.
+ */
+export interface WeatherSnapshotRecord {
+  source_id: string;
+  valid_time_ms: number;
+  fetched_at_ms: number;
+  received_at_ms: number;
+  source: string;
+  model: string;
+  version: number;
+  lat0: number;
+  lon0: number;
+  dlat: number;
+  dlon: number;
+  nlat: number;
+  nlon: number;
+  levels: string;
+  payload: string;
+}
+
 export interface BboxQuery {
   north: number;
   south: number;

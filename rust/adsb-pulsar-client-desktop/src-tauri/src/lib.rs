@@ -204,6 +204,8 @@ pub fn run() {
             commands::get_weather_availability,
             commands::get_weather_service,
             commands::set_weather_service_enabled,
+            commands::get_weather_history,
+            commands::get_weather_at,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

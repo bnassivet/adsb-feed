@@ -165,6 +165,37 @@ pub fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, String> 
 /// Snapshots are pushed as `adsb:weather` events, but a retained grid can land
 /// before the map has subscribed, and is otherwise not seen again until the
 /// next hourly fetch.
+/// List the weather snapshots on disk, newest first, **without** payloads.
+///
+/// Distinct from [`get_weather_snapshot`], which answers "what is the weather
+/// *now*" from the live MQTT relay. This one answers "what weather do we have
+/// *recorded*" — in remote mode, from the daemon's table through the view.
+///
+/// Metadata only: a snapshot is ~16 KB, so listing a day of them whole would be
+/// several hundred KB a caller almost never wants.
+#[tauri::command]
+pub async fn get_weather_history(
+    query: adsb_data_engine::WeatherSnapshotQuery,
+    state: State<'_, AppState>,
+) -> Result<Vec<adsb_data_engine::WeatherSnapshotMeta>, String> {
+    adsb_data_server::tool_service::get_weather_snapshots(&state.storage, query).await
+}
+
+/// One recorded snapshot, with its payload verbatim.
+///
+/// `None` for a model hour that was never recorded — absent is not an error,
+/// and the caller must be able to tell it apart from unavailable storage.
+///
+/// Called fully qualified: a `use` of the service function would collide with
+/// [`get_weather_snapshot`] above.
+#[tauri::command]
+pub async fn get_weather_at(
+    key: adsb_data_engine::WeatherSnapshotKey,
+    state: State<'_, AppState>,
+) -> Result<Option<adsb_data_engine::WeatherSnapshotRecord>, String> {
+    adsb_data_server::tool_service::get_weather_snapshot(&state.storage, key).await
+}
+
 #[tauri::command]
 pub fn get_weather_snapshot(state: State<'_, AppState>) -> Result<Option<WeatherSnapshot>, String> {
     let held = state.weather.read().map_err(|e| e.to_string())?;

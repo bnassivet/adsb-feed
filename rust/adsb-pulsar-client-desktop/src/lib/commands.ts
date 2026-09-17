@@ -39,6 +39,10 @@ import type {
   UpdateEventOfInterest,
   UpdateScenario,
   UpdateScenarioTrack,
+  WeatherSnapshotKey,
+  WeatherSnapshotMeta,
+  WeatherSnapshotQuery,
+  WeatherSnapshotRecord,
 } from "./types";
 import type { WeatherAvailability, WeatherServiceView, WeatherSnapshot } from "./weather";
 
@@ -66,6 +70,30 @@ export async function getStack(): Promise<string | null> {
 /** The last good weather snapshot, or null before one has arrived. */
 export async function getWeatherSnapshot(): Promise<WeatherSnapshot | null> {
   return invoke("get_weather_snapshot");
+}
+
+/**
+ * Weather snapshots on disk, newest first, **without** their payloads.
+ *
+ * Distinct from {@link getWeatherSnapshot}, which is the live one held in
+ * memory. A snapshot is ~16 KB, so the listing reports `payload_bytes` rather
+ * than the content; fetch one whole with {@link getWeatherAt}.
+ */
+export async function getWeatherHistory(
+  query: WeatherSnapshotQuery,
+): Promise<WeatherSnapshotMeta[]> {
+  return invoke("get_weather_history", { query });
+}
+
+/**
+ * One recorded snapshot, with its payload verbatim.
+ *
+ * `null` for a model hour that was never recorded — absent is not an error.
+ */
+export async function getWeatherAt(
+  key: WeatherSnapshotKey,
+): Promise<WeatherSnapshotRecord | null> {
+  return invoke("get_weather_at", { key });
 }
 
 /** Whether the weather layer can have data, and if not, why. */
