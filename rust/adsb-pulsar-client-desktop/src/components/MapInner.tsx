@@ -13,10 +13,35 @@ import { aircraftIconHtml } from "@/lib/aircraft-icon";
 import { haversineDistanceNm } from "@/lib/geo";
 import { orderTracksWithSelectedLast } from "@/lib/track-ordering";
 import { subsamplePositions } from "@/lib/subsample";
+import {
+  fieldsAt,
+  gridPoints,
+  levelLabel,
+  windAtPoint,
+  type WeatherLevel,
+  type WeatherSnapshot,
+} from "@/lib/weather";
+import { windBarbSvg } from "@/lib/wind-barb";
+import {
+  createParticles,
+  createWindField,
+  degreesPerPixel,
+  fieldBounds,
+  intersectBounds,
+  PARTICLE_COLORS,
+  particleCount,
+  projectMercator,
+  speedBucket,
+  stepParticles,
+  type GeoBounds,
+  type Particles,
+} from "@/lib/wind-particles";
+import { formatWind } from "@/lib/wind-format";
 import { MapTileToggle } from "./MapTileToggle";
 
 import { CenterOnAntennaButton } from "./CenterOnAntennaButton";
 import { AltitudeLegend } from "./AltitudeLegend";
+import { WindSpeedLegend } from "./WindSpeedLegend";
 
 /**
  * Per-leg colours for a generated route.
@@ -259,6 +284,259 @@ function MapPickerLayer({ mode, onComplete, onCancel }: {
   return null;
 }
 
+/** Adds a credit line to the map's attribution control while mounted. */
+function MapAttribution({ text }: { text: string }) {
+  const map = useMap();
+  useEffect(() => {
+    // Attribution on the control, not the tile layer: a tile layer's
+    // attribution is fixed at creation, so changing it would reload the tiles.
+    const control = map.attributionControl;
+    if (!control) return;
+    control.addAttribution(text);
+    return () => {
+      control.removeAttribution(text);
+    };
+  }, [map, text]);
+  return null;
+}
+
+const BARB_SIZE = 32;
+
+/** Wind barbs at every grid point of a weather snapshot, for one level. */
+function WeatherBarbsLayer({
+  snapshot,
+  level,
+  theme,
+}: {
+  snapshot: WeatherSnapshot;
+  level: WeatherLevel;
+  theme: MapTheme;
+}) {
+  const color = theme === "dark" ? "#e2e8f0" : "#1e293b";
+
+  // Icons are rebuilt only when the snapshot, level or theme changes. The map
+  // re-renders about twice a second with live traffic, and a fresh divIcon
+  // object makes react-leaflet call setIcon on every one of ~190 markers.
+  const barbs = useMemo(() => {
+    const fields = fieldsAt(snapshot, level);
+    if (!fields) return [];
+    return gridPoints(snapshot).flatMap(({ lat, lon, index }) => {
+      const wind = windAtPoint(fields, index);
+      if (!wind) return [];
+      return [
+        {
+          key: `wx-${index}`,
+          position: [lat, lon] as [number, number],
+          wind,
+          mslp: snapshot.surface.mslp_hpa[index],
+          icon: L.divIcon({
+            html: windBarbSvg(wind, color, BARB_SIZE),
+            className: "",
+            iconSize: [BARB_SIZE, BARB_SIZE],
+            iconAnchor: [BARB_SIZE / 2, BARB_SIZE / 2],
+          }),
+        },
+      ];
+    });
+  }, [snapshot, level, color]);
+
+  return (
+    <>
+      {barbs.map((barb) => (
+        <Marker key={barb.key} position={barb.position} icon={barb.icon} keyboard={false}>
+          <Tooltip direction="top" offset={[0, -BARB_SIZE / 2]}>
+            <div style={{ fontSize: 11 }}>
+              <div style={{ fontWeight: 600, color: "#fff" }}>{levelLabel(level)}</div>
+              <div>
+                Wind: <span style={{ color: "#fff" }}>{formatWind(barb.wind)}</span>
+              </div>
+              <div>
+                MSL pressure:{" "}
+                <span style={{ color: "#fff" }}>
+                  {barb.mslp != null ? `${barb.mslp.toFixed(1)} hPa` : "N/A"}
+                </span>
+              </div>
+            </div>
+          </Tooltip>
+        </Marker>
+      ))}
+    </>
+  );
+}
+
+/** Leaflet pane for the particle canvas: above tiles and density (400), below every marker (600). */
+const PARTICLE_PANE = "weatherParticles";
+/** Screen speed, pixels a second per knot: 100 kt crosses 60 px a second at any zoom. */
+const PARTICLE_PX_PER_KT_S = 0.6;
+/** Opacity each frame keeps of the one before: sets the trail length. */
+const PARTICLE_TRAIL_KEEP = 0.92;
+/** Bucket value for a particle that respawned this frame: nothing to draw. */
+const NO_SEGMENT = 255;
+
+/**
+ * Particles drifting with the wind on one level, drawn on a canvas.
+ *
+ * Imperative, like DotsLayer: a frame loop has no business in React state.
+ * The canvas is cleared while the map pans or zooms and re-seeded when it
+ * stops -- particle positions are geographic, but the trails on the canvas
+ * are pixels and would smear across a moving map.
+ */
+function WindParticlesLayer({
+  snapshot,
+  level,
+  theme,
+}: {
+  snapshot: WeatherSnapshot;
+  level: WeatherLevel;
+  theme: MapTheme;
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    const field = createWindField(snapshot, level);
+    if (!field) return;
+    const gridBounds = fieldBounds(field.grid);
+    const colors = PARTICLE_COLORS[theme];
+
+    const pane = map.getPane(PARTICLE_PANE) ?? map.createPane(PARTICLE_PANE);
+    pane.style.zIndex = "450";
+    pane.style.pointerEvents = "none";
+    const canvas = L.DomUtil.create("canvas", "", pane);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      canvas.remove();
+      return;
+    }
+
+    let particles: Particles | null = null;
+    let bounds: GeoBounds | null = null;
+    // Screen positions: where each particle is now, and where it was a frame ago.
+    let toX = new Float32Array(0);
+    let toY = new Float32Array(0);
+    let fromX = new Float32Array(0);
+    let fromY = new Float32Array(0);
+    let bucket = new Uint8Array(0);
+    let width = 0;
+    let height = 0;
+    let zoom = 0;
+    let degPerPx = 0;
+    let originX = 0;
+    let originY = 0;
+    let frame = 0;
+    let lastMs = 0;
+    const px = [0, 0];
+
+    const tick = (nowMs: number) => {
+      const p = particles;
+      if (!p || !bounds) return;
+      const dtS = lastMs ? (nowMs - lastMs) / 1000 : 0;
+      lastMs = nowMs;
+      stepParticles(p, field, bounds, { dtS, pxPerKtS: PARTICLE_PX_PER_KT_S, degPerPx });
+
+      for (let i = 0; i < p.count; i++) {
+        projectMercator(p.lat[i], p.lon[i], zoom, px);
+        fromX[i] = toX[i];
+        fromY[i] = toY[i];
+        toX[i] = px[0] - originX;
+        toY[i] = px[1] - originY;
+        bucket[i] = p.reborn[i] ? NO_SEGMENT : speedBucket(p.speedKt[i]);
+      }
+
+      // Fade what is already drawn, then add this frame's segments on top.
+      ctx.globalCompositeOperation = "destination-in";
+      ctx.fillStyle = `rgba(0, 0, 0, ${PARTICLE_TRAIL_KEEP})`;
+      ctx.fillRect(0, 0, width, height);
+      ctx.globalCompositeOperation = "source-over";
+      ctx.lineWidth = 1.25;
+      // One path per colour: a stroke per particle would be thousands of draw calls.
+      for (let b = 0; b < colors.length; b++) {
+        ctx.beginPath();
+        for (let i = 0; i < p.count; i++) {
+          if (bucket[i] !== b) continue;
+          ctx.moveTo(fromX[i], fromY[i]);
+          ctx.lineTo(toX[i], toY[i]);
+        }
+        ctx.strokeStyle = colors[b];
+        ctx.stroke();
+      }
+
+      frame = requestAnimationFrame(tick);
+    };
+
+    const stop = () => {
+      cancelAnimationFrame(frame);
+      particles = null;
+      ctx.clearRect(0, 0, width, height);
+    };
+
+    const reset = () => {
+      stop();
+      const size = map.getSize();
+      width = size.x;
+      height = size.y;
+      const dpr = window.devicePixelRatio || 1;
+      // Resizing a canvas clears it and resets its transform.
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // The pane moves with the map while panning; pin the canvas to the viewport.
+      L.DomUtil.setPosition(canvas, map.containerPointToLayerPoint([0, 0]));
+
+      const view = map.getBounds();
+      bounds = intersectBounds(gridBounds, {
+        south: view.getSouth(),
+        west: view.getWest(),
+        north: view.getNorth(),
+        east: view.getEast(),
+      });
+      if (!bounds) return;
+
+      zoom = map.getZoom();
+      degPerPx = degreesPerPixel(zoom);
+      const origin = map.getPixelBounds().min!;
+      originX = origin.x;
+      originY = origin.y;
+
+      // Size the population to the part of the screen the grid covers, so a
+      // zoomed-out view does not pack every particle into a small square.
+      projectMercator(bounds.north, bounds.west, zoom, px);
+      const [left, top] = px;
+      projectMercator(bounds.south, bounds.east, zoom, px);
+      const count = particleCount(Math.min(px[0] - left, width), Math.min(px[1] - top, height));
+
+      const p = createParticles(count, bounds);
+      toX = new Float32Array(count);
+      toY = new Float32Array(count);
+      fromX = new Float32Array(count);
+      fromY = new Float32Array(count);
+      bucket = new Uint8Array(count);
+      for (let i = 0; i < count; i++) {
+        projectMercator(p.lat[i], p.lon[i], zoom, px);
+        toX[i] = px[0] - originX;
+        toY[i] = px[1] - originY;
+      }
+      particles = p;
+      lastMs = 0;
+      frame = requestAnimationFrame(tick);
+    };
+
+    map.on("movestart zoomstart", stop);
+    map.on("moveend resize", reset);
+    reset();
+
+    return () => {
+      map.off("movestart zoomstart", stop);
+      map.off("moveend resize", reset);
+      cancelAnimationFrame(frame);
+      canvas.remove();
+    };
+  }, [map, snapshot, level, theme]);
+
+  return null;
+}
+
 interface Props {
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];
@@ -286,6 +564,13 @@ interface Props {
   onMapPickComplete?: (result: MapPickResult) => void;
   onMapPickCancel?: () => void;
   onFlyToReady?: (fn: (lat: number, lng: number, zoom: number) => void) => void;
+  /** Weather snapshot to draw, or null to draw none. */
+  weather?: WeatherSnapshot | null;
+  weatherLevel?: WeatherLevel;
+  /** Draw wind barbs at the grid points. */
+  weatherBarbs?: boolean;
+  /** Draw animated wind particles. */
+  weatherParticles?: boolean;
 }
 
 /** Build compact (single-line) tooltip for density cell. */
@@ -595,7 +880,7 @@ function DotsLayer({
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady }: Props) {
+export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
   const tile = TILE_CONFIGS[mapTheme];
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
@@ -649,6 +934,12 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
 
         {/* Density hexagons — zoom-adaptive H3 resolution */}
         <DensityLayer showDensity={showDensity} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} receiverLocation={receiverLocation} theme={mapTheme} />
+
+        {/* Weather — added before the traffic so aircraft draw on top. The credit is
+            required whenever the data is shown, so it follows either display. */}
+        {weather && (weatherBarbs || weatherParticles) && <MapAttribution text={weather.attribution} />}
+        {weather && weatherParticles && <WindParticlesLayer snapshot={weather} level={weatherLevel} theme={mapTheme} />}
+        {weather && weatherBarbs && <WeatherBarbsLayer snapshot={weather} level={weatherLevel} theme={mapTheme} />}
 
         {/* History tracks — rendered first so active tracks layer on top */}
         {trajectoryStyle === "dots" && historyTracks.length > 0 && (
@@ -872,6 +1163,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
       <MapTileToggle theme={mapTheme} onToggle={onToggleTheme} />
       <CenterOnAntennaButton onClick={handleCenterOnAntenna} disabled={!receiverLocation} />
       <AltitudeLegend theme={mapTheme} />
+      {weather && weatherParticles && <WindSpeedLegend theme={mapTheme} />}
     </div>
   );
 }

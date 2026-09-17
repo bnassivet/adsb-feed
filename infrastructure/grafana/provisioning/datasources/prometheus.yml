@@ -1,0 +1,21 @@
+# Grafana datasource provisioning.
+#
+# The uid is fixed and referenced by every dashboard's datasource variable, so
+# a dashboard imported into another Grafana still resolves.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: adsb-prometheus
+    type: prometheus
+    access: proxy
+    # The compose network hostname, not localhost: Grafana reaches Prometheus
+    # as a container, whatever the host is doing.
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      # Matches global.scrape_interval in prometheus.yml. Grafana uses it to
+      # pick sane default step sizes, so a mismatch makes graphs look gappy.
+      timeInterval: 15s

@@ -2,6 +2,7 @@
 import { useCallback, type ReactNode } from "react";
 import { FiltersPanel } from "@/components/Filters";
 import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventFilterMode } from "@/lib/types";
+import type { WeatherControlsProps } from "@/components/WeatherControls";
 
 const MIN_PANEL_WIDTH = 180;
 const MAX_PANEL_WIDTH = 400;
@@ -55,6 +56,8 @@ interface LeftPanelProps {
   eventTimeRangeStart: number;
   eventTimeRangeEnd: number;
   onEventTimeRangeChange: (startMs: number, endMs: number) => void;
+  /** Weather layer controls. Optional: without them the panel has no weather section. */
+  weather?: WeatherControlsProps;
   /** Rendered below the filters. A slot rather than typed props so the
    *  simulation state doesn't have to be drilled through this component. */
   simulationPanel?: ReactNode;

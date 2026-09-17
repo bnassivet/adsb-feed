@@ -58,6 +58,16 @@ pub struct ServerConfig {
     #[serde(default = "default_mqtt_topic")]
     pub mqtt_topic: String,
 
+    /// MQTT topic carrying the weather grid. Empty derives it from `mqtt_topic`.
+    ///
+    /// Empty-means-derive matches `adsb_pulsar_client::Config`, whose
+    /// `weather_topic()` this daemon reuses rather than reimplementing: the
+    /// rule already lives in two places that must agree (that function and
+    /// `scripts/render-config.py`), and a third copy is how they drift.
+    #[arg(long, env = "ADSB_MQTT_WEATHER_TOPIC", default_value = "")]
+    #[serde(default)]
+    pub mqtt_weather_topic: String,
+
     /// Timezone of the dump1090 timestamps.
     #[arg(long, env = "ADSB_DUMP1090_TZ", default_value = "Local")]
     #[serde(default = "default_tz")]
@@ -82,6 +92,16 @@ pub struct ServerConfig {
     #[arg(long, env = "ADSB_HTTP_PORT", default_value = "8787")]
     #[serde(default = "default_http_port")]
     pub http_port: u16,
+
+    /// Address the HTTP query API binds.
+    ///
+    /// Loopback by default: the API has no authentication, so reaching it from
+    /// another machine is a deliberate choice. It was hardcoded to 127.0.0.1,
+    /// which meant a Prometheus or an agent on another host could not reach it
+    /// at all and there was no way to say otherwise.
+    #[arg(long, env = "ADSB_HTTP_BIND", default_value = "127.0.0.1")]
+    #[serde(default = "default_http_bind")]
+    pub http_bind: String,
 
     /// Expose the database over Quack so other processes can ATTACH.
     #[arg(long, env = "ADSB_SHARE")]
@@ -130,6 +150,9 @@ fn default_checkpoint_secs() -> u64 {
 }
 fn default_http_port() -> u16 {
     8787
+}
+fn default_http_bind() -> String {
+    "127.0.0.1".into()
 }
 fn default_share_uri() -> String {
     "quack:0.0.0.0:9494".into()
@@ -196,6 +219,11 @@ impl ServerConfig {
         overlay!("mqtt_topic", mqtt_topic, |v: &toml::Value| v
             .as_str()
             .map(String::from));
+        overlay!(
+            "mqtt_weather_topic",
+            mqtt_weather_topic,
+            |v: &toml::Value| v.as_str().map(String::from)
+        );
         overlay!("dump1090_tz", dump1090_tz, |v: &toml::Value| v
             .as_str()
             .map(String::from));
@@ -210,6 +238,9 @@ impl ServerConfig {
         overlay!("http_port", http_port, |v: &toml::Value| v
             .as_integer()
             .map(|i| i as u16));
+        overlay!("http_bind", http_bind, |v: &toml::Value| v
+            .as_str()
+            .map(String::from));
         overlay!("share", share, |v: &toml::Value| v.as_bool());
         overlay!("share_uri", share_uri, |v: &toml::Value| v
             .as_str()
@@ -222,6 +253,32 @@ impl ServerConfig {
             && let Some(t) = file.get("share_token").and_then(|v| v.as_str())
         {
             self.share_token = Some(t.to_string());
+        }
+    }
+
+    /// The address the HTTP query API binds, or `None` when `http_bind` is not
+    /// an IP address.
+    ///
+    /// Deliberately not a hostname: binding is not name resolution, and
+    /// "localhost" resolving to two families is a silent half-bind.
+    pub fn http_bind_addr(&self) -> Option<std::net::IpAddr> {
+        self.http_bind.parse().ok()
+    }
+
+    /// Builds the feed-client configuration this daemon's MQTT source runs on.
+    ///
+    /// Built here rather than inline in `main` so the weather topic it resolves
+    /// is testable, and so the derivation rule stays where it already lives —
+    /// `adsb_pulsar_client::Config::weather_topic`, which
+    /// `scripts/render-config.py` mirrors. Change both or neither.
+    pub fn feed_config(&self) -> adsb_pulsar_client::Config {
+        adsb_pulsar_client::Config {
+            source_id: self.source_id.clone(),
+            mqtt_broker: self.mqtt_broker.clone(),
+            mqtt_port: self.mqtt_port,
+            mqtt_topic: self.mqtt_topic.clone(),
+            mqtt_weather_topic: self.mqtt_weather_topic.clone(),
+            ..Default::default()
         }
     }
 
@@ -257,6 +314,37 @@ mod tests {
 
     fn file(text: &str) -> toml::Value {
         toml::from_str(text).unwrap()
+    }
+
+    #[test]
+    fn the_weather_topic_comes_from_the_file() {
+        // A key without an `overlay!` line is ignored in silence, and the
+        // derived default usually still works -- so the bug would surface only
+        // for whoever set an explicit topic. Same guard as `http_bind`.
+        let mut cfg = defaults();
+        cfg.overlay_file(&file("mqtt_weather_topic = 'lab/wx'"), &all_defaulted);
+        assert_eq!(cfg.mqtt_weather_topic, "lab/wx");
+    }
+
+    #[test]
+    fn an_unset_weather_topic_is_derived_from_the_feed_topic() {
+        // The rule the weather service and the desktop both apply, reached
+        // through the one implementation of it rather than a third copy.
+        let mut cfg = defaults();
+        cfg.mqtt_topic = "adsb/dev/sbs/raw".to_string();
+        assert_eq!(
+            cfg.feed_config().weather_topic(),
+            "adsb/dev/weather/grid",
+            "the recorder must subscribe where the weather service publishes"
+        );
+    }
+
+    #[test]
+    fn an_explicit_weather_topic_wins() {
+        let mut cfg = defaults();
+        cfg.mqtt_topic = "adsb/dev/sbs/raw".to_string();
+        cfg.mqtt_weather_topic = "lab/wx".to_string();
+        assert_eq!(cfg.feed_config().weather_topic(), "lab/wx");
     }
 
     /// Stands in for clap: every field still holds its default.
@@ -325,6 +413,40 @@ mod tests {
         );
         assert!(cfg.share);
         assert_eq!(cfg.share_token.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn the_query_api_is_loopback_by_default() {
+        // No authentication: only an explicit http_bind opens it.
+        let cfg = defaults();
+        assert_eq!(cfg.http_bind, "127.0.0.1");
+        assert!(cfg.http_bind_addr().expect("a valid address").is_loopback());
+    }
+
+    #[test]
+    fn http_bind_comes_from_the_file() {
+        // The overlay! regression guard: without that line the rendered
+        // data-server.toml value is ignored with no error and no log.
+        let mut cfg = defaults();
+        cfg.overlay_file(&file("http_bind = '0.0.0.0'"), &all_defaulted);
+        assert_eq!(cfg.http_bind, "0.0.0.0");
+        assert!(!cfg.http_bind_addr().expect("a valid address").is_loopback());
+    }
+
+    #[test]
+    fn an_explicit_http_bind_flag_beats_the_file() {
+        let mut cfg = ServerConfig::parse_from(["adsb-data-server", "--http-bind", "0.0.0.0"]);
+        cfg.overlay_file(&file("http_bind = '10.0.0.1'"), &explicit(&["http_bind"]));
+        assert_eq!(cfg.http_bind, "0.0.0.0");
+    }
+
+    #[test]
+    fn an_http_bind_that_is_not_an_address_is_none() {
+        // The caller falls back to loopback and says so, rather than failing to
+        // start a recorder over a query-API setting.
+        let mut cfg = defaults();
+        cfg.overlay_file(&file("http_bind = 'localhost'"), &all_defaulted);
+        assert!(cfg.http_bind_addr().is_none());
     }
 
     #[test]

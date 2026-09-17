@@ -35,6 +35,12 @@ services:
     container_name: pulsar_standalone
     hostname: pulsar
     restart: unless-stopped
+    # Behind a profile so the monitoring half of this file can start alone:
+    #   docker compose up -d prometheus grafana      # just monitoring
+    #   docker compose --profile pulsar up -d        # the analytics leg too
+    # The MQTT path needs no Pulsar at all, and `make monitoring` is useful on
+    # every stack -- dragging a Pulsar standalone in for it would be absurd.
+    profiles: ["pulsar"]
     ports:
       # Pulsar broker port - used by producers and consumers
       - "6650:6650"
@@ -74,6 +80,7 @@ services:
   pulsar-init:
     image: apachepulsar/pulsar:3.2.0
     container_name: pulsar_init
+    profiles: ["pulsar"]
     depends_on:
       pulsar:
         condition: service_healthy
@@ -127,9 +134,19 @@ services:
       - '--web.enable-lifecycle'
     networks:
       - adsb-network
-    depends_on:
-      pulsar:
-        condition: service_healthy
+    # The ADS-B services are native host processes, not containers. On Docker
+    # Desktop host.docker.internal already resolves; on Linux (a Raspberry Pi)
+    # this mapping is what makes it resolve at all, so one target string works
+    # on both.
+    #
+    # It still only reaches a service bound beyond loopback. To scrape a Pi
+    # whose services are all on 127.0.0.1, use docker-compose.pi.yml instead:
+    # Prometheus joins the host network and nothing has to be opened.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # No depends_on. Prometheus is designed to start with every target down --
+    # they simply report up == 0 -- and requiring Pulsar here is what used to
+    # drag a whole standalone broker in just to look at a graph.
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
       interval: 30s
@@ -140,32 +157,37 @@ services:
   # ===========================================================================
   # Grafana - Visualization and Dashboards
   # ===========================================================================
-  # Grafana provides visualization for Pulsar metrics. Uses StreamNative's
-  # pre-built Pulsar dashboard for comprehensive monitoring.
+  # Stock Grafana, with the ADS-B dashboards provisioned from grafana/.
+  #
+  # This replaced streamnative/apache-pulsar-grafana-dashboard, which could not
+  # be used for first-party dashboards: it is a Grafana 7-era image whose
+  # GF_PATHS_PROVISIONING points INSIDE the named volume and is rewritten by its
+  # own entrypoint at boot, so there is nowhere to mount ours. Its Pulsar
+  # dashboards also predate Pulsar 3.2. To get them back, run that image
+  # separately on another port.
   # ---------------------------------------------------------------------------
   grafana:
-    image: streamnative/apache-pulsar-grafana-dashboard:latest
+    image: grafana/grafana:11.6.1
     container_name: grafana
     hostname: grafana
     restart: unless-stopped
     ports:
-      # Grafana web UI
+      # Grafana web UI. The desktop's Next dev server moved to :3200 so this
+      # can keep :3000 -- they used to collide.
       - "3000:3000"
     environment:
-      # Prometheus data source URL (using Docker network hostname)
-      - PULSAR_PROMETHEUS_URL=http://prometheus:9090
-      # Pulsar cluster name for dashboard labels
-      - PULSAR_CLUSTER=pulsar_standalone
-      # Grafana admin credentials (change in production!)
+      # Change these for anything reachable beyond this machine.
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
-      # Allow anonymous access for dashboards (optional, disable in production)
-      - GF_AUTH_ANONYMOUS_ENABLED=false
-      # Install additional plugins if needed
-      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+      - GF_USERS_DEFAULT_THEME=dark
     volumes:
-      # Persist Grafana data (dashboards, users, etc.)
+      # Persist Grafana's own state (users, preferences, ad-hoc dashboards).
       - grafana_data:/var/lib/grafana
+      # Datasource + dashboard providers, read-only: these are tracked files,
+      # and a dashboard edited in the UI must not silently become the source of
+      # truth.
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     networks:
       - adsb-network
     depends_on:

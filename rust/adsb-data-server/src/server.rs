@@ -20,7 +20,7 @@ use crate::tool_service;
 use adsb_data_engine::SharedStorage;
 use adsb_data_engine::{
     EventOfInterestQuery, FlightSummaryQuery, HourlyHeatmapQuery, TimeDistributionQuery,
-    TrajectoryQuery,
+    TrajectoryQuery, WeatherSnapshotKey, WeatherSnapshotQuery,
 };
 use axum::{
     Json, Router,
@@ -29,6 +29,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::net::{IpAddr, SocketAddr};
 use tracing::{info, warn};
 
 /// Args for `getAircraftSummary` / `getFlightSummary` — both take an optional
@@ -101,6 +102,20 @@ pub async fn dispatch(storage: &SharedStorage, name: &str, args: Value) -> Value
                 .and_then(to_value),
             Err(e) => Err(e),
         },
+        // Listing omits payloads; fetching one carries it. Splitting them is
+        // what stops a caller pulling a day of 16 KB grids by accident.
+        "getWeatherSnapshots" => match parse::<WeatherSnapshotQuery>(args) {
+            Ok(q) => tool_service::get_weather_snapshots(storage, q)
+                .await
+                .and_then(to_value),
+            Err(e) => Err(e),
+        },
+        "getWeatherSnapshot" => match parse::<WeatherSnapshotKey>(args) {
+            Ok(k) => tool_service::get_weather_snapshot(storage, k)
+                .await
+                .and_then(to_value),
+            Err(e) => Err(e),
+        },
         "listScenarios" => tool_service::list_scenarios(storage)
             .await
             .and_then(to_value),
@@ -140,13 +155,87 @@ async fn handle(
 }
 
 /// Build the tool-server router (used by `spawn` and integration tests).
+///
+/// Deliberately **without** `/metrics`. The desktop app serves this same
+/// router from its embedded tool server, and it is not a scrape target: it is
+/// a GUI on a laptop, its DuckDB file is a different database from the
+/// recorder's, and Prometheus has no idea when it is running. Use
+/// [`router_with_metrics`] for the daemon.
 pub fn router(storage: SharedStorage) -> Router {
     Router::new()
         .route("/tools/{name}", post(handle))
         .with_state(storage)
 }
 
-/// The loopback tool server itself: bind, then serve until the task is dropped.
+/// What the `/metrics` handler needs: this recorder's identity and the cached
+/// storage statistics.
+#[cfg(feature = "metrics")]
+#[derive(Clone)]
+pub struct MetricsState {
+    /// This crate's version, for `adsb_build_info`.
+    pub version: String,
+    /// The receiver id, whose suffix supplies the `stage` label.
+    pub source_id: String,
+    /// Refreshed in the background; see [`crate::metrics_export`].
+    pub cache: crate::metrics_export::StatsCache,
+}
+
+#[cfg(feature = "metrics")]
+async fn handle_metrics(State(state): State<MetricsState>) -> impl axum::response::IntoResponse {
+    let cached = state.cache.snapshot();
+    let body = crate::metrics_export::render(&state.version, &state.source_id, cached.as_ref());
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            adsb_pulsar_client::metrics_export::content_type(),
+        )],
+        body,
+    )
+}
+
+/// [`router`] plus `/metrics`, for the daemon.
+///
+/// The two surfaces share one listener: the recorder already has a port, and
+/// giving the scrape endpoint its own would be another thing to configure, to
+/// check for collisions in `make doctor`, and to forget on one machine.
+#[cfg(feature = "metrics")]
+pub fn router_with_metrics(storage: SharedStorage, metrics: MetricsState) -> Router {
+    router(storage).merge(
+        Router::new()
+            .route("/metrics", axum::routing::get(handle_metrics))
+            .with_state(metrics),
+    )
+}
+
+/// Bind `bind:port`, logging what was bound and how widely.
+///
+/// `None` on failure: binding failure is non-fatal everywhere this is used —
+/// the process keeps running, and the agent simply gets connection errors and
+/// reports its history tools as unavailable.
+async fn bind_listener(bind: IpAddr, port: u16) -> Option<tokio::net::TcpListener> {
+    let addr = SocketAddr::new(bind, port);
+    match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => {
+            if bind.is_loopback() {
+                info!("Agent tool server listening on http://{addr}");
+            } else {
+                // Worth a warning rather than an info: this API has no
+                // authentication of any kind.
+                warn!(
+                    "Agent tool server listening on http://{addr}: reachable from the network, \
+                     with no authentication"
+                );
+            }
+            Some(listener)
+        }
+        Err(e) => {
+            warn!("Agent tool server: failed to bind {addr} (agent history tools disabled): {e}");
+            None
+        }
+    }
+}
+
+/// The tool server itself: bind, then serve until the task is dropped.
 ///
 /// Returns a future and spawns nothing, so **the caller chooses what drives
 /// it**. That matters because the two consumers have different runtimes: the
@@ -155,19 +244,12 @@ pub fn router(storage: SharedStorage) -> Router {
 /// own. Spawning here with `tokio::spawn` aborted the desktop app at launch
 /// with "there is no reactor running".
 ///
-/// Binds `127.0.0.1:<port>` only — never exposed off-host. Binding failure is
-/// non-fatal: the app keeps running, the agent simply gets connection errors
-/// and reports its history tools as unavailable.
-pub async fn serve(storage: SharedStorage, port: u16) {
-    let addr = format!("127.0.0.1:{port}");
-    let listener = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            warn!("Agent tool server: failed to bind {addr} (agent history tools disabled): {e}");
-            return;
-        }
+/// `bind` is explicit rather than hardcoded so the daemon can be configured;
+/// the desktop passes `Ipv4Addr::LOCALHOST` and means it.
+pub async fn serve(storage: SharedStorage, bind: IpAddr, port: u16) {
+    let Some(listener) = bind_listener(bind, port).await else {
+        return;
     };
-    info!("Agent tool server listening on http://{addr}");
     if let Err(e) = axum::serve(listener, router(storage)).await {
         warn!("Agent tool server exited: {e}");
     }
@@ -177,8 +259,34 @@ pub async fn serve(storage: SharedStorage, port: u16) {
 ///
 /// A Tauri app must NOT use this — it has no ambient runtime at setup time.
 /// Use `tauri::async_runtime::spawn(serve(storage, port))` instead.
-pub fn spawn(storage: SharedStorage, port: u16) {
-    tokio::spawn(serve(storage, port));
+pub fn spawn(storage: SharedStorage, bind: IpAddr, port: u16) {
+    tokio::spawn(serve(storage, bind, port));
+}
+
+/// [`serve`], with `/metrics` on the same listener.
+#[cfg(feature = "metrics")]
+pub async fn serve_with_metrics(
+    storage: SharedStorage,
+    bind: IpAddr,
+    port: u16,
+    metrics: MetricsState,
+) {
+    let Some(listener) = bind_listener(bind, port).await else {
+        return;
+    };
+    info!(
+        "Recorder metrics at http://{}/metrics",
+        SocketAddr::new(bind, port)
+    );
+    if let Err(e) = axum::serve(listener, router_with_metrics(storage, metrics)).await {
+        warn!("Agent tool server exited: {e}");
+    }
+}
+
+/// Convenience for callers already inside a tokio runtime (the daemon).
+#[cfg(feature = "metrics")]
+pub fn spawn_with_metrics(storage: SharedStorage, bind: IpAddr, port: u16, metrics: MetricsState) {
+    tokio::spawn(serve_with_metrics(storage, bind, port, metrics));
 }
 
 #[cfg(test)]
@@ -220,6 +328,90 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn weather_snapshots_accepts_null_body_and_starts_empty() {
+        // Every field is optional, so an absent body must not be a parse error.
+        let storage = in_memory_storage();
+        let resp = dispatch(&storage, "getWeatherSnapshots", Value::Null).await;
+        assert_eq!(resp["ok"], true, "{resp}");
+        assert_eq!(resp["data"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn the_weather_listing_reports_sizes_not_payloads() {
+        let storage = in_memory_storage();
+        {
+            let guard = storage.read().await;
+            guard
+                .as_ref()
+                .unwrap()
+                .insert_weather_snapshot_sync(&adsb_data_engine::WeatherSnapshotRecord {
+                    source_id: String::new(),
+                    valid_time_ms: 1_789_000_000_000,
+                    fetched_at_ms: 1_789_000_400_000,
+                    received_at_ms: 1_789_000_500_000,
+                    source: "open-meteo".to_string(),
+                    model: "best_match".to_string(),
+                    version: 1,
+                    lat0: 46.0,
+                    lon0: -3.0,
+                    dlat: 1.0,
+                    dlon: 1.0,
+                    nlat: 2,
+                    nlon: 3,
+                    levels: "250,500".to_string(),
+                    payload: r#"{"version":1}"#.to_string(),
+                })
+                .expect("insert");
+        }
+
+        let resp = dispatch(&storage, "getWeatherSnapshots", Value::Null).await;
+        let rows = resp["data"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0].get("payload").is_none(),
+            "the listing must not carry 16 KB payloads: {}",
+            rows[0]
+        );
+        assert_eq!(rows[0]["payload_bytes"], r#"{"version":1}"#.len());
+
+        // Fetching the one hour does carry it, verbatim.
+        let one = dispatch(
+            &storage,
+            "getWeatherSnapshot",
+            json!({ "valid_time_ms": 1_789_000_000_000i64 }),
+        )
+        .await;
+        assert_eq!(one["ok"], true, "{one}");
+        assert_eq!(one["data"]["payload"], r#"{"version":1}"#);
+    }
+
+    #[tokio::test]
+    async fn an_unrecorded_weather_hour_is_null_not_an_error() {
+        let storage = in_memory_storage();
+        let resp = dispatch(
+            &storage,
+            "getWeatherSnapshot",
+            json!({ "valid_time_ms": 1_789_000_000_000i64 }),
+        )
+        .await;
+        assert_eq!(resp["ok"], true, "absent is not a failure: {resp}");
+        assert!(resp["data"].is_null());
+    }
+
+    #[tokio::test]
+    async fn weather_writes_are_not_reachable_from_the_tool_server() {
+        // This endpoint is read-only by design. Recording weather is the
+        // recorder's job, off the MQTT topic -- never something an agent can
+        // ask for over HTTP.
+        let storage = in_memory_storage();
+        for name in ["insertWeatherSnapshot", "recordWeather", "deleteWeather"] {
+            let resp = dispatch(&storage, name, json!({})).await;
+            assert_eq!(resp["ok"], false, "{name} must not be reachable");
+            assert!(resp["error"].as_str().unwrap().contains("Unknown tool"));
+        }
+    }
+
+    #[tokio::test]
     async fn aircraft_summary_accepts_null_body() {
         // All fields optional → absent body must not be a parse error.
         let storage = in_memory_storage();
@@ -240,7 +432,7 @@ mod tests {
     #[test]
     fn serve_future_can_be_built_without_an_ambient_runtime() {
         let storage: SharedStorage = Arc::new(RwLock::new(None));
-        let fut = serve(storage, 0);
+        let fut = serve(storage, IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0);
         // Dropping it unpolled is fine; constructing it is what used to panic.
         drop(fut);
     }

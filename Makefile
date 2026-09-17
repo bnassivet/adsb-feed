@@ -33,13 +33,22 @@ help:
 	@echo "  make client       desktop + agents only, no local broker/feed/recorder"
 	@echo "  make down         stop everything the stack started"
 	@echo "  make down-desktop stop just the desktop app"
+	@echo "  make up-weather   start just the weather service ([weather] enabled = true)"
+	@echo "  make down-weather stop just the weather service"
+	@echo "  make restart-weather  pick up an edited [weather]"
+	@echo "  make weather-status   what the weather service is doing (control API)"
+	@echo "  make weather-enable   resume fetching weather (persisted)"
+	@echo "  make weather-disable  pause fetching; the last grid stays on the map"
 	@echo "  make reap         kill orphans still holding the stack's ports"
 	@echo "  make status       what is running"
 	@echo "  make logs         tail all logs (make logs N=feed for one)"
 	@echo "  make verify       confirm rows are actually being recorded"
+	@echo "  make monitoring   Prometheus :9090 + Grafana :3000 (no Pulsar)"
+	@echo "  make down-monitoring  stop them"
 	@echo "  make render       regenerate .run/*.toml from adsb-stack.toml"
 	@echo "  make paths        which config and state dir this STACK resolves to"
 	@echo "  make tauri-config the desktop's tauri -c override for this STACK"
+	@echo "  make desktop-env  the MQTT broker/topic the desktop is launched with"
 	@echo "  make render-fleet F=deploy/prod.toml   render per-node fleet configs"
 	@echo ""
 	@echo "Build:"
@@ -59,9 +68,10 @@ help:
 .PHONY: config
 config: ; @$(SH) config
 
-.PHONY: doctor up up-agents down status logs verify render paths tauri-config
+.PHONY: doctor up up-agents down status logs verify render paths tauri-config desktop-env
 paths:   ; @$(SH) paths
 tauri-config: ; @$(SH) tauri-config
+desktop-env:  ; @$(SH) desktop-env
 doctor:  ; @$(SH) doctor
 up:      ; @$(SH) up
 up-agents: ; @$(SH) up --agents
@@ -83,6 +93,23 @@ up-desktop: up
 .PHONY: down-desktop
 down-desktop:
 	@$(SH) stop-desktop
+
+# The weather service on its own. `make up` already starts it when
+# [weather].enabled is true and `make down` always stops it; these change it
+# without restarting the stack. [weather] is read once at startup, so an edit
+# needs `restart-weather`. A recipe rather than prerequisites, so -j cannot run
+# the start before the stop.
+.PHONY: up-weather down-weather restart-weather
+up-weather:      ; @$(SH) weather
+down-weather:    ; @$(SH) stop-weather
+restart-weather: ; @$(SH) stop-weather && $(SH) weather
+
+# Runtime control of a running weather service, through its control API. A
+# disable is persisted (state_path) and survives restart-weather.
+.PHONY: weather-status weather-enable weather-disable
+weather-status:  ; @$(SH) weather-status
+weather-enable:  ; @$(SH) weather-enable
+weather-disable: ; @$(SH) weather-disable
 
 .PHONY: reap
 reap: ; @$(SH) reap
@@ -144,6 +171,27 @@ edge-arm64 feed-arm64 server-arm64 feed-armv7 deploy:
 test-scripts:
 	@python3 scripts/tests/test_render_config.py
 	@bash scripts/tests/test_stack_paths.sh
+	@bash scripts/tests/test_stack_weather.sh
+	@bash scripts/tests/test_stack_metrics.sh
+
+# Prometheus + Grafana, WITHOUT the Pulsar analytics leg -- that is behind a
+# compose profile, so this no longer drags a standalone broker in just to look
+# at a graph.
+#
+# Not keyed by STACK: one Prometheus scrapes every stack, and which stack a
+# target belongs to is a label in infrastructure/prometheus/prometheus.yml.
+.PHONY: monitoring
+monitoring:
+	@docker compose -f infrastructure/docker-compose.yml up -d prometheus grafana
+	@echo "  Prometheus  http://localhost:9090/targets"
+	@echo "  Grafana     http://localhost:3000  (admin/admin)"
+	@echo ""
+	@echo "  On a Raspberry Pi, add -f infrastructure/docker-compose.pi.yml:"
+	@echo "  Prometheus joins the host network, so the services stay on loopback."
+
+.PHONY: down-monitoring
+down-monitoring:
+	@docker compose -f infrastructure/docker-compose.yml down
 
 # The full gate: the tooling tests, then the Rust workspace gate in rust/.
 .PHONY: ci

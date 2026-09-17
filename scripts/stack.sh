@@ -11,7 +11,10 @@ set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMPLATE="$REPO/adsb-stack-template.toml"
-BIN="$REPO/rust/target/release"
+# ADSB_BIN exists for the tooling tests, which run a fake binary.
+BIN="${ADSB_BIN:-$REPO/rust/target/release}"
+# ADSB_CURL likewise: the tests answer the weather control API with a fake.
+CURL="${ADSB_CURL:-curl}"
 MOCK="$REPO/skills/run-adsb-desktop/mock_dump1090.py"
 COMPOSE="$REPO/infrastructure/mqtt/docker-compose.yml"
 
@@ -118,7 +121,7 @@ running() { # running <name>
 # Why this matters: `uv run python -m adsb_agent` forks python, and
 # `npm run tauri dev` is a whole tree (next dev, cargo, the app binary).
 # Signalling only the pid we recorded orphans the children, still holding their
-# ports -- which is how a stale dev server ends up squatting on :3000 and
+# ports -- which is how a stale dev server ends up squatting on :3200 and
 # failing the next launch with EADDRINUSE.
 #
 # perl is invoked DIRECTLY, never through a shell function. Wrapped in a
@@ -170,8 +173,12 @@ stack_ports() {
   owns_broker && echo "$(cfg mqtt port 1883)"
   echo "$(cfg dump1090 port 30003) $(cfg storage http_port 8787)"
   echo "$(desktop_tool_port) $(desktop_dev_port)"
+  [ "$(metrics_feed_port)" != "0" ] && echo "$(metrics_feed_port)"
   [ "$(cfg agents enabled false)" = "true" ] && \
     echo "$(cfg agents agent_port 8000) $(cfg agents sim_agent_port 8300)"
+  # The weather control API exists only while the service does.
+  weather_enabled && [ "$(cfg weather http_port 8789)" != "0" ] && \
+    echo "$(cfg weather http_port 8789)"
 }
 
 render() { python3 "$REPO/scripts/render-config.py" "$STACK" "$RUN"; }
@@ -207,7 +214,7 @@ sim_agent_env() {
 
 # The desktop is single-instance, for now.
 #
-# Two would need more than a free port: the Next dev server is pinned to :3000
+# Two would need more than a free port: the Next dev server is pinned to :3200
 # in both tauri.conf.json (devUrl) and package.json, and -- the harder half --
 # both instances would resolve the same Tauri app-data directory from the same
 # bundle identifier, so they would share one settings store and one DuckDB
@@ -220,13 +227,22 @@ sim_agent_env() {
 # for that to be safe; three are set here, and the fourth -- the app's DuckDB
 # and settings directory -- is ADSB_STACK, handled inside the app itself:
 #
-#   dev port   :3000 is pinned in tauri.conf.json and package.json
+#   dev port   :3200 is pinned in tauri.conf.json and package.json
 #   CSP        connect-src pins the agent's port; a different one is BLOCKED
 #              with nothing but a console message to show for it
 #   agent URL  two frontend call sites used to hardcode :8000, so a second
 #              window would have queried the FIRST stack's data
 
-desktop_dev_port() { cfg desktop dev_port 3000; }
+desktop_dev_port() { cfg desktop dev_port 3200; }
+
+# The feed client's Prometheus port; 0 disables it. Every other service serves
+# /metrics on a port it already has, so this is the only one to track.
+#
+# A helper rather than a repeated `cfg` call because TWO lists want it --
+# stack_ports and doctor -- and those two are maintained separately. They have
+# already drifted once (doctor lists the agent ports unconditionally,
+# stack_ports only when agents are enabled); a third copy would not help.
+metrics_feed_port() { cfg metrics feed_port 0; }
 
 # The desktop's own tool server. [desktop].tool_port supersedes
 # [agents].desktop_tool_port, which described the desktop but lived under the
@@ -243,7 +259,11 @@ agent_base_url() { echo "http://localhost:$(cfg agents agent_port 8000)"; }
 tauri_config_override() {
   dev="$(desktop_dev_port)"
   ap="$(cfg agents agent_port 8000)"
-  if [ "$dev" = "3000" ] && [ "$ap" = "8000" ]; then return 0; fi
+  # Must match tauri.conf.json and package.json EXACTLY. If it does not, the
+  # default stack runs the committed config while this believes it is running
+  # the configured one -- and the difference shows up only as a dev server on
+  # the wrong port.
+  if [ "$dev" = "3200" ] && [ "$ap" = "8000" ]; then return 0; fi
   python3 "$REPO/scripts/tauri-dev-config.py" "$dev" "$ap"
 }
 
@@ -318,6 +338,32 @@ owns_broker() {
   esac
 }
 
+# The weather service is opt-in: it needs outbound internet and spends a
+# rate-limited third-party quota. See [weather] in the template.
+weather_enabled() { [ "$(cfg weather enabled false)" = "true" ]; }
+
+# The desktop's live-plane broker and topic, from THIS stack, one VAR=value per
+# line. Env beats the app's stored settings on every launch; without these a
+# desktop keeps whatever topic it stored last -- one from before topics carried
+# a stage, say -- and reads a topic nobody publishes to. Weather shows it first:
+# the weather topic is derived from the feed topic, so the layer waits forever.
+#
+# Not ADSB_SOURCE_KIND: exporting it would override Settings -> Feed Source on
+# every launch and make that toggle look dead. `client` adds it explicitly.
+desktop_live_env() {
+  echo "ADSB_MQTT_BROKER=$(cfg mqtt host localhost)"
+  echo "ADSB_MQTT_PORT=$(cfg mqtt port 1883)"
+  echo "ADSB_MQTT_TOPIC=$(cfg mqtt topic adsb/sbs/raw)"
+  # Only an EXPLICIT weather topic. Unset, the desktop derives it from the feed
+  # topic by the same rule render-config.py uses; a copy here would be a third.
+  local wt; wt="$(cfg weather topic "")"
+  [ -z "$wt" ] || echo "ADSB_MQTT_WEATHER_TOPIC=$wt"
+  # The weather service's control API, for the desktop's "Fetch weather"
+  # switch. Same host as the broker: the service runs beside it. A desktop on
+  # another machine also needs [weather] http_bind opened on that host.
+  echo "ADSB_WEATHER_API_URL=http://$(cfg mqtt host localhost):$(cfg weather http_port 8789)"
+}
+
 # ---------------------------------------------------------------------------
 
 case "${1:-help}" in
@@ -328,6 +374,14 @@ tauri-config)
   # `make tauri-config STACK=prod` shows what the desktop is actually launched
   # with -- a CSP or port problem is invisible otherwise.
   tauri_config_override
+  ;;
+
+desktop-env)
+  # The live-plane environment the desktop is launched with. Same reason as
+  # tauri-config: testable, and `make desktop-env` answers "which topic will
+  # the app actually subscribe to?"
+  require_config
+  desktop_live_env
   ;;
 
 paths)
@@ -435,7 +489,11 @@ doctor)
   fi
 
   echo "Binaries:"
-  for b in adsb-pulsar-client adsb-data-server; do
+  # The weather binary is only required when the service is enabled: a checkout
+  # built before it existed must not start failing doctor.
+  bins="adsb-pulsar-client adsb-data-server"
+  weather_enabled && bins="$bins adsb-weather-server"
+  for b in $bins; do
     if [ -x "$BIN/$b" ]; then echo "  ok      $b"
     else echo "  MISSING $b -- run: make build"; rc=1; fi
   done
@@ -445,27 +503,37 @@ doctor)
   else echo "  MISSING docker daemon -- needed for the MQTT broker"; rc=1; fi
 
   echo "Ports:"
-  # The desktop's dev port is worth watching because Grafana in
-  # infrastructure/docker-compose.yml wants :3000 too -- they cannot both run.
+  # The desktop moved to :3200 so Grafana can keep :3000 -- they used to
+  # collide, and could not both run. A config still saying 3000 is warned
+  # about below.
   #
-  # The MQTT port is only OURS to bind when the broker is local. With a broker
-  # on a Pi, a local :1883 belongs to some other stack, and reporting it BUSY
-  # here is a false alarm that sends people hunting for a conflict they do not
-  # have.
-  ports="$(cfg dump1090 port 30003) $(cfg storage http_port 8787)"
-  ports="$ports $(desktop_tool_port) $(desktop_dev_port)"
-  ports="$ports $(cfg agents agent_port 8000) $(cfg agents sim_agent_port 8300)"
-  owns_broker && ports="$(cfg mqtt port 1883) $ports"
-  for p in $ports; do
+  # ONE list, shared with `down` and `reap`: see stack_ports(). A port this
+  # stack claims is exactly the port doctor should check, and two hand-kept
+  # copies drift -- this one had never checked the weather control API at all,
+  # and listed the agent ports even on a stack with agents disabled.
+  #
+  # stack_ports() also owns the rule that the MQTT port is only OURS to bind
+  # when the broker is local: with a broker on a Pi, a local :1883 belongs to
+  # something else, and reporting it BUSY is a false alarm that sends people
+  # hunting a conflict they do not have.
+  for p in $(stack_ports); do
     if port_busy "$p"; then echo "  BUSY    $p"; else echo "  free    $p"; fi
   done
+  # adsb-stack.toml is gitignored, so an existing one still says 3000 and keeps
+  # colliding with Grafana exactly as it always did. It is not broken -- the
+  # override path handles it -- but nothing else would ever mention it.
+  if [ "$(desktop_dev_port)" = "3000" ]; then
+    echo "  WARN    [desktop] dev_port is 3000, which Grafana owns"
+    echo "          (infrastructure/docker-compose.yml). The new default is"
+    echo "          3200 -- see adsb-stack-template.toml."
+  fi
   owns_broker || echo "  remote  $(cfg mqtt host) mqtt -- no local broker for this stack"
 
   # Duplicate feeds share one MQTT client id and evict each other in a loop.
   # That storm produced 567k reconnects and a 144 MB log before it was noticed,
   # so it is worth naming rather than leaving to be discovered.
   echo "Duplicates:"
-  for proc in adsb-pulsar-client adsb-data-server; do
+  for proc in adsb-pulsar-client adsb-data-server adsb-weather-server; do
     # macOS pgrep has no -c; count lines instead.
     n=$(pgrep -f "target/release/$proc " 2>/dev/null | wc -l | tr -d " ")
     if [ "$n" -gt 1 ]; then
@@ -476,6 +544,37 @@ doctor)
       echo "  ok        $proc x$n"
     fi
   done
+
+  if [ -f "$STACK" ] && weather_enabled; then
+    echo "Weather:"
+    wid="$(cfg receiver id "")"
+    wtopic="$(cfg weather topic "")"
+    wstage="${wid##*-}"
+    if [ -z "$wtopic" ]; then
+      echo "  ok      topic derived from mqtt.topic ($(cfg mqtt topic ""))"
+    else
+      case "$wstage" in
+        dev|prod|staging|test)
+          if [ "${wtopic#*"$wstage"}" = "$wtopic" ]; then
+            echo "  WARN    weather.topic '$wtopic' does not carry the stage '$wstage' --"
+            echo "          a dev service could publish into a prod desktop"
+          else
+            echo "  ok      $wtopic"
+          fi
+          ;;
+        *) echo "  ok      $wtopic" ;;
+      esac
+    fi
+    # The site root, not the forecast endpoint: a health check must not spend
+    # the daily quota. Warning only -- the service runs on its cached grid.
+    if curl -s -m 5 -o /dev/null https://api.open-meteo.com/ 2>/dev/null; then
+      echo "  ok      api.open-meteo.com reachable"
+    else
+      echo "  WARN    no route to api.open-meteo.com -- the service will publish its"
+      echo "          cached grid, if any, and keep retrying"
+    fi
+    echo "  info    estimated Open-Meteo calls/day are logged at startup: make logs N=weather"
+  fi
 
   echo "Skills:"
   "$REPO/scripts/install-skills.sh" status 2>&1 | sed 's/^/  /'
@@ -574,6 +673,13 @@ up)
   echo "Feed:"
   start feed "$BIN/adsb-pulsar-client" --config "$RUN/feed.toml"
 
+  if weather_enabled; then
+    echo "Weather:"
+    # Unlike the feed, start order does not matter here: the snapshot is a
+    # retained message, so a subscriber that arrives later still receives it.
+    start weather "$BIN/adsb-weather-server" --config "$RUN/weather.toml"
+  fi
+
   if [ "${2-}" = "--agents" ] || [ "$(cfg agents enabled false)" = "true" ]; then
     echo "Agents:"
     # shellcheck disable=SC2046  # word splitting is the point: one VAR=x per line
@@ -593,7 +699,8 @@ desktop)
   # Backgrounded with a PID file like everything else, so `down` can stop it.
   # `tauri dev` is a process tree -- next dev, cargo, the app binary -- which
   # is why start/stop work on process groups.
-  start_desktop || exit 1
+  # shellcheck disable=SC2046  # word splitting is the point: one VAR=x per line
+  start_desktop $(desktop_live_env) || exit 1
   echo "  watch it with: make logs N=desktop"
   ;;
 
@@ -617,11 +724,12 @@ client)
 
   echo "Desktop (remote: $uri, live: mqtt://$mh:$mp/$mt):"
   # Both planes, explicitly. History is seeded on FIRST launch only; the live
-  # source is applied every launch. See QUICKSTART.md topology 4.
+  # source is applied every launch. See QUICKSTART.md topology 4. Unlike
+  # `desktop`, a client forces the MQTT source: it has no dump1090 to read.
+  # shellcheck disable=SC2046  # word splitting is the point: one VAR=x per line
   start_desktop \
     "ADSB_REMOTE_URI=$uri" "ADSB_REMOTE_TOKEN=$tok" \
-    "ADSB_SOURCE_KIND=mqtt" "ADSB_MQTT_BROKER=$mh" \
-    "ADSB_MQTT_PORT=$mp" "ADSB_MQTT_TOPIC=$mt" || exit 1
+    "ADSB_SOURCE_KIND=mqtt" $(desktop_live_env) || exit 1
 
   echo "Agents:"
   # The agent defaults its tool server to :8787, which in the all-local stack
@@ -642,9 +750,78 @@ stop-desktop)
   stop desktop
   ;;
 
+weather)
+  # The weather service on its own. `up` already starts it when enabled; this
+  # is for picking up an edited [weather] (it is read once, at startup) or
+  # bringing it back after `stop-weather`, without touching the rest.
+  require_config
+  if ! weather_enabled; then
+    echo "error: [weather] enabled = false in ${STACK#"$REPO"/}." >&2
+    echo "  Off by default: it needs outbound internet and spends a rate-limited" >&2
+    echo "  Open-Meteo quota. Set enabled = true there, then run this again." >&2
+    exit 1
+  fi
+  if [ ! -x "$BIN/adsb-weather-server" ]; then
+    echo "error: $BIN/adsb-weather-server is not built -- run: make build" >&2
+    exit 1
+  fi
+  render
+  echo "Weather:"
+  # Not fatal: the service retries the broker with backoff, and the snapshot is
+  # retained, so it publishes whenever the broker does appear.
+  if owns_broker && ! port_busy "$(cfg mqtt port 1883)"; then
+    echo "  note: no broker on :$(cfg mqtt port 1883) yet -- it will retry until one is up (make up)"
+  fi
+  start weather "$BIN/adsb-weather-server" --config "$RUN/weather.toml"
+  echo "  watch it with: make logs N=weather"
+  ;;
+
+stop-weather)
+  # Whether or not [weather] is enabled now: it may have been started before
+  # enabled was turned off -- the same reason `down` always stops it.
+  echo "Weather:"
+  stop weather
+  ;;
+
+weather-status|weather-enable|weather-disable)
+  # Runtime control through the service's own API, always on 127.0.0.1: this
+  # script runs where the stack runs. An enable/disable reply only says the
+  # setting was accepted; weather-status shows what the service did about it.
+  require_config
+  port="$(cfg weather http_port 8789)"
+  if [ "$port" = "0" ]; then
+    echo "error: the weather control API is disabled ([weather] http_port = 0)." >&2
+    exit 1
+  fi
+  url="http://127.0.0.1:$port"
+  json='content-type: application/json'
+  case "$1" in
+    weather-status)  args=("$url/v1/status") ;;
+    weather-enable)  args=(-X PUT -H "$json" -d '{"enabled":true}' "$url/v1/enabled") ;;
+    weather-disable) args=(-X PUT -H "$json" -d '{"enabled":false}' "$url/v1/enabled") ;;
+  esac
+  # Keep the HTTP status: a 500 (the setting could not be saved) is not the
+  # same problem as nothing listening.
+  if ! reply="$("$CURL" -sS --max-time 5 -w '\n%{http_code}' "${args[@]}" 2>&1)"; then
+    echo "error: no weather control API on $url -- is the weather service running? (make up-weather)" >&2
+    echo "  $reply" >&2
+    exit 1
+  fi
+  code="${reply##*$'\n'}"
+  body="${reply%$'\n'*}"
+  printf '%s\n' "$body" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$body"
+  case "$code" in
+    2??) [ "$1" = weather-status ] || \
+           echo "accepted -- the service reports what it did in: make weather-status" ;;
+    *)   echo "error: HTTP $code from $url" >&2; exit 1 ;;
+  esac
+  ;;
+
 down)
   # Reverse of start order: producers first, so the recorder sees the tail.
-  for n in desktop agent sim-agent feed mock data-server; do stop "$n"; done
+  # weather is stopped whether or not it is enabled now: it may have been
+  # started before [weather].enabled was turned off.
+  for n in desktop agent sim-agent weather feed mock data-server; do stop "$n"; done
   echo "Broker:"
   if owns_broker; then
     compose down 2>&1 | sed 's/^/  /'
@@ -670,7 +847,7 @@ down)
 
 reap)
   # Last resort for orphans a previous run left behind -- typically a `tauri
-  # dev` tree killed with Ctrl-C, whose next dev server keeps :3000 and makes
+  # dev` tree killed with Ctrl-C, whose next dev server keeps :3200 and makes
   # the next `make up-desktop` fail with EADDRINUSE.
   require_config
   found=0
@@ -688,7 +865,7 @@ reap)
 status)
   require_config
   http="$(cfg storage http_port 8787)"
-  for n in data-server feed mock desktop agent sim-agent; do
+  for n in data-server feed mock weather desktop agent sim-agent; do
     if running "$n"; then
       printf "  %-12s running (pid %s)\n" "$n" "$(cat "$(pidfile "$n")")"
     else
@@ -738,8 +915,14 @@ usage: stack.sh <command>
   doctor    preflight: binaries, docker, ports, skills, LLM
   up        broker -> recorder -> feed (add --agents for the AI agents)
   desktop      start the desktop app (backgrounded; make logs N=desktop)
+  desktop-env  the MQTT broker/topic the desktop is launched with
   client       desktop + agents ONLY, attached to [remote] -- no local stack
   stop-desktop stop just the desktop app
+  weather      start just the weather service (needs [weather] enabled = true)
+  stop-weather stop just the weather service
+  weather-status   what the weather service is doing (its control API)
+  weather-enable   resume fetching weather (persisted)
+  weather-disable  pause fetching; the last grid stays published
   down      stop everything this script started
   reap      kill whatever still holds the stack's ports (orphans)
   status    what is running

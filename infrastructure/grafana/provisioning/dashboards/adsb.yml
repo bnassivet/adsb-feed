@@ -1,0 +1,23 @@
+# Grafana dashboard provisioning.
+#
+# Dashboards are tracked files under grafana/dashboards/, mounted read-only.
+# `allowUiUpdates: false` keeps it that way: an edit made in the UI would
+# otherwise become the source of truth and be lost on the next container
+# restart, silently.
+#
+# To change a dashboard, edit the JSON. To experiment, use the UI, then export
+# via Share -> Export and commit the result.
+
+apiVersion: 1
+
+providers:
+  - name: 'adsb'
+    orgId: 1
+    folder: 'ADS-B'
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

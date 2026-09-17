@@ -370,6 +370,19 @@ frontend tool (as `createEventOfInterest` does) so it passes through a UI layer
 that can confirm it. `scenario_writes_are_not_reachable_from_the_tool_server`
 pins that boundary.
 
+### Weather chat tools
+
+`setWeatherLayer` and `getWindAloft` are **client tools**, not server tools: the
+snapshot lives in the frontend (`useWeatherSnapshot`) and the Tauri tool server
+has no weather. Levels travel as **text** (`"SFC"`, `"250 hPa"`, `"FL340"`) and
+are resolved by `resolveWeatherLevel` — a `"surface" | number` union becomes an
+`anyOf` schema that local models fill badly. `setLayerVisibility` deliberately
+says weather is not one of its layers, so one tool owns each verb (the
+toggleDemoFlights lesson again). The weather readable in `useCopilotContext`
+takes the page's `weatherClockMs` rather than calling `Date.now()` in render,
+which the React Compiler flags as impure. Design: `docs/DESIGN.md` → Weather
+Layer → Chat control.
+
 ### Agent trajectory playback
 
 Three pieces, deliberately separated so the logic is testable without React:
@@ -511,3 +524,6 @@ Requires `adsb-agent` (:8000) and `adsb-simulation-agent` (:8300) running; witho
 - DuckDB historical query commands return `"Storage not available"` if init failed — callers must handle this gracefully
 - `sbs_parser.rs` is in `adsb-data-engine` crate, NOT in `src-tauri/src/` (was moved as part of shared library refactor)
 - A hook whose effect depends on an **array prop** must key that effect on a value-derived signature, not array identity. `useAgentSimulatedTracks` calls `setTracks` inside its effect, so an inline-array caller would otherwise loop forever (caught by its own tests)
+- **`tsc --noEmit` is not in the documented CI gate, and Vitest cannot substitute for it.** Vitest runs through esbuild, which *strips* types without checking them, so a type error fails nothing. Two real bugs in the historical-weather work were caught only by running `tsc` deliberately: a TDZ ordering error in `page.tsx` (hook calls referencing `const`s declared further down — a runtime throw, not a style nit) and a props mismatch. `page.tsx` has **no tests at all**, so type-checking is the only verification its wiring ever gets. Run `npx tsc --noEmit` before committing anything that touches it. There are ~55 pre-existing errors, all in five *test* files (props added after the tests were written), so read the count as a delta rather than expecting zero.
+- **Moving a hook call can turn React Compiler warnings into errors.** Relocating the two CopilotKit calls in `page.tsx` produced three `react-hooks/preserve-manual-memoization` **errors** (a gate — unlike `set-state-in-effect`/`purity`/`incompatible-library`, which stay at *warn* legitimately) on `useCallback`s that had not been edited: the compiler got further through the component than before and began inferring `setHiddenSections` as a dependency the source `[]` omitted. The fix is to name it — a `useState` setter has a stable identity, so adding it to the array costs nothing. Verify a suspected pre-existing lint failure by stashing just that file and re-running, rather than assuming.
+- **When a selector's value depends on *mode*, feed consumers the value the mode selects — but check what each consumer actually needs.** The weather layer's drawn snapshot goes null when the layer is switched off; the chat tools must keep answering wind questions with it hidden. `page.tsx` therefore derives `viewWeatherSnapshot` (what the view is *about*) separately from `mapWeather.snapshot` (what is *drawn*). Passing the drawn one to the agent would have broken a working feature silently.

@@ -26,6 +26,7 @@ make paths  STACK=prod     # which files does this resolve to?
 |---|---|
 | `make up` | broker → recorder → feed |
 | `make up-desktop` | ...and the desktop app |
+| `make up-weather` | the weather service alone (`[weather] enabled = true`); `down-weather`, `restart-weather` after editing `[weather]` |
 | `make up-agents` | ...and the AI agents |
 | `make client` | desktop + agents ONLY — for a machine whose data lives elsewhere |
 
@@ -46,6 +47,23 @@ SBS-1 to a broker, and `adsb-data-server` and the desktop app subscribe. Pulsar
 is an optional *extra* fan-out leg for the Spark/Delta pipeline
 (`pulsar.enabled = true`), never a replacement — the crate name predates the
 split. History travels separately, over Quack (DuckDB attached across HTTP).
+
+A second topic rides the same bus. The weather service (`[weather]`, off by
+default) publishes one **retained** snapshot to `adsb/<stage>/weather/grid`,
+derived from the feed topic by the same rule in `render-config.py` and
+`Config::weather_topic` — change both or neither. The desktop subscribes to it on
+its live-feed connection, so weather needs `source_kind = mqtt`. Any client that
+subscribes to it needs a packet limit above rumqttc's 10 KiB default, or the
+retained message becomes a reconnect storm. See DESIGN.md → Weather Layer.
+
+Beside the grid, the weather service publishes retained `status` and
+`availability` (`online`, or `offline` as its last will), all three derived by
+`WeatherTopics::from_grid_topic`, which both ends call. It takes enable/disable
+over HTTP (`[weather] http_port`, loopback by default, no auth), documented by a
+generated OpenAPI document at `/v1/openapi.json` with Swagger UI at `/swagger-ui/`. Commands never
+write status: the desktop's *Fetch weather* switch sends `PUT /v1/enabled` and
+waits for the status topic to confirm. `make weather-status | weather-enable |
+weather-disable`. DESIGN.md → Control and status.
 
 The desktop therefore has two independently configured planes: `source_kind`
 (`socket` | `mqtt`) for live aircraft, and the storage mode (embedded | remote)

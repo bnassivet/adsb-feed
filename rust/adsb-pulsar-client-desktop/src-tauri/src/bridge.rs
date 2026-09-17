@@ -7,6 +7,7 @@
 use crate::state::{
     ConnectionStatus, FeedHandle, SharedConnectionStatus, SharedStorage, StatusResponse,
 };
+use crate::weather::{SharedWeather, SharedWeatherService, relay_weather, relay_weather_service};
 use adsb_data_engine::{
     AircraftPosition, BatchSink, IngestConfig, IngestPipeline, StatusEvent, StatusEventStatus,
     StatusEventType,
@@ -16,6 +17,7 @@ use adsb_pulsar_client::source::mqtt_source::MqttSource;
 use adsb_pulsar_client::source::socket_source::SocketSource;
 use adsb_pulsar_client::source::{Liveness, LivenessPolicy, MessageSource, SourceStatus};
 use adsb_pulsar_client::{Config, Metrics, SourceKind};
+use adsb_weather_server::status::WeatherTopics;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter};
@@ -52,6 +54,7 @@ impl StatusEventRecorder {
 ///
 /// Returns a `FeedHandle` that can be used to stop the feed
 /// and read metrics.
+#[allow(clippy::too_many_arguments)]
 pub fn start_feed(
     app: AppHandle,
     config: Config,
@@ -60,6 +63,9 @@ pub fn start_feed(
     record_raw: Arc<AtomicBool>,
     recorder: StatusEventRecorder,
     connection_status: SharedConnectionStatus,
+    weather_state: SharedWeather,
+    weather_service: SharedWeatherService,
+    storage_mode: crate::storage_mode::StorageMode,
 ) -> Result<FeedHandle, String> {
     let test_mode = config.test_mode;
     let dump1090_tz = config.dump1090_tz.clone();
@@ -74,6 +80,8 @@ pub fn start_feed(
     // A socket source owns the feed client and therefore its counters, which
     // the metrics bar reads. An MQTT subscriber has no socket of its own to
     // report on, so it gets a fresh (zeroed) handle rather than a wrong one.
+    let mut weather_rx = None;
+    let mut service_rx = None;
     let (mut source, metrics): (Box<dyn MessageSource>, Metrics) = match source_kind {
         SourceKind::Socket => {
             let s = SocketSource::with_forwarders(config, vec![Box::new(NoopForwarder)])
@@ -81,7 +89,20 @@ pub fn start_feed(
             let m = s.metrics();
             (Box::new(s), m)
         }
-        SourceKind::Mqtt => (Box::new(MqttSource::new(&config)), Metrics::new()),
+        SourceKind::Mqtt => {
+            let mut s = MqttSource::new(&config);
+            // Weather rides the same broker connection. Only an MQTT source has
+            // one, so a socket session has no weather layer at all.
+            // The service's status and availability are siblings of the grid
+            // topic, derived by the rule the service itself uses.
+            let topics = WeatherTopics::from_grid_topic(&config.weather_topic());
+            weather_rx = Some(s.with_aux_topic(topics.grid));
+            service_rx = Some((
+                s.with_aux_topic(topics.status),
+                s.with_aux_topic(topics.availability),
+            ));
+            (Box::new(s), Metrics::new())
+        }
     };
 
     let message_rx = source.subscribe(4096);
@@ -107,7 +128,11 @@ pub fn start_feed(
     // changed() call and break their loops — no zombie tasks emitting stale status.
     let (alive_tx, alive_rx_metrics) = tokio::sync::watch::channel(true);
     let alive_rx_watchdog = alive_tx.subscribe();
+    let alive_rx_weather = alive_tx.subscribe();
+    let alive_rx_service = alive_tx.subscribe();
 
+    let app_for_weather = app.clone();
+    let app_for_service = app.clone();
     let app_for_client = app.clone();
     let app_for_messages = app.clone();
     let app_for_metrics = app.clone();
@@ -203,6 +228,10 @@ pub fn start_feed(
         // _alive_tx is dropped here, signaling background tasks to exit
     });
 
+    // Cloned before Task 2 takes ownership: the weather relay records to the
+    // same database in embedded mode, and `relay_messages` keeps the original.
+    let storage_for_weather = Arc::clone(&storage);
+
     // Task 2: Relay messages to frontend (throttled) + persist to DuckDB
     let message_task = tokio::spawn(async move {
         relay_messages(
@@ -254,11 +283,40 @@ pub fn start_feed(
         });
     });
 
+    // Task 5 (MQTT only): weather snapshots from the aux topic. Tied to the same
+    // alive signal, so it ends with the feed like the tasks above.
+    let weather_task = weather_rx.map(|rx| {
+        tokio::spawn(relay_weather(
+            app_for_weather,
+            rx,
+            weather_state,
+            storage_for_weather,
+            storage_mode,
+            alive_rx_weather,
+        ))
+    });
+
+    // Task 6 (MQTT only): the weather service's status and availability. The
+    // only writer of the service view; the enable/disable command never is.
+    let service_task = service_rx.map(|(status, availability)| {
+        tokio::spawn(relay_weather_service(
+            app_for_service,
+            status,
+            availability,
+            weather_service,
+            alive_rx_service,
+        ))
+    });
+
+    let mut task_handles = vec![client_task, message_task, metrics_task, watchdog_task];
+    task_handles.extend(weather_task);
+    task_handles.extend(service_task);
+
     Ok(FeedHandle {
         metrics,
         messages_parsed: messages_parsed_for_handle,
         shutdown_fn,
-        task_handles: vec![client_task, message_task, metrics_task, watchdog_task],
+        task_handles,
     })
 }
 

@@ -211,6 +211,32 @@ pub struct Config {
     #[serde(default = "default_socket_port")]
     pub socket_port: u16,
 
+    /// Prometheus metrics port. 0 disables the endpoint.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "metrics-port",
+            default_value = "0",
+            env = "ADSB_METRICS_PORT",
+            help = "Serve Prometheus metrics on this port; 0 disables"
+        )
+    )]
+    #[serde(default = "default_metrics_port")]
+    pub metrics_port: u16,
+
+    /// Address the metrics endpoint binds.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "metrics-bind",
+            default_value = "127.0.0.1",
+            env = "ADSB_METRICS_BIND",
+            help = "Address the metrics endpoint binds (127.0.0.1 or 0.0.0.0)"
+        )
+    )]
+    #[serde(default = "default_metrics_bind")]
+    pub metrics_bind: String,
+
     /// Pulsar broker URL
     #[cfg_attr(
         feature = "cli",
@@ -491,6 +517,36 @@ pub struct Config {
     #[serde(default = "default_mqtt_topic")]
     pub mqtt_topic: String,
 
+    /// MQTT topic carrying the retained weather snapshot. Empty derives it from
+    /// `mqtt_topic`; see [`Config::weather_topic`].
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "mqtt-weather-topic",
+            default_value = "",
+            env = "ADSB_MQTT_WEATHER_TOPIC",
+            help = "MQTT topic carrying weather snapshots (derived from mqtt_topic when empty)"
+        )
+    )]
+    #[serde(default)]
+    pub mqtt_weather_topic: String,
+
+    /// Base URL of the weather service's control API, e.g.
+    /// `http://pi-roof:8789`. Empty means the MQTT broker's host on the
+    /// default port; the consumer derives it, since the port belongs to the
+    /// weather service.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "weather-api-url",
+            default_value = "",
+            env = "ADSB_WEATHER_API_URL",
+            help = "Weather service control API (derived from mqtt_broker when empty)"
+        )
+    )]
+    #[serde(default)]
+    pub weather_api_url: String,
+
     /// MQTT client identifier. Empty derives it from `source_id`.
     ///
     /// Brokers disconnect an existing session when a second client connects
@@ -553,6 +609,14 @@ fn default_socket_host() -> String {
 }
 fn default_socket_port() -> u16 {
     30003
+}
+/// Off unless asked for: a binary invoked with no config file must not open a
+/// listening socket. The stack file is what turns it on.
+fn default_metrics_port() -> u16 {
+    0
+}
+fn default_metrics_bind() -> String {
+    "127.0.0.1".to_string()
 }
 fn default_mqtt_broker() -> String {
     "localhost".to_string()
@@ -633,6 +697,8 @@ impl Default for Config {
             source_id: default_source_id(),
             socket_host: default_socket_host(),
             socket_port: default_socket_port(),
+            metrics_port: default_metrics_port(),
+            metrics_bind: default_metrics_bind(),
             pulsar_broker: default_pulsar_broker(),
             pulsar_topic: default_pulsar_topic(),
             recv_buffer_size: default_recv_buffer_size(),
@@ -654,6 +720,8 @@ impl Default for Config {
             mqtt_broker: default_mqtt_broker(),
             mqtt_port: default_mqtt_port(),
             mqtt_topic: default_mqtt_topic(),
+            mqtt_weather_topic: String::new(),
+            weather_api_url: String::new(),
             mqtt_client_id: String::new(),
             mqtt_qos: 0,
             heartbeat_timeout_secs: default_heartbeat_timeout_secs(),
@@ -666,6 +734,15 @@ impl Default for Config {
 }
 
 impl Config {
+    /// The address the metrics endpoint binds, or `None` when `metrics_bind`
+    /// is not an IP address.
+    ///
+    /// Deliberately not a hostname: binding is not name resolution, and
+    /// "localhost" resolving to two families is a silent half-bind.
+    pub fn metrics_bind_addr(&self) -> Option<std::net::IpAddr> {
+        self.metrics_bind.parse().ok()
+    }
+
     /// Validates all configuration parameters.
     ///
     /// Checks for:
@@ -673,10 +750,20 @@ impl Config {
     /// - Valid Pulsar broker URL format (only when Pulsar forwarder is selected)
     /// - Valid connection mode string
     /// - Non-zero buffer sizes
+    /// - Valid `metrics_bind` address, but only when the endpoint is enabled
     pub fn validate(&self) -> Result<()> {
         // Validate source_id
         if self.source_id.trim().is_empty() {
             return Err(ClientError::Config("source_id cannot be empty".into()));
+        }
+
+        // Only when the endpoint is on: an unused setting must never block
+        // startup, the same rule the forwarder validation above follows.
+        if self.metrics_port > 0 && self.metrics_bind_addr().is_none() {
+            return Err(ClientError::Config(format!(
+                "metrics_bind '{}' must be an IP address, e.g. 127.0.0.1 or 0.0.0.0",
+                self.metrics_bind
+            )));
         }
 
         // Validate Pulsar broker URL only when Pulsar forwarder is configured
@@ -794,6 +881,8 @@ impl Config {
             .as_integer()
             .map(|i| i as u16));
         overlay!("mqtt_topic", mqtt_topic, as_string);
+        overlay!("mqtt_weather_topic", mqtt_weather_topic, as_string);
+        overlay!("weather_api_url", weather_api_url, as_string);
         overlay!("mqtt_client_id", mqtt_client_id, as_string);
         overlay!("mqtt_qos", mqtt_qos, |v: &toml::Value| v
             .as_integer()
@@ -814,6 +903,10 @@ impl Config {
             heartbeat_timeout_secs,
             |v: &toml::Value| v.as_integer().map(|i| i as u64)
         );
+        overlay!("metrics_port", metrics_port, |v: &toml::Value| v
+            .as_integer()
+            .and_then(|i| u16::try_from(i).ok()));
+        overlay!("metrics_bind", metrics_bind, as_string);
 
         // Receiver location is `arg(skip)`: file-only, with no flag or env
         // fallback, so the file is the ONLY way to set it.
@@ -877,6 +970,26 @@ impl Config {
             &self.source_id
         } else {
             &self.mqtt_client_id
+        }
+    }
+
+    /// The weather topic to subscribe to alongside the SBS feed.
+    ///
+    /// An explicit `mqtt_weather_topic` wins. Otherwise it is derived from
+    /// `mqtt_topic`: `adsb/<stage>/sbs/raw` becomes `adsb/<stage>/weather/grid`,
+    /// and any other topic gets a `<topic>/weather` sibling.
+    ///
+    /// `scripts/render-config.py` (`weather_topic`) renders the weather
+    /// service's topic with the SAME rule. If the two disagree, the desktop
+    /// subscribes to a topic nobody publishes to and simply draws no weather.
+    pub fn weather_topic(&self) -> String {
+        let explicit = self.mqtt_weather_topic.trim();
+        if !explicit.is_empty() {
+            return explicit.to_string();
+        }
+        match self.mqtt_topic.strip_suffix("/sbs/raw") {
+            Some(prefix) => format!("{prefix}/weather/grid"),
+            None => format!("{}/weather", self.mqtt_topic),
         }
     }
 
@@ -960,6 +1073,64 @@ mod tests {
     #[test]
     fn test_default_config_is_valid() {
         assert!(Config::default().validate().is_ok());
+    }
+
+    #[test]
+    fn test_metrics_are_off_by_default() {
+        // A binary invoked with no config file must not open a socket.
+        let config = Config::default();
+        assert_eq!(config.metrics_port, 0);
+        assert_eq!(config.metrics_bind, "127.0.0.1");
+    }
+
+    #[test]
+    #[cfg(feature = "cli")]
+    fn test_metrics_port_and_bind_come_from_the_file() {
+        // The regression guard for a missing `overlay!` line. Without one the
+        // rendered .run/feed.toml value is ignored with no error and no log --
+        // the endpoint simply never appears, and nothing says why.
+        let mut config = Config::default();
+        let file: toml::Value =
+            toml::from_str("metrics_port = 8790\nmetrics_bind = '0.0.0.0'").unwrap();
+        config.overlay_file(&file, &|_| true);
+
+        assert_eq!(config.metrics_port, 8790);
+        assert_eq!(config.metrics_bind, "0.0.0.0");
+    }
+
+    #[test]
+    #[cfg(feature = "cli")]
+    fn test_an_explicit_metrics_port_beats_the_file() {
+        let mut config = Config::default();
+        config.metrics_port = 9999;
+        let file: toml::Value = toml::from_str("metrics_port = 8790").unwrap();
+        // "metrics_port" was set explicitly, so the file must not win.
+        config.overlay_file(&file, &|id| id != "metrics_port");
+
+        assert_eq!(config.metrics_port, 9999);
+    }
+
+    #[test]
+    fn test_a_metrics_bind_that_is_not_an_address_is_an_error() {
+        let config = Config {
+            metrics_port: 8790,
+            metrics_bind: "localhost".to_string(),
+            ..Config::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("metrics_bind"), "{err}");
+    }
+
+    #[test]
+    fn test_a_bad_metrics_bind_is_ignored_while_the_endpoint_is_off() {
+        // An unused setting must never stop an edge node from booting, the
+        // same rule the Pulsar and MQTT validation follow.
+        let config = Config {
+            metrics_port: 0,
+            metrics_bind: "nonsense".to_string(),
+            ..Config::default()
+        };
+        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -1351,6 +1522,67 @@ mod tests {
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("mqtt_qos"), "got: {}", err);
     }
+
+    // --- Weather topic ---
+    //
+    // The rule must match `weather_topic` in scripts/render-config.py, pinned
+    // there by the WeatherContent tests with the same cases.
+
+    fn with_topic(topic: &str) -> Config {
+        Config {
+            mqtt_topic: topic.to_string(),
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn test_weather_topic_is_derived_from_a_staged_sbs_topic() {
+        assert_eq!(
+            with_topic("adsb/prod/sbs/raw").weather_topic(),
+            "adsb/prod/weather/grid"
+        );
+    }
+
+    #[test]
+    fn test_weather_topic_for_the_unstaged_default() {
+        assert_eq!(Config::default().weather_topic(), "adsb/weather/grid");
+    }
+
+    #[test]
+    fn test_weather_topic_without_the_sbs_suffix_is_a_sibling() {
+        assert_eq!(
+            with_topic("legacy/raw").weather_topic(),
+            "legacy/raw/weather"
+        );
+    }
+
+    #[test]
+    fn test_explicit_weather_topic_wins() {
+        let config = Config {
+            mqtt_weather_topic: "lab/wx".to_string(),
+            ..with_topic("adsb/dev/sbs/raw")
+        };
+        assert_eq!(config.weather_topic(), "lab/wx");
+    }
+
+    #[test]
+    fn test_blank_weather_topic_means_derive() {
+        // `export ADSB_MQTT_WEATHER_TOPIC=` is as easy an accident as its
+        // siblings, and must not produce a subscription to "".
+        let config = Config {
+            mqtt_weather_topic: "  ".to_string(),
+            ..with_topic("adsb/dev/sbs/raw")
+        };
+        assert_eq!(config.weather_topic(), "adsb/dev/weather/grid");
+    }
+
+    #[test]
+    fn test_weather_topic_deserializes_empty_when_missing() {
+        // Configs written before the weather layer existed must still load.
+        let json = serde_json::json!({ "source_id": "test" });
+        let config: Config = serde_json::from_value(json).unwrap();
+        assert_eq!(config.mqtt_weather_topic, "");
+    }
 }
 
 #[cfg(all(test, feature = "cli"))]
@@ -1497,6 +1729,27 @@ mod layering_tests {
         cfg.overlay_file(&file("socket_port = 30005"), &all_defaulted);
         assert_eq!(cfg.source_id, "kraspberryPi");
         assert_eq!(cfg.mqtt_topic, "adsb/sbs/raw");
+    }
+
+    #[test]
+    fn weather_api_url_layers_from_the_file() {
+        let mut cfg = Config::default();
+        assert_eq!(
+            cfg.weather_api_url, "",
+            "empty by default: derived by the consumer"
+        );
+        cfg.overlay_file(
+            &file("weather_api_url = 'http://pi-roof:8789'"),
+            &all_defaulted,
+        );
+        assert_eq!(cfg.weather_api_url, "http://pi-roof:8789");
+    }
+
+    #[test]
+    fn weather_topic_layers_from_the_file() {
+        let mut cfg = defaults();
+        cfg.overlay_file(&file("mqtt_weather_topic = 'lab/wx'"), &all_defaulted);
+        assert_eq!(cfg.weather_topic(), "lab/wx");
     }
 }
 

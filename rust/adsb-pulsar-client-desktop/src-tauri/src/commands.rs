@@ -17,7 +17,11 @@ use adsb_data_engine::{
     TrajectoryQuery, UpdateEventOfInterest, UpdateScenario, UpdateScenarioTrack,
 };
 use adsb_pulsar_client::Config;
+use adsb_weather_server::WeatherSnapshot;
+use adsb_weather_server::api_client::ApiClient;
 use tauri_plugin_store::StoreExt;
+
+use crate::weather::{WeatherAvailability, WeatherServiceView};
 
 use crate::bridge::DesktopMetrics;
 use std::sync::Arc;
@@ -58,6 +62,15 @@ pub async fn start_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
         state.record_raw.clone(),
         recorder,
         Arc::clone(&state.connection_status),
+        Arc::clone(&state.weather),
+        Arc::clone(&state.weather_service),
+        // Cloned out of the mutex rather than held across the call: the mode is
+        // a small value and start_feed does real work.
+        state
+            .storage_mode
+            .lock()
+            .map(|m| m.clone())
+            .unwrap_or_default(),
     )?;
 
     // Record feed started event (non-fatal)
@@ -145,6 +158,87 @@ pub async fn stop_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
 pub fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, String> {
     let status = state.connection_status.lock().map_err(|e| e.to_string())?;
     Ok(status.clone())
+}
+
+/// The last good weather snapshot, for a UI that mounts after it arrived.
+///
+/// Snapshots are pushed as `adsb:weather` events, but a retained grid can land
+/// before the map has subscribed, and is otherwise not seen again until the
+/// next hourly fetch.
+/// List the weather snapshots on disk, newest first, **without** payloads.
+///
+/// Distinct from [`get_weather_snapshot`], which answers "what is the weather
+/// *now*" from the live MQTT relay. This one answers "what weather do we have
+/// *recorded*" — in remote mode, from the daemon's table through the view.
+///
+/// Metadata only: a snapshot is ~16 KB, so listing a day of them whole would be
+/// several hundred KB a caller almost never wants.
+#[tauri::command]
+pub async fn get_weather_history(
+    query: adsb_data_engine::WeatherSnapshotQuery,
+    state: State<'_, AppState>,
+) -> Result<Vec<adsb_data_engine::WeatherSnapshotMeta>, String> {
+    adsb_data_server::tool_service::get_weather_snapshots(&state.storage, query).await
+}
+
+/// One recorded snapshot, with its payload verbatim.
+///
+/// `None` for a model hour that was never recorded — absent is not an error,
+/// and the caller must be able to tell it apart from unavailable storage.
+///
+/// Called fully qualified: a `use` of the service function would collide with
+/// [`get_weather_snapshot`] above.
+#[tauri::command]
+pub async fn get_weather_at(
+    key: adsb_data_engine::WeatherSnapshotKey,
+    state: State<'_, AppState>,
+) -> Result<Option<adsb_data_engine::WeatherSnapshotRecord>, String> {
+    adsb_data_server::tool_service::get_weather_snapshot(&state.storage, key).await
+}
+
+#[tauri::command]
+pub fn get_weather_snapshot(state: State<'_, AppState>) -> Result<Option<WeatherSnapshot>, String> {
+    let held = state.weather.read().map_err(|e| e.to_string())?;
+    Ok(held.clone())
+}
+
+/// Whether the weather layer can have data, and if not, why.
+#[tauri::command]
+pub fn get_weather_availability(state: State<'_, AppState>) -> Result<WeatherAvailability, String> {
+    let source_kind = state.config.lock().map_err(|e| e.to_string())?.source_kind;
+    let has_snapshot = state.weather.read().map_err(|e| e.to_string())?.is_some();
+    Ok(crate::weather::availability(source_kind, has_snapshot))
+}
+
+/// What the weather service last reported over MQTT: its status, and whether
+/// it is online. The query side -- the "Fetch weather" switch reads this.
+#[tauri::command]
+pub fn get_weather_service(state: State<'_, AppState>) -> Result<WeatherServiceView, String> {
+    let view = state.weather_service.read().map_err(|e| e.to_string())?;
+    Ok(view.clone())
+}
+
+/// Asks the weather service to enable or disable fetching: the command side.
+///
+/// Resolves once the service has accepted and persisted the setting. It
+/// deliberately changes nothing the desktop shows: the service reports the
+/// outcome on its status topic, and that is the only thing the UI reads.
+#[tauri::command]
+pub async fn set_weather_service_enabled(
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let url = {
+        let config = state.config.lock().map_err(|e| e.to_string())?;
+        crate::weather::weather_api_url(&config)
+    };
+    let client = ApiClient::new(url).map_err(|e| e.to_string())?;
+    client
+        .set_enabled(enabled)
+        .await
+        .map_err(|e| e.to_string())?;
+    info!("Weather service accepted enabled={enabled}");
+    Ok(())
 }
 
 /// The stack this instance was launched for, or `None` for the unnamed one.

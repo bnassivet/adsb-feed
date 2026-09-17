@@ -58,7 +58,7 @@ all keyed by the name. **Ports are not** — set them in the second stack's own
 reports what still collides.
 
 The desktop app can run twice — set `[desktop].dev_port` and
-`[desktop].tool_port` (`:3000` and `:8788` are the defaults) and the rest
+`[desktop].tool_port` (`:3200` and `:8788` are the defaults) and the rest
 follows. Each instance keeps its **own DuckDB and
 settings** in `<app-data>/<stack>/`, so dev and prod history never mix, and talks
 to its own stack's agent. A named stack builds into `rust/target-desktop-<name>`,
@@ -139,7 +139,7 @@ Give the prod stack its own ports — nothing derives them:
 
 | | dev | prod |
 |---|---|---|
-| `[desktop].dev_port` / `tool_port` | 3000 / 8788 | 3010 / 8798 |
+| `[desktop].dev_port` / `tool_port` | 3200 / 8788 | 3210 / 8798 |
 | `[agents].agent_port` / `sim_agent_port` | 8000 / 8300 | 8010 / 8310 |
 | `[storage].http_port` | 8787 | 8797 |
 | `[receiver].id` | `<host>-dev` | `<host>-prod` — and **not** the fleet's id |
@@ -213,6 +213,68 @@ See `deploy/README.md` for the full convention and `rust/docs/DEPLOYMENT.md` for
 the node setup, including configuring mosquitto (`apt install` alone leaves it
 listening on localhost only).
 
+## 6. Weather layer
+
+Winds aloft and mean-sea-level pressure around the receiver, drawn on the map as
+wind barbs and/or animated particles, with the wind each selected aircraft is
+flying through. Data comes
+from Open-Meteo; design detail in `DESIGN.md` → Weather Layer.
+
+```toml
+[weather]
+enabled = true     # off by default: needs outbound internet
+```
+
+```bash
+make up                  # ... starts adsb-weather-server after the feed
+make logs N=weather      # logs its Open-Meteo calls/day estimate (~6,700 by default)
+make restart-weather     # after editing [weather]; down-weather / up-weather run it alone
+```
+
+**The desktop must be on the MQTT source** — weather travels on the broker
+connection, so a socket session has no weather layer (the controls say so).
+`make up-desktop` passes this stack's broker and topic (`make desktop-env`) but
+does not change the source; launch with `ADSB_SOURCE_KIND=mqtt scripts/stack.sh
+desktop`, or set **Settings → Connection → Feed Source** to MQTT. A desktop
+launched *without* `make` keeps the topic it stored last; if that predates the
+stage in topic names it subscribes to `adsb/weather/grid` and the layer waits
+forever — its log line `Subscribed to MQTT topic` shows which. Then press Start, open **Weather** in the left panel,
+tick **Winds aloft** and pick a level. **Barbs** and **Particles** switch the two
+displays independently; particles are off by default.
+
+**Pausing the service.** Fetching can be paused without stopping anything, to
+save the Open-Meteo quota for instance. The last grid stays on the map (badged
+stale as it ages), and a pause survives restarts.
+
+```bash
+make weather-status      # what it is doing: up to date, retrying, rate limited, paused
+make weather-disable     # pause fetching; make weather-enable resumes it
+```
+
+The desktop's **Fetch weather** switch, under **Winds aloft**, does the same and
+shows the service's status line; it settles only once the service confirms. Both
+use the service's control API on `127.0.0.1:8789` (`[weather] http_port`),
+browsable at `http://127.0.0.1:8789/swagger-ui/` (OpenAPI document:
+`/v1/openapi.json`). A
+desktop on another machine needs `http_bind = "0.0.0.0"` in that node's
+`[weather]` — the API has no authentication, so only on a trusted LAN.
+
+Check the bus without the app:
+
+```bash
+docker exec adsb-mqtt mosquitto_sub -t adsb/dev/weather/grid -C 1 | head -c 300
+docker exec adsb-mqtt mosquitto_sub -t 'adsb/dev/weather/+' -v -C 3 | cut -c 1-200   # grid, status, availability
+```
+
+The snapshot is **retained**, so a subscriber that arrives later gets it at once,
+and it is republished whenever the broker restarts. The free tier is
+non-commercial and capped at 10,000 calls/day, 5,000/hour and 600/minute,
+counted per grid point: shrinking `spacing_deg` or `refresh_minutes` raises the
+count fast, and the service warns above 8,000 a day. It paces its requests under
+the per-minute limit, and when it does hit a limit it waits for that limit's
+window to pass instead of retrying into it — `make weather-status` says which. The last good grid is kept in `.run/weather-cache.json`, and the
+layer is badged **stale** once it is more than three hours old.
+
 ## Where things are
 
 | Path | What |
@@ -234,11 +296,14 @@ listening on localhost only).
 | 30003 | dump1090 (real or mock) |
 | 8787 | Data server query API |
 | 8788 | Desktop tool server — separate port so it does not collide with 8787 |
-| 3010 / 8798 | A second stack's desktop (`[desktop].dev_port` / `tool_port`) |
+| 3210 / 8798 | A second stack's desktop (`[desktop].dev_port` / `tool_port`) |
 | 8010 / 8310 | A second stack's agents |
 | 8797 / 9495 | A second stack's data server and Quack |
 | 9494 | Quack (DuckDB over HTTP) |
-| 3000 | Desktop dev server — **collides with Grafana** in the Pulsar stack |
+| 3200 | Desktop dev server (`[desktop].dev_port`) |
+| 3000 | Grafana (`make monitoring`) |
+| 8790 | Feed client `/metrics` (`[metrics].feed_port`) |
+| 9090 | Prometheus (`make monitoring`) |
 | 8000 / 8300 | adsb-agent / adsb-simulation-agent |
 
 Nothing derives a second stack's ports — set them in that stack's own config

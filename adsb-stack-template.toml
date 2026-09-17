@@ -60,8 +60,13 @@ qos = 0
 [storage]
 # Dev-local. The deployed Pi uses /var/lib/adsb/adsb.db via /etc/adsb/*.toml.
 db_path = ".run/adsb.db"
-# Read-only JSON query API. 0 disables.
+# Read-only JSON query API, and the recorder's /metrics. 0 disables both.
 http_port = 8787
+# No authentication, so it stays on this machine unless you say otherwise.
+# "0.0.0.0" is for reaching it from another host -- an agent or a Prometheus
+# elsewhere on a trusted LAN. On a Raspberry Pi prefer
+# infrastructure/docker-compose.pi.yml, which scrapes over loopback instead.
+http_bind = "127.0.0.1"
 # Expose the database over Quack so the desktop app (and duckdb CLI, webapp,
 # spark) can ATTACH while the recorder keeps writing.
 #
@@ -82,6 +87,71 @@ retention_hours = 0
 enabled = false
 broker = "pulsar://localhost:6650"
 topic = "persistent://kradsb/adsb/sbs-topic"
+
+[weather]
+# Winds aloft and mean-sea-level pressure around the receiver, fetched from
+# Open-Meteo and published as ONE retained MQTT message. The desktop draws it as
+# a map layer when its live source is MQTT.
+#
+# Off by default: it needs outbound internet, and a node without an uplink would
+# only log retries. Open-Meteo's free tier is non-commercial and capped at
+# 10,000 calls/day, 5,000/hour and 600/minute, counted per grid point; the
+# service logs its own estimate at startup (`make logs N=weather`), paces its
+# requests under the per-minute limit, and waits out a limit it runs into
+# rather than retrying into it. These defaults use about 6,700 a day.
+enabled = false
+# Leave unset to derive it from mqtt.topic: adsb/<stage>/sbs/raw becomes
+# adsb/<stage>/weather/grid. The desktop applies the same rule, so the two
+# cannot drift. Set it only to publish somewhere else on purpose.
+# topic = "adsb/dev/weather/grid"
+# The grid is centred on [receiver]. Longitude spacing widens with latitude, so
+# ±300 NM at 1° is 11 x 17 = 187 points at 47°N.
+radius_nm = 300
+spacing_deg = 1.0
+# hPa, roughly FL050 / FL100 / FL180 / FL300 / FL340 / FL390. Each level adds two
+# variables per point, and a request for more than 10 variables costs extra.
+levels = [850, 700, 500, 300, 250, 200]
+refresh_minutes = 60
+# best_match lets Open-Meteo choose. A specific model (see open-meteo.com/en/docs)
+# can be finer over one region.
+model = "best_match"
+# The last good grid survives restarts here, so a node whose uplink is down
+# still publishes something. Stack-scoped, like storage.db_path.
+cache_path = ".run/weather-cache.json"
+# Control API: `make weather-status | weather-enable | weather-disable`, and the
+# desktop's "Fetch weather" switch. Disabling pauses fetching only; the last
+# grid stays on the map. Status is also published, retained, next to the grid
+# topic (.../weather/status and .../weather/availability). 0 disables the API.
+# Browse and try it at http://127.0.0.1:8789/swagger-ui/ (OpenAPI document:
+# /v1/openapi.json).
+http_port = 8789
+# No authentication. Loopback keeps it to this machine; set "0.0.0.0" only on a
+# trusted LAN, e.g. so a desktop on another machine can use the switch.
+http_bind = "127.0.0.1"
+# The enabled setting and any rate-limit deadline survive restarts here, so a
+# node disabled before a reboot stays disabled. Stack-scoped, like cache_path.
+state_path = ".run/weather-state.json"
+
+[metrics]
+# Prometheus scrape endpoints. The recorder, the weather service and the two
+# agents serve /metrics on ports they already have (storage.http_port 8787,
+# weather.http_port 8789, agents 8000/8300); only the feed client has no
+# listener of its own, so it gets one here. 0 disables it.
+#
+# Start Prometheus and Grafana with `make monitoring`.
+feed_port = 8790
+# Counters only -- no secrets, no control -- but still a listener with no
+# authentication, so it stays on loopback.
+#
+# Loopback is enough for `make monitoring` on macOS and Windows: Docker Desktop
+# proxies host.docker.internal through to the host's 127.0.0.1, so a
+# loopback-bound endpoint is scraped fine (measured -- the recorder and weather
+# targets come up on 127.0.0.1 too). Where the Docker host is LINUX,
+# host-gateway is a real bridge address that cannot reach host loopback, and a
+# target would need "0.0.0.0" here -- but on a Raspberry Pi prefer
+# infrastructure/docker-compose.pi.yml, which puts Prometheus on the host
+# network so nothing has to be opened at all.
+feed_bind = "127.0.0.1"
 
 [agents]
 # `make up-agents` starts these. They need an LLM endpoint (see llm_base_url);
@@ -104,11 +174,14 @@ llm_base_url = "http://localhost:5010/gateway/mlflow/v1"
 mlflow_uri = "http://localhost:5010"
 
 [desktop]
-# The Next dev server. Pinned to 3000 in tauri.conf.json, so a SECOND stack
-# running its desktop at the same time needs a different one here -- and gets a
-# matching CSP entry automatically, without which its agent calls are blocked
-# with nothing but a console message.
-dev_port = 3000
+# The Next dev server. Pinned to 3200 in tauri.conf.json AND package.json, so a
+# SECOND stack running its desktop at the same time needs a different one here
+# -- and gets a matching CSP entry automatically, without which its agent calls
+# are blocked with nothing but a console message.
+#
+# 3200, not Next's usual 3000: Grafana owns :3000 in
+# infrastructure/docker-compose.yml, and the two used to collide.
+dev_port = 3200
 
 # The desktop's OWN read-only tool server for the agent, serving its own
 # storage. Must not collide with storage.http_port above, which the data server

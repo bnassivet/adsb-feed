@@ -43,8 +43,10 @@ serde_json = { workspace = true }
 # Time utilities
 chrono = { workspace = true }
 
-# Metrics
-prometheus = { version = "0.13", optional = true }
+# Metrics. Default features are off deliberately: `protobuf` is on by default
+# and pulls the unmaintained protobuf 2.x for an exposition format Prometheus
+# itself dropped. The text encoder we use is not behind it.
+prometheus = { version = "0.13", default-features = false, optional = true }
 
 # Memory utilities
 bytes = "1.7"
@@ -55,11 +57,13 @@ serde_json = { workspace = true }
 tempfile = "3"
 
 [features]
-default = ["cli", "pulsar", "mqtt"]
+default = ["cli", "pulsar", "mqtt", "metrics"]
 cli = ["clap", "dep:toml"]
 pulsar = ["dep:pulsar"]
 mqtt = ["dep:rumqttc"]
-metrics = ["prometheus"]
+# NOTE: the edge builds in ../Makefile pass --no-default-features, so this has
+# to be named explicitly there or the Pi is the one node with no endpoint.
+metrics = ["dep:prometheus"]
 
 [lib]
 name = "adsb_pulsar_client"

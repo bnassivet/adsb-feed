@@ -39,7 +39,12 @@ import type {
   UpdateEventOfInterest,
   UpdateScenario,
   UpdateScenarioTrack,
+  WeatherSnapshotKey,
+  WeatherSnapshotMeta,
+  WeatherSnapshotQuery,
+  WeatherSnapshotRecord,
 } from "./types";
+import type { WeatherAvailability, WeatherServiceView, WeatherSnapshot } from "./weather";
 
 export async function startFeed(): Promise<void> {
   return invoke("start_feed");
@@ -60,6 +65,54 @@ export async function getMetrics(): Promise<MetricsSnapshot> {
 /** The stack this window was launched for (`ADSB_STACK`), or null if unnamed. */
 export async function getStack(): Promise<string | null> {
   return invoke("get_stack");
+}
+
+/** The last good weather snapshot, or null before one has arrived. */
+export async function getWeatherSnapshot(): Promise<WeatherSnapshot | null> {
+  return invoke("get_weather_snapshot");
+}
+
+/**
+ * Weather snapshots on disk, newest first, **without** their payloads.
+ *
+ * Distinct from {@link getWeatherSnapshot}, which is the live one held in
+ * memory. A snapshot is ~16 KB, so the listing reports `payload_bytes` rather
+ * than the content; fetch one whole with {@link getWeatherAt}.
+ */
+export async function getWeatherHistory(
+  query: WeatherSnapshotQuery,
+): Promise<WeatherSnapshotMeta[]> {
+  return invoke("get_weather_history", { query });
+}
+
+/**
+ * One recorded snapshot, with its payload verbatim.
+ *
+ * `null` for a model hour that was never recorded — absent is not an error.
+ */
+export async function getWeatherAt(
+  key: WeatherSnapshotKey,
+): Promise<WeatherSnapshotRecord | null> {
+  return invoke("get_weather_at", { key });
+}
+
+/** Whether the weather layer can have data, and if not, why. */
+export async function getWeatherAvailability(): Promise<WeatherAvailability> {
+  return invoke("get_weather_availability");
+}
+
+/** What the weather service last reported over MQTT (the query side). */
+export async function getWeatherService(): Promise<WeatherServiceView> {
+  return invoke("get_weather_service");
+}
+
+/**
+ * Asks the weather service to enable or disable fetching (the command side).
+ * Resolves when the service has accepted the setting -- not when it has acted
+ * on it: that arrives as an `adsb:weather-service` event.
+ */
+export async function setWeatherServiceEnabled(enabled: boolean): Promise<void> {
+  return invoke("set_weather_service_enabled", { enabled });
 }
 
 export async function getConfig(): Promise<Config> {

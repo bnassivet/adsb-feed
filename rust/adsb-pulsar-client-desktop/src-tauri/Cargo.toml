@@ -26,6 +26,10 @@ adsb-data-engine = { path = "../../adsb-data-engine" }
 # Query surface shared with the headless daemon: same answers from the desktop
 # app, the agent tool server and adsb-data-server. No clap, no MQTT here.
 adsb-data-server = { path = "../../adsb-data-server", default-features = false, features = ["http-api"] }
+# The weather service's wire types, plus its control-API client for the "Fetch
+# weather" switch: no publisher, no refresh loop, no Open-Meteo provider. The
+# weather service itself is a separate binary.
+adsb-weather-server = { path = "../../adsb-weather-server", default-features = false, features = ["client"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

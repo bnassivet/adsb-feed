@@ -56,6 +56,9 @@ make down        # stops EVERYTHING it started, including the desktop
 |---|---|
 | `make up-desktop` | stack + the desktop app, backgrounded (`make logs N=desktop`) |
 | `make down-desktop` | stop just the desktop |
+| `make up-weather` | start just the weather service — refuses unless `[weather] enabled = true`, and says `make build` if the binary is missing |
+| `make down-weather` / `make restart-weather` | stop it / pick up an edited `[weather]`, which is only read at startup |
+| `make weather-status` / `weather-enable` / `weather-disable` | ask a running weather service what it is doing, or pause/resume fetching through its control API. A disable persists across restarts (`state_path`), and the last grid stays on the map. The API is browsable at `http://127.0.0.1:8789/swagger-ui/` |
 | `make up-agents` | stack + adsb-agent and adsb-simulation-agent |
 | `make reap` | kill whatever still holds the stack's ports (orphans) |
 | `make remote` | desktop only, pointed at a data server elsewhere |
@@ -96,7 +99,7 @@ Two things worth knowing:
 
   | | Why |
   |---|---|
-  | `[desktop].dev_port` | :3000 is pinned in `tauri.conf.json` and `package.json` |
+  | `[desktop].dev_port` | :3200 is pinned in `tauri.conf.json` and `package.json` (3200, not 3000: Grafana owns that) |
   | CSP `connect-src` | pins the agent's port — a different one is **blocked**, with only a console message |
   | `NEXT_PUBLIC_AGENT_URL` | two frontend call sites used to hardcode :8000 |
   | `ADSB_STACK` | the app's own DuckDB and settings move to `<app-data>/<stack>/` |
@@ -127,10 +130,20 @@ They are configured separately and can disagree. An empty live map with a
 working DB History panel means the history plane is pointed at the remote node
 and the live plane is not.
 
-`make up-desktop` points neither plane anywhere. Locally the desktop reads
+`make up-desktop` does not choose the source. Locally the desktop reads
 dump1090 on `:30003` directly — the same socket the feed client uses, one hop
 less for the same data. The MQTT path is still exercised, by the recorder, which
-is what `make verify` proves. To put the desktop itself on the broker:
+is what `make verify` proves.
+
+It **does** pass this stack's broker, port and topic (`make desktop-env` shows
+them), because the app otherwise keeps whatever topic it stored last. A store
+from before topics carried a stage subscribes to `adsb/sbs/raw` and derives
+`adsb/weather/grid` from it — the map stays empty and the weather layer says
+*waiting for the weather service* while the service publishes happily to
+`adsb/dev/weather/grid`. If a desktop launched by hand shows that, check its
+log for `Subscribed to MQTT topic`.
+
+To put the desktop itself on the broker:
 
 ```bash
 cd rust/adsb-pulsar-client-desktop
@@ -271,16 +284,16 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
   `uv run python -m adsb_agent` forks python, and `npm run tauri dev` is a tree
   of next dev, cargo and the app binary. Signalling only the recorded pid
   orphans the children, still holding their ports — which is how a stale dev
-  server ends up squatting on :3000 and failing the next launch with
+  server ends up squatting on :3200 and failing the next launch with
   `EADDRINUSE`. If you add a process to `stack.sh`, start it through `start()`;
   do not background it yourself.
 - **The desktop is backgrounded, not foreground.** `make up-desktop` returns
   immediately; watch it with `make logs N=desktop` and stop it with `make down`
   or `make down-desktop`. It used to run in the foreground, which left Ctrl-C as
   the only way to stop it and orphaned the tree on any other exit.
-- **Grafana and the desktop both want :3000.** The Pulsar stack's Grafana
-  collides with the Next dev server; they cannot both run. `make doctor` reports
-  :3000 as busy.
+- **Grafana owns :3000; the desktop moved to :3200.** They used to collide, and
+  could not both run. `make doctor` warns if a config still says 3000 — an
+  existing `adsb-stack.toml` is gitignored, so it keeps whatever it had.
 - **The desktop runs its own tool server, serving its own storage.** With the
   stack up, the data server already holds `storage.http_port` (8787), so the
   desktop uses `agents.desktop_tool_port` (8788) -- `make up-desktop` exports it.
@@ -325,7 +338,7 @@ it covers the mock feed, the merge assertions and cleanup of test rows.
 | A setting works here but not on another machine | It was added to `adsb-stack.toml` but not to `adsb-stack-template.toml`. `diff` them. |
 | `failed to bind 127.0.0.1:8787 (agent history tools disabled)` in the desktop log | The data server owns that port. Launch via `make up-desktop`, which sets `ADSB_AGENT_TOOL_SERVER_PORT` from `agents.desktop_tool_port`. |
 | Quack sharing reports `Unavailable` | The `quack` extension is downloaded on first use; needs outbound network and a writable `HOME`. |
-| `EADDRINUSE :::3000` from `make up-desktop` | A previous desktop tree was orphaned. `make reap`, then retry. |
+| `EADDRINUSE :::3200` from `make up-desktop` | A previous desktop tree was orphaned. `make reap`, then retry. |
 | `make down` says stopped but a port is still held | Something outside the stack owns it — `down` lists what. `make reap` if you want it gone. |
 | `MQTT connection ... lost: Connection closed by peer abruptly`, repeatedly | Two clients sharing an MQTT id are evicting each other. After a few short-lived connections the log says so outright and names the id. Almost always a leftover process: `make doctor` (it counts duplicates), then `make reap`. |
 | DB History panel works, live map empty | Only the history plane is pointed at the remote node. Set `[mqtt].host` to the Pi and relaunch with `make remote`, or switch **Settings → Connection → Feed Source** to MQTT. |

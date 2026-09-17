@@ -74,7 +74,24 @@ impl Recorder {
     /// The pipeline uses [`NoopSink`]: a recorder has no second consumer for a
     /// flushed batch — it has already been persisted. The desktop app supplies
     /// an emit sink instead; that is the only difference between the two.
-    pub async fn run(&self, mut source: impl MessageSource + 'static) -> anyhow::Result<()> {
+    pub async fn run(&self, source: impl MessageSource + 'static) -> anyhow::Result<()> {
+        self.run_with_weather(source, None).await
+    }
+
+    /// As [`run`](Self::run), and also records weather snapshots.
+    ///
+    /// The caller supplies the channel, because only it still has the concrete
+    /// `MqttSource`: `with_aux_topic` needs `&mut source` *before* the source is
+    /// moved in here, and [`MessageSource`] deliberately knows nothing about
+    /// auxiliary topics — the SBS path must stay exactly as it was.
+    ///
+    /// `None` is the recorder as it has always been, which is what keeps the
+    /// existing tests a regression on this refactor.
+    pub async fn run_with_weather(
+        &self,
+        mut source: impl MessageSource + 'static,
+        weather: Option<tokio::sync::watch::Receiver<Option<Vec<u8>>>>,
+    ) -> anyhow::Result<()> {
         let rx = source.subscribe(4096);
 
         let pipeline = IngestPipeline::new(
@@ -91,10 +108,17 @@ impl Recorder {
 
         let ingest = tokio::spawn(async move { pipeline.run(rx, NoopSink).await });
         let maintenance = self.spawn_maintenance();
+        // Rides the source's own MQTT connection, so this task only drains a
+        // channel: it opens nothing and cannot take the feed down.
+        let weather_task =
+            weather.map(|rx| tokio::spawn(crate::weather::persist_weather(self.storage(), rx)));
 
         let result = source.run().await;
         ingest.abort();
         maintenance.abort();
+        if let Some(task) = weather_task {
+            task.abort();
+        }
 
         result.map_err(Into::into)
     }
@@ -282,6 +306,68 @@ mod tests {
             Some("AFR123"),
             "callsign from MSG1 was lost"
         );
+    }
+
+    #[tokio::test]
+    async fn a_recorder_with_a_weather_channel_records_both_feeds() {
+        // The two feeds are independent: SBS arrives as broadcast lines and
+        // weather as whole retained documents on a watch channel. Recording one
+        // must not disturb the other.
+        let r = Recorder::open(in_memory()).expect("open");
+        let (weather_tx, weather_rx) = tokio::sync::watch::channel(None);
+
+        let snapshot = adsb_weather_server::WeatherSnapshot {
+            version: 1,
+            source: "open-meteo".into(),
+            attribution: "Weather data by Open-Meteo.com (CC BY 4.0)".into(),
+            model: "best_match".into(),
+            fetched_at_ms: 1_789_000_400_000,
+            valid_time_ms: 1_789_000_000_000,
+            grid: adsb_weather_server::GridSpec {
+                lat0: 46.0,
+                lon0: -3.0,
+                dlat: 1.0,
+                dlon: 1.0,
+                nlat: 1,
+                nlon: 1,
+            },
+            surface: adsb_weather_server::SurfaceFields {
+                mslp_hpa: vec![Some(1013.2)],
+                wind_speed_kt: vec![Some(8.0)],
+                wind_dir_deg: vec![Some(270.0)],
+            },
+            levels: std::collections::BTreeMap::new(),
+        };
+        weather_tx
+            .send(Some(serde_json::to_vec(&snapshot).unwrap()))
+            .unwrap();
+
+        r.run_with_weather(ScriptedSource::new(vec![MSG3]), Some(weather_rx))
+            .await
+            .expect("run");
+
+        let storage = r.storage();
+        let guard = storage.read().await;
+        let s = guard.as_ref().unwrap();
+
+        let positions = s
+            .query_bbox_sync(BboxQuery {
+                north: 90.0,
+                south: -90.0,
+                east: 180.0,
+                west: -180.0,
+                start_ms: None,
+                end_ms: None,
+                limit: 100,
+            })
+            .expect("query");
+        assert_eq!(positions.len(), 1, "the SBS path must be untouched");
+
+        let weather = s
+            .query_weather_snapshots_sync(&adsb_data_engine::WeatherSnapshotQuery::default())
+            .expect("query weather");
+        assert_eq!(weather.len(), 1, "the weather snapshot was not recorded");
+        assert_eq!(weather[0].valid_time_ms, 1_789_000_000_000);
     }
 
     #[tokio::test]

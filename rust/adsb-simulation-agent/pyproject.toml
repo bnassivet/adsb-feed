@@ -13,6 +13,8 @@ dependencies = [
     "a2a-sdk[http-server]>=1.1",
     "uvicorn>=0.34",
     "mlflow-tracing>=3.12",
+    # Prometheus exposition; a runtime dependency, as in adsb-agent.
+    "prometheus-client>=0.21",
     "boto3>=1.35",
 ]
 

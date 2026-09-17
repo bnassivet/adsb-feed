@@ -98,6 +98,82 @@ scrape_configs:
           component: 'zookeeper'
     metrics_path: /metrics
 
+  # ---------------------------------------------------------------------------
+  # ADS-B services -- native host processes, not containers
+  # ---------------------------------------------------------------------------
+  # host.docker.internal resolves on Docker Desktop and, thanks to the
+  # extra_hosts host-gateway mapping on the prometheus service, on Linux too.
+  #
+  # On a Raspberry Pi, where these are systemd units bound to 127.0.0.1, use
+  # docker-compose.pi.yml instead: Prometheus joins the host network and the
+  # targets become localhost, so nothing has to be opened beyond loopback --
+  # which matters most for the weather service, whose port also carries an
+  # unauthenticated PUT /v1/enabled.
+  #
+  # `stack` and `component` are TARGET labels, not something the processes
+  # report. The scraper is what knows which stack it was pointed at, and it can
+  # be relabelled without redeploying anything. Identity only the process knows
+  # -- source_id, version -- arrives on adsb_build_info and is joined at query
+  # time:
+  #
+  #   rate(adsb_feed_messages_received_total[1m])
+  #     * on(instance) group_left(source_id) adsb_build_info
+  #
+  # metrics_path is omitted throughout: /metrics is the default everywhere.
+  # ---------------------------------------------------------------------------
+  - job_name: 'adsb-feed'
+    static_configs:
+      - targets: ['host.docker.internal:8790']
+        labels:
+          stack: 'dev'
+          component: 'feed'
+
+  - job_name: 'adsb-data-server'
+    static_configs:
+      - targets: ['host.docker.internal:8787']
+        labels:
+          stack: 'dev'
+          component: 'recorder'
+
+  - job_name: 'adsb-weather'
+    static_configs:
+      - targets: ['host.docker.internal:8789']
+        labels:
+          stack: 'dev'
+          component: 'weather'
+
+  - job_name: 'adsb-agent'
+    static_configs:
+      - targets: ['host.docker.internal:8000']
+        labels:
+          stack: 'dev'
+          component: 'agent'
+
+  - job_name: 'adsb-simulation-agent'
+    static_configs:
+      - targets: ['host.docker.internal:8300']
+        labels:
+          stack: 'dev'
+          component: 'sim-agent'
+
+  # A second stack, if one is running. Ports come from adsb-stack-prod.toml.
+  # - job_name: 'adsb-feed-prod'
+  #   static_configs:
+  #     - targets: ['host.docker.internal:8800']
+  #       labels: { stack: 'prod', component: 'feed' }
+  # - job_name: 'adsb-data-server-prod'
+  #   static_configs:
+  #     - targets: ['host.docker.internal:8797']
+  #       labels: { stack: 'prod', component: 'recorder' }
+  # - job_name: 'adsb-agent-prod'
+  #   static_configs:
+  #     - targets: ['host.docker.internal:8010']
+  #       labels: { stack: 'prod', component: 'agent' }
+  # - job_name: 'adsb-simulation-agent-prod'
+  #   static_configs:
+  #     - targets: ['host.docker.internal:8310']
+  #       labels: { stack: 'prod', component: 'sim-agent' }
+
 # =============================================================================
 # Alerting Configuration (Optional)
 # =============================================================================

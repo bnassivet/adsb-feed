@@ -11,6 +11,7 @@ use adsb_data_engine::{
     AircraftSummary, EventOfInterest, EventOfInterestQuery, FlightSummary, FlightSummaryQuery,
     HourlyHeatmapCell, HourlyHeatmapQuery, PositionRecord, Scenario, ScenarioWithTracks,
     StorageStats, TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
+    WeatherSnapshotKey, WeatherSnapshotMeta, WeatherSnapshotQuery, WeatherSnapshotRecord,
 };
 
 /// Returned (and relayed to the agent) when the DuckDB connection is `None`
@@ -131,6 +132,39 @@ pub async fn get_scenario(
     s.get_scenario(id).await.map_err(|e| e.to_string())
 }
 
+/// List recorded weather snapshots, newest first, **without** their payloads.
+///
+/// Split from [`get_weather_snapshot`] on purpose: a snapshot is ~16 KB, so a
+/// caller that could list a day of them whole would pull several hundred KB it
+/// almost never wants. `payload_bytes` says what is being skipped.
+pub async fn get_weather_snapshots(
+    storage: &SharedStorage,
+    query: WeatherSnapshotQuery,
+) -> Result<Vec<WeatherSnapshotMeta>, String> {
+    let guard = storage.read().await;
+    let s = guard
+        .as_ref()
+        .ok_or_else(|| STORAGE_UNAVAILABLE.to_string())?;
+    s.query_weather_snapshots(query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Get one recorded weather snapshot, with its payload verbatim.
+///
+/// `None` for a model hour that was never recorded — absent is not an error,
+/// and a caller must be able to tell it apart from unavailable storage.
+pub async fn get_weather_snapshot(
+    storage: &SharedStorage,
+    key: WeatherSnapshotKey,
+) -> Result<Option<WeatherSnapshotRecord>, String> {
+    let guard = storage.read().await;
+    let s = guard
+        .as_ref()
+        .ok_or_else(|| STORAGE_UNAVAILABLE.to_string())?;
+    s.get_weather_snapshot(key).await.map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,6 +234,41 @@ mod tests {
 
         let scenarios = list_scenarios(&storage).await.expect("scenarios");
         assert!(scenarios.is_empty());
+    }
+
+    #[tokio::test]
+    async fn weather_snapshots_unavailable_when_none() {
+        let storage = empty_storage();
+        let err = get_weather_snapshots(&storage, WeatherSnapshotQuery::default())
+            .await
+            .unwrap_err();
+        assert_eq!(err, STORAGE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn an_unrecorded_model_hour_is_none_not_an_error() {
+        // Absent and unavailable are different answers, and the caller acts
+        // very differently on each.
+        let handle = adsb_data_engine::StorageHandle::open(adsb_data_engine::StorageConfig {
+            db_path: None,
+            source_id: "test".to_string(),
+            gap_threshold_ms: 3_600_000,
+            share: None,
+            remote: None,
+        })
+        .expect("open in-memory storage");
+        let storage: SharedStorage = Arc::new(RwLock::new(Some(handle)));
+
+        let got = get_weather_snapshot(
+            &storage,
+            WeatherSnapshotKey {
+                valid_time_ms: 1_789_000_000_000,
+                source_id: None,
+            },
+        )
+        .await
+        .expect("a missing hour is not an error");
+        assert!(got.is_none());
     }
 
     #[tokio::test]

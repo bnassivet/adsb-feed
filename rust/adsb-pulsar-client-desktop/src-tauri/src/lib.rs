@@ -8,6 +8,7 @@ mod bridge;
 mod commands;
 mod state;
 mod storage_mode;
+mod weather;
 
 /// Default loopback port for the agent tool server. Override with
 /// `ADSB_AGENT_TOOL_SERVER_PORT`. The Python agent must point
@@ -135,6 +136,11 @@ pub fn run() {
             // with "there is no reactor running".
             tauri::async_runtime::spawn(adsb_data_server::server::serve(
                 std::sync::Arc::clone(&state.storage),
+                // Loopback, stated rather than assumed: this is a GUI's tool
+                // server for an agent on the same machine, and it has no
+                // authentication. The daemon's bind is configurable; this one
+                // is deliberately not.
+                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
                 tool_server_port,
             ));
 
@@ -194,6 +200,12 @@ pub fn run() {
             commands::reorder_scenario_tracks,
             commands::get_storage_mode,
             commands::set_storage_mode,
+            commands::get_weather_snapshot,
+            commands::get_weather_availability,
+            commands::get_weather_service,
+            commands::set_weather_service_enabled,
+            commands::get_weather_history,
+            commands::get_weather_at,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -273,6 +285,16 @@ fn apply_env_overrides(mut config: Config, get: &dyn Fn(&str) -> Option<String>)
     }
     if let Some(v) = var("ADSB_MQTT_TOPIC") {
         config.mqtt_topic = v;
+    }
+    // Usually unset: the weather topic is derived from the feed topic. `make
+    // client` exports it only when [weather].topic is set explicitly.
+    if let Some(v) = var("ADSB_MQTT_WEATHER_TOPIC") {
+        config.mqtt_weather_topic = v;
+    }
+    // The weather service's control API, for the "Fetch weather" switch.
+    // `make up-desktop` and `make client` export it from this stack's config.
+    if let Some(v) = var("ADSB_WEATHER_API_URL") {
+        config.weather_api_url = v;
     }
 
     config
@@ -739,5 +761,39 @@ mod env_override_tests {
         assert_eq!(out.socket_port, 30005);
         assert_eq!(out.mqtt_port, 1884);
         assert_eq!(out.mqtt_topic, "adsb/other");
+    }
+
+    #[test]
+    fn weather_topic_layers_from_the_environment() {
+        // `make client` exports ADSB_MQTT_WEATHER_TOPIC only when [weather].topic
+        // is set explicitly; when it is, it must win over the derived one.
+        let out = apply_env_overrides(
+            Config::default(),
+            &env(&[
+                ("ADSB_MQTT_TOPIC", "adsb/dev/sbs/raw"),
+                ("ADSB_MQTT_WEATHER_TOPIC", "lab/wx"),
+            ]),
+        );
+        assert_eq!(out.weather_topic(), "lab/wx");
+    }
+
+    #[test]
+    fn weather_api_url_layers_from_the_environment() {
+        let out = apply_env_overrides(
+            Config::default(),
+            &env(&[("ADSB_WEATHER_API_URL", "http://pi-roof:8789")]),
+        );
+        assert_eq!(out.weather_api_url, "http://pi-roof:8789");
+    }
+
+    #[test]
+    fn without_a_weather_topic_the_desktop_follows_the_feed_topic() {
+        // The usual case: nothing exported, so the stage carries over from the
+        // feed topic -- the same rule render-config.py gives the service.
+        let out = apply_env_overrides(
+            Config::default(),
+            &env(&[("ADSB_MQTT_TOPIC", "adsb/prod/sbs/raw")]),
+        );
+        assert_eq!(out.weather_topic(), "adsb/prod/weather/grid");
     }
 }

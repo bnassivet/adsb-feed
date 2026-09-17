@@ -1,0 +1,133 @@
+{
+  "uid": "adsb-weather",
+  "title": "ADS-B Weather",
+  "description": "What the weather service is doing, and whether a command it was given has actually landed.",
+  "tags": ["adsb"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-12h", "to": "now" },
+  "templating": {
+    "list": [
+      { "name": "datasource", "label": "Data source", "type": "datasource", "query": "prometheus", "hide": 0, "current": {} },
+      {
+        "name": "stack",
+        "label": "Stack",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(adsb_build_info, stack)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "state-timeline",
+      "title": "Service state",
+      "description": "Exported as a state SET — one series per variant, exactly one at 1 — which is why this renders as named bands with no value mapping to maintain.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 90, "lineWidth": 0 } }, "overrides": [] },
+      "options": { "mergeValues": true, "showValue": "auto" },
+      "targets": [
+        { "refId": "A", "expr": "adsb_weather_state{stack=~\"$stack\"} == 1", "legendFormat": "{{state}}" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Pending command",
+      "description": "enabled is the desired setting; state is what the loop is doing. While they disagree, a command has been accepted but not acted on. 1 here means it has not landed.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "settled", "color": "green" }, "1": { "text": "PENDING", "color": "orange" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(adsb_weather_enabled{stack=~\"$stack\"} == 1) and on(instance) (adsb_weather_state{stack=~\"$stack\", state=\"disabled\"} == 1)",
+          "legendFormat": "{{instance}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Since last successful fetch",
+      "description": "Absent until the first success — a service that has never fetched has no last-success time, and zero would read as 1970.",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 7200 }, { "color": "red", "value": 14400 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "refId": "A", "expr": "time() - adsb_weather_last_success_timestamp_seconds{stack=~\"$stack\"}", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Consecutive failures",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "refId": "A", "expr": "adsb_weather_consecutive_failures{stack=~\"$stack\"}", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Grid age",
+      "description": "Age of the snapshot currently published, against [weather] refresh_minutes.",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "refId": "A", "expr": "time() - adsb_weather_snapshot_valid_timestamp_seconds{stack=~\"$stack\"}", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Rate limiting, by provider window",
+      "description": "Which Open-Meteo limit was hit decides how long asking again is pointless. The scope is a label, never a value.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "adsb_weather_rate_limited{stack=~\"$stack\"}", "legendFormat": "{{scope}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Next fetch",
+      "description": "Seconds until the next scheduled fetch. Negative means overdue.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "adsb_weather_next_fetch_timestamp_seconds{stack=~\"$stack\"} - time()", "legendFormat": "{{instance}}" }
+      ]
+    }
+  ]
+}

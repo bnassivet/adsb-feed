@@ -105,6 +105,13 @@ pub struct AppState {
     pub record_positions: Arc<AtomicBool>,
     /// Whether to record raw SBS-1 messages to DuckDB (toggled at runtime)
     pub record_raw: Arc<AtomicBool>,
+    /// Last good weather snapshot from the MQTT aux topic. Lives here rather
+    /// than in the `FeedHandle` so it survives a feed restart: a stopped feed
+    /// still shows the last grid, which the UI marks stale by its age.
+    pub weather: crate::weather::SharedWeather,
+    /// What the weather service last reported over MQTT. Like `weather`, it
+    /// outlives a feed restart.
+    pub weather_service: crate::weather::SharedWeatherService,
 }
 
 impl AppState {
@@ -137,6 +144,8 @@ impl AppState {
             storage_mode: Mutex::new(storage_mode),
             record_positions: Arc::new(AtomicBool::new(true)),
             record_raw: Arc::new(AtomicBool::new(true)),
+            weather: Arc::new(std::sync::RwLock::new(None)),
+            weather_service: Arc::new(std::sync::RwLock::new(Default::default())),
         }
     }
 }
@@ -275,5 +284,19 @@ mod tests {
         assert_eq!(json["is_running"], true);
         assert!(json.get("socket_status").is_some());
         assert!(json.get("pulsar_status").is_some());
+    }
+
+    #[test]
+    fn test_weather_starts_empty() {
+        let state = AppState::new(None);
+        assert!(state.weather.read().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_weather_service_starts_unheard() {
+        let state = AppState::new(None);
+        let view = state.weather_service.read().unwrap();
+        assert!(view.status.is_none());
+        assert!(view.availability.is_none());
     }
 }

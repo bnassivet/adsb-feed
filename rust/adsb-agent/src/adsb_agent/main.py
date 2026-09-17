@@ -23,8 +23,9 @@ from ag_ui.encoder import EventEncoder
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from . import metrics
 from .config import settings
 from .llm import stream_llm_response
 from .tracing import make_span, set_session_tag
@@ -140,6 +141,9 @@ class RequestLoggingMiddleware:
 
     _HEADERS_OF_INTEREST = ("accept", "content-type", "origin", "user-agent")
 
+    #: Polled by machines on a timer, and of no diagnostic value in a log.
+    _SKIP_LOGGING = frozenset({"/metrics", "/health"})
+
     def __init__(self, app):
         self.app = app
 
@@ -159,6 +163,17 @@ class RequestLoggingMiddleware:
 
         method = scope.get("method", "")
         path = scope.get("path", "")
+
+        # Skip the machine-polled endpoints entirely. This middleware buffers
+        # the request body AND accumulates the whole non-SSE response body to
+        # pretty-print it -- so a Prometheus scrape every 15s would write the
+        # entire exposition into the log, forever, burying every real request.
+        # Note that mounting the endpoint would NOT avoid this: a mount sits
+        # inside the middleware, not outside it.
+        if path in self._SKIP_LOGGING:
+            await self.app(scope, receive, send)
+            return
+
         headers = {k.decode(): v.decode() for k, v in scope.get("headers", [])}
 
         # Drain the request body so we can log it, then replay it to the app.
@@ -442,6 +457,24 @@ async def runtime_single_endpoint(body: AgUiRequest, request: Request):
 async def health() -> HealthResponse:
     """Health check endpoint."""
     return HealthResponse(status="healthy", service="adsb-agent")
+
+
+metrics.init()
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics_endpoint() -> Response:
+    """Prometheus exposition.
+
+    `include_in_schema=False` keeps it out of `/openapi.json`: that document
+    describes the agent's JSON contract, and a text/plain scrape surface has no
+    business in it -- `tests/test_openapi.py` asserts against the whole path
+    set, so adding one would make those assertions say something they do not
+    mean.
+
+    Named `metrics_endpoint`, not `metrics`, so it does not shadow the module.
+    """
+    return Response(metrics.exposition(), media_type=metrics.CONTENT_TYPE)
 
 
 # ---------------------------------------------------------------------------

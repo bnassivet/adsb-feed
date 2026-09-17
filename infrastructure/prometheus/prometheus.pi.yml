@@ -1,0 +1,49 @@
+# Prometheus configuration for a Raspberry Pi edge node.
+#
+# Used with docker-compose.pi.yml, which puts Prometheus on the host network.
+# Every target is therefore `localhost`, and every ADS-B service can stay bound
+# to 127.0.0.1 -- nothing is exposed to the LAN, which matters most for the
+# weather service, whose port also carries an unauthenticated PUT /v1/enabled.
+#
+# Ports come from the node's rendered config (deploy/.rendered/<node>/), which
+# in turn comes from deploy/<stage>.toml. Adjust `stack` to the fleet's stage.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+  external_labels:
+    cluster: 'adsb_edge'
+    environment: 'production'
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          component: 'prometheus'
+
+  # The feed client. Present on every node, including 32-bit ones.
+  - job_name: 'adsb-feed'
+    static_configs:
+      - targets: ['localhost:8790']
+        labels:
+          stack: 'prod'
+          component: 'feed'
+
+  # The recorder. aarch64 nodes only -- a feed-only Pi has none, and this job
+  # will simply report up == 0 there.
+  - job_name: 'adsb-data-server'
+    static_configs:
+      - targets: ['localhost:8787']
+        labels:
+          stack: 'prod'
+          component: 'recorder'
+
+  # The weather service, where it runs -- one per stage, not one per node.
+  - job_name: 'adsb-weather'
+    static_configs:
+      - targets: ['localhost:8789']
+        labels:
+          stack: 'prod'
+          component: 'weather'

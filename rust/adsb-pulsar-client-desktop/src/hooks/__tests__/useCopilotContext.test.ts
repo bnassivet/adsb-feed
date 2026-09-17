@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { useCopilotContext, type CopilotContextConfig } from "../useCopilotContext";
+import type { WeatherSnapshot } from "@/lib/weather";
 
 // Capture all readables from useAgentContext calls
 const registeredReadables = new Map<string, unknown>();
@@ -39,6 +40,8 @@ function makeConfig(overrides: Partial<CopilotContextConfig> = {}): CopilotConte
       { hex_ident: "G7H8I9" } as never,
     ],
     storageStatus: "available",
+    receiverLocation: null,
+    agentSimulatedCount: 0,
     ...overrides,
   };
 }
@@ -118,5 +121,140 @@ describe("useCopilotContext", () => {
     ) as { selected: string[]; lastSelected: string | null };
     expect(v.selected).toEqual([]);
     expect(v.lastSelected).toBeNull();
+  });
+
+  describe("weather layer", () => {
+    const WEATHER = "Weather layer (winds aloft): availability, what it draws, and how current the data is";
+
+    function snapshot(validTimeMs: number): WeatherSnapshot {
+      return {
+        version: 1,
+        source: "open-meteo",
+        attribution: "Weather data by Open-Meteo.com (CC BY 4.0)",
+        model: "best_match",
+        fetched_at_ms: validTimeMs,
+        valid_time_ms: validTimeMs,
+        grid: { lat0: 46, lon0: -3, dlat: 1, dlon: 1, nlat: 1, nlon: 1 },
+        surface: { wind_dir_deg: [270], wind_speed_kt: [10], mslp_hpa: [1013] },
+        levels: { "250": { wind_dir_deg: [250], wind_speed_kt: [100] } },
+      };
+    }
+
+    function weatherContext(weather: CopilotContextConfig["weather"]) {
+      registeredReadables.clear();
+      renderHook(() => useCopilotContext(makeConfig({ weather })));
+      return registeredReadables.get(WEATHER);
+    }
+
+    it("describes what the layer draws and how current it is", () => {
+      const value = weatherContext({
+        snapshot: snapshot(Date.now()),
+        availability: "available",
+        show: true,
+        level: 250,
+        showBarbs: true,
+        showParticles: false,
+        nowMs: Date.now(),
+      });
+
+      expect(value).toMatchObject({
+        availability: "available",
+        shown: true,
+        level: "FL340 · 250 hPa",
+        barbs: true,
+        particles: false,
+        stale: false,
+      });
+      expect((value as { validity: string }).validity).toMatch(/valid/);
+    });
+
+    it("says it is waiting before the first snapshot", () => {
+      const value = weatherContext({
+        snapshot: null,
+        availability: "waiting",
+        show: false,
+        level: "surface",
+        showBarbs: true,
+        showParticles: false,
+        nowMs: Date.now(),
+      });
+
+      expect((value as { validity: string }).validity).toMatch(/waiting/i);
+    });
+
+    it("explains an unsupported live source instead of describing the layer", () => {
+      const value = weatherContext({
+        snapshot: null,
+        availability: "unsupported_source",
+        show: true,
+        level: 250,
+        showBarbs: true,
+        showParticles: true,
+        nowMs: Date.now(),
+      });
+
+      expect(value).toMatch(/MQTT/);
+    });
+
+    it("is registered even when the page provides no weather", () => {
+      expect(weatherContext(undefined)).toBe("unavailable in this view");
+    });
+
+    describe("while browsing recorded weather", () => {
+      const VIEW_MS = Date.now() - 48 * 3_600_000;
+
+      function browsing(overrides: Record<string, unknown> = {}) {
+        return weatherContext({
+          snapshot: snapshot(VIEW_MS - 20 * 60_000),
+          availability: "available",
+          show: true,
+          level: 250,
+          showBarbs: true,
+          showParticles: false,
+          nowMs: Date.now(),
+          isLive: false,
+          viewTimeMs: VIEW_MS,
+          ...overrides,
+        } as CopilotContextConfig["weather"]);
+      }
+
+      it("measures the hour against the time on screen, not against now", () => {
+        // `describeValidity` would say "valid 2 d ago", which reads as a fault
+        // rather than as the answer -- and the agent has no visual cue to
+        // correct it with.
+        expect((browsing() as { validity: string }).validity).toMatch(
+          /model hour 20 min earlier/,
+        );
+      });
+
+      it("says which mode it is describing", () => {
+        // The invariant: the agent sees what the map shows. Saying so
+        // explicitly beats leaving the LLM to infer it from the wording.
+        expect(browsing()).toMatchObject({ mode: "history" });
+      });
+
+      it("does not blame the live source when showing recorded weather", () => {
+        // The step-12 bug in prose, which is worse: text carries no visual cue
+        // that it is describing the wrong day. Recorded weather comes out of
+        // DuckDB, so a socket session can browse it.
+        const value = browsing({ availability: "unsupported_source" });
+        expect(JSON.stringify(value)).not.toMatch(/MQTT/i);
+        expect(value).toMatchObject({ mode: "history" });
+      });
+
+      it("still explains an unsupported source while live", () => {
+        // The live branch must not regress.
+        const value = weatherContext({
+          snapshot: null,
+          availability: "unsupported_source",
+          show: true,
+          level: 250,
+          showBarbs: true,
+          showParticles: false,
+          nowMs: Date.now(),
+        });
+        expect(value).toMatch(/MQTT/);
+      });
+    });
   });
 });

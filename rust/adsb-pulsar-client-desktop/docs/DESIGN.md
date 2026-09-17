@@ -4003,7 +4003,7 @@ The agent partitions every tool into one of two planes (`SERVER_TOOL_NAMES` in
 | Plane | Executed by | Examples | Why |
 |-------|-------------|----------|-----|
 | **Server tools** | Agent loop, via Tauri tool server (`:8787`) — except `getCurrentDateTime`, resolved locally | `getStorageStats`, `getAircraftSummary`, `getFlightSummary`, `getTrajectory`, `getTimeDistribution`, `getHourlyHeatmap`, `getEventsOfInterest` | Read-only DuckDB queries. Chaining them in-loop lets the agent gather data and reason over multiple hops **without** a frontend round-trip per call. |
-| **Client tools** | Frontend, via AG-UI round-trip | `selectAircraft`, `panMapTo`, `setFilters`, `setMapTheme`, `setActiveMode`, `toggleSidebar`, `setLayerVisibility`, `setColorMode`, `setDensityConfig`, `setEventFilter`, `toggleDemoFlights`, `searchLiveFlights`, `startFeed`, `stopFeed`, `createEventOfInterest` | UI mutations and state changes. Keeping these client-side preserves **user-in-the-loop** control and direct access to live React state. |
+| **Client tools** | Frontend, via AG-UI round-trip | `selectAircraft`, `panMapTo`, `setFilters`, `setMapTheme`, `setActiveMode`, `toggleSidebar`, `setLayerVisibility`, `setColorMode`, `setDensityConfig`, `setEventFilter`, `toggleDemoFlights`, `searchLiveFlights`, `startFeed`, `stopFeed`, `createEventOfInterest`, `setWeatherLayer`, `getWindAloft` | UI mutations and state changes. Keeping these client-side preserves **user-in-the-loop** control and direct access to live React state. |
 
 The `route()` function loops back into the agent **only when every pending tool call is
 server-side**. As soon as one client tool is requested, the graph hits `END` and
@@ -4362,6 +4362,708 @@ See [`QUICKSTART.md`](../../../QUICKSTART.md) for the three supported topologies
 
 ---
 
+## Weather Layer
+
+### Overview
+
+The map showed traffic but not the air it flies through. An aircraft at FL340 can ride a
+150 kt jet stream while the surface is calm, and SBS-1 carries only ground speed and track
+— no airspeed, no heading — so wind **cannot be derived from our own feed**. It has to
+come from a weather model.
+
+`adsb-weather-server` fetches gridded winds aloft and mean-sea-level pressure around the
+receiver from [Open-Meteo](https://open-meteo.com) and publishes them as **one retained
+MQTT message**. The desktop subscribes on the connection it already has for the live
+feed, draws wind barbs for a chosen pressure level, and shows the wind each selected
+aircraft is flying through.
+
+Scope is deliberately narrow: current conditions only (no forecast slider, no history) and
+wind barbs plus a pressure tooltip (no isobars). Weather data only ever travels over MQTT;
+the one HTTP surface is the service's small control API (enable/disable), see *Control and
+status*. Animated particles and chat tools came later and have their own sections below.
+
+```mermaid
+flowchart LR
+    om["Open-Meteo<br/><i>hourly, per grid point</i>"]
+
+    subgraph svc["adsb-weather-server"]
+        refresh["Refresher<br/><i>schedule, retry, cache</i>"]
+        pub["Publisher<br/><i>retained, QoS 1</i>"]
+    end
+
+    broker[("Mosquitto<br/><i>adsb/stage/weather/grid</i>")]
+
+    subgraph desk["Desktop"]
+        src["MqttSource<br/><i>aux topic</i>"]
+        relay["weather.rs<br/><i>validate, hold last good</i>"]
+        ui["Map barbs, controls,<br/>aircraft wind row"]
+    end
+
+    om -->|"HTTPS"| refresh --> pub --> broker --> src --> relay -->|"adsb:weather"| ui
+```
+
+### The service
+
+**Grid.** A regular lat/lon grid centred on `[receiver]`, the centre snapped to a multiple
+of the spacing so a slightly edited receiver position keeps the same points. Longitude
+spacing widens by 1/cos(latitude): at 47°N, ±300 NM at 1° is 11 rows × 17 columns =
+**187 points**. Rows are clipped at the poles, columns wrap at the antimeridian.
+
+**Open-Meteo facts the design rests on:**
+
+| Fact | Consequence |
+|------|-------------|
+| Pressure-level variables exist only under `hourly=`, not `current=` | Request `past_hours=1&forecast_hours=2`, pick the hour nearest now — a short forecast in the second half of each hour |
+| Several locations come back as a JSON array; one location is a bare object; a rejection is `{"error":true,"reason":…}` | An untagged enum with the error variant **first**, so the API's reason survives |
+| Free tier: 10,000 calls/day, non-commercial, CC BY 4.0 | Budget computed and logged at startup; attribution shown on the map |
+| Each location counts as a call; more than 10 variables costs fractionally more | 187 points × 15 variables (1.5 calls) × 24 = **~6,732 calls/day** |
+| Default `cell_selection` is `land` | `nearest`, or a grid point over the Bay of Biscay is moved ashore |
+
+Geopotential height was dropped to stay inside the budget (21 variables would reach
+~8,300 calls/day). It is not needed: SBS-1 altitude is a *pressure* altitude referenced to
+1013.25 hPa, which the ISA formula maps straight to hPa.
+
+**Refresh loop** (`refresh.rs`). Snapshots leave through a `watch` channel holding only the
+latest one. After a success it waits the refresh interval; after a failure it waits according to
+the failure's class — a network blip, a rate limit and a rejected request each get their own
+wait (see *Retry and rate limits*). A failed fetch **never clears the channel** —
+the consumer judges staleness from `valid_time_ms`. The wait sleeps to a fixed deadline, so a
+spurious shutdown notification cannot trigger an early, quota-spending fetch.
+
+**Cache** (`cache.rs`). The last good snapshot is written atomically (temp file + rename)
+and replayed on start, so a node whose uplink is down still publishes something. A cache
+written for a different grid or level set is ignored rather than drawn over the wrong area.
+
+**Publisher** (`publisher.rs`). One retained message, **QoS 1** — unlike the SBS feed, one
+message an hour is the only copy on the bus. It is republished on **every ConnAck**, not
+only when a new snapshot arrives: the broker runs with `persistence false`, so a broker
+restart erases the retained message and only the publisher can put it back. The republish
+comes from memory and costs no API call. Client id `<source_id>-weather`, distinct from the
+feed's and the recorder's.
+
+### Retry and rate limits
+
+Open-Meteo refuses in different ways, and each needs a different wait. The provider
+classifies every failure (`ProviderError::class`) by **HTTP status first, body second**:
+Open-Meteo sends the same `{"error": true, "reason": …}` body with a 400 and a 429. Until
+this was fixed, a real 429 decoded as a plain API rejection, `is_rate_limited()` returned
+false, and a spent quota was retried like a network blip — a test using a plain-text 429
+body hid it.
+
+| Class | Cause | Next attempt (`refresh::next_delay`) |
+|-------|-------|--------------------------------------|
+| Transient | Network error, timeout, 408, 5xx, a body that is not the API's | Exponential from 1 min, capped at the refresh interval; jitter shortens it by up to half |
+| Rate limited | 429 | Until the window named in the reason rolls over: minutely 60 s; hourly the next UTC hour; daily the next UTC midnight, but at most 6 h (the reset time is undocumented); unknown `max(refresh, 30 min)`. Never before `Retry-After`; hourly, daily and unknown never before a refresh. Jitter only lengthens it, by up to 10% |
+| Rejected | Any other 4xx, or an API rejection in a 200 | A full refresh interval, reported as `rejected` with the reason |
+
+Three more rules stop retries spending the quota:
+
+- **Not-before survives restarts.** A rate-limit deadline is written to `state_path` as
+  `not_before_ms` and honoured at startup and on re-enable, so `make restart-weather` after
+  a daily 429 does not ask again straight away. Any other outcome clears it.
+- **Partial fetches resume.** A grid is fetched in chunks of 50 locations. Chunks that
+  succeeded before a failure are kept for the same model hour, and the retry requests only
+  the missing ones; a retry in a later hour fetches everything again.
+- **Requests are paced.** A token bucket (`budget::TokenBucket`) spends at most 80% of the
+  600 calls/minute limit, charging each chunk its weighted cost before it is sent. The
+  default grid (~280 calls a refresh) never waits; a 0.5° grid (~1,100) is spread over
+  about 80 s. The startup budget log also warns when one refresh exceeds the hourly limit.
+
+### Control and status
+
+The service can be paused and resumed while it runs, and it reports what it is doing. The
+design is **CQRS**: commands and status travel on different paths, and every piece of state
+has exactly one writer.
+
+```mermaid
+flowchart LR
+    cmd["make weather-enable<br/>desktop switch"] -->|"PUT /v1/enabled"| control
+
+    subgraph svc["adsb-weather-server"]
+        control["Control<br/><i>persist, desired</i>"]
+        refresh["Refresher<br/><i>reported</i>"]
+        proj["Projection<br/><i>WeatherStatus</i>"]
+        pub["Publisher"]
+        get["GET /v1/status"]
+    end
+
+    control -->|"desired"| refresh
+    control -->|"desired"| proj
+    refresh -->|"reported"| proj
+    proj --> pub
+    proj --> get
+    pub --> broker[("adsb/stage/weather/status<br/>adsb/stage/weather/availability")]
+    broker --> relay["Desktop relay<br/><i>only writer of the view</i>"] --> ui["Fetch weather switch"]
+```
+
+**Desired vs reported.** `WeatherStatus.enabled` is the operator's accepted, persisted
+setting; `state` — `idle | fetching | retrying | rate_limited | rejected | disabled` — is what
+the refresh loop is doing. A command appears in `enabled` at once and `state` follows when
+the loop acts. That gap is what the desktop shows as pending.
+
+**One writer each.** `Control` writes the desired setting: to `state_path` first, then to a
+`watch` channel, so a failed write returns 500 and changes nothing. The refresh loop writes
+the reported state. The projection joins the two and is the only writer of the status
+channel, which the publisher and `GET /v1/status` both read, so HTTP and MQTT cannot
+disagree. On the desktop, the MQTT relay is the only writer of the service view:
+`set_weather_service_enabled` returns nothing and never touches it.
+
+**Disabling** pauses fetching only. An in-flight fetch is cancelled; the last grid stays
+retained, is still republished on reconnect, and is marked stale by its age. **Re-enabling**
+never fetches before the deadline already pending — `max(now, pending, not_before)` — so
+toggling cannot buy an early fetch or skip a back-off, while a deadline that passed during
+the pause fires at once.
+
+**Topics.** Three retained siblings, all derived from the grid topic by
+`WeatherTopics::from_grid_topic`, which the service and the desktop both call:
+
+| Topic | Payload | Published |
+|-------|---------|-----------|
+| `…/weather/grid` | `WeatherSnapshot` | New snapshot; every ConnAck |
+| `…/weather/status` | `WeatherStatus`, versioned JSON | On change; every ConnAck |
+| `…/weather/availability` | `online` / `offline` | `online` on every ConnAck (birth); `offline` as the retained last will, and sent explicitly before a graceful disconnect |
+
+Liveness is kept off the status topic on purpose. A last will is fixed at CONNECT, so a will
+carrying a full status would overwrite the real one with fields frozen at connect time. With
+the split, a crash leaves `offline` beside the last real status: "offline, was paused".
+
+**HTTP API** (`api.rs` contract, `api_server.rs`, `api_client.rs`):
+
+| Route | Answers |
+|-------|---------|
+| `GET /v1/status` | 200, `WeatherStatus` |
+| `PUT /v1/enabled` `{"enabled": bool}` | 202 `{"enabled": bool}`: accepted and persisted, not yet acted on. 400 for a bad body; 500 `{"error"}` when the setting cannot be saved |
+| `GET /v1/openapi.json` | The OpenAPI document for the routes above |
+| `GET /swagger-ui/` | Swagger UI over that document (feature `swagger-ui`, part of the default `cli` build) |
+
+The OpenAPI document is **generated, not written**. utoipa derives the schemas from the
+contract types — behind an `openapi` feature, so the desktop's `client` build never compiles
+it — and utoipa-axum's `OpenApiRouter` registers each route from the same `#[utoipa::path]`
+attribute that documents it, so routing and documentation cannot diverge. `tests/openapi.rs`
+pins what that does not: the document lists exactly the contract's routes, every documented
+operation is routed, and schema field names and enum strings equal what serde writes. The
+Swagger UI assets are `vendored`, so building needs no network (offline and arm64 Docker
+builds).
+
+Commands use HTTP rather than an MQTT command topic: the caller gets a synchronous error, a
+retained command cannot replay on every reconnect, and the desktop stays subscribe-only on
+the broker. The API has **no authentication**. It binds `127.0.0.1` by default
+(`[weather] http_bind`; `http_port = 8789`, `0` disables it) and logs a warning when bound
+anywhere else.
+
+**Desktop.** The *Fetch weather* switch sits under *Winds aloft*, separate from drawing the
+layer. The command goes through Rust (`set_weather_service_enabled` → `api_client`), so the
+webview CSP stays closed. The URL is `ADSB_WEATHER_API_URL`, which `make up-desktop` and
+`make client` export, else the broker's host on port 8789; a desktop on another machine also
+needs `http_bind = "0.0.0.0"` on the node. `useWeatherSnapshot` keeps the requested setting
+pending until the status topic reports it, and gives up after 10 s with *No confirmation
+from the weather service*.
+
+Operators: `make weather-status | weather-enable | weather-disable`.
+
+### The 10 KiB trap
+
+rumqttc caps packets at **10 KiB in both directions** by default, and a default-grid
+snapshot is ~16 KB. On the publisher that fails the publish. On a **subscriber** it is worse:
+an oversized incoming packet fails the event loop, the client reconnects, the broker
+re-delivers the retained message, and it fails again — a reconnect storm on the same
+connection as the live SBS feed.
+
+Both ends are raised to 1 MiB (`MAX_PACKET_BYTES`, `MAX_INCOMING_PACKET_BYTES`). Only
+`adsb-weather-server` can see both constants — it depends on `adsb-pulsar-client`, not the
+reverse — so a `const { assert!(…) }` there fails the build if the subscriber limit ever
+drops below the publisher's.
+
+### Desktop: a second topic on the live connection
+
+`MqttSource::with_aux_topic` adds a subscription on the existing connection and hands each
+payload over **whole**, through one `watch` channel per topic — the grid, the service
+status and its availability each get their own. `route_publish` checks the SBS topic
+first, then the aux topics, and ignores anything else, so the SBS path is byte-for-byte
+unchanged and a JSON document can never reach the line splitter. An aux topic equal to the
+SBS topic stays SBS and is not subscribed twice. `Connected` status follows the SBS
+subscription only.
+
+Consequently **weather is available only when `source_kind = mqtt`**; a socket session has
+no weather layer and the controls say so.
+
+**Topic derivation — one rule, two places.** Unset, the weather topic is derived from the
+feed topic: `adsb/<stage>/sbs/raw` → `adsb/<stage>/weather/grid`, any other topic →
+`<topic>/weather`. `scripts/render-config.py` (`weather_topic`) renders the service's topic
+and `Config::weather_topic` derives the desktop's subscription with the same rule, each
+pinned by tests with the same cases. If they disagreed the desktop would subscribe to a
+topic nobody publishes to and silently draw nothing. `ADSB_MQTT_WEATHER_TOPIC` overrides it.
+
+**Relay** (`src-tauri/src/weather.rs`). Payloads are validated in Rust — version and array
+lengths — before the webview sees them. A different valid snapshot replaces the held one
+and is emitted as `adsb:weather`; an identical one (every reconnect re-delivers the
+retained message) is ignored; anything malformed is logged and the last good snapshot
+stays. The snapshot lives in `AppState`, not the `FeedHandle`, so it survives a feed
+restart. `get_weather_snapshot` serves a late-mounting UI; `get_weather_availability`
+returns `available | waiting | unsupported_source`.
+
+### Recording weather
+
+The desktop holds one snapshot to draw. Nothing kept it: the next publish overwrote the
+retained message, so the stack recorded where aircraft flew but not the air they flew
+through, and the two could never be correlated afterwards. The restriction on per-aircraft
+wind above — live selections only — existed for exactly that reason.
+
+**That restriction is now lifted**, and the sections below say how. Recording the weather
+created the data that made it liftable, so the guard became a *routing* decision rather
+than a suppression: a DB-history or imported selection is given the wind of the hour
+recorded nearest its own `last_seen`, while the live aircraft beside it keep the live
+snapshot. See *Browsing recorded weather* below.
+
+**The recorder is the writer**, not the weather service. DuckDB takes an exclusive file
+lock and `adsb-data-server` holds it, so the service could not write to the database even
+if it wanted to. It keeps publishing to MQTT and the recorder subscribes, which also keeps
+one writer per piece of state.
+
+It costs no new connection. `main.rs` registers the grid topic with
+`MqttSource::with_aux_topic` before handing the source to `Recorder::run_with_weather`,
+which spawns `weather::persist_weather` beside ingest and maintenance and aborts it the
+same way. `run` delegates to `run_with_weather(source, None)`, so the SBS path is
+unchanged and its existing tests are the regression. `with_aux_topic` needs `&mut source`
+*before* the source is moved, which is why the caller registers it rather than the
+recorder: `MessageSource` knows nothing about auxiliary topics and must not learn.
+
+**One row per model hour.** Retained means the broker re-delivers on every ConnAck, so
+"we already have this one" is the ordinary case. It is caught twice: in the task, against
+the last hour stored, and authoritatively by an anti-join on
+`(source_id, valid_time_ms)` that also survives a restart. The anti-join is deliberate
+rather than `ON CONFLICT DO NOTHING` — that needs a `PRIMARY KEY` on the conflict target,
+and this schema has **no migration mechanism at all**, so a key committed today could
+never be widened.
+
+**The schema is metadata plus the raw payload.** `weather_snapshots` carries the model
+hour, the fetch and receipt times, source, model, version, the grid's shape and the level
+set — everything worth filtering on in SQL — beside `payload`, the snapshot JSON **as
+received**. Not a re-serialisation: a serde round-trip is free to reorder keys, and the
+point of the column is that a replay is identical to what was published. `received_at_ms`
+is the only clock the recorder owns, and so the only way to notice that the weather host's
+is wrong.
+
+| Topic | Rows | Read as |
+|-------|------|---------|
+| `…/weather/grid` | one per model hour, ~16 KB each | `getWeatherSnapshots` — metadata, newest first, **no payloads**, with `payload_bytes` |
+| | | `getWeatherSnapshot` — one hour, payload verbatim |
+
+The two tools are split so a caller cannot pull a day of grids by accident. Both are
+read-only, like everything else on that endpoint.
+
+**Weather is never pruned.** `prune_sync` drops positions and raw messages; a year of
+weather is ~140 MB and it is the slow-moving context that makes old flight data
+interpretable. A test pins that, because the next reader will reasonably assume otherwise.
+
+Two consequences of adding an *observed* table, both of which bite silently:
+
+- It must be registered in `share::OBSERVED_TABLES` too, or a desktop in remote mode sees
+  no weather at all. Those views are now created **one per table**, tolerantly: DuckDB
+  binds a view body at `CREATE VIEW` time, so as a single batch a table an older daemon
+  lacks would abort `StorageHandle::open` entirely — costing the user every other view,
+  not just weather. The statistics count is `unwrap_or(0)` for the same reason.
+- `preview_table` hardcoded `timestamp_ms`. Weather is timed by the model hour it
+  describes, so the time column is a parameter now.
+
+**Mixed deployments.** The recorder parses with `WeatherSnapshot::from_json`, which rejects
+an unknown `SNAPSHOT_VERSION`. Inside the workspace both binaries rebuild together, so a
+bump is safe; an *older recorder beside a newer service* would store nothing and log a
+warning per publish. There is deliberately no store-the-rejected-payload path — the
+metadata columns require a parse.
+
+### Browsing recorded weather
+
+Recording it was half the job. The map still drew **whatever `adsb:weather` last pushed** —
+the current model hour — with no reference to what was on screen, so browsing a week-old
+track showed today's winds over it, silently. That is worse than drawing nothing, because
+it looks like an answer.
+
+**Two instants, not one.** The map follows the browsed window's end; each selected aircraft
+follows its own `last_seen`. `weatherTimesFor` derives both. Analysis mode has no window of
+its own — its set is accumulated across several browses — so its span outranks the last
+window requested, which may describe none of what is displayed.
+
+The aircraft instant is deliberately **not gated on live/history alone**: a DB-history or
+imported track loaded onto the *live* map is still historical and gets its own hour, while
+the live aircraft beside it keep the live snapshot. That is the lifted guard, restated as
+routing.
+
+**Two hops, cheap first.** `getWeatherHistory` lists model hours over ±3 h as metadata
+(bytes), a pure `nearestSnapshotTime` picks one, and only then does `getWeatherAt` fetch the
+~16 KB payload. The LRU is keyed by `valid_time_ms` rather than by the requested time:
+many browsed instants resolve onto one hour, and the map and aircraft slots share the cache
+whenever they land on the same one.
+
+**Selected on mode, never on "whichever is non-null".** The MQTT subscription keeps running
+while history is on screen, so a retained republish would otherwise repaint week-old tracks
+with the current hour. `selectMapWeather` reproduces today's live behaviour byte-for-byte in
+the live branch and **never falls back to it** in the other — the fallback *is* the bug.
+
+**`unsupported_source` is a claim about the live plane only.** It means weather arrives over
+MQTT and this session reads a dump1090 socket. Recorded weather comes out of DuckDB, so a
+socket session can still browse hours a remote daemon recorded; gating the recorded path on
+it would blank the feature for every socket user. In `WeatherControls` this splits into
+`browsing` and `liveUnsupported`, because the flag gated four things and three of them —
+the disabled toggle, the advice to change sources, the *Fetch weather* switch — are wrong
+while browsing.
+
+**Validity forks; `isStale` does not.** `isStale` stays signed on purpose (a model hour
+slightly ahead is the short forecast, not staleness). History asks a different question,
+answered by `isOffHour` / `describeRecordedValidity`, which avoids the word *"valid"*
+because in `weather.ts` that means "relative to now" — `"valid 6 d ago"` would read as a
+fault rather than as the answer.
+
+**The agent sees what the map shows.** Both weather chat tools' `unsupported_source` early
+returns are live-only, and the context readable carries a `mode`. Leaving the copilot
+live-only would reproduce the bug in prose, which is worse: text carries no visual cue that
+it is the wrong day. `windReport` is unchanged — its other callers are all live — so
+`getWindAloft` overrides `validity`/`stale` itself when browsing. The copilot reads a
+snapshot for the *view*, not the one *drawn*: the drawn one goes null when the layer is
+switched off, and the tools must keep answering with it hidden.
+
+**The browse seam.** `DBHistoryContent` already fired `onBrowse` from `doBrowse`, the single
+funnel for every window change (presets, custom, refresh, chart zoom, granularity, metric);
+`page.tsx` simply had never passed it. It must be `useCallback`'d — `doBrowse` lists it in
+its dependency array and six handlers capture it — and passed at **both** call sites, docked
+and floating.
+
+**Panel state is per-instance.** The docked and floating panels each own their window state,
+so toggling between them remounts and resets to the 24 h default while the page keeps the
+last browsed window. The weather then describes the page's window, not the panel's display.
+
+### Frontend
+
+| Piece | Role |
+|-------|------|
+| `lib/weather.ts` | Types, ISA pressure altitude, interpolation, components, barb parts, staleness; the service status line and switch state |
+| `lib/wind-barb.ts` | SVG barb geometry, unit-tested because `MapInner` is not |
+| `lib/aircraft-wind.ts` | Wind and components for a tracked aircraft |
+| `lib/wind-format.ts` | `070° / 20 kt`, `85 kt headwind`, `49 kt from the left` |
+| `hooks/useWeatherSnapshot.ts` | Hydrate, `adsb:weather`, re-check availability on `adsb:status`; the service view from `adsb:weather-service`, and the pending enable/disable request |
+| `lib/weather-history.ts` | Reading *recorded* weather: payload validation, nearest recorded hour, the analysis span, `weatherTimesFor`, the two mode selectors, the bounded LRU |
+| `hooks/useHistoricalWeather.ts` | Two instants in, two slots out. A sibling of `useWeatherSnapshot`, never an extension: pull-by-time versus push, and the consumer needs two weathers at once |
+| `components/WeatherControls.tsx` | Toggle, level picker, Barbs / Particles display toggles, validity, stale badge, credit; the *Fetch weather* switch and service status |
+| `MapInner` `WeatherBarbsLayer` | One barb per grid point, MSL pressure tooltip |
+| `lib/wind-particles.ts` | Field sampler, particle simulation, Mercator projection — pure, unit-tested |
+| `MapInner` `WindParticlesLayer` | Canvas particle animation for the selected level |
+| `components/WindSpeedLegend.tsx` | Particle colour key under the altitude legend, shown only while particles are drawn |
+
+**Interpolation.** Horizontally bilinear, on **u/v components** — averaging 350° and 010° as
+numbers gives 180°. Vertically linear in ln(p) between the two levels bracketing the
+aircraft's pressure, with the surface as a level at 1013.25 hPa. Above the top level
+(200 hPa ≈ FL390) its wind is held down to 150 hPa (≈ FL450) rather than extrapolated, since
+FL410 traffic is common; above that the wind is unknown. ISA is a power law below the
+tropopause (36,089 ft) and exponential above it — the power law alone is ~3 hPa off at FL450.
+
+**Rendering.** Barbs point into the wind with northern-hemisphere feathers: 50 kt pennants,
+10 kt lines, a 5 kt half line, a circle when calm. Icons are memoised per snapshot, level
+and theme: the map re-renders about twice a second with live traffic, and a fresh `divIcon`
+makes react-leaflet call `setIcon` on all ~190 markers. The Open-Meteo credit is added to
+Leaflet's attribution control, not the tile layer, whose attribution is fixed at creation.
+It is mounted whenever barbs **or** particles are drawn — either one shows the data.
+
+**Particles.** Barbs and particles are independent toggles under "Winds aloft"
+(`adsb-weather-barbs`, default on; `adsb-weather-particles`, default off — a continuous
+animation is opt-in). A custom canvas layer, not `leaflet-velocity`: that plugin has been
+unmaintained since 2023, patches the global `L`, and wants GRIB-JSON — a second conversion of
+data `lib/weather.ts` already interpolates. The design, in the order a frame runs:
+
+- **Field.** `createWindField` converts one level to u/v typed arrays once per snapshot and
+  level; `sampleWind` interpolates bilinearly with no allocation. A cell with a missing
+  corner is no wind, as for barbs.
+- **Motion.** Particles live in geographic coordinates and move at a constant **screen**
+  speed of 0.6 px/s per knot at every zoom — true wind speed would be invisible (100 kt is
+  about 0.0005°/s). On Web Mercator a pixel spans `cos φ` times as many degrees of latitude
+  as of longitude, so `Δlat` carries that factor and motion is isotropic on screen.
+- **Respawn.** A particle is re-seeded when it ages out (2–5 s), reaches missing data, or
+  leaves the visible part of the grid, and is flagged `reborn` so no segment is drawn for it
+  that frame — otherwise each respawn would streak a line across the map. Initial ages are
+  staggered so the whole layer does not blink in step. Frame gaps are clamped to 0.1 s, so a
+  backgrounded tab does not make particles jump when it resumes.
+- **Drawing.** Each frame fades the canvas with `destination-in` (keeping 92%), then strokes
+  one path per speed bucket (<20, 20–40, … ≥100 kt): six draw calls, not one per particle.
+  Colours run pale blue → sky blue → yellow → orange → red, more opaque as speed rises.
+  `PARTICLE_COLORS` and `speedBucketLabel` live in `lib/wind-particles.ts` and feed both the
+  layer and `WindSpeedLegend`, so the key cannot drift from what is drawn.
+  Every particle is projected every frame, so `projectMercator` reimplements EPSG:3857
+  rather than calling `latLngToContainerPoint`, which allocates two objects per call.
+- **Map interaction.** The canvas sits in its own pane at z 450 — above tiles and density
+  hexagons, below every marker, `pointer-events: none` so barb tooltips and aircraft clicks
+  still work. It is cleared on `movestart`/`zoomstart` and re-anchored, resized for
+  `devicePixelRatio` and re-seeded on `moveend`/`resize`: positions are geographic but trails
+  are pixels, and would smear across a moving map. The population (300–2,500) is sized to the
+  screen area the grid actually covers.
+
+Known limits: 8-bit alpha rounding leaves trails a residual opacity of a few levels out of 255
+rather than fading to exactly zero, which is standard for this technique and barely visible.
+View bounds that cross the antimeridian are not handled; a ±300 NM receiver grid does not
+reach it in practice.
+
+**Per-aircraft wind.** The details panel shows the wind at the aircraft's pressure altitude
+with head/tail and crosswind components along its track — for **live** selections only
+(current winds would describe the wrong day for imported or DB-history tracks), not on the
+ground, and not once the snapshot is stale (older than 3 hours).
+
+**Availability race.** On mount the snapshot and availability requests race each other and
+the event stream. A late `waiting` never hides a held snapshot; `unsupported_source` is never
+upgraded by one left over from an earlier MQTT session. A hydrate answer only fills an empty
+slot, so it cannot overwrite a newer snapshot that arrived as an event.
+
+### Chat control
+
+The chat can drive the layer and read the wind. Both tools are **client tools**
+(`useCopilotTools.ts`): the snapshot lives in the frontend, and the Tauri tool server the
+agent's server tools call has no weather. Plan:
+`docs/plans/2026-09-15-weather-copilot-tools.md`.
+
+| Tool | Does |
+|------|------|
+| `setWeatherLayer` | `enabled`, `level`, `barbs`, `particles` — only given fields change |
+| `getWindAloft` | Wind for a tracked aircraft (at its altitude, plus head/crosswind on its track), a lat/lon, or the receiver; on the level shown unless `level` or `altitudeFt` is given |
+
+- **Levels are text.** `"SFC"`, `"250 hPa"` and `"FL340"` go through
+  `resolveWeatherLevel`: a flight level maps to the nearest carried level, a pressure level
+  must be carried exactly, and the error lists every option so the model can retry. A
+  `"surface" | number` union would reach the model as an `anyOf` schema, which local models
+  fill badly.
+- **Validate, then apply.** A bad level changes nothing — not even an `enabled: true`
+  in the same call. Asking for barbs or particles also turns the layer on; otherwise the call
+  would succeed and visibly do nothing.
+- **An unsupported source is refused, not ignored**, with the fix (switch the feed source to
+  MQTT) in the message — the chat equivalent of the disabled checkbox. Before the first
+  snapshot the layer can still be enabled; it reports that it is waiting.
+- **An explicit level wins over the aircraft's altitude.** "Wind at FL340 for UAL123" is a
+  what-if; with neither given, the aircraft's own altitude is used.
+- **One owner per verb.** `setLayerVisibility` says weather is not one of its layers, and a
+  prompt guideline routes display changes to `setWeatherLayer` and wind questions to
+  `getWindAloft` — the same kind of description collision that once sent "start simulated
+  flights" to `toggleDemoFlights`.
+- **Ambient context.** A "Weather layer (winds aloft)" readable tells the agent on every turn
+  whether weather is available, what is drawn and how current it is. It takes the page's
+  `weatherClockMs`; calling `Date.now()` during render is impure under the React Compiler.
+
+`windReport` rounds to whole degrees and knots and normalises `-0`, so the model quotes
+clean numbers. The Python `tools.py` fallback list mirrors both schemas;
+`tests/test_weather_tools.py` pins the routing prose and that neither tool is in
+`SERVER_TOOL_NAMES`.
+
+### Configuration
+
+`[weather]` in `adsb-stack.toml`, rendered to `.run/weather.toml`. Configs created before
+this section existed still render, with every key defaulted.
+
+`make up` starts the service when enabled and `make down` always stops it. `make up-weather`,
+`down-weather` and `restart-weather` run it alone — the last to pick up an edited `[weather]`,
+which is read once at startup. `up-weather` refuses unless `enabled = true`, so the config
+stays the one switch for spending quota, and says `make build` when the binary is missing;
+a broker that is not up yet is only a note, since the service retries and the snapshot is
+retained. `scripts/tests/test_stack_weather.sh` covers all of it against a fake binary.
+
+`make up-desktop` exports the stack's `ADSB_MQTT_BROKER` / `_PORT` / `_TOPIC` (and an explicit
+weather topic only), which the app applies over its stored config on every launch. It used to
+export none: a desktop whose store predated staged topics subscribed to `adsb/sbs/raw`, derived
+`adsb/weather/grid`, and showed "waiting for the weather service" while the service published to
+`adsb/dev/weather/grid`. The source kind is still not exported — that would override Settings →
+Feed Source on every launch.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `enabled` | `false` | `make up` starts the service. Off by default: needs internet and spends a third-party quota |
+| `topic` | derived | See topic derivation above |
+| `radius_nm` | `300` | Grid radius around the receiver |
+| `spacing_deg` | `1.0` | Grid spacing |
+| `levels` | `[850, 700, 500, 300, 250, 200]` | hPa; each adds two variables per point |
+| `refresh_minutes` | `60` | Model data updates hourly |
+| `model` | `best_match` | Open-Meteo model name; validated as a plain identifier because it goes into the URL unencoded |
+| `cache_path` | `.run/weather-cache.json` | Stack-scoped, like `storage.db_path` |
+
+**Recording weather adds no new key.** The recorder needs the same topic the service
+publishes to, so `render_server` derives `mqtt_weather_topic` into `.run/data-server.toml`
+from `[weather].topic` — or, unset, from the same rule applied to `mqtt.topic`. The
+operator sets the topic once, or never, and the publisher and the recorder follow it
+together. `test_the_recorder_subscribes_to_the_weather_service_s_topic` asserts the two
+rendered topics are equal **to each other** rather than to a literal, so a change to the
+derivation cannot move one without the other. It is rendered even when `[weather]` is
+disabled, which costs nothing and means a later `make up-weather` needs no re-render.
+`ADSB_MQTT_WEATHER_TOPIC` overrides it on the recorder as it does on the desktop.
+
+`make doctor` requires the binary only when enabled, counts duplicate instances, checks the
+topic carries the stage, and reaches the Open-Meteo **site root** — not the forecast API,
+which would spend quota on every health check. Receiver position, broker and `source_id`
+come from `[receiver]` and `[mqtt]`, shared with the feed.
+
+### Verified end to end
+
+On the default stack (2026-09-15): the service fetched 187 points from the live API and
+published a 16,048-byte retained snapshot, which a fresh subscriber received with every
+value present at the surface and all six levels. `docker restart` of the broker was
+followed two seconds later by a republish from memory — still a single API fetch — and a
+fresh subscriber received the snapshot again, while the recorder re-subscribed in the same
+instant.
+
+**Recording** (2026-09-17, same stack, against a 289 MB database holding 19 days of
+history). Restarted onto the new binary, the recorder logged `Recording weather snapshots
+from 'adsb/dev/weather/grid'`, subscribed to both topics, and recorded the model hour
+**3 ms later** — no fetch and no waiting for the next refresh, because the retained
+message is replayed on the first ConnAck. The stored row was 187 points (`nlat` 11 ×
+`nlon` 17), `payload_bytes` 16,011, `levels` `200,250,300,500,700,850`, and `source_id`
+`dev-laptop-dev` — stamped by the storage layer, since the payload carries no receiver
+identity. `fetched_at_ms` was **16 minutes older** than `received_at_ms`: one timestamp
+column would have conflated when the model was fetched with when this node got it.
+
+Restarting the recorder a second time is the dedupe proof that matters. The new process
+starts with an empty in-memory guard, so the replayed retained message really is offered
+for insertion — and the result was **no second row and no log line**, leaving the count at
+1. Only the database anti-join on `(source_id, valid_time_ms)` can decline that write,
+which is the layer that survives a restart. `getWeatherSnapshots`, `getWeatherSnapshot`
+(payload byte-identical and re-parseable) and `adsb_recorder_weather_snapshots_rows` all
+answered; the same tools returned `Unknown tool` minutes earlier on the previous binary.
+
+Incidentally confirming the two legs are independent: the SBS feed was down throughout
+(dump1090 unreachable, `messages_received_total 0`), and weather recorded regardless.
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `adsb-weather-server/src/grid.rs` | Receiver-centred grid |
+| `adsb-weather-server/src/budget.rs` | Open-Meteo daily call estimate |
+| `adsb-weather-server/src/snapshot.rs` | Wire contract + validation |
+| `adsb-weather-server/src/open_meteo.rs` | Request building, response decoding |
+| `adsb-weather-server/src/provider.rs` | `WeatherProvider` trait, `OpenMeteoProvider` |
+| `adsb-weather-server/src/refresh.rs`, `cache.rs` | Schedule, retry, last-good cache |
+| `adsb-weather-server/src/publisher.rs` | Retained publish, republish per ConnAck |
+| `adsb-pulsar-client/src/source/mqtt_source.rs` | `with_aux_topic`, `route_publish`, packet limit |
+| `adsb-pulsar-client/src/config.rs` | `mqtt_weather_topic`, `weather_topic()` |
+| `src-tauri/src/weather.rs` | Relay, availability |
+| `adsb-data-server/src/weather.rs` | Recorder-side relay: classify a payload, map it to a row, persist |
+| `adsb-data-server/src/recorder.rs` | `run_with_weather` — the persist task beside ingest |
+| `adsb-data-server/src/config.rs` | `mqtt_weather_topic`, `feed_config()` |
+| `adsb-data-engine/src/storage.rs` | `weather_snapshots` DDL, insert with dedupe, listing, fetch |
+| `adsb-data-engine/src/share.rs` | `OBSERVED_TABLES`, per-table remote views |
+| `src/lib/weather.ts`, `src/lib/wind-particles.ts` | Interpolation; particle field and simulation |
+| `src/components/MapInner.tsx` | `WeatherBarbsLayer`, `WindParticlesLayer` |
+| `src/hooks/useCopilotTools.ts`, `src/hooks/useCopilotContext.ts` | `setWeatherLayer`, `getWindAloft`, weather readable |
+| `adsb-agent/src/adsb_agent/tools.py`, `prompt_sections.yaml` | Fallback schemas, routing guideline |
+| `scripts/render-config.py`, `scripts/stack.sh` | `[weather]` rendering, start/stop/doctor |
+
+---
+
+## Observability (Prometheus)
+
+Every long-lived service in the stack exposes a Prometheus endpoint. Before
+this, the telemetry existed but was trapped: the feed client kept excellent
+counters and wrote them to one log line every 10 s; the recorder could report
+storage statistics only to whoever `POST`ed to its tool endpoint; the weather
+service published a status projection, which is a state, not a time series.
+Answering "is the feed flowing, is the recorder growing, did weather get rate
+limited overnight" meant reading logs on each host.
+
+| Service | Endpoint | Port |
+|---|---|---|
+| Feed client | `/metrics` | `[metrics] feed_port` (8790) — its own listener |
+| Data server | `/metrics` | `[storage] http_port` (8787) — shared |
+| Weather service | `/metrics` | `[weather] http_port` (8789) — shared |
+| adsb-agent | `/metrics` | 8000 |
+| adsb-simulation-agent | `/metrics` | 8300 |
+
+Only the feed client needed a port of its own; everything else rides a listener
+it already had. That is why there is exactly one new config setting.
+
+### The desktop is deliberately not a scrape target
+
+`adsb-data-server`'s `server::router` is embedded by the desktop app for its own
+agent tool server, so adding `/metrics` there would have made the Tauri app a
+scrape target by accident. It is not one: it is a GUI on a laptop, Prometheus
+has no idea when it is running, and its DuckDB file is a *different database*
+from the recorder's — so its numbers would silently mix two stores in one graph.
+
+The exclusion is structural rather than conventional. `/metrics` lives on
+`router_with_metrics`/`serve_with_metrics`, and the desktop takes both
+`adsb-data-server` and `adsb-pulsar-client` with `default-features = false`, so
+nothing in that build enables the `metrics` feature at all.
+`tests/metrics_http.rs` pins it with a test that fails if `/metrics` ever
+appears on the plain router.
+
+If desktop metrics are ever wanted — `bridge.rs` already owns a `Metrics` — the
+honest mechanism is Prometheus `file_sd` or a push gateway, not a scrape target
+that is down most of the time.
+
+### Identity is one series, not a label on everything
+
+Three kinds of identity, three homes:
+
+1. **Which stack a target belongs to** is a *target label* (`stack`,
+   `component`) in `prometheus.yml`. The scraper already knows what it was
+   pointed at, and it can be relabelled without redeploying. Baking it into the
+   process would create two sources of truth that disagree the first time
+   someone runs `STACK=prod` with a copied config.
+2. **Identity only the process knows** — `source_id`, version, stage — is one
+   always-`1` gauge, `adsb_build_info`, joined at query time:
+   `rate(...) * on(instance) group_left(source_id) adsb_build_info`. As a label
+   on all ~30 series it would be bytes on every scrape, cardinality in the
+   database, and series churn the day a receiver is renamed.
+3. **Real dimensions** (`state`, `scope`, `tool`, `outcome`) are labels, but
+   only ever bounded sets. Never a hex ident, a callsign, a topic, or an error
+   string — `last_error` stays in the status API, which is built for it.
+
+### Three choices worth keeping
+
+**The weather state is a state *set*.** `ServiceState` becomes one series per
+variant with exactly one at `1`, not a gauge holding `0..5`. It is
+self-describing, it alerts on a name
+(`adsb_weather_state{state="rate_limited"} == 1 for 30m`) rather than a magic
+number, and inserting a variant cannot silently change what an existing alert
+means. The label functions match exhaustively, so a new variant fails to
+compile instead of being exported as an old one.
+
+**Recorder statistics are cached, never queried per scrape.** `get_stats` runs
+several full-table aggregates under the same lock the ingest path holds, so a
+scrape-time query would make Prometheus's cadence — plus every retry, every
+human hitting `/metrics`, every second scraper — cost recorded messages. A
+15 s refresher feeds the endpoint, and the staleness is *exported*
+(`stats_age_seconds`, `stats_query_duration_seconds`) rather than hidden.
+
+**Absent is not zero.** Optional timestamps are omitted when they have no
+value. A recorder with no rows has no oldest record; exporting `0` would plot a
+row from 1970 and make `time() - oldest` a plausible-looking 56 years.
+
+### Reaching host processes from a container
+
+The services are native processes; Prometheus runs in Docker. It reaches them
+through `host.docker.internal`, mapped to `host-gateway` so one target string
+works on Docker Desktop and Linux alike.
+
+**Whether that reaches a loopback-bound service depends on the Docker host**,
+and the two cases behave differently enough to be worth stating:
+
+- On **Docker Desktop** (macOS, Windows) the name is proxied through to the
+  host's `127.0.0.1`, so every service stays on loopback and is still scraped.
+  This was measured, not assumed: the recorder and the weather service bind
+  `127.0.0.1` only, and both targets report UP.
+- On **Linux**, `host-gateway` is a real bridge address that cannot reach host
+  loopback, so a target there must bind `0.0.0.0` — or Prometheus must not be
+  in a bridge network at all.
+
+Which is why the Pi answer is the better one generally:
+`infrastructure/docker-compose.pi.yml` puts Prometheus on the host network,
+every target becomes `localhost`, and **nothing has to be opened**. That matters
+most for the weather service, whose port also carries an unauthenticated
+`PUT /v1/enabled` — opening it to scrape counters would hand the LAN a switch
+for the weather layer. The feed (`[metrics].feed_bind`) and the recorder
+(`[storage].http_bind`) can each be opened deliberately where that is the right
+trade; the weather service is the one where it is not.
+
+### Grafana
+
+`make monitoring` starts Prometheus and Grafana without Pulsar, which now sits
+behind a compose profile. Dashboards (`adsb-pipeline`, `adsb-recorder`,
+`adsb-weather`, `adsb-agents`) are tracked JSON, mounted read-only with
+`allowUiUpdates: false` — an edit made in the UI would otherwise become the
+source of truth and vanish on the next restart. Grafana keeps `:3000`, which is
+why the Next dev server moved to `:3200`.
+
 ## Conclusion
 
 The ADS-B Aircraft Tracker desktop application demonstrates a modern, performant architecture:
@@ -4380,4 +5082,11 @@ This design prioritizes developer experience (hot reload, TypeScript, TDD), user
 
 ---
 
-*Last updated: August 2026 — Added a **System Architecture (C4 Model)** view — three Mermaid diagrams drawn to C4 conventions (Level 1 Context, Level 2 Container, Level 3 Component), with C4 palette, element-type and technology annotations, and dashed edges for optional dependencies, plus a component inventory table and trust/process boundaries, refreshed the table of contents to match the document's 27 sections, added `tool_server.rs`/`tool_service.rs` to the backend directory tree and component diagram, documented the `adsb-simulation-agent` A2A service on `:8300`, and normalized `adsb-agent/` paths. Previous: simulation scenarios (scenario builder, descriptions, panel layout, trajectory visibility). Previous: AI Agent & AG-UI integration (CopilotKit chat panel, LangGraph ReAct agent on `:8000`, loopback Tauri tool server on `:8787`, server/client tool-plane split, ambient `useCopilotContext` readables, `useCopilotTools`, voice input via Voxtral / LFM2.5-Audio with auto-send). Previous: status event audit trail, Arrow IPC query pipeline, storage management (release/reclaim/export/swap/import), section-aware track visibility, analysis mode, config persistence, `adsb-data-engine` workspace crate, DB History panel.*
+*Last updated: September 2026 — Added **browsing recorded weather**: the map, the
+per-aircraft wind rows and the chat agent now describe the weather of the time being
+viewed rather than the current model hour — two instants (the browsed window's end for the
+map, each aircraft's own `last_seen` for its wind), a two-hop metadata-then-payload fetch
+behind an LRU keyed by model hour, pure mode selectors that never fall back to the live
+snapshot, and `unsupported_source` narrowed to the live plane so a dump1090-socket session
+can still browse hours a daemon recorded. **The "live selections only" restriction on
+per-aircraft wind is lifted** — it becomes routing rather than suppression. Previous: **recording weather**: the recorder subscribes to the weather grid as an aux topic on the MQTT connection it already has and stores one row per model hour in a new observed `weather_snapshots` table (metadata lifted out of the payload, plus the payload verbatim), deduped by an anti-join on `(source_id, valid_time_ms)` because the retained message is re-delivered on every ConnAck, deliberately exempt from the retention window, and readable through `getWeatherSnapshots` / `getWeatherSnapshot`; remote views are now created one per table so a client newer than its daemon is not locked out of history entirely, and `preview_table` takes its time column as a parameter. Previous: the **Weather Layer**: `adsb-weather-server` (Open-Meteo winds aloft and MSL pressure on a receiver-centred grid, published as a retained MQTT message and republished per ConnAck), the desktop's aux-topic subscription on the live-feed connection, the rumqttc 10 KiB packet trap, u/v and ln(p) interpolation, wind barbs and per-aircraft wind. Previous: Added a **System Architecture (C4 Model)** view — three Mermaid diagrams drawn to C4 conventions (Level 1 Context, Level 2 Container, Level 3 Component), with C4 palette, element-type and technology annotations, and dashed edges for optional dependencies, plus a component inventory table and trust/process boundaries, refreshed the table of contents to match the document's 27 sections, added `tool_server.rs`/`tool_service.rs` to the backend directory tree and component diagram, documented the `adsb-simulation-agent` A2A service on `:8300`, and normalized `adsb-agent/` paths. Previous: simulation scenarios (scenario builder, descriptions, panel layout, trajectory visibility). Previous: AI Agent & AG-UI integration (CopilotKit chat panel, LangGraph ReAct agent on `:8000`, loopback Tauri tool server on `:8787`, server/client tool-plane split, ambient `useCopilotContext` readables, `useCopilotTools`, voice input via Voxtral / LFM2.5-Audio with auto-send). Previous: status event audit trail, Arrow IPC query pipeline, storage management (release/reclaim/export/swap/import), section-aware track visibility, analysis mode, config persistence, `adsb-data-engine` workspace crate, DB History panel.*

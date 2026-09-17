@@ -1,0 +1,122 @@
+{
+  "uid": "adsb-agents",
+  "title": "ADS-B Agents",
+  "description": "The chat agent and the simulation agent. Complements MLflow tracing rather than repeating it — this is what still works when MLflow is down.",
+  "tags": ["adsb"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      { "name": "datasource", "label": "Data source", "type": "datasource", "query": "prometheus", "hide": 0, "current": {} },
+      {
+        "name": "stack",
+        "label": "Stack",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(adsb_build_info, stack)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Runs",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by(outcome) (rate(adsb_agent_runs_total{stack=~\"$stack\"}[5m]))", "legendFormat": "{{outcome}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Error ratio",
+      "description": "Errored runs as a fraction of all runs. A RUN_ERROR is terminal for a turn, so this is user-visible failure.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "max": 1,
+          "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.05 }, { "color": "red", "value": 0.2 }] },
+          "custom": { "fillOpacity": 10 }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(adsb_agent_runs_total{stack=~\"$stack\", outcome=\"error\"}[5m])) / clamp_min(sum(rate(adsb_agent_runs_total{stack=~\"$stack\"}[5m])), 1e-9)",
+          "legendFormat": "error ratio"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Run duration percentiles",
+      "description": "Buckets are chosen for LLM turns, not HTTP requests: a multi-hop tool-calling run routinely takes a minute.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 0 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.5, sum by(le) (rate(adsb_agent_run_duration_seconds_bucket{stack=~\"$stack\"}[10m])))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by(le) (rate(adsb_agent_run_duration_seconds_bucket{stack=~\"$stack\"}[10m])))", "legendFormat": "p95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum by(le) (rate(adsb_agent_run_duration_seconds_bucket{stack=~\"$stack\"}[10m])))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "In flight — runs and SSE streams",
+      "description": "The leak detector. Streams that never close show up as a staircase that does not come back down.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "adsb_agent_active_runs{stack=~\"$stack\"}", "legendFormat": "active runs" },
+        { "refId": "B", "expr": "adsb_agent_sse_streams_active{stack=~\"$stack\"}", "legendFormat": "open SSE streams" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tool calls",
+      "description": "Tool names are a bounded, code-defined set, so they are safe as a label.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "topk(10, sum by(tool) (rate(adsb_agent_tool_calls_total{stack=~\"$stack\"}[5m])))", "legendFormat": "{{tool}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Simulation agent — route hints",
+      "description": "The fallback arm is the one that pays for itself: an exhausted token budget returns empty content, which looks exactly like a model ignoring the prompt.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by(outcome) (rate(adsb_sim_agent_route_hint_total{stack=~\"$stack\"}[15m]))", "legendFormat": "{{outcome}}" },
+        { "refId": "B", "expr": "sum by(outcome) (rate(adsb_sim_agent_tasks_total{stack=~\"$stack\"}[15m]))", "legendFormat": "tasks {{outcome}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Resident memory",
+      "description": "Linux only: prometheus_client reads /proc for this, so it is absent on a macOS dev machine.",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "process_resident_memory_bytes{job=~\"adsb-agent|adsb-simulation-agent\"}", "legendFormat": "{{job}}" }
+      ]
+    }
+  ]
+}

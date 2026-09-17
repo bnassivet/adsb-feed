@@ -1,0 +1,145 @@
+{
+  "uid": "adsb-recorder",
+  "title": "ADS-B Recorder",
+  "description": "Is the database growing, how fast, and how long until the disk is full? `make verify`, continuously.",
+  "tags": ["adsb"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      { "name": "datasource", "label": "Data source", "type": "datasource", "query": "prometheus", "hide": 0, "current": {} },
+      {
+        "name": "stack",
+        "label": "Stack",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(adsb_build_info, stack)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Storage",
+      "description": "0 means the handle is closed or the last statistics query failed — which is NOT the same as an empty database.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DEGRADED", "color": "red" }, "1": { "text": "OK", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "refId": "A", "expr": "adsb_recorder_storage_up{stack=~\"$stack\"}", "legendFormat": "{{instance}}" }]
+    },
+    {
+      "type": "stat",
+      "title": "Recording lag",
+      "description": "time() - newest record. Absent when nothing has been recorded at all, which is honest: there is no newest row.",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 60 }, { "color": "red", "value": 300 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "refId": "A", "expr": "time() - adsb_recorder_newest_record_timestamp_seconds{stack=~\"$stack\"}", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Statistics age",
+      "description": "The cache, made honest. These numbers are refreshed every 15s rather than queried per scrape, because the query contends with the ingest path.",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 120 }] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "refId": "A", "expr": "adsb_recorder_stats_age_seconds{stack=~\"$stack\"}", "legendFormat": "{{instance}}" }]
+    },
+    {
+      "type": "stat",
+      "title": "Retention window",
+      "description": "newest - oldest: how much history the database actually holds.",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "adsb_recorder_newest_record_timestamp_seconds{stack=~\"$stack\"} - adsb_recorder_oldest_record_timestamp_seconds{stack=~\"$stack\"}",
+          "legendFormat": "{{instance}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Rows recorded per second",
+      "description": "This is what `make verify` samples twice, six seconds apart — here it is all the time.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "rowsps", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "rate(adsb_recorder_positions_rows{stack=~\"$stack\"}[5m])", "legendFormat": "{{instance}} positions" },
+        { "refId": "B", "expr": "rate(adsb_recorder_raw_messages_rows{stack=~\"$stack\"}[5m])", "legendFormat": "{{instance}} raw" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Database size, and a week ahead",
+      "description": "predict_linear over 6h, projected 7 days. On an SD card this is the number that matters.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "adsb_recorder_db_size_bytes{stack=~\"$stack\"}", "legendFormat": "{{instance}} now" },
+        { "refId": "B", "expr": "predict_linear(adsb_recorder_db_size_bytes{stack=~\"$stack\"}[6h], 7 * 86400)", "legendFormat": "{{instance}} in 7d" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Table row counts",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "adsb_recorder_positions_rows{stack=~\"$stack\"}", "legendFormat": "positions" },
+        { "refId": "B", "expr": "adsb_recorder_flights_rows{stack=~\"$stack\"}", "legendFormat": "flights" },
+        { "refId": "C", "expr": "adsb_recorder_status_events_rows{stack=~\"$stack\"}", "legendFormat": "status events" },
+        { "refId": "D", "expr": "adsb_recorder_events_of_interest_rows{stack=~\"$stack\"}", "legendFormat": "events of interest" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Statistics query cost",
+      "description": "How long the cached query takes. If this climbs toward the scrape timeout on a large database, the cache is doing its job.",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "adsb_recorder_stats_query_duration_seconds{stack=~\"$stack\"}", "legendFormat": "{{instance}}" }
+      ]
+    }
+  ]
+}

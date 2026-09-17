@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { useCopilotTools, type DisplayToolsConfig } from "../useCopilotTools";
+import type { WeatherSnapshot } from "@/lib/weather";
 
 // Capture all tool registrations from useFrontendTool calls
 const registeredTools = new Map<
@@ -120,9 +121,121 @@ describe("useCopilotTools — display control tools", () => {
     renderHook(() => useCopilotTools(config));
   });
 
-  it("registers all 35 tools", () => {
-    // 26 display/query tools + 9 simulation-scenario tools.
-    expect(registeredTools.size).toBe(35);
+  it("registers all 37 tools", () => {
+    // 26 display/query tools + 9 simulation-scenario tools + 2 weather tools.
+    expect(registeredTools.size).toBe(37);
+  });
+
+  describe("weather tools", () => {
+    const HOUR = 3_600_000;
+    const VIEW_MS = Date.now() - 48 * HOUR;
+
+    /** A 2x2 grid bracketing the receiver at 45.5, -73.6. */
+    function snapshot(validTimeMs: number): WeatherSnapshot {
+      return {
+        version: 1,
+        source: "open-meteo",
+        attribution: "Weather data by Open-Meteo.com (CC BY 4.0)",
+        model: "best_match",
+        fetched_at_ms: validTimeMs,
+        valid_time_ms: validTimeMs,
+        grid: { lat0: 45, lon0: -74, dlat: 1, dlon: 1, nlat: 2, nlon: 2 },
+        surface: {
+          wind_dir_deg: [270, 270, 270, 270],
+          wind_speed_kt: [10, 10, 10, 10],
+          mslp_hpa: [1013, 1013, 1013, 1013],
+        },
+        levels: {
+          "250": { wind_dir_deg: [250, 250, 250, 250], wind_speed_kt: [100, 100, 100, 100] },
+        },
+      };
+    }
+
+    function weather(overrides: Record<string, unknown> = {}) {
+      return {
+        snapshot: snapshot(VIEW_MS - 20 * 60_000),
+        availability: "available",
+        show: true,
+        level: 250,
+        showBarbs: true,
+        showParticles: false,
+        setShowWeather: vi.fn(),
+        setWeatherLevel: vi.fn(),
+        setShowWeatherBarbs: vi.fn(),
+        setShowWeatherParticles: vi.fn(),
+        ...overrides,
+      } as unknown as DisplayToolsConfig["weather"];
+    }
+
+    /** Re-registers the tools against a config carrying weather. */
+    function render(weatherConfig: DisplayToolsConfig["weather"]) {
+      registeredTools.clear();
+      renderHook(() => useCopilotTools(makeConfig({ weather: weatherConfig })));
+    }
+
+    async function call(name: string, args: unknown = {}) {
+      return JSON.parse((await getHandler(name)(args)) as string);
+    }
+
+    it("reads the wind from the snapshot the map is drawing", async () => {
+      // The invariant: the agent sees what the map shows. Leaving it live-only
+      // reproduces the bug in prose, which is worse -- text carries no visual
+      // cue that it is the wrong day.
+      render(weather({ isLive: false, viewTimeMs: VIEW_MS }));
+
+      const result = await call("getWindAloft");
+
+      expect(result.speedKt).toBe(100);
+      expect(result.fromDeg).toBe(250);
+    });
+
+    it("measures the recorded hour against the time on screen", async () => {
+      // windReport reports validity and staleness against the wall clock, so a
+      // perfectly good recorded hour would be handed to the agent as "valid 2 d
+      // ago, stale: true".
+      render(weather({ isLive: false, viewTimeMs: VIEW_MS }));
+
+      const result = await call("getWindAloft");
+
+      expect(result.validity).toMatch(/model hour 20 min earlier/);
+      expect(result.stale).toBe(false);
+    });
+
+    it("says nothing was recorded rather than waiting for a snapshot", async () => {
+      // "No weather snapshot has arrived yet" is a live sentence: it invites
+      // the agent to wait for something that is never coming.
+      render(weather({ snapshot: null, isLive: false, viewTimeMs: VIEW_MS }));
+
+      const result = await call("getWindAloft");
+
+      expect(result.error).toMatch(/recorded/i);
+      expect(result.error).not.toMatch(/arrived yet/i);
+    });
+
+    it("works on a socket source while browsing recorded weather", async () => {
+      // Recorded weather comes out of DuckDB, not MQTT.
+      render(weather({ availability: "unsupported_source", isLive: false, viewTimeMs: VIEW_MS }));
+
+      expect((await call("getWindAloft")).speedKt).toBe(100);
+      expect(await call("setWeatherLayer", { enabled: true })).not.toHaveProperty("error");
+    });
+
+    it("still refuses on a socket source while live", async () => {
+      // The live branch must not regress.
+      render(weather({ availability: "unsupported_source" }));
+
+      expect((await call("getWindAloft")).error).toMatch(/MQTT/);
+      expect((await call("setWeatherLayer", { enabled: true })).error).toMatch(/MQTT/);
+    });
+
+    it("reads the live snapshot against the wall clock as before", async () => {
+      render(weather({ snapshot: snapshot(Date.now() - 20 * 60_000) }));
+
+      const result = await call("getWindAloft");
+
+      expect(result.speedKt).toBe(100);
+      expect(result.validity).toMatch(/valid 20 min ago/);
+    });
   });
 
   describe("simulation agent tools", () => {
@@ -306,6 +419,10 @@ describe("useCopilotTools — display control tools", () => {
   });
 
   describe("setLayerVisibility", () => {
+    it("sends weather requests to setWeatherLayer, which owns that layer", () => {
+      expect(registeredTools.get("setLayerVisibility")?.description).toMatch(/setWeatherLayer/);
+    });
+
     it("sets only provided layers", async () => {
       const result = JSON.parse(
         await getHandler("setLayerVisibility")({ history: true, density: true })

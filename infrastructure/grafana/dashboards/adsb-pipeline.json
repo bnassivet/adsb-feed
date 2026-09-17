@@ -1,0 +1,144 @@
+{
+  "uid": "adsb-pipeline",
+  "title": "ADS-B Pipeline",
+  "description": "Is the feed alive, and is it moving messages? The one dashboard to open first.",
+  "tags": ["adsb"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "hide": 0,
+        "current": {}
+      },
+      {
+        "name": "stack",
+        "label": "Stack",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(adsb_build_info, stack)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Silence — since the last heartbeat or data line",
+      "description": "The metric that catches a feed which is connected and receiving nothing. Every other number on this page looks healthy in that state.",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 75 },
+              { "color": "red", "value": 90 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by(instance) (adsb_feed_last_meaningful_message_seconds{stack=~\"$stack\"})",
+          "legendFormat": "{{instance}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Targets up",
+      "description": "0 means the process is gone, not merely unhealthy.",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "refId": "A", "expr": "up{job=~\"adsb-.*\"}", "legendFormat": "{{job}}" }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "What is running",
+      "description": "adsb_build_info: identity the process alone knows, joined here rather than repeated on every series.",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "adsb_build_info{stack=~\"$stack\"}", "format": "table", "instant": true }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true } } }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Throughput",
+      "description": "Received includes heartbeats; sent is what a forwarder accepted. A persistent gap between them is back-pressure.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (rate(adsb_feed_messages_received_total{stack=~\"$stack\"}[1m]))", "legendFormat": "{{instance}} received" },
+        { "refId": "B", "expr": "sum by(instance) (rate(adsb_feed_messages_sent_total{stack=~\"$stack\"}[1m]))", "legendFormat": "{{instance}} sent" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Errors and reconnections",
+      "description": "A reconnect storm from duplicate MQTT client ids shows up here first — once it produced 567k reconnects and a 144 MB log before anyone noticed.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (rate(adsb_feed_errors_total{stack=~\"$stack\"}[5m]))", "legendFormat": "{{instance}} errors/s" },
+        { "refId": "B", "expr": "sum by(instance) (increase(adsb_feed_reconnections_total{stack=~\"$stack\"}[1h]))", "legendFormat": "{{instance}} reconnects/h" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Retry queue depth",
+      "description": "A depth, not a total. Sustained growth means a forwarder is not draining.",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "adsb_feed_retry_queue_messages{stack=~\"$stack\"}", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Bytes on the wire",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (rate(adsb_feed_bytes_received_total{stack=~\"$stack\"}[1m]))", "legendFormat": "{{instance}} in" },
+        { "refId": "B", "expr": "sum by(instance) (rate(adsb_feed_bytes_sent_total{stack=~\"$stack\"}[1m]))", "legendFormat": "{{instance}} out" }
+      ]
+    }
+  ]
+}

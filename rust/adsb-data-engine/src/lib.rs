@@ -30,5 +30,6 @@ pub use types::{
     ScenarioWithTracks, ShareConfig, ShareInfo, ShareStatus, StatusEvent, StatusEventQuery,
     StatusEventStatus, StatusEventType, StorageConfig, StorageStats, TablePreview,
     TimeDistributionBucket, TimeDistributionMetric, TimeDistributionQuery, TrajectoryQuery,
-    UpdateEventOfInterest, UpdateScenario, UpdateScenarioTrack,
+    UpdateEventOfInterest, UpdateScenario, UpdateScenarioTrack, WeatherSnapshotKey,
+    WeatherSnapshotMeta, WeatherSnapshotQuery, WeatherSnapshotRecord,
 };

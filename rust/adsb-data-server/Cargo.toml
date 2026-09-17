@@ -13,6 +13,12 @@ adsb-data-engine = { path = "../adsb-data-engine" }
 # live in the feed client. `default-features = false` drops clap and pulsar,
 # so this crate never pulls protoc.
 adsb-pulsar-client = { path = "../adsb-pulsar-client", default-features = false, features = ["mqtt"] }
+# The weather payload contract only: `default-features = false` is serde +
+# serde_json + thiserror, since every other dependency of that crate is
+# optional. NOT `client` (the desktop's choice) or `service` -- both pull
+# reqwest and a TLS stack this recorder has no use for, and aws-lc-rs compiles
+# C, which is felt on an arm64 Pi build.
+adsb-weather-server = { path = "../adsb-weather-server", default-features = false }
 
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -29,14 +35,28 @@ toml = { version = "0.8", optional = true }
 # Read-only HTTP query API (optional)
 axum = { version = "0.8", optional = true }
 
+# Prometheus exposition. `default-features = false` for the same reason as in
+# adsb-pulsar-client: the default `protobuf` feature pulls protobuf 2.x.
+prometheus = { version = "0.13", default-features = false, optional = true }
+
 [dev-dependencies]
 tempfile = "3"
 async-trait = "0.1"
+# Drives the HTTP tests. Same version and features as adsb-weather-server, so
+# the workspace builds one reqwest rather than two.
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 
 [features]
-default = ["cli", "http-api"]
+default = ["cli", "http-api", "metrics"]
 cli = ["dep:clap", "dep:toml"]
 http-api = ["dep:axum"]
+# Prometheus exposition at /metrics, on the query API's own listener.
+#
+# NOT reachable from the desktop: it takes this crate with
+# `default-features = false, features = ["http-api"]`, so nothing in that build
+# enables `metrics` and the Tauri app's embedded tool server has no /metrics.
+# That is deliberate -- see `server::router_with_metrics`.
+metrics = ["http-api", "adsb-pulsar-client/metrics", "dep:prometheus"]
 
 [lib]
 name = "adsb_data_server"

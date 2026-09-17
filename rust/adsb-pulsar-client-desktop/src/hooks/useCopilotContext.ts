@@ -16,6 +16,76 @@ import type {
   Filters,
   StorageAvailability,
 } from "@/lib/types";
+import {
+  describeRecordedValidity,
+  describeValidity,
+  isOffHour,
+  isStale,
+  levelLabel,
+  type WeatherAvailability,
+  type WeatherLevel,
+  type WeatherSnapshot,
+} from "@/lib/weather";
+
+/** The weather layer as the agent should see it. */
+export interface CopilotWeatherContext {
+  snapshot: WeatherSnapshot | null;
+  availability: WeatherAvailability;
+  show: boolean;
+  level: WeatherLevel;
+  showBarbs: boolean;
+  showParticles: boolean;
+  /** The page's weather clock: reading Date.now() here would be impure. */
+  nowMs: number;
+  /**
+   * False while the view is showing recorded weather.
+   *
+   * Optional, defaulting to live, so a caller that omits it cannot silently
+   * change what the agent is told about a live session.
+   */
+  isLive?: boolean;
+  /** The instant on screen while browsing; null while live. */
+  viewTimeMs?: number | null;
+}
+
+/**
+ * The invariant this defends: **the agent sees what the map shows.**
+ *
+ * Leaving it live-only would reproduce the map's bug in prose, which is worse
+ * — text carries no visual cue that it is describing the wrong day.
+ */
+function weatherValue(weather: CopilotWeatherContext | undefined) {
+  if (!weather) return "unavailable in this view";
+  const { nowMs, snapshot } = weather;
+  const isLive = weather.isLive !== false;
+  const viewTimeMs = weather.viewTimeMs ?? null;
+
+  // A statement about the live plane only: recorded weather comes out of
+  // DuckDB, so a socket session can still browse hours recorded earlier.
+  if (weather.availability === "unsupported_source" && isLive) {
+    return "unsupported: weather arrives over the MQTT live source, and the app is reading dump1090 directly";
+  }
+
+  const recorded = !isLive && viewTimeMs !== null;
+  return {
+    mode: isLive ? "live" : "history",
+    availability: weather.availability,
+    shown: weather.show,
+    level: levelLabel(weather.level),
+    barbs: weather.showBarbs,
+    particles: weather.showParticles,
+    validity: snapshot
+      ? recorded
+        ? describeRecordedValidity(snapshot.valid_time_ms, viewTimeMs)
+        : describeValidity(snapshot.valid_time_ms, nowMs)
+      : isLive
+        ? "waiting for the first weather snapshot"
+        : "no weather was recorded for the time being viewed",
+    // Staleness is a live question. Browsing asks a different one: how far the
+    // nearest recorded hour is from the time on screen, either way.
+    stale: snapshot ? (recorded ? isOffHour(snapshot, viewTimeMs) : isStale(snapshot, nowMs)) : false,
+  };
+}
 
 export interface CopilotContextConfig {
   connectionStatus: string;
@@ -37,6 +107,8 @@ export interface CopilotContextConfig {
   receiverLocation: { lat: number; lng: number } | null;
   /** How many agent-generated simulated aircraft are currently playing. */
   agentSimulatedCount: number;
+  /** The weather layer. Absent when the page does not provide one. */
+  weather?: CopilotWeatherContext;
 }
 
 export function useCopilotContext(config: CopilotContextConfig) {
@@ -105,6 +177,12 @@ export function useCopilotContext(config: CopilotContextConfig) {
   useAgentContext({
     description: "Number of agent-generated simulated aircraft currently on the map",
     value: config.agentSimulatedCount,
+  });
+
+  useAgentContext({
+    description:
+      "Weather layer (winds aloft): availability, what it draws, and how current the data is",
+    value: weatherValue(config.weather),
   });
 
 }

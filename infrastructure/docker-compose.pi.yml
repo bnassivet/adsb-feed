@@ -1,0 +1,43 @@
+# Monitoring on a Raspberry Pi, where the ADS-B services are systemd units
+# bound to 127.0.0.1.
+#
+#     docker compose -f docker-compose.yml -f docker-compose.pi.yml up -d prometheus grafana
+#
+# Why a separate override rather than opening the services' binds:
+#
+# On Linux a container reaching the host through host-gateway is NOT loopback,
+# so scraping that way means every service has to listen beyond 127.0.0.1.
+# Each of them can be told to ([metrics].feed_bind, [storage].http_bind,
+# [weather].http_bind), but they do not cost the same.
+#
+# The feed client's endpoint is counters and nothing else. The data server's
+# port also serves the read-only query API. The weather service is the one to
+# leave alone: the same port carries `PUT /v1/enabled`, unauthenticated, so
+# anything on the LAN could pause the weather layer.
+#
+# Putting Prometheus on the host network instead makes every target
+# `localhost:<port>` and nothing has to be opened. Linux only -- which is
+# exactly where the Pi is.
+#
+# Grafana is deliberately NOT on the host network: it only needs to reach
+# Prometheus, and publishing :3000 is enough.
+
+services:
+  prometheus:
+    network_mode: host
+    # host networking ignores `ports:`; Prometheus binds :9090 on the host
+    # directly. The compose network is unavailable here, hence its own config.
+    ports: !override []
+    networks: !override []
+    volumes:
+      - ./prometheus/prometheus.pi.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+  grafana:
+    # Prometheus is no longer a compose-network service, so reach it on the
+    # host, and drop the healthcheck dependency that no longer resolves.
+    depends_on: !override []
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_DEFAULT_THEME=dark
