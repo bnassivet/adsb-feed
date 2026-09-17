@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { WeatherControls, type WeatherControlsProps } from "../WeatherControls";
 import type { WeatherServiceStatus, WeatherServiceView } from "@/lib/weather";
+import type { WeatherHistoryView } from "@/lib/weather-history";
 
 const MIN = 60_000;
 
@@ -249,6 +250,131 @@ describe("WeatherControls", () => {
             service: service(),
             onServiceToggle: vi.fn(),
           })}
+        />,
+      );
+
+      expect(screen.queryByRole("checkbox", { name: /fetch weather/i })).not.toBeInTheDocument();
+    });
+  });
+
+  describe("browsing recorded weather", () => {
+    const VIEW_MS = 1_789_412_400_000;
+
+    function history(overrides: Partial<WeatherHistoryView> = {}): WeatherHistoryView {
+      return {
+        status: "found",
+        validTimeMs: VIEW_MS - 20 * MIN,
+        atMs: VIEW_MS,
+        offHour: false,
+        error: null,
+        ...overrides,
+      };
+    }
+
+    it("names the recorded hour and how far it is from the viewed time", () => {
+      render(<WeatherControls {...props({ history: history() })} />);
+
+      expect(screen.getByText(/model hour 20 min earlier/i)).toBeInTheDocument();
+    });
+
+    it("says nothing about being valid now, which means a different thing", () => {
+      // `describeValidity` measures against the wall clock. In history mode the
+      // wall clock is irrelevant, and two lines that read alike must not mean
+      // different things depending on the mode.
+      render(<WeatherControls {...props({ validTimeMs: 0, history: history() })} />);
+
+      expect(screen.queryByText(/valid .* ago/i)).not.toBeInTheDocument();
+    });
+
+    it("flags an hour too far from the viewed time", () => {
+      render(<WeatherControls {...props({ history: history({ offHour: true }) })} />);
+
+      expect(screen.getByText(/off-hour/i)).toBeInTheDocument();
+    });
+
+    it("says when nothing was recorded for this time", () => {
+      render(
+        <WeatherControls
+          {...props({ history: history({ status: "none", validTimeMs: null }) })}
+        />,
+      );
+
+      expect(screen.getByText(/no weather was recorded for this time/i)).toBeInTheDocument();
+    });
+
+    it("says it is looking one up", () => {
+      render(
+        <WeatherControls
+          {...props({ history: history({ status: "loading", validTimeMs: null }) })}
+        />,
+      );
+
+      expect(screen.getByText(/looking up recorded weather/i)).toBeInTheDocument();
+    });
+
+    it("shows why recorded weather could not be read", () => {
+      render(
+        <WeatherControls
+          {...props({
+            history: history({
+              status: "unavailable",
+              validTimeMs: null,
+              error: "Storage not available",
+            }),
+          })}
+        />,
+      );
+
+      expect(screen.getByRole("alert")).toHaveTextContent(/storage not available/i);
+    });
+
+    it("asks for tracks when there is no time to look weather up at", () => {
+      render(
+        <WeatherControls
+          {...props({ history: history({ status: "idle", validTimeMs: null, atMs: null }) })}
+        />,
+      );
+
+      expect(screen.getByText(/load tracks to see the weather of their time/i)).toBeInTheDocument();
+    });
+
+    it("does not tell the user to switch to MQTT when showing recorded weather", () => {
+      // The bug this prevents: recorded weather comes out of DuckDB, not MQTT.
+      // A session on the dump1090 socket source reports `unsupported_source`
+      // for the LIVE plane, and telling that user to change their live source
+      // in order to see last week's winds is actively misleading -- the winds
+      // are already there.
+      render(
+        <WeatherControls
+          {...props({
+            availability: "unsupported_source",
+            validTimeMs: null,
+            attribution: null,
+            history: history(),
+          })}
+        />,
+      );
+
+      expect(screen.queryByText(/mqtt/i)).not.toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: /winds aloft/i })).toBeEnabled();
+    });
+
+    it("still draws the layer's controls on a source that has no live weather", () => {
+      render(
+        <WeatherControls
+          {...props({ availability: "unsupported_source", attribution: null, history: history() })}
+        />,
+      );
+
+      expect(screen.getByRole("button", { name: "SFC" })).toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: /barbs/i })).toBeInTheDocument();
+    });
+
+    it("does not offer the Fetch weather switch", () => {
+      // Enabling the live service does nothing for an hour already recorded.
+      render(
+        <WeatherControls
+          {...props({ history: history(), service: service(), onServiceToggle: vi.fn() })}
         />,
       );
 

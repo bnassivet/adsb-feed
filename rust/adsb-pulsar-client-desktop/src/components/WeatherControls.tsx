@@ -1,6 +1,7 @@
 "use client";
 import {
   EMPTY_SERVICE_VIEW,
+  describeRecordedValidity,
   describeServiceStatus,
   describeValidity,
   levelLabel,
@@ -12,6 +13,7 @@ import type {
   WeatherLevel,
   WeatherServiceView,
 } from "@/lib/weather";
+import type { WeatherHistoryView } from "@/lib/weather-history";
 
 const TONE_CLASS: Record<ServiceTone, string> = {
   ok: "text-slate-500",
@@ -49,6 +51,47 @@ export interface WeatherControlsProps {
   serviceError?: string | null;
   /** Sends enable/disable to the service. Without it there is no switch. */
   onServiceToggle?: (enabled: boolean) => void;
+  /**
+   * Set when the map is drawing *recorded* weather rather than the live hour.
+   *
+   * Its presence — not its status — is what puts the controls in history mode,
+   * so the live/recorded choice is made by the caller's mode rather than by
+   * whichever value happens to be non-null.
+   */
+  history?: WeatherHistoryView;
+}
+
+/** What the layer is showing, for a recorded hour rather than the live one. */
+function RecordedStatus({ history }: { history: WeatherHistoryView }) {
+  if (history.status === "unavailable") {
+    return (
+      <p role="alert" className="text-[11px] text-red-400">
+        {history.error ?? "Recorded weather could not be read."}
+      </p>
+    );
+  }
+  if (history.status === "loading") {
+    return <p className="text-[11px] text-slate-500">Looking up recorded weather…</p>;
+  }
+  if (history.status === "idle") {
+    // No tracks means no span, so there is no instant to look weather up at.
+    return (
+      <p className="text-[11px] text-slate-500">Load tracks to see the weather of their time.</p>
+    );
+  }
+  if (history.validTimeMs == null || history.atMs == null) {
+    return <p className="text-[11px] text-slate-500">No weather was recorded for this time.</p>;
+  }
+  return (
+    <div className="flex items-center gap-2 text-[11px] text-slate-500">
+      <span>{describeRecordedValidity(history.validTimeMs, history.atMs)}</span>
+      {history.offHour && (
+        <span className="px-1 py-0.5 text-[9px] font-bold rounded bg-amber-800/60 text-amber-300 uppercase tracking-wide">
+          off-hour
+        </span>
+      )}
+    </div>
+  );
 }
 
 /** The weather layer's toggle, level picker and data status. */
@@ -71,8 +114,17 @@ export function WeatherControls({
   pendingEnabled = null,
   serviceError = null,
   onServiceToggle,
+  history,
 }: WeatherControlsProps) {
+  // `unsupported_source` is a statement about the LIVE plane only: weather
+  // arrives over MQTT and this session's source is a socket. Recorded weather
+  // comes out of DuckDB, so while browsing, none of what it implies holds —
+  // not the disabled toggle, not the advice to change sources, not the switch
+  // that commands a service which has nothing to do with an hour already
+  // stored. Splitting the concept keeps each gate readable as what it means.
+  const browsing = history != null;
   const unsupported = availability === "unsupported_source";
+  const liveUnsupported = unsupported && !browsing;
   const options: WeatherLevel[] = ["surface", ...levels];
   const toggle = onServiceToggle ? serviceToggleView(availability, service, pendingEnabled) : null;
   const serviceLine = onServiceToggle ? describeServiceStatus(service, nowMs) : null;
@@ -84,22 +136,22 @@ export function WeatherControls({
           type="checkbox"
           checked={show}
           onChange={onToggle}
-          disabled={unsupported}
+          disabled={liveUnsupported}
           className="accent-sky-500"
         />
         <span>Winds aloft</span>
       </label>
 
-      {unsupported && (
+      {liveUnsupported && (
         <p className="ml-5 mt-1 text-[11px] text-slate-500">
           Weather arrives over MQTT. Set the live source to MQTT in Settings to receive it.
         </p>
       )}
-      {availability === "waiting" && (
+      {availability === "waiting" && !browsing && (
         <p className="ml-5 mt-1 text-[11px] text-slate-500">Waiting for the weather service…</p>
       )}
 
-      {toggle && onServiceToggle && !unsupported && (
+      {toggle && onServiceToggle && !unsupported && !browsing && (
         <div className="ml-5 mt-1 flex flex-col gap-0.5">
           <label className="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer select-none">
             <input
@@ -130,7 +182,7 @@ export function WeatherControls({
         </div>
       )}
 
-      {show && !unsupported && (
+      {show && !liveUnsupported && (
         <div className="ml-5 mt-2 flex flex-col gap-2">
           <div role="group" aria-label="Wind level" className="flex flex-wrap gap-1">
             {options.map((option) => {
@@ -169,15 +221,22 @@ export function WeatherControls({
             </label>
           </div>
 
-          {validTimeMs != null && (
-            <div className="flex items-center gap-2 text-[11px] text-slate-500">
-              <span>{describeValidity(validTimeMs, nowMs)}</span>
-              {stale && (
-                <span className="px-1 py-0.5 text-[9px] font-bold rounded bg-amber-800/60 text-amber-300 uppercase tracking-wide">
-                  stale
-                </span>
-              )}
-            </div>
+          {/* `describeValidity` measures against the wall clock, which says
+              nothing useful about a week-old hour — and "valid 6 d ago" would
+              read as a fault rather than as the answer. */}
+          {history ? (
+            <RecordedStatus history={history} />
+          ) : (
+            validTimeMs != null && (
+              <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                <span>{describeValidity(validTimeMs, nowMs)}</span>
+                {stale && (
+                  <span className="px-1 py-0.5 text-[9px] font-bold rounded bg-amber-800/60 text-amber-300 uppercase tracking-wide">
+                    stale
+                  </span>
+                )}
+              </div>
+            )
           )}
 
           {attribution && <p className="text-[10px] text-slate-600">{attribution}</p>}

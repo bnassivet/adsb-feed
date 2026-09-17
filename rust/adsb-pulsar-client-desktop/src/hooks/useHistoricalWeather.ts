@@ -8,10 +8,13 @@ import {
   nearestSnapshotTime,
   parseRecordedSnapshot,
   type HistoricalWeatherEntry,
+  type HistoricalWeatherStatus,
 } from "@/lib/weather-history";
 
-/** Why a slot holds no entry, or that it does. */
-export type HistoricalWeatherStatus = "idle" | "loading" | "found" | "none" | "unavailable";
+// Defined in `lib/weather-history` so the controls can name the same union
+// without importing from a hook, and re-exported here because this is where
+// callers meet it.
+export type { HistoricalWeatherStatus };
 
 export interface HistoricalWeatherSlot {
   entry: HistoricalWeatherEntry | null;

@@ -127,6 +127,28 @@ export function tracksTimeSpan(tracks: AircraftTrack[]): TimeSpan | null {
   return { startMs, endMs };
 }
 
+/** Why a slot holds no recorded snapshot, or that it does. */
+export type HistoricalWeatherStatus = "idle" | "loading" | "found" | "none" | "unavailable";
+
+/**
+ * What the controls need in order to describe recorded weather.
+ *
+ * Deliberately carries no snapshot. A status line needs the hour, the instant
+ * viewed and why there is nothing — never the ~16 KB payload — so `WeatherControls`
+ * stays a pure render of small values.
+ */
+export interface WeatherHistoryView {
+  status: HistoricalWeatherStatus;
+  /** The model hour found, or `null` unless `status` is `"found"`. */
+  validTimeMs: number | null;
+  /** The instant being viewed, or `null` when there is nothing to look up. */
+  atMs: number | null;
+  /** Whether the hour found is further from `atMs` than it should be. */
+  offHour: boolean;
+  /** Why nothing could be looked up — e.g. `"Storage not available"`. */
+  error: string | null;
+}
+
 /** A recorded snapshot, with how far its model hour is from what was asked for. */
 export interface HistoricalWeatherEntry {
   snapshot: WeatherSnapshot;
