@@ -4607,7 +4607,13 @@ returns `available | waiting | unsupported_source`.
 The desktop holds one snapshot to draw. Nothing kept it: the next publish overwrote the
 retained message, so the stack recorded where aircraft flew but not the air they flew
 through, and the two could never be correlated afterwards. The restriction on per-aircraft
-wind above — live selections only — exists for exactly that reason.
+wind above — live selections only — existed for exactly that reason.
+
+**That restriction is now lifted**, and the sections below say how. Recording the weather
+created the data that made it liftable, so the guard became a *routing* decision rather
+than a suppression: a DB-history or imported selection is given the wind of the hour
+recorded nearest its own `last_seen`, while the live aircraft beside it keep the live
+snapshot. See *Browsing recorded weather* below.
 
 **The recorder is the writer**, not the weather service. DuckDB takes an exclusive file
 lock and `adsb-data-server` holds it, so the service could not write to the database even
@@ -4666,6 +4672,66 @@ bump is safe; an *older recorder beside a newer service* would store nothing and
 warning per publish. There is deliberately no store-the-rejected-payload path — the
 metadata columns require a parse.
 
+### Browsing recorded weather
+
+Recording it was half the job. The map still drew **whatever `adsb:weather` last pushed** —
+the current model hour — with no reference to what was on screen, so browsing a week-old
+track showed today's winds over it, silently. That is worse than drawing nothing, because
+it looks like an answer.
+
+**Two instants, not one.** The map follows the browsed window's end; each selected aircraft
+follows its own `last_seen`. `weatherTimesFor` derives both. Analysis mode has no window of
+its own — its set is accumulated across several browses — so its span outranks the last
+window requested, which may describe none of what is displayed.
+
+The aircraft instant is deliberately **not gated on live/history alone**: a DB-history or
+imported track loaded onto the *live* map is still historical and gets its own hour, while
+the live aircraft beside it keep the live snapshot. That is the lifted guard, restated as
+routing.
+
+**Two hops, cheap first.** `getWeatherHistory` lists model hours over ±3 h as metadata
+(bytes), a pure `nearestSnapshotTime` picks one, and only then does `getWeatherAt` fetch the
+~16 KB payload. The LRU is keyed by `valid_time_ms` rather than by the requested time:
+many browsed instants resolve onto one hour, and the map and aircraft slots share the cache
+whenever they land on the same one.
+
+**Selected on mode, never on "whichever is non-null".** The MQTT subscription keeps running
+while history is on screen, so a retained republish would otherwise repaint week-old tracks
+with the current hour. `selectMapWeather` reproduces today's live behaviour byte-for-byte in
+the live branch and **never falls back to it** in the other — the fallback *is* the bug.
+
+**`unsupported_source` is a claim about the live plane only.** It means weather arrives over
+MQTT and this session reads a dump1090 socket. Recorded weather comes out of DuckDB, so a
+socket session can still browse hours a remote daemon recorded; gating the recorded path on
+it would blank the feature for every socket user. In `WeatherControls` this splits into
+`browsing` and `liveUnsupported`, because the flag gated four things and three of them —
+the disabled toggle, the advice to change sources, the *Fetch weather* switch — are wrong
+while browsing.
+
+**Validity forks; `isStale` does not.** `isStale` stays signed on purpose (a model hour
+slightly ahead is the short forecast, not staleness). History asks a different question,
+answered by `isOffHour` / `describeRecordedValidity`, which avoids the word *"valid"*
+because in `weather.ts` that means "relative to now" — `"valid 6 d ago"` would read as a
+fault rather than as the answer.
+
+**The agent sees what the map shows.** Both weather chat tools' `unsupported_source` early
+returns are live-only, and the context readable carries a `mode`. Leaving the copilot
+live-only would reproduce the bug in prose, which is worse: text carries no visual cue that
+it is the wrong day. `windReport` is unchanged — its other callers are all live — so
+`getWindAloft` overrides `validity`/`stale` itself when browsing. The copilot reads a
+snapshot for the *view*, not the one *drawn*: the drawn one goes null when the layer is
+switched off, and the tools must keep answering with it hidden.
+
+**The browse seam.** `DBHistoryContent` already fired `onBrowse` from `doBrowse`, the single
+funnel for every window change (presets, custom, refresh, chart zoom, granularity, metric);
+`page.tsx` simply had never passed it. It must be `useCallback`'d — `doBrowse` lists it in
+its dependency array and six handlers capture it — and passed at **both** call sites, docked
+and floating.
+
+**Panel state is per-instance.** The docked and floating panels each own their window state,
+so toggling between them remounts and resets to the 24 h default while the page keeps the
+last browsed window. The weather then describes the page's window, not the panel's display.
+
 ### Frontend
 
 | Piece | Role |
@@ -4675,6 +4741,8 @@ metadata columns require a parse.
 | `lib/aircraft-wind.ts` | Wind and components for a tracked aircraft |
 | `lib/wind-format.ts` | `070° / 20 kt`, `85 kt headwind`, `49 kt from the left` |
 | `hooks/useWeatherSnapshot.ts` | Hydrate, `adsb:weather`, re-check availability on `adsb:status`; the service view from `adsb:weather-service`, and the pending enable/disable request |
+| `lib/weather-history.ts` | Reading *recorded* weather: payload validation, nearest recorded hour, the analysis span, `weatherTimesFor`, the two mode selectors, the bounded LRU |
+| `hooks/useHistoricalWeather.ts` | Two instants in, two slots out. A sibling of `useWeatherSnapshot`, never an extension: pull-by-time versus push, and the consumer needs two weathers at once |
 | `components/WeatherControls.tsx` | Toggle, level picker, Barbs / Particles display toggles, validity, stale badge, credit; the *Fetch weather* switch and service status |
 | `MapInner` `WeatherBarbsLayer` | One barb per grid point, MSL pressure tooltip |
 | `lib/wind-particles.ts` | Field sampler, particle simulation, Mercator projection — pure, unit-tested |
@@ -5014,4 +5082,11 @@ This design prioritizes developer experience (hot reload, TypeScript, TDD), user
 
 ---
 
-*Last updated: September 2026 — Added **recording weather**: the recorder subscribes to the weather grid as an aux topic on the MQTT connection it already has and stores one row per model hour in a new observed `weather_snapshots` table (metadata lifted out of the payload, plus the payload verbatim), deduped by an anti-join on `(source_id, valid_time_ms)` because the retained message is re-delivered on every ConnAck, deliberately exempt from the retention window, and readable through `getWeatherSnapshots` / `getWeatherSnapshot`; remote views are now created one per table so a client newer than its daemon is not locked out of history entirely, and `preview_table` takes its time column as a parameter. Previous: the **Weather Layer**: `adsb-weather-server` (Open-Meteo winds aloft and MSL pressure on a receiver-centred grid, published as a retained MQTT message and republished per ConnAck), the desktop's aux-topic subscription on the live-feed connection, the rumqttc 10 KiB packet trap, u/v and ln(p) interpolation, wind barbs and per-aircraft wind. Previous: Added a **System Architecture (C4 Model)** view — three Mermaid diagrams drawn to C4 conventions (Level 1 Context, Level 2 Container, Level 3 Component), with C4 palette, element-type and technology annotations, and dashed edges for optional dependencies, plus a component inventory table and trust/process boundaries, refreshed the table of contents to match the document's 27 sections, added `tool_server.rs`/`tool_service.rs` to the backend directory tree and component diagram, documented the `adsb-simulation-agent` A2A service on `:8300`, and normalized `adsb-agent/` paths. Previous: simulation scenarios (scenario builder, descriptions, panel layout, trajectory visibility). Previous: AI Agent & AG-UI integration (CopilotKit chat panel, LangGraph ReAct agent on `:8000`, loopback Tauri tool server on `:8787`, server/client tool-plane split, ambient `useCopilotContext` readables, `useCopilotTools`, voice input via Voxtral / LFM2.5-Audio with auto-send). Previous: status event audit trail, Arrow IPC query pipeline, storage management (release/reclaim/export/swap/import), section-aware track visibility, analysis mode, config persistence, `adsb-data-engine` workspace crate, DB History panel.*
+*Last updated: September 2026 — Added **browsing recorded weather**: the map, the
+per-aircraft wind rows and the chat agent now describe the weather of the time being
+viewed rather than the current model hour — two instants (the browsed window's end for the
+map, each aircraft's own `last_seen` for its wind), a two-hop metadata-then-payload fetch
+behind an LRU keyed by model hour, pure mode selectors that never fall back to the live
+snapshot, and `unsupported_source` narrowed to the live plane so a dump1090-socket session
+can still browse hours a daemon recorded. **The "live selections only" restriction on
+per-aircraft wind is lifted** — it becomes routing rather than suppression. Previous: **recording weather**: the recorder subscribes to the weather grid as an aux topic on the MQTT connection it already has and stores one row per model hour in a new observed `weather_snapshots` table (metadata lifted out of the payload, plus the payload verbatim), deduped by an anti-join on `(source_id, valid_time_ms)` because the retained message is re-delivered on every ConnAck, deliberately exempt from the retention window, and readable through `getWeatherSnapshots` / `getWeatherSnapshot`; remote views are now created one per table so a client newer than its daemon is not locked out of history entirely, and `preview_table` takes its time column as a parameter. Previous: the **Weather Layer**: `adsb-weather-server` (Open-Meteo winds aloft and MSL pressure on a receiver-centred grid, published as a retained MQTT message and republished per ConnAck), the desktop's aux-topic subscription on the live-feed connection, the rumqttc 10 KiB packet trap, u/v and ln(p) interpolation, wind barbs and per-aircraft wind. Previous: Added a **System Architecture (C4 Model)** view — three Mermaid diagrams drawn to C4 conventions (Level 1 Context, Level 2 Container, Level 3 Component), with C4 palette, element-type and technology annotations, and dashed edges for optional dependencies, plus a component inventory table and trust/process boundaries, refreshed the table of contents to match the document's 27 sections, added `tool_server.rs`/`tool_service.rs` to the backend directory tree and component diagram, documented the `adsb-simulation-agent` A2A service on `:8300`, and normalized `adsb-agent/` paths. Previous: simulation scenarios (scenario builder, descriptions, panel layout, trajectory visibility). Previous: AI Agent & AG-UI integration (CopilotKit chat panel, LangGraph ReAct agent on `:8000`, loopback Tauri tool server on `:8787`, server/client tool-plane split, ambient `useCopilotContext` readables, `useCopilotTools`, voice input via Voxtral / LFM2.5-Audio with auto-send). Previous: status event audit trail, Arrow IPC query pipeline, storage management (release/reclaim/export/swap/import), section-aware track visibility, analysis mode, config persistence, `adsb-data-engine` workspace crate, DB History panel.*
