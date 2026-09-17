@@ -507,16 +507,16 @@ doctor)
   # collide, and could not both run. A config still saying 3000 is warned
   # about below.
   #
-  # The MQTT port is only OURS to bind when the broker is local. With a broker
-  # on a Pi, a local :1883 belongs to some other stack, and reporting it BUSY
-  # here is a false alarm that sends people hunting for a conflict they do not
-  # have.
-  ports="$(cfg dump1090 port 30003) $(cfg storage http_port 8787)"
-  ports="$ports $(desktop_tool_port) $(desktop_dev_port)"
-  ports="$ports $(cfg agents agent_port 8000) $(cfg agents sim_agent_port 8300)"
-  [ "$(metrics_feed_port)" != "0" ] && ports="$ports $(metrics_feed_port)"
-  owns_broker && ports="$(cfg mqtt port 1883) $ports"
-  for p in $ports; do
+  # ONE list, shared with `down` and `reap`: see stack_ports(). A port this
+  # stack claims is exactly the port doctor should check, and two hand-kept
+  # copies drift -- this one had never checked the weather control API at all,
+  # and listed the agent ports even on a stack with agents disabled.
+  #
+  # stack_ports() also owns the rule that the MQTT port is only OURS to bind
+  # when the broker is local: with a broker on a Pi, a local :1883 belongs to
+  # something else, and reporting it BUSY is a false alarm that sends people
+  # hunting a conflict they do not have.
+  for p in $(stack_ports); do
     if port_busy "$p"; then echo "  BUSY    $p"; else echo "  free    $p"; fi
   done
   # adsb-stack.toml is gitignored, so an existing one still says 3000 and keeps
