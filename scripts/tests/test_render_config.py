@@ -236,6 +236,24 @@ class WeatherContent(unittest.TestCase):
                    weather=dict(WEATHER_STACK["weather"], topic="lab/wx"))
         self.assertEqual(self.render(cfg)["mqtt_topic"], "lab/wx")
 
+    def test_the_recorder_subscribes_to_the_weather_service_s_topic(self):
+        # Pinned to each other, never to a literal. The derivation may change,
+        # but the publisher and the recorder have to move together: a recorder
+        # subscribed to a topic nobody publishes to records no weather and looks
+        # perfectly healthy from both sides.
+        for cfg in (
+            WEATHER_STACK,
+            dict(WEATHER_STACK,
+                 weather=dict(WEATHER_STACK["weather"], topic="lab/wx")),
+            dict(WEATHER_STACK, mqtt=dict(STACK["mqtt"], topic="legacy/raw")),
+            STACK,  # a stack file written before [weather] existed
+        ):
+            with self.subTest(topic=cfg.get("weather", {}).get("topic")):
+                recorder = parse(rc.render_server(cfg, REPO / ".run"))
+                weather = parse(rc.render_weather(cfg, REPO / ".run"))
+                self.assertEqual(recorder["mqtt_weather_topic"],
+                                 weather["mqtt_topic"])
+
     def test_grid_and_schedule_settings_pass_through(self):
         weather = self.render()
         self.assertEqual(weather["radius_nm"], 250)

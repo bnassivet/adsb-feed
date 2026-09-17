@@ -4602,6 +4602,70 @@ stays. The snapshot lives in `AppState`, not the `FeedHandle`, so it survives a 
 restart. `get_weather_snapshot` serves a late-mounting UI; `get_weather_availability`
 returns `available | waiting | unsupported_source`.
 
+### Recording weather
+
+The desktop holds one snapshot to draw. Nothing kept it: the next publish overwrote the
+retained message, so the stack recorded where aircraft flew but not the air they flew
+through, and the two could never be correlated afterwards. The restriction on per-aircraft
+wind above — live selections only — exists for exactly that reason.
+
+**The recorder is the writer**, not the weather service. DuckDB takes an exclusive file
+lock and `adsb-data-server` holds it, so the service could not write to the database even
+if it wanted to. It keeps publishing to MQTT and the recorder subscribes, which also keeps
+one writer per piece of state.
+
+It costs no new connection. `main.rs` registers the grid topic with
+`MqttSource::with_aux_topic` before handing the source to `Recorder::run_with_weather`,
+which spawns `weather::persist_weather` beside ingest and maintenance and aborts it the
+same way. `run` delegates to `run_with_weather(source, None)`, so the SBS path is
+unchanged and its existing tests are the regression. `with_aux_topic` needs `&mut source`
+*before* the source is moved, which is why the caller registers it rather than the
+recorder: `MessageSource` knows nothing about auxiliary topics and must not learn.
+
+**One row per model hour.** Retained means the broker re-delivers on every ConnAck, so
+"we already have this one" is the ordinary case. It is caught twice: in the task, against
+the last hour stored, and authoritatively by an anti-join on
+`(source_id, valid_time_ms)` that also survives a restart. The anti-join is deliberate
+rather than `ON CONFLICT DO NOTHING` — that needs a `PRIMARY KEY` on the conflict target,
+and this schema has **no migration mechanism at all**, so a key committed today could
+never be widened.
+
+**The schema is metadata plus the raw payload.** `weather_snapshots` carries the model
+hour, the fetch and receipt times, source, model, version, the grid's shape and the level
+set — everything worth filtering on in SQL — beside `payload`, the snapshot JSON **as
+received**. Not a re-serialisation: a serde round-trip is free to reorder keys, and the
+point of the column is that a replay is identical to what was published. `received_at_ms`
+is the only clock the recorder owns, and so the only way to notice that the weather host's
+is wrong.
+
+| Topic | Rows | Read as |
+|-------|------|---------|
+| `…/weather/grid` | one per model hour, ~16 KB each | `getWeatherSnapshots` — metadata, newest first, **no payloads**, with `payload_bytes` |
+| | | `getWeatherSnapshot` — one hour, payload verbatim |
+
+The two tools are split so a caller cannot pull a day of grids by accident. Both are
+read-only, like everything else on that endpoint.
+
+**Weather is never pruned.** `prune_sync` drops positions and raw messages; a year of
+weather is ~140 MB and it is the slow-moving context that makes old flight data
+interpretable. A test pins that, because the next reader will reasonably assume otherwise.
+
+Two consequences of adding an *observed* table, both of which bite silently:
+
+- It must be registered in `share::OBSERVED_TABLES` too, or a desktop in remote mode sees
+  no weather at all. Those views are now created **one per table**, tolerantly: DuckDB
+  binds a view body at `CREATE VIEW` time, so as a single batch a table an older daemon
+  lacks would abort `StorageHandle::open` entirely — costing the user every other view,
+  not just weather. The statistics count is `unwrap_or(0)` for the same reason.
+- `preview_table` hardcoded `timestamp_ms`. Weather is timed by the model hour it
+  describes, so the time column is a parameter now.
+
+**Mixed deployments.** The recorder parses with `WeatherSnapshot::from_json`, which rejects
+an unknown `SNAPSHOT_VERSION`. Inside the workspace both binaries rebuild together, so a
+bump is safe; an *older recorder beside a newer service* would store nothing and log a
+warning per publish. There is deliberately no store-the-rejected-payload path — the
+metadata columns require a parse.
+
 ### Frontend
 
 | Piece | Role |
@@ -4746,6 +4810,16 @@ Feed Source on every launch.
 | `model` | `best_match` | Open-Meteo model name; validated as a plain identifier because it goes into the URL unencoded |
 | `cache_path` | `.run/weather-cache.json` | Stack-scoped, like `storage.db_path` |
 
+**Recording weather adds no new key.** The recorder needs the same topic the service
+publishes to, so `render_server` derives `mqtt_weather_topic` into `.run/data-server.toml`
+from `[weather].topic` — or, unset, from the same rule applied to `mqtt.topic`. The
+operator sets the topic once, or never, and the publisher and the recorder follow it
+together. `test_the_recorder_subscribes_to_the_weather_service_s_topic` asserts the two
+rendered topics are equal **to each other** rather than to a literal, so a change to the
+derivation cannot move one without the other. It is rendered even when `[weather]` is
+disabled, which costs nothing and means a later `make up-weather` needs no re-render.
+`ADSB_MQTT_WEATHER_TOPIC` overrides it on the recorder as it does on the desktop.
+
 `make doctor` requires the binary only when enabled, counts duplicate instances, checks the
 topic carries the stage, and reaches the Open-Meteo **site root** — not the forecast API,
 which would spend quota on every health check. Receiver position, broker and `source_id`
@@ -4774,6 +4848,11 @@ instant.
 | `adsb-pulsar-client/src/source/mqtt_source.rs` | `with_aux_topic`, `route_publish`, packet limit |
 | `adsb-pulsar-client/src/config.rs` | `mqtt_weather_topic`, `weather_topic()` |
 | `src-tauri/src/weather.rs` | Relay, availability |
+| `adsb-data-server/src/weather.rs` | Recorder-side relay: classify a payload, map it to a row, persist |
+| `adsb-data-server/src/recorder.rs` | `run_with_weather` — the persist task beside ingest |
+| `adsb-data-server/src/config.rs` | `mqtt_weather_topic`, `feed_config()` |
+| `adsb-data-engine/src/storage.rs` | `weather_snapshots` DDL, insert with dedupe, listing, fetch |
+| `adsb-data-engine/src/share.rs` | `OBSERVED_TABLES`, per-table remote views |
 | `src/lib/weather.ts`, `src/lib/wind-particles.ts` | Interpolation; particle field and simulation |
 | `src/components/MapInner.tsx` | `WeatherBarbsLayer`, `WindParticlesLayer` |
 | `src/hooks/useCopilotTools.ts`, `src/hooks/useCopilotContext.ts` | `setWeatherLayer`, `getWindAloft`, weather readable |
@@ -4914,4 +4993,4 @@ This design prioritizes developer experience (hot reload, TypeScript, TDD), user
 
 ---
 
-*Last updated: September 2026 — Added the **Weather Layer**: `adsb-weather-server` (Open-Meteo winds aloft and MSL pressure on a receiver-centred grid, published as a retained MQTT message and republished per ConnAck), the desktop's aux-topic subscription on the live-feed connection, the rumqttc 10 KiB packet trap, u/v and ln(p) interpolation, wind barbs and per-aircraft wind. Previous: Added a **System Architecture (C4 Model)** view — three Mermaid diagrams drawn to C4 conventions (Level 1 Context, Level 2 Container, Level 3 Component), with C4 palette, element-type and technology annotations, and dashed edges for optional dependencies, plus a component inventory table and trust/process boundaries, refreshed the table of contents to match the document's 27 sections, added `tool_server.rs`/`tool_service.rs` to the backend directory tree and component diagram, documented the `adsb-simulation-agent` A2A service on `:8300`, and normalized `adsb-agent/` paths. Previous: simulation scenarios (scenario builder, descriptions, panel layout, trajectory visibility). Previous: AI Agent & AG-UI integration (CopilotKit chat panel, LangGraph ReAct agent on `:8000`, loopback Tauri tool server on `:8787`, server/client tool-plane split, ambient `useCopilotContext` readables, `useCopilotTools`, voice input via Voxtral / LFM2.5-Audio with auto-send). Previous: status event audit trail, Arrow IPC query pipeline, storage management (release/reclaim/export/swap/import), section-aware track visibility, analysis mode, config persistence, `adsb-data-engine` workspace crate, DB History panel.*
+*Last updated: September 2026 — Added **recording weather**: the recorder subscribes to the weather grid as an aux topic on the MQTT connection it already has and stores one row per model hour in a new observed `weather_snapshots` table (metadata lifted out of the payload, plus the payload verbatim), deduped by an anti-join on `(source_id, valid_time_ms)` because the retained message is re-delivered on every ConnAck, deliberately exempt from the retention window, and readable through `getWeatherSnapshots` / `getWeatherSnapshot`; remote views are now created one per table so a client newer than its daemon is not locked out of history entirely, and `preview_table` takes its time column as a parameter. Previous: the **Weather Layer**: `adsb-weather-server` (Open-Meteo winds aloft and MSL pressure on a receiver-centred grid, published as a retained MQTT message and republished per ConnAck), the desktop's aux-topic subscription on the live-feed connection, the rumqttc 10 KiB packet trap, u/v and ln(p) interpolation, wind barbs and per-aircraft wind. Previous: Added a **System Architecture (C4 Model)** view — three Mermaid diagrams drawn to C4 conventions (Level 1 Context, Level 2 Container, Level 3 Component), with C4 palette, element-type and technology annotations, and dashed edges for optional dependencies, plus a component inventory table and trust/process boundaries, refreshed the table of contents to match the document's 27 sections, added `tool_server.rs`/`tool_service.rs` to the backend directory tree and component diagram, documented the `adsb-simulation-agent` A2A service on `:8300`, and normalized `adsb-agent/` paths. Previous: simulation scenarios (scenario builder, descriptions, panel layout, trajectory visibility). Previous: AI Agent & AG-UI integration (CopilotKit chat panel, LangGraph ReAct agent on `:8000`, loopback Tauri tool server on `:8787`, server/client tool-plane split, ambient `useCopilotContext` readables, `useCopilotTools`, voice input via Voxtral / LFM2.5-Audio with auto-send). Previous: status event audit trail, Arrow IPC query pipeline, storage management (release/reclaim/export/swap/import), section-aware track visibility, analysis mode, config persistence, `adsb-data-engine` workspace crate, DB History panel.*

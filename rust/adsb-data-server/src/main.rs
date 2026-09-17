@@ -1,7 +1,6 @@
 //! ADS-B data server — headless recorder entry point.
 
 use adsb_data_server::{Recorder, RecorderConfig};
-use adsb_pulsar_client::Config as FeedConfig;
 use adsb_pulsar_client::source::mqtt_source::MqttSource;
 use std::time::Duration;
 use tracing::{error, info};
@@ -94,16 +93,19 @@ async fn run(cfg: ServerConfig) -> anyhow::Result<()> {
 
     // The MQTT subscriber lives in the feed client, which owns both ends of the
     // MQTT transport and the raw-SBS broadcast contract every consumer speaks.
-    let source = MqttSource::new(&FeedConfig {
-        source_id: cfg.source_id.clone(),
-        mqtt_broker: cfg.mqtt_broker.clone(),
-        mqtt_port: cfg.mqtt_port,
-        mqtt_topic: cfg.mqtt_topic.clone(),
-        ..FeedConfig::default()
-    });
+    let feed = cfg.feed_config();
+    let weather_topic = feed.weather_topic();
+    let mut source = MqttSource::new(&feed);
+
+    // A second topic on the SAME connection: whole retained documents, never
+    // line-split, so the SBS path is byte-for-byte unchanged. Registered here
+    // because `with_aux_topic` needs `&mut source` before the source is moved
+    // into the recorder.
+    let weather_rx = source.with_aux_topic(&weather_topic);
+    info!("Recording weather snapshots from '{}'", weather_topic);
 
     tokio::select! {
-        result = recorder.run(source) => result,
+        result = recorder.run_with_weather(source, Some(weather_rx)) => result,
         _ = shutdown_signal() => {
             info!("Shutdown signal received, stopping gracefully...");
             // Fold the WAL back into the file: an edge node that loses power

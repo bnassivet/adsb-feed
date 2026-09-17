@@ -117,7 +117,19 @@ StorageHandle          (Arc<Mutex<Storage>>, Clone-able)
 
 ### Database Schema
 
-Two tables are created on first open:
+Eight tables are created on first open, in two groups that differ in **who owns
+them** — which is what decides whether they exist locally at all:
+
+| Group | Tables | Created |
+|-------|--------|---------|
+| **Observed** — recorded from a feed | `positions`, `raw_messages`, `flights`, `status_events`, `weather_snapshots` | Embedded mode only. In remote mode the daemon owns them and `share::remote_view_sql` creates views of the same names over its attached catalog, so every query works unchanged. Listed in `share::OBSERVED_TABLES`; **a new observed table must be added there too**, or remote clients silently see nothing. |
+| **Authored** — written by whoever uses the app | `events_of_interest`, `scenarios`, `scenario_tracks` | Always, in both modes. They are the user's, not the receiver's. |
+
+There is **no migration mechanism**: `CREATE TABLE IF NOT EXISTS`, re-executed on
+every open, is the whole story. Adding a table is safe and additive; adding a
+column to an existing one has no supported upgrade path, so column sets are
+permanent in practice. `storage.rs` (`SCHEMA_OBSERVED_SQL`, `SCHEMA_AUTHORED_SQL`)
+is the source of truth; the two oldest tables and the newest are shown here.
 
 ```sql
 -- Parsed aircraft positions (primary query target)
@@ -149,9 +161,36 @@ CREATE TABLE IF NOT EXISTS raw_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_raw_msgs_ts     ON raw_messages (timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_raw_msgs_hex_ts ON raw_messages (hex_ident, timestamp_ms);
+
+-- Weather grids, one row per model hour: metadata plus the payload verbatim
+CREATE TABLE IF NOT EXISTS weather_snapshots (
+    source_id       TEXT    NOT NULL,
+    valid_time_ms   BIGINT  NOT NULL,   -- the model hour; half the identity
+    fetched_at_ms   BIGINT  NOT NULL,   -- when the service called the provider
+    received_at_ms  BIGINT  NOT NULL,   -- the only clock this process owns
+    source          TEXT    NOT NULL,
+    model           TEXT    NOT NULL,
+    version         INTEGER NOT NULL,
+    lat0 DOUBLE NOT NULL, lon0 DOUBLE NOT NULL,
+    dlat DOUBLE NOT NULL, dlon DOUBLE NOT NULL,
+    nlat INTEGER NOT NULL, nlon INTEGER NOT NULL,
+    levels          TEXT    NOT NULL,   -- ascending, comma-separated
+    payload         TEXT    NOT NULL    -- the snapshot JSON AS RECEIVED
+);
+CREATE INDEX IF NOT EXISTS idx_weather_snapshots_src_valid
+    ON weather_snapshots (source_id, valid_time_ms);
 ```
 
 All timestamps are stored as `BIGINT` UTC epoch milliseconds. Conversion from SBS-1 timestamp strings happens at insert time.
+
+`weather_snapshots` has no uniqueness constraint even though
+`(source_id, valid_time_ms)` is its natural key. Inserts dedupe with an
+anti-join instead: the weather topic is **retained**, so the broker re-delivers
+on every reconnect and duplicates are the ordinary case — and with no migration
+path, a key committed as a `PRIMARY KEY` today could never be widened. `payload`
+is stored as received rather than re-serialised, so a replay is byte-identical
+to what was published. The retention window deliberately does not prune this
+table.
 
 ### API Convention — Sync vs Async
 

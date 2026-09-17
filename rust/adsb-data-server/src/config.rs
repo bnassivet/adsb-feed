@@ -58,6 +58,16 @@ pub struct ServerConfig {
     #[serde(default = "default_mqtt_topic")]
     pub mqtt_topic: String,
 
+    /// MQTT topic carrying the weather grid. Empty derives it from `mqtt_topic`.
+    ///
+    /// Empty-means-derive matches `adsb_pulsar_client::Config`, whose
+    /// `weather_topic()` this daemon reuses rather than reimplementing: the
+    /// rule already lives in two places that must agree (that function and
+    /// `scripts/render-config.py`), and a third copy is how they drift.
+    #[arg(long, env = "ADSB_MQTT_WEATHER_TOPIC", default_value = "")]
+    #[serde(default)]
+    pub mqtt_weather_topic: String,
+
     /// Timezone of the dump1090 timestamps.
     #[arg(long, env = "ADSB_DUMP1090_TZ", default_value = "Local")]
     #[serde(default = "default_tz")]
@@ -209,6 +219,11 @@ impl ServerConfig {
         overlay!("mqtt_topic", mqtt_topic, |v: &toml::Value| v
             .as_str()
             .map(String::from));
+        overlay!(
+            "mqtt_weather_topic",
+            mqtt_weather_topic,
+            |v: &toml::Value| v.as_str().map(String::from)
+        );
         overlay!("dump1090_tz", dump1090_tz, |v: &toml::Value| v
             .as_str()
             .map(String::from));
@@ -250,6 +265,23 @@ impl ServerConfig {
         self.http_bind.parse().ok()
     }
 
+    /// Builds the feed-client configuration this daemon's MQTT source runs on.
+    ///
+    /// Built here rather than inline in `main` so the weather topic it resolves
+    /// is testable, and so the derivation rule stays where it already lives —
+    /// `adsb_pulsar_client::Config::weather_topic`, which
+    /// `scripts/render-config.py` mirrors. Change both or neither.
+    pub fn feed_config(&self) -> adsb_pulsar_client::Config {
+        adsb_pulsar_client::Config {
+            source_id: self.source_id.clone(),
+            mqtt_broker: self.mqtt_broker.clone(),
+            mqtt_port: self.mqtt_port,
+            mqtt_topic: self.mqtt_topic.clone(),
+            mqtt_weather_topic: self.mqtt_weather_topic.clone(),
+            ..Default::default()
+        }
+    }
+
     /// Builds the storage configuration this daemon should open.
     pub fn storage_config(&self) -> StorageConfig {
         StorageConfig {
@@ -282,6 +314,37 @@ mod tests {
 
     fn file(text: &str) -> toml::Value {
         toml::from_str(text).unwrap()
+    }
+
+    #[test]
+    fn the_weather_topic_comes_from_the_file() {
+        // A key without an `overlay!` line is ignored in silence, and the
+        // derived default usually still works -- so the bug would surface only
+        // for whoever set an explicit topic. Same guard as `http_bind`.
+        let mut cfg = defaults();
+        cfg.overlay_file(&file("mqtt_weather_topic = 'lab/wx'"), &all_defaulted);
+        assert_eq!(cfg.mqtt_weather_topic, "lab/wx");
+    }
+
+    #[test]
+    fn an_unset_weather_topic_is_derived_from_the_feed_topic() {
+        // The rule the weather service and the desktop both apply, reached
+        // through the one implementation of it rather than a third copy.
+        let mut cfg = defaults();
+        cfg.mqtt_topic = "adsb/dev/sbs/raw".to_string();
+        assert_eq!(
+            cfg.feed_config().weather_topic(),
+            "adsb/dev/weather/grid",
+            "the recorder must subscribe where the weather service publishes"
+        );
+    }
+
+    #[test]
+    fn an_explicit_weather_topic_wins() {
+        let mut cfg = defaults();
+        cfg.mqtt_topic = "adsb/dev/sbs/raw".to_string();
+        cfg.mqtt_weather_topic = "lab/wx".to_string();
+        assert_eq!(cfg.feed_config().weather_topic(), "lab/wx");
     }
 
     /// Stands in for clap: every field still holds its default.

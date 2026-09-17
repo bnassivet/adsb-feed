@@ -13,6 +13,12 @@ adsb-data-engine = { path = "../adsb-data-engine" }
 # live in the feed client. `default-features = false` drops clap and pulsar,
 # so this crate never pulls protoc.
 adsb-pulsar-client = { path = "../adsb-pulsar-client", default-features = false, features = ["mqtt"] }
+# The weather payload contract only: `default-features = false` is serde +
+# serde_json + thiserror, since every other dependency of that crate is
+# optional. NOT `client` (the desktop's choice) or `service` -- both pull
+# reqwest and a TLS stack this recorder has no use for, and aws-lc-rs compiles
+# C, which is felt on an arm64 Pi build.
+adsb-weather-server = { path = "../adsb-weather-server", default-features = false }
 
 tokio = { workspace = true }
 serde = { workspace = true }

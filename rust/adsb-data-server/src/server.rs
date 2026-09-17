@@ -20,7 +20,7 @@ use crate::tool_service;
 use adsb_data_engine::SharedStorage;
 use adsb_data_engine::{
     EventOfInterestQuery, FlightSummaryQuery, HourlyHeatmapQuery, TimeDistributionQuery,
-    TrajectoryQuery,
+    TrajectoryQuery, WeatherSnapshotKey, WeatherSnapshotQuery,
 };
 use axum::{
     Json, Router,
@@ -98,6 +98,20 @@ pub async fn dispatch(storage: &SharedStorage, name: &str, args: Value) -> Value
         },
         "getEventsOfInterest" => match parse::<EventOfInterestQuery>(args) {
             Ok(q) => tool_service::get_events_of_interest(storage, q)
+                .await
+                .and_then(to_value),
+            Err(e) => Err(e),
+        },
+        // Listing omits payloads; fetching one carries it. Splitting them is
+        // what stops a caller pulling a day of 16 KB grids by accident.
+        "getWeatherSnapshots" => match parse::<WeatherSnapshotQuery>(args) {
+            Ok(q) => tool_service::get_weather_snapshots(storage, q)
+                .await
+                .and_then(to_value),
+            Err(e) => Err(e),
+        },
+        "getWeatherSnapshot" => match parse::<WeatherSnapshotKey>(args) {
+            Ok(k) => tool_service::get_weather_snapshot(storage, k)
                 .await
                 .and_then(to_value),
             Err(e) => Err(e),
@@ -311,6 +325,90 @@ mod tests {
         let resp = dispatch(&storage, "getStorageStats", Value::Null).await;
         assert_eq!(resp["ok"], false);
         assert_eq!(resp["error"], tool_service::STORAGE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn weather_snapshots_accepts_null_body_and_starts_empty() {
+        // Every field is optional, so an absent body must not be a parse error.
+        let storage = in_memory_storage();
+        let resp = dispatch(&storage, "getWeatherSnapshots", Value::Null).await;
+        assert_eq!(resp["ok"], true, "{resp}");
+        assert_eq!(resp["data"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn the_weather_listing_reports_sizes_not_payloads() {
+        let storage = in_memory_storage();
+        {
+            let guard = storage.read().await;
+            guard
+                .as_ref()
+                .unwrap()
+                .insert_weather_snapshot_sync(&adsb_data_engine::WeatherSnapshotRecord {
+                    source_id: String::new(),
+                    valid_time_ms: 1_789_000_000_000,
+                    fetched_at_ms: 1_789_000_400_000,
+                    received_at_ms: 1_789_000_500_000,
+                    source: "open-meteo".to_string(),
+                    model: "best_match".to_string(),
+                    version: 1,
+                    lat0: 46.0,
+                    lon0: -3.0,
+                    dlat: 1.0,
+                    dlon: 1.0,
+                    nlat: 2,
+                    nlon: 3,
+                    levels: "250,500".to_string(),
+                    payload: r#"{"version":1}"#.to_string(),
+                })
+                .expect("insert");
+        }
+
+        let resp = dispatch(&storage, "getWeatherSnapshots", Value::Null).await;
+        let rows = resp["data"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0].get("payload").is_none(),
+            "the listing must not carry 16 KB payloads: {}",
+            rows[0]
+        );
+        assert_eq!(rows[0]["payload_bytes"], r#"{"version":1}"#.len());
+
+        // Fetching the one hour does carry it, verbatim.
+        let one = dispatch(
+            &storage,
+            "getWeatherSnapshot",
+            json!({ "valid_time_ms": 1_789_000_000_000i64 }),
+        )
+        .await;
+        assert_eq!(one["ok"], true, "{one}");
+        assert_eq!(one["data"]["payload"], r#"{"version":1}"#);
+    }
+
+    #[tokio::test]
+    async fn an_unrecorded_weather_hour_is_null_not_an_error() {
+        let storage = in_memory_storage();
+        let resp = dispatch(
+            &storage,
+            "getWeatherSnapshot",
+            json!({ "valid_time_ms": 1_789_000_000_000i64 }),
+        )
+        .await;
+        assert_eq!(resp["ok"], true, "absent is not a failure: {resp}");
+        assert!(resp["data"].is_null());
+    }
+
+    #[tokio::test]
+    async fn weather_writes_are_not_reachable_from_the_tool_server() {
+        // This endpoint is read-only by design. Recording weather is the
+        // recorder's job, off the MQTT topic -- never something an agent can
+        // ask for over HTTP.
+        let storage = in_memory_storage();
+        for name in ["insertWeatherSnapshot", "recordWeather", "deleteWeather"] {
+            let resp = dispatch(&storage, name, json!({})).await;
+            assert_eq!(resp["ok"], false, "{name} must not be reachable");
+            assert!(resp["error"].as_str().unwrap().contains("Unknown tool"));
+        }
     }
 
     #[tokio::test]

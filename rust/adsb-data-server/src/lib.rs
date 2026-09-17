@@ -27,5 +27,6 @@ pub mod recorder;
 #[cfg(feature = "http-api")]
 pub mod server;
 pub mod tool_service;
+pub mod weather;
 
 pub use recorder::{Recorder, RecorderConfig};

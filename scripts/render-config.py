@@ -127,6 +127,12 @@ def run_scoped(path: str, out: Path) -> Path:
 def render_server(cfg: dict, out: Path = OUT) -> str:
     rx, m, s = cfg["receiver"], cfg["mqtt"], cfg["storage"]
     db_path = run_scoped(s["db_path"], out)
+    # The recorder subscribes to the weather grid on the connection it already
+    # has, and records it. Same expression render_weather uses, so the publisher
+    # and the recorder cannot end up on different topics. Emitted even when
+    # [weather] is disabled: it costs nothing, and a later `make up-weather`
+    # then needs no re-render.
+    w = cfg.get("weather", {})
 
     pairs = [
         ("source_id", rx["id"]),
@@ -134,6 +140,7 @@ def render_server(cfg: dict, out: Path = OUT) -> str:
         ("mqtt_broker", m["host"]),
         ("mqtt_port", m["port"]),
         ("mqtt_topic", m["topic"]),
+        ("mqtt_weather_topic", w.get("topic") or weather_topic(m["topic"])),
         ("dump1090_tz", rx.get("timezone", "Local")),
         ("checkpoint_secs", s.get("checkpoint_secs", 300)),
         ("retention_hours", s.get("retention_hours", 0)),

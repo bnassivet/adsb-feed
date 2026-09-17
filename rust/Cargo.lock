@@ -31,6 +31,7 @@ version = "0.1.0"
 dependencies = [
  "adsb-data-engine",
  "adsb-pulsar-client",
+ "adsb-weather-server",
  "anyhow",
  "async-trait",
  "axum",
