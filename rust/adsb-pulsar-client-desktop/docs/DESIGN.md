@@ -4834,6 +4834,27 @@ followed two seconds later by a republish from memory — still a single API fet
 fresh subscriber received the snapshot again, while the recorder re-subscribed in the same
 instant.
 
+**Recording** (2026-09-17, same stack, against a 289 MB database holding 19 days of
+history). Restarted onto the new binary, the recorder logged `Recording weather snapshots
+from 'adsb/dev/weather/grid'`, subscribed to both topics, and recorded the model hour
+**3 ms later** — no fetch and no waiting for the next refresh, because the retained
+message is replayed on the first ConnAck. The stored row was 187 points (`nlat` 11 ×
+`nlon` 17), `payload_bytes` 16,011, `levels` `200,250,300,500,700,850`, and `source_id`
+`dev-laptop-dev` — stamped by the storage layer, since the payload carries no receiver
+identity. `fetched_at_ms` was **16 minutes older** than `received_at_ms`: one timestamp
+column would have conflated when the model was fetched with when this node got it.
+
+Restarting the recorder a second time is the dedupe proof that matters. The new process
+starts with an empty in-memory guard, so the replayed retained message really is offered
+for insertion — and the result was **no second row and no log line**, leaving the count at
+1. Only the database anti-join on `(source_id, valid_time_ms)` can decline that write,
+which is the layer that survives a restart. `getWeatherSnapshots`, `getWeatherSnapshot`
+(payload byte-identical and re-parseable) and `adsb_recorder_weather_snapshots_rows` all
+answered; the same tools returned `Unknown tool` minutes earlier on the previous binary.
+
+Incidentally confirming the two legs are independent: the SBS feed was down throughout
+(dump1090 unreachable, `messages_received_total 0`), and weather recorded regardless.
+
 ### Files
 
 | File | Purpose |
