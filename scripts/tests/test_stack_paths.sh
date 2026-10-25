@@ -77,7 +77,10 @@ check "CSP keeps the map tile sources" "yes" \
   "$(printf %s "$ovr" | python3 -c '
 import json,sys
 csp = json.load(sys.stdin)["app"]["security"]["csp"]
-print("yes" if "tile.openstreetmap.org" in csp and "ipc:" in csp else "no")')"
+# CARTO (keyed dark theme) and Esri (its keyless fallback) are both basemaps.
+img = next(d for d in csp.split(";") if d.strip().startswith("img-src"))
+hosts = ("tile.openstreetmap.org", "https://*.basemaps.cartocdn.com", "https://server.arcgisonline.com")
+print("yes" if all(h in img for h in hosts) and "ipc:" in csp else "no")')"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "OK"; else echo "$fails failure(s)"; exit 1; fi

@@ -23,3 +23,6 @@ next-env.d.ts
 **/.next/
 # Per-stack dist dirs (NEXT_DIST_DIR): one dev server per dist dir.
 **/.next-*/
+
+# Next.js local env (e.g. NEXT_PUBLIC_CARTO_API_KEY) -- never committed
+.env*.local

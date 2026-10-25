@@ -189,6 +189,14 @@ dev_port = 3200
 # disabled. (Was agents.desktop_tool_port, which still works.)
 tool_port = 8788
 
+# CARTO basemap key for the dark map theme. Since 2026-09-25 CARTO serves raster
+# tiles only with a key, and keyless requests get an "API KEY REQUIRED" tile.
+# Free from https://carto.com/basemaps/apikey (5M tiles/month non-commercial).
+# Empty = fall back to Esri's keyless Dark Gray Canvas. adsb-stack.toml is
+# gitignored, so the key stays on this machine. Read when the desktop starts:
+# restart it (make down-desktop / up-desktop) after changing this.
+carto_api_key = ""
+
 [remote]
 # For `make remote`: run the desktop app against a data server on another host
 # (typically a Raspberry Pi) instead of recording locally. Leave uri empty for

@@ -37,6 +37,7 @@ import {
   type Particles,
 } from "@/lib/wind-particles";
 import { formatWind } from "@/lib/wind-format";
+import { CARTO_API_KEY, tileConfig } from "@/lib/basemap";
 import { MapTileToggle } from "./MapTileToggle";
 
 import { CenterOnAntennaButton } from "./CenterOnAntennaButton";
@@ -55,17 +56,6 @@ const SIM_LEG_COLORS = ["#38bdf8", "#a78bfa", "#fbbf24", "#34d399", "#f472b6", "
 // Default center: Montreal
 const DEFAULT_CENTER: [number, number] = [45.5, -73.6];
 const DEFAULT_ZOOM = 8;
-
-const TILE_CONFIGS = {
-  light: {
-    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  },
-  dark: {
-    url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
-  },
-} as const;
 
 /** Creates a rotated triangle SVG DivIcon for an aircraft, with optional selection ring. */
 function aircraftIcon(heading: number, color: string, selected: boolean = false): L.DivIcon {
@@ -881,7 +871,7 @@ function DotsLayer({
 }
 
 export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
-  const tile = TILE_CONFIGS[mapTheme];
+  const tile = tileConfig(mapTheme, CARTO_API_KEY);
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
     : DEFAULT_CENTER;
@@ -927,9 +917,11 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         <MapClickHandler onDeselect={handleDeselect} />
         <FlyToHandler onReady={handleFlyToReady} />
         <TileLayer
-          key={mapTheme}
+          key={tile.url}
           attribution={tile.attribution}
           url={tile.url}
+          maxZoom={tile.maxZoom}
+          {...(tile.subdomains && { subdomains: tile.subdomains })}
         />
 
         {/* Density hexagons — zoom-adaptive H3 resolution */}
