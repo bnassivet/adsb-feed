@@ -517,6 +517,10 @@ Requires `adsb-agent` (:8000) and `adsb-simulation-agent` (:8300) running; witho
   `EventLoop::poll` returns its error immediately and applies no backoff of its own.
   The attempt counter resets after **30 s connected**, never on `ConnAck` — duplicate
   client ids evict each other while connecting successfully every time.
+- **CARTO raster tiles need `?key=` since 2026-09-25** — keyless requests render an "API KEY REQUIRED"
+  tile, not an error. `src/lib/basemap.ts::tileConfig` uses CARTO only when `NEXT_PUBLIC_CARTO_API_KEY`
+  is set (`[desktop] carto_api_key`), otherwise Esri's keyless Dark Gray Canvas. A new tile host goes in
+  the CSP `img-src` of **both** `tauri.conf.json` and `scripts/tauri-dev-config.py`.
 - Root `.gitignore` has `lib/` which silently ignores `src/lib/`. Negated with `!**/src/lib/`
 - Tauri v2 commands silently fail without proper permissions in `capabilities/default.json`
 - `create-next-app` fails if `src-tauri/` exists — scaffold manually or use temp dir

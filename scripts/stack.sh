@@ -319,6 +319,11 @@ start_desktop() { # start_desktop [VAR=value ...]
     "NEXT_DIST_DIR=$dist" \
     "CARGO_TARGET_DIR=$target"
 
+  # Only when set: an empty value would override a key exported in the shell
+  # or kept in the desktop's .env.local.
+  carto_key="$(cfg desktop carto_api_key "")"
+  [ -z "$carto_key" ] || set -- "$@" "NEXT_PUBLIC_CARTO_API_KEY=$carto_key"
+
   if [ -n "$cfg_json" ]; then
     CFG_JSON="$cfg_json" start desktop env "$@" "TAURI_DEV_CONFIG=$cfg_json" \
       sh -c "cd '$REPO/rust/adsb-pulsar-client-desktop' && exec npx tauri dev -c \"\$TAURI_DEV_CONFIG\""

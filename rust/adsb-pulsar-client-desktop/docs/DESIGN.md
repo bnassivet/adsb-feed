@@ -522,7 +522,7 @@ agreement. Session-only — nothing is persisted, everything is visible again on
 ```
 
 **Content Security Policy (CSP)**:
-- Allows OpenStreetMap tile servers for map rendering
+- Allows the basemap tile servers (OpenStreetMap, CARTO, Esri) for map rendering
 - Permits IPC communication between frontend and backend
 - Restricts external scripts for security
 
@@ -1039,10 +1039,21 @@ DotsLayer({ tracks, colorMode, type: "history" | "live" })
 - **Color**: Altitude-based, same scale as active but at reduced opacity
 
 **Map Layers**:
-- Light theme: `https://tile.openstreetmap.org/{z}/{x}/{y}.png`
-- Dark theme: `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png` (CARTO)
+- Light theme: `https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png`
+- Dark theme, CARTO key configured: `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=<key>` (CARTO Dark Matter, max zoom 20)
+- Dark theme, no key: `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}` (Esri Dark Gray Canvas, keyless, max zoom 16; note `{y}/{x}`)
 
-**File**: `src/components/MapInner.tsx`
+Since 2026-09-25 CARTO serves raster tiles only with a key; a keyless request
+renders an "API KEY REQUIRED" tile instead of the map. Keys are free
+(carto.com/basemaps/apikey, 5M tiles/month non-commercial). The key comes from
+`NEXT_PUBLIC_CARTO_API_KEY`, which `scripts/stack.sh` sets from
+`[desktop] carto_api_key` in `adsb-stack.toml` (or put it in the desktop's
+gitignored `.env.local`). Next inlines it at dev-server start / `next build`, so
+changing it means restarting the desktop. CARTO's vector styles are keyless for
+now, but CARTO has said that may change, and they would need MapLibre GL in
+place of Leaflet raster layers, so they were not adopted.
+
+**Files**: `src/components/MapInner.tsx`, `src/lib/basemap.ts` (`tileConfig`)
 
 ---
 
@@ -2613,11 +2624,17 @@ const { tracks, history } = useAircraftTracks(filters);
 
 ```
 default-src 'self';
-img-src 'self' https://*.tile.openstreetmap.org https://*.openstreetmap.org data:;
+img-src 'self' https://*.tile.openstreetmap.org https://*.openstreetmap.org
+        https://*.basemaps.cartocdn.com https://server.arcgisonline.com data:;
 style-src 'self' 'unsafe-inline' https://unpkg.com;
 script-src 'self' 'unsafe-inline';
-connect-src 'self' ipc: http://ipc.localhost https://*.tile.openstreetmap.org;
+connect-src 'self' ipc: http://ipc.localhost https://*.tile.openstreetmap.org
+            http://localhost:8000 http://127.0.0.1:8000;
 ```
+
+Mirrored by `scripts/tauri-dev-config.py` for per-stack `tauri dev -c` overrides;
+a new tile host must be added to **both**, and `scripts/tests/test_stack_paths.sh`
+checks the override still lists every basemap host.
 
 **Purpose**:
 - Allow only necessary external resources (map tiles)
