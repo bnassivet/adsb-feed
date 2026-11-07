@@ -127,6 +127,8 @@ export default function Dashboard() {
   const [showReceiver, setShowReceiver] = useLocalStorage<boolean>("adsb-show-receiver", true);
   // Trail of past positions behind live aircraft; the aircraft icons are always drawn.
   const [showPositions, setShowPositions] = useLocalStorage<boolean>("adsb-show-positions", true);
+  // `HEX/CALLSIGN` labels beside live aircraft, auto-placed (lib/label-layout.ts). Off by default.
+  const [showLabels, setShowLabels] = useLocalStorage<boolean>("adsb-show-labels", false);
 
   // DB History Panel state
   const [dbHistoryOpen, setDbHistoryOpen] = useLocalStorage<boolean>("adsb-dbhistory-open", false);
@@ -904,6 +906,7 @@ export default function Dashboard() {
     scenarios: scenarioToolsConfig,
     showReceiver,
     showPositions,
+    showLabels,
     showEvents,
     liveColorMode,
     historyColorMode,
@@ -924,6 +927,7 @@ export default function Dashboard() {
     setShowImported,
     setShowReceiver,
     setShowPositions,
+    setShowLabels,
     setShowEvents,
     setLiveColorMode,
     setHistoryColorMode,
@@ -970,6 +974,7 @@ export default function Dashboard() {
     showImported,
     showReceiver,
     showPositions,
+    showLabels,
     showEvents,
     selectedHexIdents,
     lastSelectedHexIdent,
@@ -1044,6 +1049,10 @@ export default function Dashboard() {
 
   function handleTogglePositions() {
     setShowPositions((prev: boolean) => !prev);
+  }
+
+  function handleToggleLabels() {
+    setShowLabels((prev: boolean) => !prev);
   }
 
   function handleToggleEvents() {
@@ -1401,6 +1410,8 @@ export default function Dashboard() {
           hasReceiverLocation={receiverLocation != null}
           showPositions={showPositions}
           onTogglePositions={handleTogglePositions}
+          showLabels={showLabels}
+          onToggleLabels={handleToggleLabels}
           simulationPanel={
             <SimulationPanel
               receiverLocation={simReceiverLocation}
@@ -1467,7 +1478,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
+              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel

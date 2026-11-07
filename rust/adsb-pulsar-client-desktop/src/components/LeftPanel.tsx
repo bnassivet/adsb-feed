@@ -44,6 +44,8 @@ interface LeftPanelProps {
   hasReceiverLocation: boolean;
   showPositions: boolean;
   onTogglePositions: () => void;
+  showLabels: boolean;
+  onToggleLabels: () => void;
   historySliderMin: number;
   historySliderMax: number;
   historySliderRange: number;

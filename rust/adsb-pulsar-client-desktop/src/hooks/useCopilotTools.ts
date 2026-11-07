@@ -145,6 +145,7 @@ export interface DisplayToolsConfig {
   agentTrajectories: AgentTrajectory[];
   showReceiver: boolean;
   showPositions: boolean;
+  showLabels: boolean;
   showEvents: boolean;
   liveColorMode: AltitudeColorMode;
   historyColorMode: AltitudeColorMode;
@@ -167,6 +168,7 @@ export interface DisplayToolsConfig {
   setAgentTrajectories: (v: AgentTrajectory[]) => void;
   setShowReceiver: (fn: (prev: boolean) => boolean) => void;
   setShowPositions: (fn: (prev: boolean) => boolean) => void;
+  setShowLabels: (fn: (prev: boolean) => boolean) => void;
   setShowEvents: (fn: (prev: boolean) => boolean) => void;
   setLiveColorMode: (v: AltitudeColorMode) => void;
   setHistoryColorMode: (v: AltitudeColorMode) => void;
@@ -970,7 +972,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
   useSafeFrontendTool({
     name: "setLayerVisibility",
     description:
-      "Show or hide map layers. Only provided layers are changed; omitted layers keep their current state. Available layers: positions, history, density, simulation, imported, receiver, events. Weather and wind are not among them: use setWeatherLayer.",
+      "Show or hide map layers. Only provided layers are changed; omitted layers keep their current state. Available layers: positions, labels, history, density, simulation, imported, receiver, events. Weather and wind are not among them: use setWeatherLayer.",
     parameters: z.object({
       positions: z
         .boolean()
@@ -978,6 +980,10 @@ export function useCopilotTools(config: DisplayToolsConfig) {
         .describe(
           "Show the trail of past positions behind live aircraft (aircraft icons stay visible)",
         ),
+      labels: z
+        .boolean()
+        .optional()
+        .describe("Show hex ident / callsign labels next to live aircraft"),
       history: z.boolean().optional().describe("Show tracks of aircraft no longer live"),
       density: z.boolean().optional().describe("Show density heatmap"),
       simulation: z
@@ -993,6 +999,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
     }),
     handler: async (args: {
       positions?: boolean;
+      labels?: boolean;
       history?: boolean;
       density?: boolean;
       simulation?: boolean;
@@ -1004,6 +1011,10 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       if (args.positions !== undefined) {
         configRef.current.setShowPositions(() => args.positions!);
         changes.positions = args.positions!;
+      }
+      if (args.labels !== undefined) {
+        configRef.current.setShowLabels(() => args.labels!);
+        changes.labels = args.labels!;
       }
       if (args.history !== undefined) {
         configRef.current.setShowHistory(() => args.history!);

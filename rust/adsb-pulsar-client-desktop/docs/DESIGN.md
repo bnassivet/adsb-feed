@@ -729,6 +729,7 @@ accumulation even when users navigate to Settings or other pages.
 - `sidebarWidth: number`: Left panel width in px, 180–400 (persisted)
 - `trajectoryStyle: "line" | "dots"`: Trajectory rendering mode (persisted)
 - `showPositions: boolean`: Draw the trail of past positions (dots or line, per `trajectoryStyle`) behind **live** aircraft; icons always render. History/DB history/imported keep their own toggles. Chat: `setLayerVisibility({ positions })` (persisted as `adsb-show-positions`)
+- `showLabels: boolean`: Draw `HEX/CALLSIGN` labels (`-` when no callsign) beside **live** aircraft, auto-placed so they never overlap — see *Track labels*. Chat: `setLayerVisibility({ labels })` (persisted as `adsb-show-labels`, default off)
 - `showHistory: boolean`: Whether to display expired aircraft (persisted)
 - `showDensity: boolean`: H3 density overlay toggle (persisted)
 - `densityMetric: DensityMetric`: Which metric to display in H3 hexagons (persisted)
@@ -3670,6 +3671,7 @@ The application includes a built-in simulation mode that animates 20 aircraft al
 | `adsb-sidebar-width` | `number` | `224` | Left panel width in px (180–400) |
 | `adsb-trajectory-style` | `"line" \| "dots"` | `"line"` | Trajectory rendering mode |
 | `adsb-show-positions` | `boolean` | `true` | Toggle the position trail behind live aircraft |
+| `adsb-show-labels` | `boolean` | `false` | Toggle `HEX/CALLSIGN` labels beside live aircraft |
 | `adsb-show-history` | `boolean` | `false` | Toggle visibility of history tracks |
 | `adsb-show-density` | `boolean` | `false` | Toggle H3 density overlay |
 | `adsb-density-metric` | `DensityMetric` | `"positions"` | Which metric for H3 hexagons |
@@ -3862,6 +3864,36 @@ The H3 density overlay is **not affected** by per-track or per-group visibility 
 - **Analysis mode**: `analysis`
 
 Density is controlled exclusively by the left panel toggles (`showDensity`, `includeImportedInDensity`, altitude range). This separation ensures that density always represents "what coverage do I have" regardless of which individual tracks are visible on the map.
+
+### Track labels
+
+"Show track labels" (Display Layers) draws `HEX/CALLSIGN` next to every **live**
+aircraft. Live-only needs no check of its own: outside live mode `page.tsx` hands the
+map `EMPTY_TRACKS`, and hidden-section filtering has already been applied.
+
+| Piece | Role |
+|-------|------|
+| `lib/label-layout.ts` | Pure: `formatTrackLabel`, `layoutLabels`, `trackLabelHtml` — all decisions, fully unit-tested |
+| `TrackLabelsLayer` (`MapInner.tsx`) | Imperative Leaflet plumbing only: one zero-size, non-interactive marker per label in pane `trackLabels` (z 640, `pointer-events: none`) |
+
+**Placement** works in container pixels. Each label has 16 candidate slots: 8 compass
+directions on a ring just outside the icon, and the same 8 on an outer ring that gets a
+leader line. The ring is *square*, not circular: the icon is square, and a circle of
+radius `r` puts a diagonal slot's corner at `r·0.707`, inside the icon. Costs, lower is better:
+
+- `|d − 90|` where `d` is the slot's angle from the **trail** (`heading + 180°`), so beside
+  the aircraft is best and ahead is acceptable;
+- plus `max(0, 90 − d)`, so trail-side slots are penalised twice;
+- plus 5 for the left of the heading (right-hand side first), and 60 for the outer ring;
+- **minus 40 for last frame's slot**. Without that hysteresis, labels jump at the feed's 2 Hz refresh.
+
+Labels are placed greedily, selected tracks first and then by `last_seen` descending. A slot is
+taken only if it overlaps no placed label, no other aircraft's icon, and stays inside the
+viewport. A label with no free slot is **hidden**, which is the only way to guarantee no overlap
+in dense traffic. The exception is a selected aircraft's label, which falls back to its
+best inner slot. Labels use a 10px monospace font with an explicit width, so the rendered box is
+the reserved box with no DOM measuring. The layout re-runs on every feed update and on
+`zoomend`/`moveend`/`resize`, and `setIcon` is called only when slot, text, colour or selection changes.
 
 ### Map Filtering
 

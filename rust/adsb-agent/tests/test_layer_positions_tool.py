@@ -30,3 +30,13 @@ def test_positions_is_about_live_aircraft_trails():
 
 def test_history_reads_as_aircraft_no_longer_live():
     assert "no longer live" in _layer_props()["history"]["description"].lower()
+
+
+def test_declares_labels_as_a_boolean_layer():
+    assert _layer_props()["labels"]["type"] == "boolean"
+
+
+def test_labels_are_hex_and_callsign_beside_live_aircraft():
+    description = _layer_props()["labels"]["description"].lower()
+    assert "callsign" in description
+    assert "live aircraft" in description

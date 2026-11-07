@@ -42,6 +42,8 @@ function renderFilters(overrides = {}) {
     hasReceiverLocation: true,
     showPositions: true,
     onTogglePositions: vi.fn(),
+    showLabels: false,
+    onToggleLabels: vi.fn(),
     historySliderMin: 0,
     historySliderMax: 24,
     historySliderRange: 24,
@@ -62,6 +64,25 @@ function renderFilters(overrides = {}) {
 }
 
 describe("FiltersPanel", () => {
+  describe("Show track labels", () => {
+    it("renders unchecked when labels are hidden", () => {
+      renderFilters({ showLabels: false });
+      expect(screen.getByRole("checkbox", { name: /show track labels/i })).not.toBeChecked();
+    });
+
+    it("renders checked when labels are shown", () => {
+      renderFilters({ showLabels: true });
+      expect(screen.getByRole("checkbox", { name: /show track labels/i })).toBeChecked();
+    });
+
+    it("calls onToggleLabels when clicked", async () => {
+      const user = userEvent.setup();
+      const { props } = renderFilters();
+      await user.click(screen.getByRole("checkbox", { name: /show track labels/i }));
+      expect(props.onToggleLabels).toHaveBeenCalledOnce();
+    });
+  });
+
   describe("Show track positions", () => {
     it("renders checked when positions are shown", () => {
       renderFilters({ showPositions: true });

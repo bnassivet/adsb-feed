@@ -426,6 +426,10 @@ TOOLS: list[dict] = [
                             "(aircraft icons stay visible)"
                         ),
                     },
+                    "labels": {
+                        "type": "boolean",
+                        "description": "Show hex ident / callsign labels next to live aircraft",
+                    },
                     "history": {
                         "type": "boolean",
                         "description": "Show tracks of aircraft no longer live",

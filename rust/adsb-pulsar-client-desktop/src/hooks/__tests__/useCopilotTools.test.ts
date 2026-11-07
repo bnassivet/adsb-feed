@@ -61,6 +61,7 @@ function makeConfig(overrides: Partial<DisplayToolsConfig> = {}): DisplayToolsCo
     agentTrajectories: [],
     showReceiver: true,
     showPositions: true,
+    showLabels: false,
     showEvents: true,
     liveColorMode: "track",
     historyColorMode: "track",
@@ -82,6 +83,7 @@ function makeConfig(overrides: Partial<DisplayToolsConfig> = {}): DisplayToolsCo
     setAgentTrajectories: vi.fn(),
     setShowReceiver: vi.fn(),
     setShowPositions: vi.fn(),
+    setShowLabels: vi.fn(),
     setShowEvents: vi.fn(),
     setLiveColorMode: vi.fn(),
     setHistoryColorMode: vi.fn(),
@@ -447,6 +449,25 @@ describe("useCopilotTools — display control tools", () => {
       const updater = vi.mocked(config.setShowPositions).mock.calls[0][0];
       expect(updater(true)).toBe(false);
       expect(config.setShowHistory).not.toHaveBeenCalled();
+    });
+
+    it("toggles live track labels without touching other layers", async () => {
+      const result = JSON.parse(
+        (await getHandler("setLayerVisibility")({ labels: true })) as string
+      );
+      expect(result.updated).toEqual({ labels: true });
+      expect(config.setShowLabels).toHaveBeenCalledOnce();
+      const updater = vi.mocked(config.setShowLabels).mock.calls[0][0];
+      expect(updater(false)).toBe(true);
+      expect(config.setShowPositions).not.toHaveBeenCalled();
+    });
+
+    it("describes labels as hex ident / callsign beside live aircraft", () => {
+      const tool = registeredTools.get("setLayerVisibility");
+      expect(tool?.description).toMatch(/labels/);
+      const shape = (tool?.parameters as { shape: Record<string, { description?: string }> }).shape;
+      expect(shape.labels.description).toMatch(/callsign/i);
+      expect(shape.labels.description).toMatch(/live aircraft/i);
     });
 
     it("tells positions (live trails) apart from history in its schema", () => {

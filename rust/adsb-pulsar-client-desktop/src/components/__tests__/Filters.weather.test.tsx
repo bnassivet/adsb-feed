@@ -40,6 +40,8 @@ const baseProps = {
   onToggleReceiver: vi.fn(),
   showPositions: true,
   onTogglePositions: vi.fn(),
+  showLabels: false,
+  onToggleLabels: vi.fn(),
   hasReceiverLocation: true,
   historySliderMin: 0,
   historySliderMax: 24,
