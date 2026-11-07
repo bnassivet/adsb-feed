@@ -20,6 +20,7 @@ pub use ingest::{
 };
 pub use sbs_parser::{
     AircraftPosition, extract_sbs_timestamp, parse_sbs_message, parse_sbs_raw_fields,
+    updates_aircraft_state,
 };
 pub use storage::{StorageHandle, move_database_to_snapshot};
 pub use types::{

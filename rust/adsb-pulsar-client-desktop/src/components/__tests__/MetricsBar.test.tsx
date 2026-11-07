@@ -8,6 +8,7 @@ function makeMetrics(overrides: Partial<MetricsWithRates> = {}): MetricsWithRate
   return {
     messages_sent: 1000,
     messages_received: 6000,
+    lines_received: 7000,
     messages_parsed: 5000,
     positions_parsed: 1000,
     errors: 0,
@@ -18,6 +19,7 @@ function makeMetrics(overrides: Partial<MetricsWithRates> = {}): MetricsWithRate
     elapsed_secs: 120,
     throughput_msg_per_sec: 8.3,
     hits_per_sec: 41.7,
+    pos_per_sec: 2.5,
     ...overrides,
   };
 }
@@ -36,15 +38,26 @@ describe("MetricsBar", () => {
     expect(screen.getByText("hits/s:")).toBeInTheDocument();
   });
 
-  it("explains hits/s vs pos/s in tooltips", () => {
+  it("shows hits/s, msgs/s and pos/s with their values", () => {
+    render(<MetricsBar metrics={makeMetrics()} />);
+    expect(screen.getByText("hits/s:").nextElementSibling).toHaveTextContent("41.7");
+    expect(screen.getByText("msgs/s:").nextElementSibling).toHaveTextContent("8.3");
+    expect(screen.getByText("pos/s:").nextElementSibling).toHaveTextContent("2.5");
+  });
+
+  it("explains each rate in a tooltip", () => {
     render(<MetricsBar metrics={makeMetrics()} />);
     expect(screen.getByText("hits/s:").parentElement).toHaveAttribute(
       "title",
-      "All ADS-B messages received, any MSG type",
+      "Every line received from the source, including heartbeats and non-MSG lines",
+    );
+    expect(screen.getByText("msgs/s:").parentElement).toHaveAttribute(
+      "title",
+      "MSG messages used to update aircraft information",
     );
     expect(screen.getByText("pos/s:").parentElement).toHaveAttribute(
       "title",
-      "Position messages (with latitude/longitude)",
+      "Messages carrying a position (latitude/longitude)",
     );
   });
 

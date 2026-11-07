@@ -89,6 +89,29 @@ pub fn parse_sbs_message(line: &str) -> Option<AircraftPosition> {
     })
 }
 
+/// Whether a MSG line of this transmission type is merged into aircraft state.
+///
+/// | Type | Carries | Merged |
+/// |------|---------|--------|
+/// | 1 | callsign | yes |
+/// | 2 | surface position: altitude, speed, track, lat/lon, on-ground | yes |
+/// | 3 | airborne position: altitude, lat/lon, on-ground | yes |
+/// | 4 | ground speed, track, vertical rate | yes |
+/// | 5 | altitude (surveillance reply) | yes |
+/// | 6 | squawk, altitude | yes |
+/// | 7 | altitude (air-to-air, DF16/ACAS) | yes |
+/// | 8 | on-ground flag only (all-call reply) | **no** |
+///
+/// MSG7 stays: it is the aircraft's own barometric altitude, the same data as
+/// MSG5, and for a Mode S aircraft with TCAS but no ADS-B it can be the most
+/// frequent altitude source. MSG8 adds nothing, and merging it would only
+/// refresh `last_seen` for an aircraft we know nothing about. It is still
+/// archived as a raw message. An unparseable type (`None`) is merged rather
+/// than dropped.
+pub fn updates_aircraft_state(transmission_type: Option<u8>) -> bool {
+    transmission_type != Some(8)
+}
+
 /// Extract raw SBS metadata without full position parsing.
 ///
 /// Returns `(hex_ident, msg_type, transmission_type)` or `None` for
@@ -155,6 +178,23 @@ fn parse_bool(s: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn msg1_to_msg7_update_aircraft_state() {
+        for t in 1..=7 {
+            assert!(updates_aircraft_state(Some(t)), "MSG{t} must be merged");
+        }
+    }
+
+    #[test]
+    fn msg8_all_call_does_not_update_aircraft_state() {
+        assert!(!updates_aircraft_state(Some(8)));
+    }
+
+    #[test]
+    fn unknown_transmission_type_is_merged_rather_than_dropped() {
+        assert!(updates_aircraft_state(None));
+    }
 
     #[test]
     fn test_parse_msg3_position() {

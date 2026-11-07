@@ -22,6 +22,7 @@
 
 use crate::sbs_parser::{
     AircraftPosition, extract_sbs_timestamp, parse_sbs_message, parse_sbs_raw_fields,
+    updates_aircraft_state,
 };
 use crate::storage::StorageHandle;
 use crate::types::RawSbsRecord;
@@ -84,7 +85,10 @@ pub struct IngestPipeline {
     config: IngestConfig,
     record_positions: Arc<AtomicBool>,
     record_raw: Arc<AtomicBool>,
-    /// Every valid MSG line, any transmission type (the "hits" rate).
+    /// Every line delivered to the pipeline, parsed or not (the hits/s rate).
+    lines_received: Arc<AtomicU64>,
+    /// MSG lines merged into aircraft state (the msgs/s rate): see
+    /// [`updates_aircraft_state`].
     messages_parsed: Arc<AtomicU64>,
     /// MSG lines that carry a latitude/longitude fix (the position rate).
     positions_parsed: Arc<AtomicU64>,
@@ -103,6 +107,7 @@ impl IngestPipeline {
             config,
             record_positions: Arc::new(AtomicBool::new(true)),
             record_raw: Arc::new(AtomicBool::new(true)),
+            lines_received: Arc::new(AtomicU64::new(0)),
             messages_parsed: Arc::new(AtomicU64::new(0)),
             positions_parsed: Arc::new(AtomicU64::new(0)),
             last_message_time: Arc::new(RwLock::new(Instant::now())),
@@ -118,6 +123,12 @@ impl IngestPipeline {
     /// Replaces the raw-recording toggle with a caller-owned handle.
     pub fn with_record_raw(mut self, flag: Arc<AtomicBool>) -> Self {
         self.record_raw = flag;
+        self
+    }
+
+    /// Replaces the received-line counter with a caller-owned handle.
+    pub fn with_lines_received(mut self, counter: Arc<AtomicU64>) -> Self {
+        self.lines_received = counter;
         self
     }
 
@@ -152,7 +163,12 @@ impl IngestPipeline {
         Arc::clone(&self.record_raw)
     }
 
-    /// Handle to the parsed-message counter (all valid MSG lines, any type).
+    /// Handle to the received-line counter (every line, parsed or not).
+    pub fn lines_received(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.lines_received)
+    }
+
+    /// Handle to the parsed-message counter (MSG lines merged into an aircraft).
     pub fn messages_parsed(&self) -> Arc<AtomicU64> {
         Arc::clone(&self.messages_parsed)
     }
@@ -216,13 +232,17 @@ impl IngestPipeline {
         message_counts: &mut HashMap<String, u64>,
         raw_buffer: &mut Vec<RawSbsRecord>,
     ) {
+        self.lines_received.fetch_add(1, Ordering::Relaxed);
         let Ok(line) = std::str::from_utf8(data) else {
             return;
         };
 
         // Collect the raw message for audit/replay before parsing, so a line
-        // that fails position parsing is still recoverable from the archive.
-        if let Some((hex, msg_type, trans_type)) = parse_sbs_raw_fields(line)
+        // that fails position parsing (or is not merged, like MSG8) is still
+        // recoverable from the archive.
+        let raw_fields = parse_sbs_raw_fields(line);
+        let trans_type = raw_fields.as_ref().and_then(|(_, _, t)| *t);
+        if let Some((hex, msg_type, _)) = raw_fields
             && let Some(ts) = extract_sbs_timestamp(line)
         {
             raw_buffer.push(RawSbsRecord {
@@ -236,6 +256,9 @@ impl IngestPipeline {
             });
         }
 
+        if !updates_aircraft_state(trans_type) {
+            return;
+        }
         if let Some(pos) = parse_sbs_message(line) {
             self.messages_parsed.fetch_add(1, Ordering::Relaxed);
             if pos.latitude.is_some() && pos.longitude.is_some() {
@@ -588,9 +611,19 @@ mod tests {
     const SAMPLE_MSG3_NO_FIX: &str =
         "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:02.000,2024/01/15,10:30:02.000,,35000,,,,,,,,,,0";
 
-    async fn count_after(lines: &[&str]) -> (u64, u64) {
+    /// MSG8 all-call reply: only the on-ground flag, nothing to merge.
+    const SAMPLE_MSG8: &str =
+        "MSG,8,1,1,A1B2C3,1,2024/01/15,10:30:05.000,2024/01/15,10:30:05.000,,,,,,,,,,,,0";
+    /// Heartbeat (hex 000000) and a non-MSG status line.
+    const SAMPLE_HEARTBEAT: &str =
+        "MSG,3,1,1,000000,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,,,,,,,,,,,0";
+    const SAMPLE_STA: &str = "STA,,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,RM";
+
+    /// Returns `(lines, messages, positions)` after feeding `lines` through.
+    async fn count_after(lines: &[&str]) -> (u64, u64, u64) {
         let (tx, rx) = broadcast::channel(64);
         let pipeline = test_pipeline(no_storage());
+        let received = pipeline.lines_received();
         let messages = pipeline.messages_parsed();
         let positions = pipeline.positions_parsed();
         for line in lines {
@@ -599,30 +632,117 @@ mod tests {
         drop(tx);
         pipeline.run(rx, RecordingSink::default()).await;
         (
+            received.load(Ordering::Relaxed),
             messages.load(Ordering::Relaxed),
             positions.load(Ordering::Relaxed),
         )
     }
 
     #[tokio::test]
-    async fn pipeline_counts_all_msg_types_as_messages() {
-        let (messages, _) = count_after(&[SAMPLE_MSG3, SAMPLE_MSG1, "garbage"]).await;
-        assert_eq!(
-            messages, 2,
-            "every valid MSG line counts, whatever its type"
-        );
+    async fn every_received_line_counts_as_a_hit() {
+        let (lines, messages, _) = count_after(&[
+            SAMPLE_MSG3,
+            SAMPLE_MSG1,
+            SAMPLE_HEARTBEAT,
+            SAMPLE_STA,
+            "garbage",
+        ])
+        .await;
+        assert_eq!(lines, 5, "hits count every line, parsed or not");
+        assert_eq!(messages, 2, "only the MSG1 and MSG3 update an aircraft");
+    }
+
+    #[tokio::test]
+    async fn invalid_utf8_still_counts_as_a_hit() {
+        let (tx, rx) = broadcast::channel(64);
+        let pipeline = test_pipeline(no_storage());
+        let received = pipeline.lines_received();
+        tx.send(vec![0xff, 0xfe]).unwrap();
+        drop(tx);
+        pipeline.run(rx, RecordingSink::default()).await;
+        assert_eq!(received.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]
     async fn pipeline_counts_only_positions_as_positions() {
-        let (_, positions) = count_after(&[SAMPLE_MSG3, SAMPLE_MSG1, "garbage"]).await;
+        let (_, _, positions) = count_after(&[SAMPLE_MSG3, SAMPLE_MSG1, "garbage"]).await;
         assert_eq!(positions, 1, "only the MSG3 carries a lat/lon");
     }
 
     #[tokio::test]
-    async fn msg3_without_coordinates_is_not_a_position() {
-        let (messages, positions) = count_after(&[SAMPLE_MSG3_NO_FIX]).await;
+    async fn msg3_without_coordinates_is_a_message_not_a_position() {
+        let (_, messages, positions) = count_after(&[SAMPLE_MSG3_NO_FIX]).await;
         assert_eq!((messages, positions), (1, 0));
+    }
+
+    #[tokio::test]
+    async fn msg8_is_a_hit_but_not_a_message() {
+        let (lines, messages, positions) = count_after(&[SAMPLE_MSG8]).await;
+        assert_eq!((lines, messages, positions), (1, 0, 0));
+    }
+
+    #[tokio::test]
+    async fn msg8_alone_creates_no_aircraft() {
+        let (tx, rx) = broadcast::channel(64);
+        let sink = RecordingSink::default();
+        let sink_for_assert = sink.clone();
+        tx.send(SAMPLE_MSG8.as_bytes().to_vec()).unwrap();
+        drop(tx);
+        test_pipeline(no_storage()).run(rx, sink).await;
+        assert!(
+            sink_for_assert
+                .batches()
+                .into_iter()
+                .flatten()
+                .next()
+                .is_none(),
+            "an all-call reply must not surface an aircraft"
+        );
+    }
+
+    #[tokio::test]
+    async fn msg8_does_not_touch_an_existing_aircraft() {
+        let (tx, rx) = broadcast::channel(64);
+        let sink = RecordingSink::default();
+        let sink_for_assert = sink.clone();
+        tx.send(SAMPLE_MSG3.as_bytes().to_vec()).unwrap();
+        tx.send(SAMPLE_MSG8.as_bytes().to_vec()).unwrap();
+        drop(tx);
+        test_pipeline(no_storage()).run(rx, sink).await;
+        let flat: Vec<_> = sink_for_assert.batches().into_iter().flatten().collect();
+        assert_eq!(flat.len(), 1);
+        assert_eq!(
+            flat[0].timestamp, "2024/01/15 10:30:00.000",
+            "MSG8 must not refresh it"
+        );
+        assert_eq!(flat[0].message_count, 1, "MSG8 must not count toward it");
+    }
+
+    /// MSG8 is still archived: the DB History message-type charts show it.
+    #[tokio::test]
+    async fn msg8_is_still_recorded_as_raw() {
+        let storage = StorageHandle::open(StorageConfig {
+            db_path: None,
+            source_id: "test-node".to_string(),
+            gap_threshold_ms: 3_600_000,
+            share: None,
+            remote: None,
+        })
+        .expect("in-memory storage");
+        let shared: SharedStorage = Arc::new(RwLock::new(Some(storage.clone())));
+        let (tx, rx) = broadcast::channel(64);
+        tx.send(SAMPLE_MSG8.as_bytes().to_vec()).unwrap();
+        drop(tx);
+        test_pipeline(shared).run(rx, NoopSink).await;
+        let raw = storage
+            .query_raw_messages_sync(RawMessageQuery {
+                hex_ident: "A1B2C3".to_string(),
+                start_ms: 0,
+                end_ms: i64::MAX,
+            })
+            .expect("query raw messages");
+        assert_eq!(raw.len(), 1, "MSG8 must still be archived");
+        assert_eq!(raw[0].transmission_type, Some(8));
     }
 
     #[tokio::test]
