@@ -486,8 +486,8 @@ TOOLS: list[dict] = [
                     },
                     "tooltipMode": {
                         "type": "string",
-                        "enum": ["compact", "extended"],
-                        "description": "Tooltip detail level",
+                        "enum": ["compact", "extended", "off"],
+                        "description": "Tooltip detail level on hover; 'off' shows no tooltip",
                     },
                 },
             },

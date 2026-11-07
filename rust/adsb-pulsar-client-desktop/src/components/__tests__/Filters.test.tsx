@@ -384,4 +384,30 @@ describe("events of interest toggle", () => {
     const allInputs = document.querySelectorAll('input[type="datetime-local"]');
     expect(allInputs.length).toBe(0);
   });
+  describe("density tooltip mode", () => {
+    it("offers Off, Compact and Extended, in that order", () => {
+      renderFilters({ showDensity: true });
+      const radios = Array.from(
+        document.querySelectorAll<HTMLInputElement>('input[name="density-tooltip-mode"]'),
+      );
+      expect(radios.map((r) => r.closest("label")?.textContent?.trim())).toEqual([
+        "Off",
+        "Compact",
+        "Extended",
+      ]);
+    });
+
+    it("selecting Tooltip Off reports the off mode", async () => {
+      const user = userEvent.setup();
+      const { props } = renderFilters({ showDensity: true });
+      await user.click(screen.getByLabelText("Off"));
+      expect(props.onDensityTooltipModeChange).toHaveBeenCalledWith("off");
+    });
+
+    it("checks the Tooltip Off radio when mode is off", () => {
+      renderFilters({ showDensity: true, densityTooltipMode: "off" });
+      expect(screen.getByLabelText("Off")).toBeChecked();
+      expect(screen.getByLabelText("Compact")).not.toBeChecked();
+    });
+  });
 });

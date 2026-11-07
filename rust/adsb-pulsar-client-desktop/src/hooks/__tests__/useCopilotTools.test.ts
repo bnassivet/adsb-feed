@@ -483,6 +483,22 @@ describe("useCopilotTools — display control tools", () => {
       expect(config.setDensityAltitudeMin).toHaveBeenCalledWith(1000);
       expect(config.setDensityAltitudeMax).toHaveBeenCalledWith(30000);
     });
+
+    it("turns density tooltips off", async () => {
+      const result = JSON.parse(
+        await getHandler("setDensityConfig")({ tooltipMode: "off" })
+      );
+      expect(result.tooltipMode).toBe("off");
+      expect(config.setDensityTooltipMode).toHaveBeenCalledWith("off");
+    });
+
+    it("accepts off in the tooltipMode schema", () => {
+      const schema = registeredTools.get("setDensityConfig")!.parameters as {
+        safeParse: (v: unknown) => { success: boolean };
+      };
+      expect(schema.safeParse({ tooltipMode: "off" }).success).toBe(true);
+      expect(schema.safeParse({ tooltipMode: "bogus" }).success).toBe(false);
+    });
   });
 
   describe("setEventFilter", () => {

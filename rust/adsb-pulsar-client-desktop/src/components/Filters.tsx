@@ -404,6 +404,16 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
                   <input
                     type="radio"
                     name="density-tooltip-mode"
+                    checked={densityTooltipMode === "off"}
+                    onChange={() => onDensityTooltipModeChange("off")}
+                    className="accent-purple-500"
+                  />
+                  Off
+                </label>
+                <label className="flex items-center gap-1 text-xs text-slate-500 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="density-tooltip-mode"
                     checked={densityTooltipMode === "compact"}
                     onChange={() => onDensityTooltipModeChange("compact")}
                     className="accent-purple-500"
