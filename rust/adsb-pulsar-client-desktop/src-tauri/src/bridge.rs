@@ -114,6 +114,12 @@ pub fn start_feed(
     let messages_parsed_for_relay = messages_parsed.clone();
     let messages_parsed_for_metrics = messages_parsed.clone();
     let messages_parsed_for_handle = messages_parsed.clone();
+    // Lines carrying a lat/lon fix: the metrics bar's pos/s (hits/s is the
+    // count above, every MSG type). Both are counted by the shared ingest
+    // pipeline, so they are correct whichever source feeds it.
+    let positions_parsed = Arc::new(AtomicU64::new(0));
+    let positions_parsed_for_relay = positions_parsed.clone();
+    let positions_parsed_for_handle = positions_parsed.clone();
 
     // Shared state for last message time (for socket watchdog)
     let last_message_time = Arc::new(RwLock::new(Instant::now()));
@@ -242,6 +248,7 @@ pub fn start_feed(
             dump1090_tz,
             source_id,
             messages_parsed_for_relay,
+            positions_parsed_for_relay,
             record_positions,
             record_raw,
         )
@@ -254,6 +261,7 @@ pub fn start_feed(
             app_for_metrics,
             metrics_for_relay,
             messages_parsed_for_metrics,
+            positions_parsed,
             alive_rx_metrics,
         )
         .await;
@@ -315,6 +323,7 @@ pub fn start_feed(
     Ok(FeedHandle {
         metrics,
         messages_parsed: messages_parsed_for_handle,
+        positions_parsed: positions_parsed_for_handle,
         shutdown_fn,
         task_handles,
     })
@@ -349,6 +358,7 @@ async fn relay_messages(
     dump1090_tz: String,
     source_id: String,
     messages_parsed: Arc<AtomicU64>,
+    positions_parsed: Arc<AtomicU64>,
     record_positions: Arc<AtomicBool>,
     record_raw: Arc<AtomicBool>,
 ) {
@@ -362,6 +372,7 @@ async fn relay_messages(
     )
     .with_last_message_time(last_message_time)
     .with_messages_parsed(messages_parsed)
+    .with_positions_parsed(positions_parsed)
     .with_record_positions(record_positions)
     .with_record_raw(record_raw);
 
@@ -373,9 +384,12 @@ async fn relay_messages(
 pub struct DesktopMetrics {
     #[serde(flatten)]
     pub base: adsb_pulsar_client::MetricsSnapshot,
-    /// Total raw SBS-1 messages successfully parsed into AircraftPosition (pre-throttle).
-    /// Distinct from `messages_received` (in base) which counts ALL TCP lines including heartbeats.
+    /// Every valid SBS-1 MSG line, any transmission type (pre-throttle) — hits/s.
+    /// Counted by the ingest pipeline, so unlike `base` it is populated for an
+    /// MQTT source too (an MQTT session's `base` is a zeroed handle).
     pub messages_parsed: u64,
+    /// MSG lines carrying a latitude/longitude fix (pre-throttle) — pos/s.
+    pub positions_parsed: u64,
 }
 
 /// Emits metrics snapshots to the frontend every second.
@@ -386,6 +400,7 @@ async fn relay_metrics(
     app: AppHandle,
     metrics: Metrics,
     messages_parsed: Arc<AtomicU64>,
+    positions_parsed: Arc<AtomicU64>,
     mut alive_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     let mut tick = interval(Duration::from_secs(1));
@@ -396,6 +411,7 @@ async fn relay_metrics(
                 let desktop_metrics = DesktopMetrics {
                     base: metrics.snapshot(),
                     messages_parsed: messages_parsed.load(Ordering::Relaxed),
+                    positions_parsed: positions_parsed.load(Ordering::Relaxed),
                 };
                 if app.emit("adsb:metrics", &desktop_metrics).is_err() {
                     break;

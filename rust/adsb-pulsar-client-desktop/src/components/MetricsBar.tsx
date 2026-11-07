@@ -31,14 +31,14 @@ export function MetricsBar({
 }: Props) {
   return (
     <div className="flex items-center gap-6 px-4 py-2 bg-slate-900 border-t border-slate-700 text-xs text-slate-400">
-      <span>
+      <span title="All ADS-B messages received, any MSG type">
         <span className="text-slate-500">hits/s:</span>{" "}
         <span className="text-slate-200 font-mono">
           {metrics.hits_per_sec.toFixed(1)}
         </span>
       </span>
-      <span>
-        <span className="text-slate-500">msgs/s:</span>{" "}
+      <span title="Position messages (with latitude/longitude)">
+        <span className="text-slate-500">pos/s:</span>{" "}
         <span className="text-slate-200 font-mono">
           {metrics.throughput_msg_per_sec.toFixed(1)}
         </span>

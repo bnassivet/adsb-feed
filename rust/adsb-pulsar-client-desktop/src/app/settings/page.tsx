@@ -417,7 +417,7 @@ export default function SettingsPage() {
                 }}
               />
               <p className="text-xs text-slate-500 mt-1">
-                Sliding window for msgs/s calculation (1&ndash;60s). Saved automatically.
+                Sliding window for hits/s and pos/s calculation (1&ndash;60s). Saved automatically.
               </p>
             </div>
             <div className="mt-4">

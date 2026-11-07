@@ -254,7 +254,7 @@ pub fn get_stack() -> Option<String> {
 }
 
 /// Returns the current metrics snapshot, including bridge-level counters
-/// (`messages_parsed`) that the TS `MetricsSnapshot` type expects to be present.
+/// (`messages_parsed`, `positions_parsed`) that the TS `MetricsSnapshot` type expects to be present.
 #[tauri::command]
 pub fn get_metrics(state: State<'_, AppState>) -> Result<DesktopMetrics, String> {
     let handle = state.feed_handle.lock().map_err(|e| e.to_string())?;
@@ -262,10 +262,12 @@ pub fn get_metrics(state: State<'_, AppState>) -> Result<DesktopMetrics, String>
         Some(h) => Ok(DesktopMetrics {
             base: h.metrics.snapshot(),
             messages_parsed: h.messages_parsed.load(Ordering::Relaxed),
+            positions_parsed: h.positions_parsed.load(Ordering::Relaxed),
         }),
         None => Ok(DesktopMetrics {
             base: adsb_pulsar_client::Metrics::new().snapshot(),
             messages_parsed: 0,
+            positions_parsed: 0,
         }),
     }
 }

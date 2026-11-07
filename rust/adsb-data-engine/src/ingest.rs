@@ -84,7 +84,10 @@ pub struct IngestPipeline {
     config: IngestConfig,
     record_positions: Arc<AtomicBool>,
     record_raw: Arc<AtomicBool>,
+    /// Every valid MSG line, any transmission type (the "hits" rate).
     messages_parsed: Arc<AtomicU64>,
+    /// MSG lines that carry a latitude/longitude fix (the position rate).
+    positions_parsed: Arc<AtomicU64>,
     last_message_time: Arc<RwLock<Instant>>,
 }
 
@@ -101,6 +104,7 @@ impl IngestPipeline {
             record_positions: Arc::new(AtomicBool::new(true)),
             record_raw: Arc::new(AtomicBool::new(true)),
             messages_parsed: Arc::new(AtomicU64::new(0)),
+            positions_parsed: Arc::new(AtomicU64::new(0)),
             last_message_time: Arc::new(RwLock::new(Instant::now())),
         }
     }
@@ -123,6 +127,12 @@ impl IngestPipeline {
         self
     }
 
+    /// Replaces the position-fix counter with a caller-owned handle.
+    pub fn with_positions_parsed(mut self, counter: Arc<AtomicU64>) -> Self {
+        self.positions_parsed = counter;
+        self
+    }
+
     /// Replaces the activity clock with a caller-owned handle.
     ///
     /// Consumers drive connection-liveness UI from this: it is updated on every
@@ -142,9 +152,14 @@ impl IngestPipeline {
         Arc::clone(&self.record_raw)
     }
 
-    /// Handle to the parsed-message counter.
+    /// Handle to the parsed-message counter (all valid MSG lines, any type).
     pub fn messages_parsed(&self) -> Arc<AtomicU64> {
         Arc::clone(&self.messages_parsed)
+    }
+
+    /// Handle to the position-fix counter (MSG lines with a lat/lon).
+    pub fn positions_parsed(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.positions_parsed)
     }
 
     /// Handle to the activity clock.
@@ -223,6 +238,9 @@ impl IngestPipeline {
 
         if let Some(pos) = parse_sbs_message(line) {
             self.messages_parsed.fetch_add(1, Ordering::Relaxed);
+            if pos.latitude.is_some() && pos.longitude.is_some() {
+                self.positions_parsed.fetch_add(1, Ordering::Relaxed);
+            }
             *message_counts.entry(pos.hex_ident.clone()).or_insert(0) += 1;
             merge_into_buffer(buffer, pos);
         }
@@ -564,6 +582,47 @@ mod tests {
         pipeline.run(rx, RecordingSink::default()).await;
 
         assert_eq!(counter.load(Ordering::Relaxed), 1, "only valid lines count");
+    }
+
+    /// MSG3 with no coordinates — a valid MSG line that is not a position fix.
+    const SAMPLE_MSG3_NO_FIX: &str =
+        "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:02.000,2024/01/15,10:30:02.000,,35000,,,,,,,,,,0";
+
+    async fn count_after(lines: &[&str]) -> (u64, u64) {
+        let (tx, rx) = broadcast::channel(64);
+        let pipeline = test_pipeline(no_storage());
+        let messages = pipeline.messages_parsed();
+        let positions = pipeline.positions_parsed();
+        for line in lines {
+            tx.send(line.as_bytes().to_vec()).unwrap();
+        }
+        drop(tx);
+        pipeline.run(rx, RecordingSink::default()).await;
+        (
+            messages.load(Ordering::Relaxed),
+            positions.load(Ordering::Relaxed),
+        )
+    }
+
+    #[tokio::test]
+    async fn pipeline_counts_all_msg_types_as_messages() {
+        let (messages, _) = count_after(&[SAMPLE_MSG3, SAMPLE_MSG1, "garbage"]).await;
+        assert_eq!(
+            messages, 2,
+            "every valid MSG line counts, whatever its type"
+        );
+    }
+
+    #[tokio::test]
+    async fn pipeline_counts_only_positions_as_positions() {
+        let (_, positions) = count_after(&[SAMPLE_MSG3, SAMPLE_MSG1, "garbage"]).await;
+        assert_eq!(positions, 1, "only the MSG3 carries a lat/lon");
+    }
+
+    #[tokio::test]
+    async fn msg3_without_coordinates_is_not_a_position() {
+        let (messages, positions) = count_after(&[SAMPLE_MSG3_NO_FIX]).await;
+        assert_eq!((messages, positions), (1, 0));
     }
 
     #[tokio::test]

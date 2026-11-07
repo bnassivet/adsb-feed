@@ -9,6 +9,7 @@ function makeMetrics(overrides: Partial<MetricsWithRates> = {}): MetricsWithRate
     messages_sent: 1000,
     messages_received: 6000,
     messages_parsed: 5000,
+    positions_parsed: 1000,
     errors: 0,
     bytes_received: 524288,
     bytes_sent: 262144,
@@ -33,6 +34,18 @@ describe("MetricsBar", () => {
   it("renders hits/s label", () => {
     render(<MetricsBar metrics={makeMetrics()} />);
     expect(screen.getByText("hits/s:")).toBeInTheDocument();
+  });
+
+  it("explains hits/s vs pos/s in tooltips", () => {
+    render(<MetricsBar metrics={makeMetrics()} />);
+    expect(screen.getByText("hits/s:").parentElement).toHaveAttribute(
+      "title",
+      "All ADS-B messages received, any MSG type",
+    );
+    expect(screen.getByText("pos/s:").parentElement).toHaveAttribute(
+      "title",
+      "Position messages (with latitude/longitude)",
+    );
   });
 
   it("shows errors in red when > 0", () => {
