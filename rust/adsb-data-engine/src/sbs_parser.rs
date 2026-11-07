@@ -167,10 +167,15 @@ fn parse_f64(s: &str) -> Option<f64> {
     s.trim().parse::<f64>().ok()
 }
 
+/// Parses an SBS-1 flag field.
+///
+/// BaseStation (and dump1090, which copies it) writes a set flag as `-1`, the
+/// Visual Basic `True`, and a clear one as `0`; an empty field means unknown.
+/// `1` is accepted as true too, for feeds that normalise it.
 fn parse_bool(s: &str) -> Option<bool> {
     match s.trim() {
-        "0" | "-1" => Some(false),
-        "1" => Some(true),
+        "0" => Some(false),
+        "-1" | "1" => Some(true),
         _ => None,
     }
 }
@@ -275,10 +280,10 @@ mod tests {
             "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,,,,,,,,,,,1";
         assert_eq!(parse_sbs_message(line).unwrap().is_on_ground, Some(true));
 
-        // "-1" -> false
+        // "-1" -> true: BaseStation/dump1090 write -1 for a set flag
         let line =
             "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,,,,,,,,,,,-1";
-        assert_eq!(parse_sbs_message(line).unwrap().is_on_ground, Some(false));
+        assert_eq!(parse_sbs_message(line).unwrap().is_on_ground, Some(true));
 
         // "" -> None
         let line = "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,,,,,,,,,,,";
@@ -324,11 +329,22 @@ mod tests {
         assert_eq!(pos.altitude, None);
     }
 
+    /// Regression: a taxiing aircraft (dump1090 MSG2 surface position, flag
+    /// `-1`) was reported airborne, because `-1` was read as `false`.
+    #[test]
+    fn surface_position_reports_on_ground() {
+        let line = "MSG,2,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,,,12,270,45.5017,-73.5673,,,,,,-1";
+        let pos = parse_sbs_message(line).unwrap();
+        assert_eq!(pos.is_on_ground, Some(true));
+        assert_eq!(pos.ground_speed, Some(12.0));
+    }
+
     #[test]
     fn test_parse_bool_edge_cases() {
         assert_eq!(parse_bool("0"), Some(false));
         assert_eq!(parse_bool("1"), Some(true));
-        assert_eq!(parse_bool("-1"), Some(false));
+        assert_eq!(parse_bool("-1"), Some(true));
+        assert_eq!(parse_bool(" -1 "), Some(true));
         assert_eq!(parse_bool(""), None);
         assert_eq!(parse_bool("abc"), None);
     }
