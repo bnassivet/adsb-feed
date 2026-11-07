@@ -376,6 +376,14 @@ export interface TimeDistributionBucket {
   count: number;
 }
 
+/** Raw-message count for one (time bucket, SBS-1 transmission type) pair (mirrors Rust MessageTypeBucket). */
+export interface MessageTypeBucket {
+  bucket_ms: number;
+  /** SBS-1 transmission type 1–8; null when the field could not be parsed. */
+  transmission_type: number | null;
+  count: number;
+}
+
 /** Which metric to count in each histogram bucket. */
 export type TimeDistributionMetric = "positions" | "aircraft" | "raw_messages" | "flights";
 

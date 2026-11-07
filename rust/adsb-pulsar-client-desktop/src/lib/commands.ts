@@ -33,6 +33,7 @@ import type {
   StorageAvailability,
   StorageMode,
   StorageStats,
+  MessageTypeBucket,
   TimeDistributionBucket,
   TimeDistributionQuery,
   TrajectoryQuery,
@@ -199,6 +200,13 @@ export async function getDetectionRange(
   query: DetectionRangeQuery
 ): Promise<DetectionRangeSector[]> {
   return invoke("get_detection_range", { query });
+}
+
+/** Raw-message counts per (time bucket, transmission type). `metric` is ignored. */
+export async function getMessageTypeDistribution(
+  query: TimeDistributionQuery
+): Promise<MessageTypeBucket[]> {
+  return invoke("get_message_type_distribution", { query });
 }
 
 export async function getHourlyHeatmap(

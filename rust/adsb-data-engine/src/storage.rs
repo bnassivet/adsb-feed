@@ -11,12 +11,12 @@ use crate::types::{
     AircraftSummary, BboxQuery, CreateEventOfInterest, CreateScenario, CreateScenarioTrack,
     DetectionRangeQuery, DetectionRangeSector, EventOfInterest, EventOfInterestQuery,
     FlightSummary, FlightSummaryQuery, HourlyHeatmapCell, HourlyHeatmapQuery, ImportPreview,
-    ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord, Scenario, ScenarioTrack,
-    ScenarioWithTracks, ShareConfig, ShareInfo, ShareStatus, StatusEvent, StatusEventQuery,
-    StorageConfig, StorageStats, TablePreview, TimeDistributionBucket, TimeDistributionMetric,
-    TimeDistributionQuery, TrajectoryQuery, UpdateEventOfInterest, UpdateScenario,
-    UpdateScenarioTrack, WeatherSnapshotKey, WeatherSnapshotMeta, WeatherSnapshotQuery,
-    WeatherSnapshotRecord,
+    ImportResult, MessageTypeBucket, PositionRecord, RawMessageQuery, RawSbsRecord, Scenario,
+    ScenarioTrack, ScenarioWithTracks, ShareConfig, ShareInfo, ShareStatus, StatusEvent,
+    StatusEventQuery, StorageConfig, StorageStats, TablePreview, TimeDistributionBucket,
+    TimeDistributionMetric, TimeDistributionQuery, TrajectoryQuery, UpdateEventOfInterest,
+    UpdateScenario, UpdateScenarioTrack, WeatherSnapshotKey, WeatherSnapshotMeta,
+    WeatherSnapshotQuery, WeatherSnapshotRecord,
 };
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
@@ -1367,21 +1367,21 @@ impl StorageHandle {
 
         let sql = match query.metric {
             TimeDistributionMetric::Positions => {
-                "SELECT CAST(timestamp_ms / ? AS BIGINT) * ? AS bucket_ms, COUNT(*) AS count
+                "SELECT (timestamp_ms // ?) * ? AS bucket_ms, COUNT(*) AS count
                  FROM positions
                  WHERE timestamp_ms BETWEEN ? AND ?
                  GROUP BY bucket_ms
                  ORDER BY bucket_ms"
             }
             TimeDistributionMetric::Aircraft => {
-                "SELECT CAST(timestamp_ms / ? AS BIGINT) * ? AS bucket_ms, COUNT(DISTINCT hex_ident) AS count
+                "SELECT (timestamp_ms // ?) * ? AS bucket_ms, COUNT(DISTINCT hex_ident) AS count
                  FROM positions
                  WHERE timestamp_ms BETWEEN ? AND ?
                  GROUP BY bucket_ms
                  ORDER BY bucket_ms"
             }
             TimeDistributionMetric::RawMessages => {
-                "SELECT CAST(timestamp_ms / ? AS BIGINT) * ? AS bucket_ms, COUNT(*) AS count
+                "SELECT (timestamp_ms // ?) * ? AS bucket_ms, COUNT(*) AS count
                  FROM raw_messages
                  WHERE timestamp_ms BETWEEN ? AND ?
                  GROUP BY bucket_ms
@@ -1430,6 +1430,54 @@ impl StorageHandle {
             .collect::<Result<Vec<_>, _>>()?
         };
 
+        Ok(rows)
+    }
+
+    /// Raw-message counts per (time bucket, transmission type) (synchronous).
+    ///
+    /// Uses the same bucketing as [`Self::get_time_distribution_sync`] with the
+    /// `RawMessages` metric, so per-type counts sum to that histogram's totals.
+    /// The query's `metric` is ignored. Rows are ordered by bucket, then type
+    /// (unknown type first).
+    pub fn get_message_type_distribution_sync(
+        &self,
+        query: TimeDistributionQuery,
+    ) -> Result<Vec<MessageTypeBucket>, StorageError> {
+        let range = query.end_ms - query.start_ms;
+        if query.num_buckets == 0 || range <= 0 {
+            return Ok(Vec::new());
+        }
+        let bucket_width = range / query.num_buckets as i64;
+        if bucket_width == 0 {
+            return Ok(Vec::new());
+        }
+
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let mut stmt = storage.conn.prepare(
+            "SELECT (timestamp_ms // ?) * ? AS bucket_ms, transmission_type, COUNT(*) AS count
+             FROM raw_messages
+             WHERE timestamp_ms BETWEEN ? AND ?
+             GROUP BY bucket_ms, transmission_type
+             ORDER BY bucket_ms, transmission_type NULLS FIRST",
+        )?;
+        let rows = stmt
+            .query_map(
+                params![bucket_width, bucket_width, query.start_ms, query.end_ms],
+                |row| {
+                    Ok(MessageTypeBucket {
+                        bucket_ms: row.get(0)?,
+                        transmission_type: row
+                            .get::<_, Option<i32>>(1)?
+                            .and_then(|t| u8::try_from(t).ok()),
+                        count: row.get::<_, i64>(2)? as u64,
+                    })
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
@@ -2974,6 +3022,17 @@ impl StorageHandle {
     ) -> Result<Vec<TimeDistributionBucket>, StorageError> {
         let handle = self.clone();
         tokio::task::spawn_blocking(move || handle.get_time_distribution_sync(query))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Raw-message counts per (time bucket, transmission type) (async via spawn_blocking).
+    pub async fn get_message_type_distribution(
+        &self,
+        query: TimeDistributionQuery,
+    ) -> Result<Vec<MessageTypeBucket>, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.get_message_type_distribution_sync(query))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
@@ -5572,6 +5631,127 @@ mod tests {
             .unwrap();
         let total: u64 = buckets.iter().map(|b| b.count).sum();
         assert_eq!(total, 4);
+    }
+
+    #[test]
+    fn test_message_type_distribution_groups_by_bucket_and_type() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let records = vec![
+            sample_raw_record("A1", "MSG,1", Some(1), "2024/01/15 10:00:00.000"),
+            sample_raw_record("A1", "MSG,3", Some(3), "2024/01/15 10:00:10.000"),
+            sample_raw_record("A2", "MSG,3", Some(3), "2024/01/15 10:00:20.000"),
+            sample_raw_record("A2", "MSG,4", Some(4), "2024/01/15 10:40:00.000"),
+            sample_raw_record("A3", "MSG,", None, "2024/01/15 10:40:05.000"),
+        ];
+        handle.insert_raw_batch_sync(&records, "UTC").unwrap();
+
+        let start = parse_timestamp_to_ms("2024/01/15 10:00:00.000", "UTC");
+        let end = parse_timestamp_to_ms("2024/01/15 11:00:00.000", "UTC");
+        let rows = handle
+            .get_message_type_distribution_sync(crate::types::TimeDistributionQuery {
+                start_ms: start,
+                end_ms: end,
+                num_buckets: 2, // 30-minute buckets
+                metric: crate::types::TimeDistributionMetric::RawMessages,
+            })
+            .unwrap();
+
+        let b0 = start;
+        let b1 = start + 30 * 60 * 1000;
+        assert_eq!(
+            rows,
+            vec![
+                MessageTypeBucket {
+                    bucket_ms: b0,
+                    transmission_type: Some(1),
+                    count: 1
+                },
+                MessageTypeBucket {
+                    bucket_ms: b0,
+                    transmission_type: Some(3),
+                    count: 2
+                },
+                MessageTypeBucket {
+                    bucket_ms: b1,
+                    transmission_type: None,
+                    count: 1
+                },
+                MessageTypeBucket {
+                    bucket_ms: b1,
+                    transmission_type: Some(4),
+                    count: 1
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_message_type_distribution_matches_raw_message_totals() {
+        // The stacked histogram must line up with the RawMessages metric bucket for bucket.
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let records = vec![
+            sample_raw_record("A1", "MSG,1", Some(1), "2024/01/15 10:05:00.000"),
+            sample_raw_record("A1", "MSG,3", Some(3), "2024/01/15 10:25:00.000"),
+            sample_raw_record("A2", "MSG,5", Some(5), "2024/01/15 10:55:00.000"),
+            sample_raw_record("A2", "MSG,8", Some(8), "2024/01/15 11:30:00.000"),
+        ];
+        handle.insert_raw_batch_sync(&records, "UTC").unwrap();
+        let q = crate::types::TimeDistributionQuery {
+            start_ms: parse_timestamp_to_ms("2024/01/15 09:00:00.000", "UTC"),
+            end_ms: parse_timestamp_to_ms("2024/01/15 12:00:00.000", "UTC"),
+            num_buckets: 6,
+            metric: crate::types::TimeDistributionMetric::RawMessages,
+        };
+        let totals = handle.get_time_distribution_sync(q.clone()).unwrap();
+        let by_type = handle.get_message_type_distribution_sync(q).unwrap();
+        for t in &totals {
+            let sum: u64 = by_type
+                .iter()
+                .filter(|r| r.bucket_ms == t.bucket_ms)
+                .map(|r| r.count)
+                .sum();
+            assert_eq!(sum, t.count, "bucket {}", t.bucket_ms);
+        }
+        assert_eq!(by_type.iter().map(|r| r.count).sum::<u64>(), 4);
+    }
+
+    #[test]
+    fn test_time_distribution_floors_into_containing_bucket() {
+        // Regression: `/` is float division in DuckDB and CAST rounds, so 10:25 used
+        // to land in the 10:30 bucket of a 30-minute histogram instead of 10:00.
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let records = vec![sample_raw_record(
+            "A1",
+            "MSG,3",
+            Some(3),
+            "2024/01/15 10:25:00.000",
+        )];
+        handle.insert_raw_batch_sync(&records, "UTC").unwrap();
+        let start = parse_timestamp_to_ms("2024/01/15 10:00:00.000", "UTC");
+        let buckets = handle
+            .get_time_distribution_sync(crate::types::TimeDistributionQuery {
+                start_ms: start,
+                end_ms: start + 60 * 60 * 1000,
+                num_buckets: 2,
+                metric: crate::types::TimeDistributionMetric::RawMessages,
+            })
+            .unwrap();
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0].bucket_ms, start);
+    }
+
+    #[test]
+    fn test_message_type_distribution_empty_range() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let rows = handle
+            .get_message_type_distribution_sync(crate::types::TimeDistributionQuery {
+                start_ms: 1000,
+                end_ms: 1000,
+                num_buckets: 10,
+                metric: crate::types::TimeDistributionMetric::RawMessages,
+            })
+            .unwrap();
+        assert!(rows.is_empty());
     }
 
     #[test]

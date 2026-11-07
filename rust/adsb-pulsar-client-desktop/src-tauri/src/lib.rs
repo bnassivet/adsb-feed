@@ -165,6 +165,7 @@ pub fn run() {
             commands::get_flight_summary,
             commands::get_flight_summary_arrow,
             commands::get_time_distribution,
+            commands::get_message_type_distribution,
             commands::get_storage_stats,
             commands::get_detection_range,
             commands::get_hourly_heatmap,

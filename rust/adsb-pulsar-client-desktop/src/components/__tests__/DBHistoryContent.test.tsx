@@ -418,6 +418,44 @@ describe("DBHistoryContent", () => {
     });
   });
 
+  it("queries the message type breakdown with the histogram's bucket count", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockBrowseResponses();
+    mockInvokeResponse("get_message_type_distribution", [
+      { bucket_ms: Date.now() - 3_600_000, transmission_type: 3, count: 5 },
+    ]);
+
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} />);
+    await waitFor(() => expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument());
+    await user.click(screen.getByTestId("dbhist-preset-24h"));
+
+    await waitFor(() => {
+      const calls = (invoke as ReturnType<typeof vi.fn>).mock.calls;
+      const byType = calls.find((c: unknown[]) => c[0] === "get_message_type_distribution");
+      expect(byType).toBeDefined();
+      expect(byType![1].query.num_buckets).toBe(24);
+    });
+    await waitFor(() => expect(screen.getByTestId("msgtype-distribution")).toBeInTheDocument());
+  });
+
+  it("still lists flights when the message type breakdown fails", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockBrowseResponses();
+    mockInvokeResponse("get_message_type_distribution", () => {
+      throw new Error("boom");
+    });
+
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} />);
+    await waitFor(() => expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument());
+    await user.click(screen.getByTestId("dbhist-preset-24h"));
+
+    await waitFor(() => expect(screen.getByText("TEST123")).toBeInTheDocument());
+    expect(screen.queryByTestId("msgtype-distribution")).not.toBeInTheDocument();
+  });
+
   it("wraps DB Stats in a foldable <details> open by default", async () => {
     mockInvokeResponse("get_storage_stats", sampleStats);
     render(<DBHistoryContent {...baseProps} />);
