@@ -9,9 +9,10 @@
 use adsb_data_engine::SharedStorage;
 use adsb_data_engine::{
     AircraftSummary, EventOfInterest, EventOfInterestQuery, FlightSummary, FlightSummaryQuery,
-    HourlyHeatmapCell, HourlyHeatmapQuery, PositionRecord, Scenario, ScenarioWithTracks,
-    StorageStats, TimeDistributionBucket, TimeDistributionQuery, TrajectoryQuery,
-    WeatherSnapshotKey, WeatherSnapshotMeta, WeatherSnapshotQuery, WeatherSnapshotRecord,
+    HourlyHeatmapCell, HourlyHeatmapQuery, MessageTypeBucket, PositionRecord, Scenario,
+    ScenarioWithTracks, StorageStats, TimeDistributionBucket, TimeDistributionQuery,
+    TrajectoryQuery, WeatherSnapshotKey, WeatherSnapshotMeta, WeatherSnapshotQuery,
+    WeatherSnapshotRecord,
 };
 
 /// Returned (and relayed to the agent) when the DuckDB connection is `None`
@@ -77,6 +78,20 @@ pub async fn get_time_distribution(
         .as_ref()
         .ok_or_else(|| STORAGE_UNAVAILABLE.to_string())?;
     s.get_time_distribution(query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Get raw-message counts per (time bucket, SBS-1 transmission type).
+pub async fn get_message_type_distribution(
+    storage: &SharedStorage,
+    query: TimeDistributionQuery,
+) -> Result<Vec<MessageTypeBucket>, String> {
+    let guard = storage.read().await;
+    let s = guard
+        .as_ref()
+        .ok_or_else(|| STORAGE_UNAVAILABLE.to_string())?;
+    s.get_message_type_distribution(query)
         .await
         .map_err(|e| e.to_string())
 }
@@ -234,6 +249,15 @@ mod tests {
 
         let scenarios = list_scenarios(&storage).await.expect("scenarios");
         assert!(scenarios.is_empty());
+    }
+
+    #[tokio::test]
+    async fn message_type_distribution_unavailable_when_none() {
+        let storage = empty_storage();
+        let err = get_message_type_distribution(&storage, TimeDistributionQuery::default())
+            .await
+            .unwrap_err();
+        assert_eq!(err, STORAGE_UNAVAILABLE);
     }
 
     #[tokio::test]

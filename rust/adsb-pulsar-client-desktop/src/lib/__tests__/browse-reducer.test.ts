@@ -64,8 +64,10 @@ describe("browseReducer", () => {
         detectionSectors: [],
         heatmapCells: [],
         rawMessageCount: 99,
+        messageTypeBuckets: [{ bucket_ms: 0, transmission_type: 3, count: 99 }],
       });
 
+      expect(next.messageTypeBuckets).toEqual([{ bucket_ms: 0, transmission_type: 3, count: 99 }]);
       expect(next.loading).toBe(false);
       expect(next.browsing).toBe(true);
       expect(next.flightSummaries).toEqual([flight1, flight2]);

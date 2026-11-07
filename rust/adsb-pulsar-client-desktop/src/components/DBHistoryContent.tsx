@@ -1,9 +1,9 @@
 "use client";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { getStorageStats, getAircraftSummary, getFlightSummaryArrow, getTrajectoryBatchArrow, getAllTrajectoriesArrow, getTimeDistribution, getDetectionRange, getHourlyHeatmap, getRawMessageCount } from "@/lib/commands";
+import { getStorageStats, getAircraftSummary, getFlightSummaryArrow, getTrajectoryBatchArrow, getAllTrajectoriesArrow, getTimeDistribution, getDetectionRange, getHourlyHeatmap, getRawMessageCount, getMessageTypeDistribution } from "@/lib/commands";
 import { arrowToTracks, arrowToFlightSummaries } from "@/lib/arrow-utils";
-import type { AircraftSummary, AircraftTrack, DetectionRangeSector, FlightSummary, HourlyHeatmapCell, StorageStats, TimeDistributionBucket, TimeDistributionMetric, TimeGranularity, TimeRangePreset } from "@/lib/types";
+import type { AircraftSummary, AircraftTrack, DetectionRangeSector, FlightSummary, HourlyHeatmapCell, MessageTypeBucket, StorageStats, TimeDistributionBucket, TimeDistributionMetric, TimeGranularity, TimeRangePreset } from "@/lib/types";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
 import { formatBytes } from "@/lib/format";
 import { granularityToNumBuckets } from "@/lib/db-history-analytics";
@@ -64,7 +64,7 @@ export function DBHistoryContent({
   const [refreshing, setRefreshing] = useState(false);
 
   const [browse, dispatch] = useReducer(browseReducer, initialBrowseState);
-  const { browsing, loading, batchLoading, summaries, flightSummaries, timeBuckets, detectionSectors, heatmapCells, rawMessageCount, selectedFlights } = browse;
+  const { browsing, loading, batchLoading, summaries, flightSummaries, timeBuckets, detectionSectors, heatmapCells, rawMessageCount, messageTypeBuckets, selectedFlights } = browse;
 
   // Virtualizer for flight list
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -107,6 +107,7 @@ export function DBHistoryContent({
       Promise<DetectionRangeSector[] | string>,
       Promise<HourlyHeatmapCell[] | string>,
       Promise<number | string>,
+      Promise<MessageTypeBucket[]>,
     ] = [
       getAircraftSummary(start, end),
       getFlightSummaryArrow({ start_ms: start, end_ms: end })
@@ -122,9 +123,14 @@ export function DBHistoryContent({
         : Promise.resolve([]),
       getHourlyHeatmap({ start_ms: start, end_ms: end }),
       getRawMessageCount(start, end),
+      // Same bucketing as the histogram so stacked bars line up with its totals.
+      // Optional: a failure must not take the rest of the browse down with it.
+      getMessageTypeDistribution({ start_ms: start, end_ms: end, num_buckets: numBuckets })
+        .then((r) => (Array.isArray(r) ? r : []))
+        .catch(() => []),
     ];
 
-    const [summaryResults, flightResults, timeResults, rangeResults, heatmapResults, rawCountResult] = await Promise.all(promises);
+    const [summaryResults, flightResults, timeResults, rangeResults, heatmapResults, rawCountResult, typeResults] = await Promise.all(promises);
 
     const sums = typeof summaryResults === "string" ? [] : (summaryResults as AircraftSummary[]);
     const flights = typeof flightResults === "string" ? [] : (flightResults as FlightSummary[]);
@@ -141,6 +147,7 @@ export function DBHistoryContent({
       detectionSectors: sectors,
       heatmapCells: heatmap,
       rawMessageCount: rawCount,
+      messageTypeBuckets: typeResults,
     });
     onSummariesLoaded?.(sums);
   }, [granularity, timeMetric, onBrowse, onSummariesLoaded, receiverLat, receiverLon]);
@@ -565,6 +572,7 @@ export function DBHistoryContent({
               timeMetric={timeMetric}
               onTimeMetricChange={handleTimeMetricChange}
               flightSummaries={flightSummaries}
+              messageTypeBuckets={messageTypeBuckets}
             />
           )}
 

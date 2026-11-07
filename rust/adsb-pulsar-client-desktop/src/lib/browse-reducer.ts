@@ -3,6 +3,7 @@ import type {
   DetectionRangeSector,
   FlightSummary,
   HourlyHeatmapCell,
+  MessageTypeBucket,
   TimeDistributionBucket,
 } from "./types";
 
@@ -16,6 +17,7 @@ export interface BrowseState {
   detectionSectors: DetectionRangeSector[];
   heatmapCells: HourlyHeatmapCell[];
   rawMessageCount: number;
+  messageTypeBuckets: MessageTypeBucket[];
   selectedFlights: Set<string>;
 }
 
@@ -29,6 +31,8 @@ export type BrowseAction =
       detectionSectors: DetectionRangeSector[];
       heatmapCells: HourlyHeatmapCell[];
       rawMessageCount: number;
+      /** Optional so callers predating the type breakdown still type-check; absent → []. */
+      messageTypeBuckets?: MessageTypeBucket[];
     }
   | { type: "TOGGLE_FLIGHT"; flightId: string }
   | { type: "TOGGLE_ALL" }
@@ -45,6 +49,7 @@ export const initialBrowseState: BrowseState = {
   detectionSectors: [],
   heatmapCells: [],
   rawMessageCount: 0,
+  messageTypeBuckets: [],
   selectedFlights: new Set(),
 };
 
@@ -67,6 +72,7 @@ export function browseReducer(
         detectionSectors: action.detectionSectors,
         heatmapCells: action.heatmapCells,
         rawMessageCount: action.rawMessageCount,
+        messageTypeBuckets: action.messageTypeBuckets ?? [],
         selectedFlights: new Set(),
       };
 

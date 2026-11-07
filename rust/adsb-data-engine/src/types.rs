@@ -174,6 +174,18 @@ pub struct TimeDistributionBucket {
     pub count: u64,
 }
 
+/// Raw-message count for one (time bucket, SBS-1 transmission type) pair.
+///
+/// Long format: a bucket with three types present yields three rows. Zero
+/// counts are never returned. `transmission_type` is `None` for rows whose
+/// type field could not be parsed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MessageTypeBucket {
+    pub bucket_ms: i64,
+    pub transmission_type: Option<u8>,
+    pub count: u64,
+}
+
 /// Which metric to count in each histogram bucket.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

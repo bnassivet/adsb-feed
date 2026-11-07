@@ -11,10 +11,11 @@ use adsb_data_engine::{
     AircraftSummary, BboxQuery, CreateEventOfInterest, CreateScenario, CreateScenarioTrack,
     DetectionRangeQuery, DetectionRangeSector, EventOfInterest, EventOfInterestQuery,
     FlightSummary, FlightSummaryQuery, HourlyHeatmapCell, HourlyHeatmapQuery, ImportPreview,
-    ImportResult, PositionRecord, RawMessageQuery, RawSbsRecord, Scenario, ScenarioTrack,
-    ScenarioWithTracks, ShareInfo, ShareStatus, StatusEvent, StatusEventQuery, StatusEventStatus,
-    StatusEventType, StorageHandle, StorageStats, TimeDistributionBucket, TimeDistributionQuery,
-    TrajectoryQuery, UpdateEventOfInterest, UpdateScenario, UpdateScenarioTrack,
+    ImportResult, MessageTypeBucket, PositionRecord, RawMessageQuery, RawSbsRecord, Scenario,
+    ScenarioTrack, ScenarioWithTracks, ShareInfo, ShareStatus, StatusEvent, StatusEventQuery,
+    StatusEventStatus, StatusEventType, StorageHandle, StorageStats, TimeDistributionBucket,
+    TimeDistributionQuery, TrajectoryQuery, UpdateEventOfInterest, UpdateScenario,
+    UpdateScenarioTrack,
 };
 use adsb_pulsar_client::Config;
 use adsb_weather_server::WeatherSnapshot;
@@ -442,6 +443,15 @@ pub async fn get_time_distribution(
     state: State<'_, AppState>,
 ) -> Result<Vec<TimeDistributionBucket>, String> {
     adsb_data_server::tool_service::get_time_distribution(&state.storage, query).await
+}
+
+/// Get raw-message counts per (time bucket, SBS-1 transmission type).
+#[tauri::command]
+pub async fn get_message_type_distribution(
+    query: TimeDistributionQuery,
+    state: State<'_, AppState>,
+) -> Result<Vec<MessageTypeBucket>, String> {
+    adsb_data_server::tool_service::get_message_type_distribution(&state.storage, query).await
 }
 
 /// Get storage statistics (row count, time range, estimated size).
