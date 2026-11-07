@@ -37,6 +37,8 @@ const baseFilterProps = {
   hasReceiverLocation: true,
   showPositions: true,
   onTogglePositions: vi.fn(),
+  showLabels: false,
+  onToggleLabels: vi.fn(),
 };
 
 describe("LeftPanel", () => {

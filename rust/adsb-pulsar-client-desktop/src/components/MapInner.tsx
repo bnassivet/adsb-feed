@@ -13,6 +13,7 @@ import { useMapZoom } from "@/hooks/useMapZoom";
 import { aircraftIconHtml } from "@/lib/aircraft-icon";
 import { orderTracksWithSelectedLast } from "@/lib/track-ordering";
 import { subsamplePositions } from "@/lib/subsample";
+import { formatTrackLabel, layoutLabels, trackLabelHtml, type LabelItem, type LabelPlacement } from "@/lib/label-layout";
 import {
   fieldsAt,
   gridPoints,
@@ -537,6 +538,8 @@ interface Props {
   trajectoryStyle: "line" | "dots";
   /** Draw the trail of past positions behind live aircraft. Defaults to true. */
   showPositions?: boolean;
+  /** Draw `HEX/CALLSIGN` labels beside live aircraft. Defaults to false. */
+  showLabels?: boolean;
   showDensity: boolean;
   densityMetric: DensityMetric;
   densityTracks: AircraftTrack[];
@@ -657,6 +660,123 @@ function toLatLngs(positions: Positions): [number, number][] {
   }
   latLngCache.set(positions, result);
   return result;
+}
+
+const LABEL_PANE = "trackLabels";
+
+/**
+ * `HEX/CALLSIGN` labels beside live aircraft, placed by `layoutLabels`.
+ *
+ * Imperative like `DotsLayer`: one zero-size, non-interactive marker per label in
+ * its own pane (above aircraft icons, `pointer-events: none` so a label never
+ * steals a click). Re-laid out on every feed update and on zoom/move/resize,
+ * feeding the previous result back so labels keep their slot; an icon is only
+ * rebuilt when its slot, text, colour or selection changes.
+ */
+function TrackLabelsLayer({
+  tracks,
+  selectedHexIdents,
+  theme,
+}: {
+  tracks: AircraftTrack[];
+  selectedHexIdents: Set<string>;
+  theme: MapTheme;
+}) {
+  const map = useMap();
+  const markers = useRef<Map<string, { marker: L.Marker; sig: string }>>(new Map());
+  const previous = useRef<Map<string, LabelPlacement | null>>(new Map());
+  const [viewTick, setViewTick] = useState(0);
+  useMapEvents({
+    zoomend: () => setViewTick((n) => n + 1),
+    moveend: () => setViewTick((n) => n + 1),
+    resize: () => setViewTick((n) => n + 1),
+  });
+
+  useEffect(() => {
+    const pane = map.getPane(LABEL_PANE) ?? map.createPane(LABEL_PANE);
+    pane.style.zIndex = "640";
+    pane.style.pointerEvents = "none";
+    const live = markers.current;
+    return () => {
+      for (const { marker } of live.values()) marker.remove();
+      live.clear();
+      previous.current = new Map();
+    };
+  }, [map]);
+
+  useEffect(() => {
+    const size = map.getSize();
+    const items: LabelItem[] = [];
+    const byKey = new Map<string, AircraftTrack>();
+    for (const t of tracks) {
+      if (t.latitude === null || t.longitude === null) continue;
+      const key = trackKey(t);
+      const pt = map.latLngToContainerPoint([t.latitude, t.longitude]);
+      byKey.set(key, t);
+      items.push({
+        key,
+        x: pt.x,
+        y: pt.y,
+        heading: t.track,
+        text: formatTrackLabel(t),
+        selected: selectedHexIdents.has(key),
+        priority: t.last_seen,
+      });
+    }
+
+    const layout = layoutLabels(items, { width: size.x, height: size.y }, previous.current);
+    previous.current = layout;
+
+    const live = markers.current;
+    for (const item of items) {
+      const p = layout.get(item.key);
+      const existing = live.get(item.key);
+      if (!p) {
+        if (existing) {
+          existing.marker.remove();
+          live.delete(item.key);
+        }
+        continue;
+      }
+      const t = byKey.get(item.key)!;
+      const latLng: L.LatLngExpression = [t.latitude!, t.longitude!];
+      const color = cachedAltitudeToColor(t.altitude, theme);
+      const sig = `${p.candidate}|${item.text}|${item.selected}|${color}|${theme}`;
+      if (existing) {
+        existing.marker.setLatLng(latLng);
+        if (existing.sig !== sig) {
+          existing.marker.setIcon(labelIcon(p, item.text, color, item.selected, theme));
+          existing.sig = sig;
+        }
+      } else {
+        const marker = L.marker(latLng, {
+          icon: labelIcon(p, item.text, color, item.selected, theme),
+          pane: LABEL_PANE,
+          interactive: false,
+          keyboard: false,
+        }).addTo(map);
+        live.set(item.key, { marker, sig });
+      }
+    }
+    // Aircraft that left the feed (or the live set) take their label with them.
+    for (const [key, { marker }] of live) {
+      if (!layout.get(key)) {
+        marker.remove();
+        live.delete(key);
+      }
+    }
+  }, [map, tracks, selectedHexIdents, theme, viewTick]);
+
+  return null;
+}
+
+function labelIcon(p: LabelPlacement, text: string, color: string, selected: boolean, theme: MapTheme): L.DivIcon {
+  return L.divIcon({
+    html: trackLabelHtml(p, text, color, selected, theme),
+    className: "track-label",
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  });
 }
 
 /**
@@ -832,7 +952,7 @@ function DotsLayer({
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
+export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
   const tile = tileConfig(mapTheme, CARTO_API_KEY);
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
@@ -1066,6 +1186,11 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
 
         {/* Events of interest markers */}
         {eventsOfInterest.length > 0 && <EventMarkersLayer events={eventsOfInterest} theme={mapTheme} />}
+
+        {/* Live track labels — auto-placed, live mode only (tracks is empty otherwise) */}
+        {showLabels && tracks.length > 0 && (
+          <TrackLabelsLayer tracks={tracks} selectedHexIdents={selectedHexIdents} theme={mapTheme} />
+        )}
 
         {/* Active tracks — aircraft markers and line trajectories */}
         {orderedTracks.map((t) => {

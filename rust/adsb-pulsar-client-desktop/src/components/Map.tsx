@@ -25,6 +25,8 @@ interface Props {
   trajectoryStyle: "line" | "dots";
   /** Draw the trail of past positions behind live aircraft. Defaults to true. */
   showPositions?: boolean;
+  /** Draw `HEX/CALLSIGN` labels beside live aircraft. Defaults to false. */
+  showLabels?: boolean;
   showDensity: boolean;
   densityMetric: DensityMetric;
   densityTracks: AircraftTrack[];
@@ -54,6 +56,6 @@ interface Props {
   weatherParticles?: boolean;
 }
 
-export function Map({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showPositions, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, importedTracks, dbHistoryTracks, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest, onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather, weatherLevel, weatherBarbs, weatherParticles }: Props) {
-  return <MapInner tracks={tracks} historyTracks={historyTracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showDensity={showDensity} densityMetric={densityMetric} densityTracks={densityTracks} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} liveColorMode={liveColorMode} historyColorMode={historyColorMode} importedTracks={importedTracks} dbHistoryTracks={dbHistoryTracks} selectedHexIdents={selectedHexIdents} onSelectTrack={onSelectTrack} receiverLocation={receiverLocation} simulatedRoutes={simulatedRoutes} eventsOfInterest={eventsOfInterest} onContextMenu={onContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={onMapPickComplete} onMapPickCancel={onMapPickCancel} onFlyToReady={onFlyToReady} weather={weather} weatherLevel={weatherLevel} weatherBarbs={weatherBarbs} weatherParticles={weatherParticles} />;
+export function Map({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showPositions, showLabels, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, importedTracks, dbHistoryTracks, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest, onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather, weatherLevel, weatherBarbs, weatherParticles }: Props) {
+  return <MapInner tracks={tracks} historyTracks={historyTracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} showDensity={showDensity} densityMetric={densityMetric} densityTracks={densityTracks} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} liveColorMode={liveColorMode} historyColorMode={historyColorMode} importedTracks={importedTracks} dbHistoryTracks={dbHistoryTracks} selectedHexIdents={selectedHexIdents} onSelectTrack={onSelectTrack} receiverLocation={receiverLocation} simulatedRoutes={simulatedRoutes} eventsOfInterest={eventsOfInterest} onContextMenu={onContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={onMapPickComplete} onMapPickCancel={onMapPickCancel} onFlyToReady={onFlyToReady} weather={weather} weatherLevel={weatherLevel} weatherBarbs={weatherBarbs} weatherParticles={weatherParticles} />;
 }
