@@ -109,14 +109,19 @@ pub fn start_feed(
     let transport_status = source.status();
     let metrics_for_relay = metrics.clone();
 
-    // Shared counter for total raw SBS-1 messages parsed (pre-throttle)
+    // The metrics bar's three rates, all counted by the shared ingest pipeline
+    // so they are correct whichever source feeds it (an MQTT session's base
+    // counters are a zeroed handle). hits/s >= msgs/s >= pos/s.
+    // hits/s: every line received, parsed or not.
+    let lines_received = Arc::new(AtomicU64::new(0));
+    let lines_received_for_relay = lines_received.clone();
+    let lines_received_for_handle = lines_received.clone();
+    // msgs/s: MSG lines merged into an aircraft (MSG1-7; MSG8 is not merged).
     let messages_parsed = Arc::new(AtomicU64::new(0));
     let messages_parsed_for_relay = messages_parsed.clone();
     let messages_parsed_for_metrics = messages_parsed.clone();
     let messages_parsed_for_handle = messages_parsed.clone();
-    // Lines carrying a lat/lon fix: the metrics bar's pos/s (hits/s is the
-    // count above, every MSG type). Both are counted by the shared ingest
-    // pipeline, so they are correct whichever source feeds it.
+    // pos/s: merged lines carrying a lat/lon fix.
     let positions_parsed = Arc::new(AtomicU64::new(0));
     let positions_parsed_for_relay = positions_parsed.clone();
     let positions_parsed_for_handle = positions_parsed.clone();
@@ -247,6 +252,7 @@ pub fn start_feed(
             storage,
             dump1090_tz,
             source_id,
+            lines_received_for_relay,
             messages_parsed_for_relay,
             positions_parsed_for_relay,
             record_positions,
@@ -260,6 +266,7 @@ pub fn start_feed(
         relay_metrics(
             app_for_metrics,
             metrics_for_relay,
+            lines_received,
             messages_parsed_for_metrics,
             positions_parsed,
             alive_rx_metrics,
@@ -322,6 +329,7 @@ pub fn start_feed(
 
     Ok(FeedHandle {
         metrics,
+        lines_received: lines_received_for_handle,
         messages_parsed: messages_parsed_for_handle,
         positions_parsed: positions_parsed_for_handle,
         shutdown_fn,
@@ -357,6 +365,7 @@ async fn relay_messages(
     storage: SharedStorage,
     dump1090_tz: String,
     source_id: String,
+    lines_received: Arc<AtomicU64>,
     messages_parsed: Arc<AtomicU64>,
     positions_parsed: Arc<AtomicU64>,
     record_positions: Arc<AtomicBool>,
@@ -371,6 +380,7 @@ async fn relay_messages(
         },
     )
     .with_last_message_time(last_message_time)
+    .with_lines_received(lines_received)
     .with_messages_parsed(messages_parsed)
     .with_positions_parsed(positions_parsed)
     .with_record_positions(record_positions)
@@ -384,11 +394,14 @@ async fn relay_messages(
 pub struct DesktopMetrics {
     #[serde(flatten)]
     pub base: adsb_pulsar_client::MetricsSnapshot,
-    /// Every valid SBS-1 MSG line, any transmission type (pre-throttle) — hits/s.
-    /// Counted by the ingest pipeline, so unlike `base` it is populated for an
-    /// MQTT source too (an MQTT session's `base` is a zeroed handle).
+    /// Every line received, parsed or not (pre-throttle) — hits/s.
+    /// The three rate counters are counted by the ingest pipeline, so unlike
+    /// `base` they are populated for an MQTT source too (an MQTT session's
+    /// `base` is a zeroed handle).
+    pub lines_received: u64,
+    /// MSG lines merged into an aircraft, MSG1–7 (pre-throttle) — msgs/s.
     pub messages_parsed: u64,
-    /// MSG lines carrying a latitude/longitude fix (pre-throttle) — pos/s.
+    /// Merged lines carrying a latitude/longitude fix (pre-throttle) — pos/s.
     pub positions_parsed: u64,
 }
 
@@ -399,6 +412,7 @@ pub struct DesktopMetrics {
 async fn relay_metrics(
     app: AppHandle,
     metrics: Metrics,
+    lines_received: Arc<AtomicU64>,
     messages_parsed: Arc<AtomicU64>,
     positions_parsed: Arc<AtomicU64>,
     mut alive_rx: tokio::sync::watch::Receiver<bool>,
@@ -410,6 +424,7 @@ async fn relay_metrics(
             _ = tick.tick() => {
                 let desktop_metrics = DesktopMetrics {
                     base: metrics.snapshot(),
+                    lines_received: lines_received.load(Ordering::Relaxed),
                     messages_parsed: messages_parsed.load(Ordering::Relaxed),
                     positions_parsed: positions_parsed.load(Ordering::Relaxed),
                 };
@@ -541,5 +556,27 @@ async fn socket_watchdog(
             // Client task exited: alive_tx dropped, stop watchdog
             _ = alive_rx.changed() => { break; }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The TS `MetricsSnapshot` reads the three rate counters at the top level
+    /// of the `adsb:metrics` payload, beside the flattened base counters.
+    #[test]
+    fn desktop_metrics_serializes_the_three_rate_counters() {
+        let m = DesktopMetrics {
+            base: adsb_pulsar_client::Metrics::new().snapshot(),
+            lines_received: 30,
+            messages_parsed: 20,
+            positions_parsed: 10,
+        };
+        let json = serde_json::to_value(&m).unwrap();
+        assert_eq!(json["lines_received"], 30);
+        assert_eq!(json["messages_parsed"], 20);
+        assert_eq!(json["positions_parsed"], 10);
+        assert!(json.get("messages_sent").is_some(), "base stays flattened");
     }
 }

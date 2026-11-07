@@ -1086,8 +1086,12 @@ place of Leaflet raster layers, so they were not adopted.
 **Metrics Displayed**:
 - **Messages Sent**: Total messages forwarded to backends
 - **Errors**: Total errors encountered
-- **Throughput**: Messages/second (windowed rate from `messages_parsed`)
-- **Hits/s**: Raw TCP line rate (windowed rate from `messages_sent`)
+- **hits/s**: every line received, parsed or not: MSG, SEL/ID/AIR/STA/CLK, heartbeats, garbage (windowed rate from `lines_received`)
+- **msgs/s**: MSG messages used to update aircraft information, MSG1–7 (windowed rate from `messages_parsed`)
+- **pos/s**: the merged messages that carry a lat/lon (windowed rate from `positions_parsed`)
+- The three are nested, so hits/s ≥ msgs/s ≥ pos/s. All three are counted by the shared
+  `IngestPipeline`, never by the socket client, so they work for MQTT sources (whose base
+  `Metrics` is a zeroed handle) as well as socket sources
 - **Elapsed Time**: Time since feed started
 - **Bytes Sent/Received**: Network traffic stats
 
@@ -1320,8 +1324,9 @@ useEffect(() => {
 **Responsibilities**:
 - Subscribe to `adsb:metrics` Tauri events (emitted every 1s by `relay_metrics`)
 - Compute windowed throughput rates via `useWindowedRate`:
-  - `throughput_msg_per_sec`: windowed rate from `messages_parsed` (successfully parsed SBS messages)
-  - `hits_per_sec`: windowed rate from `messages_sent` (all forwarded TCP lines)
+  - `hits_per_sec` (hits/s): windowed rate from `lines_received` (every line received)
+  - `throughput_msg_per_sec` (msgs/s): windowed rate from `messages_parsed` (MSG lines merged into an aircraft)
+  - `pos_per_sec` (pos/s): windowed rate from `positions_parsed` (merged lines with a lat/lon)
 - Window size configurable via localStorage key `adsb-metrics-window-secs` (default 5s)
 
 **File**: `src/hooks/useMetrics.ts`
@@ -1479,7 +1484,9 @@ export async function queryBbox(query: BboxQuery): Promise<PositionRecord[]> {
   - `positions: [lat, lng, altitude | null][]` — capped at 100 entries, no per-position timestamps
 - `MetricsSnapshot`: Performance metrics (flattened `DesktopMetrics` from Rust). Key fields:
   - `messages_received: number` — all TCP lines from socket (core library counter, includes heartbeats)
-  - `messages_parsed: number` — SBS-1 messages successfully parsed into `AircraftPosition` (bridge-level counter)
+  - `lines_received: number` — every line delivered to the ingest pipeline, parsed or not (hits/s)
+  - `messages_parsed: number` — MSG lines merged into an aircraft, MSG1–7 (msgs/s)
+  - `positions_parsed: number` — merged lines carrying a lat/lon (pos/s)
   - `messages_sent: number` — messages forwarded to backends
   - `reconnection_attempts: number` — TCP reconnection count since start
 - `ConnectionStatus`: Connection state union (`Disconnected | Connecting | Connected | Degraded | ConnectionLost | Error`)
@@ -2044,9 +2051,29 @@ on successful connection. `Metrics.reconnection_attempts` counter is incremented
 **Metrics relay** (`DesktopMetrics`):
 
 The `adsb:metrics` event emits a `DesktopMetrics` struct that flattens the core `MetricsSnapshot`
-(via `#[serde(flatten)]`) and adds a bridge-level counter:
-- `messages_received` (from core): all TCP lines including heartbeats
-- `messages_parsed` (bridge-level): SBS-1 messages successfully parsed into `AircraftPosition`
+(via `#[serde(flatten)]`) and adds three ingest-pipeline counters:
+- `messages_received` (from core): all TCP lines including heartbeats (zero on an MQTT source)
+- `lines_received` (pipeline): every line received, parsed or not, from any source (hits/s)
+- `messages_parsed` (pipeline): MSG lines merged into aircraft state (msgs/s)
+- `positions_parsed` (pipeline): merged lines carrying a lat/lon (pos/s)
+
+**Which MSG types update aircraft state** (`updates_aircraft_state` in
+`adsb-data-engine/src/sbs_parser.rs`). Every MSG line is still archived as a raw message,
+so the DB History message-type charts show all eight types.
+
+| Type | Carries | Merged |
+|------|---------|--------|
+| MSG1 | callsign | yes |
+| MSG2 | surface position: altitude, speed, track, lat/lon, on-ground | yes |
+| MSG3 | airborne position: altitude, lat/lon, on-ground | yes |
+| MSG4 | ground speed, track, vertical rate | yes |
+| MSG5 | altitude (surveillance reply) | yes |
+| MSG6 | squawk, altitude | yes |
+| MSG7 | altitude (air-to-air, DF16/ACAS) | yes: it is the aircraft's own barometric altitude, and often the main altitude source for a TCAS-equipped Mode S aircraft without ADS-B |
+| MSG8 | on-ground flag only (all-call reply) | **no**: it adds nothing, and merging it only refreshed `last_seen` for an aircraft with no data |
+
+A non-merged MSG8 counts toward hits/s but not msgs/s, and not toward an aircraft's
+`message_count`. An aircraft heard only through all-call replies does not appear on the map.
 - `reconnection_attempts` (from core): TCP reconnection count since start
 
 **Status Event Recording** (`StatusEventRecorder`):

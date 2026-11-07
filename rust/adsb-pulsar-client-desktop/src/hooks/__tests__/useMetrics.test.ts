@@ -8,10 +8,16 @@ import type { MetricsSnapshot } from "@/lib/types";
  * An MQTT session's base counters are a zeroed handle (`messages_sent` stays 0);
  * only the ingest-pipeline counters move. That is the case hits/s used to miss.
  */
-function snapshot(elapsed: number, messages: number, positions: number): MetricsSnapshot {
+function snapshot(
+  elapsed: number,
+  lines: number,
+  messages: number,
+  positions: number,
+): MetricsSnapshot {
   return {
     messages_sent: 0,
     messages_received: 0,
+    lines_received: lines,
     messages_parsed: messages,
     positions_parsed: positions,
     errors: 0,
@@ -36,28 +42,29 @@ async function renderWithSnapshots(snaps: MetricsSnapshot[]) {
   return result;
 }
 
+// Per second: 150 lines received, 100 merged into aircraft, 20 with a position.
+const STEADY = [snapshot(1, 150, 100, 20), snapshot(2, 300, 200, 40), snapshot(3, 450, 300, 60)];
+
 describe("useMetrics", () => {
-  it("derives hits/s from every parsed MSG line, whatever its type", async () => {
-    // 100 MSG lines/s, 20 of them positions.
-    const result = await renderWithSnapshots([
-      snapshot(1, 100, 20),
-      snapshot(2, 200, 40),
-      snapshot(3, 300, 60),
-    ]);
-    expect(result.current.hits_per_sec).toBeCloseTo(100);
+  it("derives hits/s from every received line", async () => {
+    const result = await renderWithSnapshots(STEADY);
+    expect(result.current.hits_per_sec).toBeCloseTo(150);
+  });
+
+  it("derives msgs/s from messages merged into aircraft", async () => {
+    const result = await renderWithSnapshots(STEADY);
+    expect(result.current.throughput_msg_per_sec).toBeCloseTo(100);
   });
 
   it("derives pos/s from position messages only", async () => {
-    const result = await renderWithSnapshots([
-      snapshot(1, 100, 20),
-      snapshot(2, 200, 40),
-      snapshot(3, 300, 60),
-    ]);
-    expect(result.current.throughput_msg_per_sec).toBeCloseTo(20);
+    const result = await renderWithSnapshots(STEADY);
+    expect(result.current.pos_per_sec).toBeCloseTo(20);
   });
 
-  it("reads hits/s above pos/s when non-position messages arrive", async () => {
-    const result = await renderWithSnapshots([snapshot(1, 50, 10), snapshot(2, 150, 30)]);
-    expect(result.current.hits_per_sec).toBeGreaterThan(result.current.throughput_msg_per_sec);
+  it("orders the rates hits/s >= msgs/s >= pos/s", async () => {
+    const result = await renderWithSnapshots([snapshot(1, 60, 50, 10), snapshot(2, 180, 150, 30)]);
+    const { hits_per_sec, throughput_msg_per_sec, pos_per_sec } = result.current;
+    expect(hits_per_sec).toBeGreaterThan(throughput_msg_per_sec);
+    expect(throughput_msg_per_sec).toBeGreaterThan(pos_per_sec);
   });
 });

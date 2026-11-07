@@ -41,10 +41,13 @@ pub struct StatusResponse {
 pub struct FeedHandle {
     /// Metrics handle (lock-free reads)
     pub metrics: Metrics,
-    /// Every valid SBS-1 MSG line, any type (hits/s). Counted by the ingest
-    /// pipeline, so it is populated for MQTT and socket sources alike.
+    /// Every line received, parsed or not (hits/s). The three rate counters
+    /// are counted by the ingest pipeline, so they are populated for MQTT and
+    /// socket sources alike.
+    pub lines_received: Arc<AtomicU64>,
+    /// MSG lines merged into an aircraft, MSG1–7 (msgs/s).
     pub messages_parsed: Arc<AtomicU64>,
-    /// MSG lines carrying a lat/lon fix (pos/s). Shared with bridge tasks.
+    /// Merged lines carrying a lat/lon fix (pos/s). Shared with bridge tasks.
     pub positions_parsed: Arc<AtomicU64>,
     /// Shutdown function — sends signal to stop the client
     pub shutdown_fn: Box<dyn Fn() + Send + Sync>,

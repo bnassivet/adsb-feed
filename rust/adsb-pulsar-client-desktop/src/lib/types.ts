@@ -88,9 +88,11 @@ export interface MetricsSnapshot {
   messages_sent: number;
   /** All TCP lines received from socket, including heartbeats (core library counter). */
   messages_received: number;
-  /** Every valid SBS-1 MSG line, any transmission type (ingest-pipeline counter) — hits/s. */
+  /** Every line received, parsed or not (ingest-pipeline counter) — hits/s. */
+  lines_received: number;
+  /** MSG lines merged into an aircraft, MSG1–7; MSG8 is not merged (ingest-pipeline counter) — msgs/s. */
   messages_parsed: number;
-  /** MSG lines carrying a latitude/longitude fix (ingest-pipeline counter) — pos/s. */
+  /** Merged lines carrying a latitude/longitude fix (ingest-pipeline counter) — pos/s. */
   positions_parsed: number;
   errors: number;
   bytes_received: number;
