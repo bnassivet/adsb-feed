@@ -188,7 +188,7 @@ export type TimeGranularity = "1h" | "4h" | "day" | "week" | "month";
 export type DensityMetric = "positions" | "aircraft" | "altitude" | "altitude_min" | "altitude_max";
 
 /** Tooltip detail level for the H3 density overlay. */
-export type DensityTooltipMode = "compact" | "extended";
+export type DensityTooltipMode = "compact" | "extended" | "off";
 
 /** How trajectory positions are colored: by each position's altitude or the track's latest altitude. */
 export type AltitudeColorMode = "plot" | "track";

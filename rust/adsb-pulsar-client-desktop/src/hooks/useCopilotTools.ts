@@ -1072,9 +1072,9 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       altitudeMin: z.number().optional().describe("Min altitude filter in feet (0-50000)"),
       altitudeMax: z.number().optional().describe("Max altitude filter in feet (0-50000)"),
       tooltipMode: z
-        .enum(["compact", "extended"])
+        .enum(["compact", "extended", "off"])
         .optional()
-        .describe("Tooltip detail level"),
+        .describe("Tooltip detail level on hover; 'off' shows no tooltip"),
     }),
     handler: async (args: {
       metric?: DensityMetric;
