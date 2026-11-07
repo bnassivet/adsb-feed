@@ -38,6 +38,8 @@ const baseProps = {
   onToggleIncludeImportedInDensity: vi.fn(),
   showReceiver: true,
   onToggleReceiver: vi.fn(),
+  showPositions: true,
+  onTogglePositions: vi.fn(),
   hasReceiverLocation: true,
   historySliderMin: 0,
   historySliderMax: 24,

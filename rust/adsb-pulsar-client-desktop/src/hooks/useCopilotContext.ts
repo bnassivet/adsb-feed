@@ -97,6 +97,7 @@ export interface CopilotContextConfig {
   showSimulation: boolean;
   showImported: boolean;
   showReceiver: boolean;
+  showPositions: boolean;
   showEvents: boolean;
   selectedHexIdents: Set<string>;
   lastSelectedHexIdent: string | null;
@@ -149,8 +150,9 @@ export function useCopilotContext(config: CopilotContextConfig) {
 
   useAgentContext({
     description:
-      "Visible map layers (history, density, simulation, imported, receiver, events)",
+      "Visible map layers (positions, history, density, simulation, imported, receiver, events)",
     value: {
+      positions: config.showPositions,
       history: config.showHistory,
       density: config.showDensity,
       simulation: config.showSimulation,

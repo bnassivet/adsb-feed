@@ -419,7 +419,17 @@ TOOLS: list[dict] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "history": {"type": "boolean", "description": "Show history trails"},
+                    "positions": {
+                        "type": "boolean",
+                        "description": (
+                            "Show the trail of past positions behind live aircraft "
+                            "(aircraft icons stay visible)"
+                        ),
+                    },
+                    "history": {
+                        "type": "boolean",
+                        "description": "Show tracks of aircraft no longer live",
+                    },
                     "density": {"type": "boolean", "description": "Show density heatmap"},
                     "simulation": {
                         "type": "boolean",
