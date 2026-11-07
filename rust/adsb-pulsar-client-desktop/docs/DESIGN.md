@@ -2074,6 +2074,12 @@ so the DB History message-type charts show all eight types.
 
 A non-merged MSG8 counts toward hits/s but not msgs/s, and not toward an aircraft's
 `message_count`. An aircraft heard only through all-call replies does not appear on the map.
+
+**SBS flag fields use `-1` for true.** BaseStation, and dump1090 which copies it, writes a set
+flag as `-1` (the Visual Basic `True`) and a clear one as `0`; empty means unknown. `parse_bool`
+used to read `-1` as `false`, so every taxiing aircraft was reported airborne. Live traffic
+confirms the convention: airborne MSG1/3/4/8 all carry `0`. Position rows recorded before the fix
+hold `false` where the aircraft was on the ground; the raw table still has the original text.
 - `reconnection_attempts` (from core): TCP reconnection count since start
 
 **Status Event Recording** (`StatusEventRecorder`):
