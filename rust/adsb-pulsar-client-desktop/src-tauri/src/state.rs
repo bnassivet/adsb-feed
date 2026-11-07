@@ -41,9 +41,11 @@ pub struct StatusResponse {
 pub struct FeedHandle {
     /// Metrics handle (lock-free reads)
     pub metrics: Metrics,
-    /// Bridge-level parsed-message counter (distinct from core messages_received
-    /// which counts every TCP line). Shared with bridge tasks.
+    /// Every valid SBS-1 MSG line, any type (hits/s). Counted by the ingest
+    /// pipeline, so it is populated for MQTT and socket sources alike.
     pub messages_parsed: Arc<AtomicU64>,
+    /// MSG lines carrying a lat/lon fix (pos/s). Shared with bridge tasks.
+    pub positions_parsed: Arc<AtomicU64>,
     /// Shutdown function — sends signal to stop the client
     pub shutdown_fn: Box<dyn Fn() + Send + Sync>,
     /// Background task handles for cleanup

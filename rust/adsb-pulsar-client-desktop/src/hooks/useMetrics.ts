@@ -9,6 +9,7 @@ const EMPTY_METRICS: MetricsSnapshot = {
   messages_sent: 0,
   messages_received: 0,
   messages_parsed: 0,
+  positions_parsed: 0,
   errors: 0,
   bytes_received: 0,
   bytes_sent: 0,
@@ -19,15 +20,19 @@ const EMPTY_METRICS: MetricsSnapshot = {
 };
 
 export interface MetricsWithRates extends MetricsSnapshot {
-  /** Windowed raw TCP line rate (all lines from socket, pre-parse). */
+  /** Windowed rate of every ADS-B message received, whatever its MSG type. */
   hits_per_sec: number;
 }
 
 /**
  * Subscribes to `adsb:metrics` events and returns the latest snapshot
  * with windowed rates:
- * - `hits_per_sec`: all raw lines from socket (messages_sent counter)
- * - `throughput_msg_per_sec`: successfully parsed MSG messages (messages_parsed counter)
+ * - `hits_per_sec`: every valid MSG line, any type (`messages_parsed`)
+ * - `throughput_msg_per_sec`: position messages only (`positions_parsed`)
+ *
+ * Both counters come from the shared ingest pipeline, never from the socket
+ * client's `messages_sent`: an MQTT session has no socket client, and its base
+ * counters are a zeroed handle — reading them left hits/s stuck at 0.
  */
 export function useMetrics(): MetricsWithRates {
   const [metrics, setMetrics] = useState<MetricsSnapshot>(EMPTY_METRICS);
@@ -38,16 +43,15 @@ export function useMetrics(): MetricsWithRates {
   const active = metrics.elapsed_secs > 0 ? metrics : null;
 
   const windowedRate = useWindowedRate(
-    active?.messages_parsed ?? null,
+    active?.positions_parsed ?? null,
     metrics.elapsed_secs,
     windowSecs,
   );
 
   const hitsPerSec = useWindowedRate(
-    active?.messages_sent ?? null,
+    active?.messages_parsed ?? null,
     metrics.elapsed_secs,
     windowSecs,
-    metrics.throughput_msg_per_sec,
   );
 
   return useMemo(
