@@ -728,6 +728,7 @@ accumulation even when users navigate to Settings or other pages.
 - `sidebarOpen: boolean`: Left panel expanded/collapsed (persisted)
 - `sidebarWidth: number`: Left panel width in px, 180–400 (persisted)
 - `trajectoryStyle: "line" | "dots"`: Trajectory rendering mode (persisted)
+- `showPositions: boolean`: Draw the trail of past positions (dots or line, per `trajectoryStyle`) behind **live** aircraft; icons always render. History/DB history/imported keep their own toggles. Chat: `setLayerVisibility({ positions })` (persisted as `adsb-show-positions`)
 - `showHistory: boolean`: Whether to display expired aircraft (persisted)
 - `showDensity: boolean`: H3 density overlay toggle (persisted)
 - `densityMetric: DensityMetric`: Which metric to display in H3 hexagons (persisted)
@@ -3668,6 +3669,7 @@ The application includes a built-in simulation mode that animates 20 aircraft al
 | `adsb-sidebar-open` | `boolean` | `true` | Left panel expanded/collapsed |
 | `adsb-sidebar-width` | `number` | `224` | Left panel width in px (180–400) |
 | `adsb-trajectory-style` | `"line" \| "dots"` | `"line"` | Trajectory rendering mode |
+| `adsb-show-positions` | `boolean` | `true` | Toggle the position trail behind live aircraft |
 | `adsb-show-history` | `boolean` | `false` | Toggle visibility of history tracks |
 | `adsb-show-density` | `boolean` | `false` | Toggle H3 density overlay |
 | `adsb-density-metric` | `DensityMetric` | `"positions"` | Which metric for H3 hexagons |

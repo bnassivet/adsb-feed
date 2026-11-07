@@ -33,6 +33,9 @@ interface Props {
   showReceiver: boolean;
   onToggleReceiver: () => void;
   hasReceiverLocation: boolean;
+  /** Trail of past positions behind live aircraft (dots or line). Icons are unaffected. */
+  showPositions: boolean;
+  onTogglePositions: () => void;
   historySliderMin: number;
   historySliderMax: number;
   historySliderRange: number;
@@ -71,7 +74,7 @@ function Section({ title, defaultOpen, children }: { title: string; defaultOpen?
   );
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange, showEvents, onToggleEvents, eventsCount, eventFilterMode, onEventFilterModeChange, eventUpcomingDays, onEventUpcomingDaysChange, eventTimeRangeStart, eventTimeRangeEnd, onEventTimeRangeChange, weather }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, showPositions, onTogglePositions, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange, showEvents, onToggleEvents, eventsCount, eventFilterMode, onEventFilterModeChange, eventUpcomingDays, onEventUpcomingDaysChange, eventTimeRangeStart, eventTimeRangeEnd, onEventTimeRangeChange, weather }: Props) {
   return (
     <div className="flex flex-col gap-2 p-4">
 
@@ -136,6 +139,18 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
 
       {/* ── Display Layers ── */}
       <Section title="Display Layers" defaultOpen>
+        <div>
+          <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showPositions}
+              onChange={onTogglePositions}
+              className="accent-cyan-500"
+            />
+            <span>Show track positions</span>
+          </label>
+        </div>
+
         <div>
           <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
             <input

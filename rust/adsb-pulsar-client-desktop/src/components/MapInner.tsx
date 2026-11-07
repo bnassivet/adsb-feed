@@ -535,6 +535,8 @@ interface Props {
   mapTheme: "light" | "dark";
   onToggleTheme: () => void;
   trajectoryStyle: "line" | "dots";
+  /** Draw the trail of past positions behind live aircraft. Defaults to true. */
+  showPositions?: boolean;
   showDensity: boolean;
   densityMetric: DensityMetric;
   densityTracks: AircraftTrack[];
@@ -830,7 +832,7 @@ function DotsLayer({
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
+export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
   const tile = tileConfig(mapTheme, CARTO_API_KEY);
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
@@ -992,7 +994,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         })}
 
         {/* Active track dots — imperative layer for performance */}
-        {trajectoryStyle === "dots" && tracks.length > 0 && (
+        {trajectoryStyle === "dots" && showPositions && tracks.length > 0 && (
           <DotsLayer tracks={tracks} colorMode={liveColorMode} type="live" selectedHexIdents={selectedHexIdents} theme={mapTheme} />
         )}
 
@@ -1097,7 +1099,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
               </Marker>
 
               {/* Line trajectory */}
-              {t.positions.length > 1 && trajectoryStyle === "line" && (
+              {t.positions.length > 1 && trajectoryStyle === "line" && showPositions && (
                 <Polyline
                   positions={toLatLngs(t.positions)}
                   pathOptions={{

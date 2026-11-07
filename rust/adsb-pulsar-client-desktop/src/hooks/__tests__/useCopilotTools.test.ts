@@ -60,6 +60,7 @@ function makeConfig(overrides: Partial<DisplayToolsConfig> = {}): DisplayToolsCo
     receiverLocation: { lat: 45.5, lng: -73.6 },
     agentTrajectories: [],
     showReceiver: true,
+    showPositions: true,
     showEvents: true,
     liveColorMode: "track",
     historyColorMode: "track",
@@ -80,6 +81,7 @@ function makeConfig(overrides: Partial<DisplayToolsConfig> = {}): DisplayToolsCo
     setShowImported: vi.fn(),
     setAgentTrajectories: vi.fn(),
     setShowReceiver: vi.fn(),
+    setShowPositions: vi.fn(),
     setShowEvents: vi.fn(),
     setLiveColorMode: vi.fn(),
     setHistoryColorMode: vi.fn(),
@@ -434,6 +436,25 @@ describe("useCopilotTools — display control tools", () => {
       // Others not called
       expect(config.setShowSimulation).not.toHaveBeenCalled();
       expect(config.setShowImported).not.toHaveBeenCalled();
+    });
+
+    it("toggles live track positions without touching other layers", async () => {
+      const result = JSON.parse(
+        await getHandler("setLayerVisibility")({ positions: false })
+      );
+      expect(result.updated).toEqual({ positions: false });
+      expect(config.setShowPositions).toHaveBeenCalledOnce();
+      const updater = vi.mocked(config.setShowPositions).mock.calls[0][0];
+      expect(updater(true)).toBe(false);
+      expect(config.setShowHistory).not.toHaveBeenCalled();
+    });
+
+    it("tells positions (live trails) apart from history in its schema", () => {
+      const tool = registeredTools.get("setLayerVisibility");
+      expect(tool?.description).toMatch(/positions/);
+      const shape = (tool?.parameters as { shape: Record<string, { description?: string }> }).shape;
+      expect(shape.positions.description).toMatch(/live aircraft/i);
+      expect(shape.history.description).toMatch(/no longer live/i);
     });
 
     it("handles all layers at once", async () => {

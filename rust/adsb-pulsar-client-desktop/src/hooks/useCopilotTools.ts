@@ -144,6 +144,7 @@ export interface DisplayToolsConfig {
   /** Agent-generated trajectories currently playing back. */
   agentTrajectories: AgentTrajectory[];
   showReceiver: boolean;
+  showPositions: boolean;
   showEvents: boolean;
   liveColorMode: AltitudeColorMode;
   historyColorMode: AltitudeColorMode;
@@ -165,6 +166,7 @@ export interface DisplayToolsConfig {
   setShowImported: (fn: (prev: boolean) => boolean) => void;
   setAgentTrajectories: (v: AgentTrajectory[]) => void;
   setShowReceiver: (fn: (prev: boolean) => boolean) => void;
+  setShowPositions: (fn: (prev: boolean) => boolean) => void;
   setShowEvents: (fn: (prev: boolean) => boolean) => void;
   setLiveColorMode: (v: AltitudeColorMode) => void;
   setHistoryColorMode: (v: AltitudeColorMode) => void;
@@ -968,9 +970,15 @@ export function useCopilotTools(config: DisplayToolsConfig) {
   useSafeFrontendTool({
     name: "setLayerVisibility",
     description:
-      "Show or hide map layers. Only provided layers are changed; omitted layers keep their current state. Available layers: history, density, simulation, imported, receiver, events. Weather and wind are not among them: use setWeatherLayer.",
+      "Show or hide map layers. Only provided layers are changed; omitted layers keep their current state. Available layers: positions, history, density, simulation, imported, receiver, events. Weather and wind are not among them: use setWeatherLayer.",
     parameters: z.object({
-      history: z.boolean().optional().describe("Show history trails"),
+      positions: z
+        .boolean()
+        .optional()
+        .describe(
+          "Show the trail of past positions behind live aircraft (aircraft icons stay visible)",
+        ),
+      history: z.boolean().optional().describe("Show tracks of aircraft no longer live"),
       density: z.boolean().optional().describe("Show density heatmap"),
       simulation: z
         .boolean()
@@ -984,6 +992,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       events: z.boolean().optional().describe("Show events of interest"),
     }),
     handler: async (args: {
+      positions?: boolean;
       history?: boolean;
       density?: boolean;
       simulation?: boolean;
@@ -992,6 +1001,10 @@ export function useCopilotTools(config: DisplayToolsConfig) {
       events?: boolean;
     }) => {
       const changes: Record<string, boolean> = {};
+      if (args.positions !== undefined) {
+        configRef.current.setShowPositions(() => args.positions!);
+        changes.positions = args.positions!;
+      }
       if (args.history !== undefined) {
         configRef.current.setShowHistory(() => args.history!);
         changes.history = args.history!;

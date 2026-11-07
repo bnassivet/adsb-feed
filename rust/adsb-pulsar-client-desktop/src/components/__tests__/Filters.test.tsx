@@ -40,6 +40,8 @@ function renderFilters(overrides = {}) {
     showReceiver: true,
     onToggleReceiver: vi.fn(),
     hasReceiverLocation: true,
+    showPositions: true,
+    onTogglePositions: vi.fn(),
     historySliderMin: 0,
     historySliderMax: 24,
     historySliderRange: 24,
@@ -60,6 +62,25 @@ function renderFilters(overrides = {}) {
 }
 
 describe("FiltersPanel", () => {
+  describe("Show track positions", () => {
+    it("renders checked when positions are shown", () => {
+      renderFilters({ showPositions: true });
+      expect(screen.getByRole("checkbox", { name: /show track positions/i })).toBeChecked();
+    });
+
+    it("renders unchecked when positions are hidden", () => {
+      renderFilters({ showPositions: false });
+      expect(screen.getByRole("checkbox", { name: /show track positions/i })).not.toBeChecked();
+    });
+
+    it("calls onTogglePositions when clicked", async () => {
+      const user = userEvent.setup();
+      const { props } = renderFilters();
+      await user.click(screen.getByRole("checkbox", { name: /show track positions/i }));
+      expect(props.onTogglePositions).toHaveBeenCalledOnce();
+    });
+  });
+
   it("renders with default filters", () => {
     renderFilters();
     expect(screen.getByPlaceholderText("Search... (comma-separated)")).toBeInTheDocument();
