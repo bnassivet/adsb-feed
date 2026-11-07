@@ -139,6 +139,60 @@ function inside(b: Box, view: Viewport): boolean {
   return b.left >= 0 && b.top >= 0 && b.right <= view.width && b.bottom <= view.height;
 }
 
+/** Grid cell edge, px. About a label's height × 3: a typical label spans 2–3 cells. */
+const GRID_CELL = 48;
+
+/** An obstacle: an aircraft icon (owner = its key) or a placed label (owner = ""). */
+interface Obstacle {
+  box: Box;
+  owner: string;
+}
+
+/**
+ * Uniform grid over the viewport. Each obstacle is filed under every cell it
+ * touches, so a query only looks at its neighbours. A full scan made layout
+ * quadratic (37 ms at 1,000 aircraft); this keeps it close to linear.
+ */
+class ObstacleGrid {
+  private readonly cols: number;
+  private readonly rows: number;
+  private readonly cells: Obstacle[][];
+
+  constructor(view: Viewport) {
+    this.cols = Math.max(1, Math.ceil(view.width / GRID_CELL));
+    this.rows = Math.max(1, Math.ceil(view.height / GRID_CELL));
+    this.cells = Array.from({ length: this.cols * this.rows }, () => []);
+  }
+
+  private span(b: Box): [number, number, number, number] {
+    const c0 = Math.max(0, Math.floor(b.left / GRID_CELL));
+    const r0 = Math.max(0, Math.floor(b.top / GRID_CELL));
+    const c1 = Math.min(this.cols - 1, Math.floor(b.right / GRID_CELL));
+    const r1 = Math.min(this.rows - 1, Math.floor(b.bottom / GRID_CELL));
+    return [c0, r0, c1, r1];
+  }
+
+  add(o: Obstacle): void {
+    const [c0, r0, c1, r1] = this.span(o.box);
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) this.cells[r * this.cols + c].push(o);
+    }
+  }
+
+  /** True if `b` overlaps any obstacle not owned by `self`. */
+  collides(b: Box, self: string): boolean {
+    const [c0, r0, c1, r1] = this.span(b);
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        for (const o of this.cells[r * this.cols + c]) {
+          if (o.owner !== self && overlaps(o.box, b)) return true;
+        }
+      }
+    }
+    return false;
+  }
+}
+
 /**
  * Places every item's label, or `null` when it cannot be placed without overlap.
  * `previous` is last frame's result; a slot that is still free is kept.
@@ -149,8 +203,13 @@ export function layoutLabels(
   previous?: ReadonlyMap<string, LabelPlacement | null>,
 ): Map<string, LabelPlacement | null> {
   const result = new Map<string, LabelPlacement | null>();
-  const icons = items.map((i) => ({ key: i.key, box: iconBox(i) }));
-  const placed: Box[] = [];
+  const grid = new ObstacleGrid(view);
+  const viewBox: Box = { left: 0, top: 0, right: view.width, bottom: view.height };
+  for (const i of items) {
+    const box = iconBox(i);
+    // Labels never leave the viewport, so an icon outside it can never block one.
+    if (overlaps(box, viewBox)) grid.add({ box, owner: i.key });
+  }
 
   const order = [...items].sort((a, b) => {
     if (a.selected !== b.selected) return a.selected ? -1 : 1;
@@ -187,8 +246,7 @@ export function layoutLabels(
       };
       if (!inside(b, view)) continue;
       if (fallback === null && c < CANDIDATES_PER_RING) fallback = { candidate: c, box: b };
-      if (placed.some((p) => overlaps(p, b))) continue;
-      if (icons.some((ic) => ic.key !== item.key && overlaps(ic.box, b))) continue;
+      if (grid.collides(b, item.key)) continue;
       chosen = { candidate: c, box: b };
       break;
     }
@@ -202,7 +260,7 @@ export function layoutLabels(
     }
 
     const s = slotBox(item, chosen.candidate, width, height);
-    placed.push(chosen.box);
+    grid.add({ box: chosen.box, owner: "" });
     result.set(item.key, {
       candidate: chosen.candidate,
       left: chosen.box.left,

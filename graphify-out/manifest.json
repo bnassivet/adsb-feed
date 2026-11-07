@@ -805,8 +805,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/DESIGN.md": {
-    "mtime": 1794085852.71799,
-    "ast_hash": "ae89d9c896b1af9e9fa0f2a52fcd86af",
+    "mtime": 1794095717.1959424,
+    "ast_hash": "f139e2a44ab78d069733b31fb288b045",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/2026-02-22-imported-tracks-selection-design.md": {
@@ -7615,8 +7615,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/.run/weather-cache.json": {
-    "mtime": 1794083433.7634165,
-    "ast_hash": "23a094609bc532dc81b0f628d0632583",
+    "mtime": 1794094236.6516945,
+    "ast_hash": "5142814041c2156e6daf0700fc34f9df",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/2026-09-14-weather-layer-design.md": {
@@ -7945,8 +7945,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/label-layout.ts": {
-    "mtime": 1794085736.3859255,
-    "ast_hash": "4a3d0030d25683cac2cc61812bc613f8",
+    "mtime": 1794095696.4020097,
+    "ast_hash": "bf5f5072ea7b421d3c33f0b418e53132",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/label-layout.test.ts": {
@@ -7957,6 +7957,11 @@
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/2026-11-07-track-labels.md": {
     "mtime": 1794085864.3298345,
     "ast_hash": "80103dc2312531a47ba1360b15895edb",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/label-layout.perf.test.ts": {
+    "mtime": 1794095676.5185487,
+    "ast_hash": "6e54f1b55430ed3018d702511878abcd",
     "semantic_hash": ""
   }
 }
