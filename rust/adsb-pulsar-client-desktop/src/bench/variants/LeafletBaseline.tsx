@@ -62,6 +62,8 @@ export default function LeafletBaseline({ params }: { params: BenchParams }) {
   }, [params]);
 
   const live = params.scenario === "live";
+  // Bench-only switch for reproducing label behaviour (`?labels=1`); off for measurements.
+  const showLabels = typeof location !== "undefined" && new URLSearchParams(location.search).get("labels") === "1";
   return (
     <div style={{ position: "fixed", inset: 0 }}>
       <MapInner
@@ -72,6 +74,7 @@ export default function LeafletBaseline({ params }: { params: BenchParams }) {
         onToggleTheme={noop}
         trajectoryStyle={data.style}
         showPositions
+        showLabels={showLabels}
         showDensity={false}
         densityMetric="positions"
         densityTracks={[]}

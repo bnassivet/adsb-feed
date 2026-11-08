@@ -26,6 +26,7 @@ import { ScatterplotLayer } from "@deck.gl/layers";
 import { DeckLayer } from "@/lib/deck-leaflet/leaflet-layer";
 import { buildDotBuffers, locateDot, type DotBuffers } from "@/lib/deck-dots";
 import { dotTooltipHtml, type DotSetType } from "@/lib/dot-tooltip";
+import { isBareMapTarget } from "@/lib/map-hover-target";
 import type { MapTheme } from "@/lib/colors";
 import type { AircraftTrack, AltitudeColorMode } from "@/lib/types";
 
@@ -121,6 +122,11 @@ export function DeckDotsOverlay({ sets, selected, theme }: { sets: DotSet[]; sel
       shown = id;
     };
     const onMove = (e: L.LeafletMouseEvent) => {
+      // Over an aircraft icon (or a tooltip, popup, control) that element owns the hover.
+      if (!isBareMapTarget(e.originalEvent.target, map.getContainer())) {
+        last = null;
+        return hide();
+      }
       last = e.containerPoint;
       if (!frame) frame = requestAnimationFrame(pick);
     };
