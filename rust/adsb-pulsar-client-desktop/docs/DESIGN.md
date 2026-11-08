@@ -3920,9 +3920,19 @@ time per layout on a 1920×1080 viewport:
 | 1,000 | 37 ms | 4.0 ms |
 | 3,000 | 92 ms | 11.7 ms |
 
-Both versions placed exactly the same number of labels. `label-layout.perf.test.ts` pins this:
-loose time budgets that catch a return to quadratic behaviour, plus a full overlap check on a
-2,000-aircraft random fleet.
+The original full scan is kept as `layoutLabels(…, { index: "scan" })`, **for tests only**.
+`label-layout.perf.test.ts` uses it in three ways:
+- as an **equivalence oracle**: the grid must return identical layouts, including frame-to-frame with hysteresis;
+- as a **same-machine speed baseline**: the grid must be at least 3× faster at 1,000 aircraft (measured
+  9–10×) and with 20,000 off-screen (13×), timed in interleaved runs;
+- alongside a full overlap check on a 2,000-aircraft random fleet.
+
+**Never use absolute millisecond budgets for this.** The first version did (12 ms at 1,000 aircraft),
+and it failed CI at 21 ms. That was not a regression: the same grid code ran in 4 ms locally on
+faster hardware. A ratio against the reference cancels out machine speed, and a real return to
+quadratic behaviour still fails at a ratio of about 1.0×. The block also sets an explicit 30 s
+timeout, and the exhaustive check asserts once on a collected list. Calling `expect` about 10^6
+times took more than 5 s on a loaded machine.
 
 ### Range lines
 

@@ -199,6 +199,36 @@ class ObstacleGrid {
 }
 
 /**
+ * The original full scan: every obstacle checked on every query. Quadratic, and
+ * kept **only as a reference for tests**. It must give results identical to the grid,
+ * and the grid must beat it by a wide margin *on the same machine*. A fixed
+ * millisecond budget cannot do that job: the same code ran 4 ms locally and
+ * 21 ms on a slower CI runner.
+ */
+class ObstacleScan {
+  private readonly all: Obstacle[] = [];
+
+  add(o: Obstacle): void {
+    this.all.push(o);
+  }
+
+  collides(b: Box, self: string): boolean {
+    for (const o of this.all) {
+      if (o.owner !== self && overlaps(o.box, b)) return true;
+    }
+    return false;
+  }
+}
+
+export interface LayoutOptions {
+  /**
+   * Collision index. `"grid"` (default) is the production path. `"scan"` is the
+   * quadratic reference, used by tests as an equivalence oracle and a speed baseline.
+   */
+  index?: "grid" | "scan";
+}
+
+/**
  * Places every item's label, or `null` when it cannot be placed without overlap.
  * `previous` is last frame's result; a slot that is still free is kept.
  */
@@ -206,14 +236,17 @@ export function layoutLabels(
   items: readonly LabelItem[],
   view: Viewport,
   previous?: ReadonlyMap<string, LabelPlacement | null>,
+  options: LayoutOptions = {},
 ): Map<string, LabelPlacement | null> {
   const result = new Map<string, LabelPlacement | null>();
-  const grid = new ObstacleGrid(view);
+  const scan = options.index === "scan";
+  const grid: ObstacleGrid | ObstacleScan = scan ? new ObstacleScan() : new ObstacleGrid(view);
   const viewBox: Box = { left: 0, top: 0, right: view.width, bottom: view.height };
   for (const i of items) {
     const box = iconBox(i);
     // Labels never leave the viewport, so an icon outside it can never block one.
-    if (overlaps(box, viewBox)) grid.add({ box, owner: i.key });
+    // The scan reference indexes every icon, as the original did.
+    if (scan || overlaps(box, viewBox)) grid.add({ box, owner: i.key });
   }
 
   const order = [...items].sort((a, b) => {

@@ -805,8 +805,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/DESIGN.md": {
-    "mtime": 1794098953.7756805,
-    "ast_hash": "93cc44f94e1d458d5bd7fe4ee9a219cb",
+    "mtime": 1794100979.6322007,
+    "ast_hash": "3e31eb05009bb6ba7a47a59ffd2fabc0",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/2026-02-22-imported-tracks-selection-design.md": {
@@ -7945,8 +7945,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/label-layout.ts": {
-    "mtime": 1794098908.1460714,
-    "ast_hash": "e2c5a03efed76103ab97cdeaa508f516",
+    "mtime": 1794100952.9744306,
+    "ast_hash": "c5a6960e4137035b6473b00767af28b1",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/label-layout.test.ts": {
@@ -7960,8 +7960,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/label-layout.perf.test.ts": {
-    "mtime": 1794095676.5185487,
-    "ast_hash": "6e54f1b55430ed3018d702511878abcd",
+    "mtime": 1794100905.9279137,
+    "ast_hash": "2666195dc269b4da70ee267be705fc4f",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/RangeLineButton.tsx": {
