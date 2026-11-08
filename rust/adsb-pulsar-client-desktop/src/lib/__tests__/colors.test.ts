@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { altitudeToColor, densityColor, ALTITUDE_SCALE_STOPS, cachedAltitudeToColor, clearColorCache } from "../colors";
+import { altitudeToColor, densityColor, ALTITUDE_SCALE_STOPS, cachedAltitudeToColor, clearColorCache, contrastRatio, readableOn } from "../colors";
 
 describe("altitudeToColor", () => {
   it("returns gray for null", () => {
@@ -134,5 +134,47 @@ describe("cachedAltitudeToColor", () => {
     clearColorCache();
     // After clearing, should still return correct result (recomputed)
     expect(cachedAltitudeToColor(10000)).toBe(altitudeToColor(10000));
+  });
+});
+
+describe("contrastRatio", () => {
+  it("is 21 for black on white and 1 for a colour on itself", () => {
+    expect(contrastRatio("rgb(0,0,0)", "#ffffff")).toBeCloseTo(21, 1);
+    expect(contrastRatio("#0f172a", "#0f172a")).toBeCloseTo(1, 6);
+  });
+
+  it("reads shorthand hex", () => {
+    expect(contrastRatio("#fff", "#000")).toBeCloseTo(21, 1);
+  });
+
+  it("confirms pure blue is unreadable on the dark label background", () => {
+    expect(contrastRatio("rgb(0,0,255)", "#0f172a")).toBeLessThan(3);
+  });
+});
+
+describe("readableOn", () => {
+  const BG = "#0f172a";
+
+  it("lightens a too-dark colour just enough to reach the target contrast", () => {
+    const fixed = readableOn("rgb(0,0,255)", BG, 4.5);
+    expect(contrastRatio(fixed, BG)).toBeGreaterThanOrEqual(4.5);
+    // Just enough: well short of white, and still recognisably blue.
+    expect(contrastRatio(fixed, BG)).toBeLessThan(5.5);
+    const [r, g, b] = fixed.match(/\d+/g)!.map(Number);
+    expect(b).toBeGreaterThan(r);
+    expect(b).toBeGreaterThan(g);
+  });
+
+  it("leaves colours that already pass untouched", () => {
+    expect(readableOn("rgb(255,255,0)", BG, 4.5)).toBe("rgb(255,255,0)");
+    expect(readableOn("rgb(0,255,255)", BG, 4.5)).toBe("rgb(0,255,255)");
+    expect(readableOn("#888888", BG, 4.5)).toBe("#888888");
+  });
+
+  it("makes the whole dark altitude scale readable on the label background", () => {
+    for (let alt = 0; alt <= 50000; alt += 1000) {
+      const c = readableOn(altitudeToColor(alt, "dark"), BG, 4.5);
+      expect(contrastRatio(c, BG)).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });

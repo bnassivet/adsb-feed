@@ -161,3 +161,53 @@ function interpolateColor(
   const b = Math.round(from[2] + (to[2] - from[2]) * t);
   return `rgb(${r},${g},${b})`;
 }
+
+/** Parses `rgb(r,g,b)`, `rgba(r,g,b,a)` (alpha ignored), `#rrggbb` or `#rgb`. */
+function parseRgb(color: string): [number, number, number] {
+  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(color.trim());
+  if (short) return [parseInt(short[1] + short[1], 16), parseInt(short[2] + short[2], 16), parseInt(short[3] + short[3], 16)];
+  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color.trim());
+  if (hex) return [parseInt(hex[1], 16), parseInt(hex[2], 16), parseInt(hex[3], 16)];
+  const nums = color.match(/[\d.]+/g);
+  if (!nums || nums.length < 3) throw new Error(`Unsupported colour: ${color}`);
+  return [Number(nums[0]), Number(nums[1]), Number(nums[2])];
+}
+
+/** WCAG 2.x relative luminance of an sRGB colour, 0..1. */
+function relativeLuminance([r, g, b]: [number, number, number]): number {
+  const lin = (c: number) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/** WCAG contrast ratio between two colours, 1..21. */
+export function contrastRatio(a: string, b: string): number {
+  const la = relativeLuminance(parseRgb(a));
+  const lb = relativeLuminance(parseRgb(b));
+  const [hi, lo] = la > lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/**
+ * `color` itself if it already reaches `minRatio` against `background`, otherwise
+ * the least-lightened mix of it toward white that does. Hue is kept as far as
+ * possible, so altitude-coloured text stays colour-coded. Only the dark end of the
+ * scale (deep blue, which is ~2:1 on a dark chip) is lifted. Assumes a dark
+ * background; on a light one, lightening cannot help and white is returned.
+ */
+export function readableOn(color: string, background: string, minRatio: number): string {
+  if (contrastRatio(color, background) >= minRatio) return color;
+  const [r, g, b] = parseRgb(color);
+  const mix = (t: number) =>
+    `rgb(${Math.round(r + (255 - r) * t)},${Math.round(g + (255 - g) * t)},${Math.round(b + (255 - b) * t)})`;
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 20; i++) {
+    const mid = (lo + hi) / 2;
+    if (contrastRatio(mix(mid), background) >= minRatio) hi = mid;
+    else lo = mid;
+  }
+  return mix(hi);
+}
