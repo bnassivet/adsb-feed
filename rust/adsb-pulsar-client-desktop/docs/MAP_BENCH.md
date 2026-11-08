@@ -118,6 +118,30 @@ What this shows:
 - **The rest of the cost is the CPU redraw.** It grows with the number of points on screen. WebKit's 2D canvas is about 4× slower at it than Chromium's (472 vs 125 ms worst frame at 1M), and WebKit is the engine the app ships on. deck.gl's cost stays flat with size, because the GPU redraws on every frame.
 - **Canvas has no hover tooltips or click-to-select yet.** The baseline attaches a tooltip to every marker, which is part of its cost. Canvas would need its own lookup of the point under the cursor, for example a grid index over the projected pixels. deck.gl provides this already (`pickable`).
 
+## Real view sizes (recorded data, 2026-11-06 20:49 → 2026-11-08 20:49 UTC)
+
+The synthetic sizes above need a real reference. These counts come from the
+live recorder's DuckDB, attached read-only over Quack. They use the same rules as the app's
+own queries: positions that have a fix, joined to their flight as in
+`get_all_trajectories_arrow`. Each window length was evaluated every 15 minutes
+across the 2 days:
+
+| Window | min | median | max |
+|---|---:|---:|---:|
+| 1 h | 3 | 3.4k | 31k |
+| 6 h | 1.1k | 40k | 144k |
+| 12 h | 31k | 108k | 192k |
+| **24 h** | **149k** | **202k** | **238k** |
+| 48 h (whole range) | | | 380k |
+
+- The busiest UTC day (2026-11-07) had 236k positions and the quieter one 128k. Traffic swings from a handful of positions an hour at night to about 30k at midday.
+- 431k of the 811k positions stored in the window have no fix and are never drawn.
+- **The default view is the 24 h one.** At startup, the app preloads `trackHistoryHours` (default 24) into the live history layer (`queryBbox`, limit 1M). The DB History panel's *select all* then loads its whole time range with no cap. So the map normally starts at about 200k points, and that figure grows with traffic.
+
+That settles the recommendation below in favour of deck.gl. Even the smallest
+24 h window is 3× the 50k at which canvas stopped matching deck.gl. At 200k, canvas's worst frame in WebKit
+is already 118 ms.
+
 ## Findings
 
 1. **Leaflet + deck.gl overlay is the fastest variant on every measure that matters here.** At 1M points it loads in 40–50 ms instead of 0.7–1.2 s. It uses 79 MB of heap instead of 1.2 GB. Its worst frame during pan or zoom is 33 ms, against Leaflet's 1.8–2.6 s freeze. With 500 live aircraft it updates in 8–15 ms, the only variant with no stall. Below about 50k points every variant is fine, so the difference only matters for DB history and density-scale data.
@@ -133,7 +157,9 @@ Keep Leaflet for the map: tiles, controls, live aircraft icons, labels and weath
 - **deck.gl overlay** (`src/lib/deck-leaflet/`, a vendored copy of deck.gl-leaflet 1.3.1, MIT). This is the choice if DB-history views can reach about 200k points or more. It is the only variant that stays at full frame rate in WebKit at every size. Hover and click picking are built in. It costs a dependency: `@deck.gl/core` and `@deck.gl/layers` move from devDependencies to dependencies.
 - **Canvas renderer** (`src/lib/canvas-dots*.ts`). This is the choice if realistic views stay under about 200k points. It adds no dependency and loads fastest at small sizes, but tooltips and selection would need a hit-test index.
 
-Either one also makes `subsamplePositions` and the rebuild on every `moveend` unnecessary for those layers. The deciding question is the typical point count of a DB-history view in real use, which this synthetic benchmark can't answer.
+Either one also makes `subsamplePositions` and the rebuild on every `moveend` unnecessary for those layers.
+
+**Decision: deck.gl.** Real views start at about 200k points and will grow (section *Real view sizes*). The overlay replaces `DotsLayer` for every dot set, not only DB History, because the 24 h startup preload goes through the history layer.
 
 **Why the bridge is vendored.** The npm `deck.gl-leaflet` 1.3.1 hasn't had a release since 2024, and it pins `@deck.gl/core ^9`. Its package is also mis-declared: its CommonJS `main` sits inside a `"type": "module"` package, so a plain import resolves `LeafletLayer` to `undefined`. Its 232 lines now live in `src/lib/deck-leaflet/`, with the view maths split out and tested.
 
