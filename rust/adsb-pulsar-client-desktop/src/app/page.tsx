@@ -63,6 +63,7 @@ import type { SelectEvent } from "@/components/AircraftTable";
 import { ModeTabs } from "@/components/ModeTabs";
 import Link from "next/link";
 import { resolveStage } from "@/lib/stage";
+import { rangeLineTargets } from "@/lib/range-line";
 
 /** Base window/header title. `tauri.conf.json` sets the same string. */
 const APP_TITLE = "ADS-B Aircraft Tracker";
@@ -129,6 +130,8 @@ export default function Dashboard() {
   const [showPositions, setShowPositions] = useLocalStorage<boolean>("adsb-show-positions", true);
   // `HEX/CALLSIGN` labels beside live aircraft, auto-placed (lib/label-layout.ts). Off by default.
   const [showLabels, setShowLabels] = useLocalStorage<boolean>("adsb-show-labels", false);
+  // Range-line MODE: while on, every selected aircraft gets a receiver → aircraft line (lib/range-line.ts).
+  const [showRangeLines, setShowRangeLines] = useLocalStorage<boolean>("adsb-show-range-lines", false);
 
   // DB History Panel state
   const [dbHistoryOpen, setDbHistoryOpen] = useLocalStorage<boolean>("adsb-dbhistory-open", false);
@@ -748,6 +751,12 @@ export default function Dashboard() {
     [lastSelectedHexIdent, allMapTracksMap],
   );
 
+  // Selected aircraft on the map with a position — the range-line endpoints.
+  const selectedRangeLineTargets = useMemo(
+    () => (showRangeLines ? rangeLineTargets(selectedHexIdents, allMapTracksMap) : EMPTY_TRACKS),
+    [showRangeLines, selectedHexIdents, allMapTracksMap, EMPTY_TRACKS],
+  );
+
   // Memoized sorted arrays — shared by AircraftTable and flatVisibleOrder
   const sortedTableTracks = useMemo(() => sortTracks(tableTracks, sortKey, sortAsc), [tableTracks, sortKey, sortAsc]);
   const sortedTableHistory = useMemo(() => sortTracks(tableHistory, sortKey, sortAsc), [tableHistory, sortKey, sortAsc]);
@@ -907,6 +916,7 @@ export default function Dashboard() {
     showReceiver,
     showPositions,
     showLabels,
+    showRangeLines,
     showEvents,
     liveColorMode,
     historyColorMode,
@@ -928,6 +938,7 @@ export default function Dashboard() {
     setShowReceiver,
     setShowPositions,
     setShowLabels,
+    setShowRangeLines,
     setShowEvents,
     setLiveColorMode,
     setHistoryColorMode,
@@ -975,6 +986,7 @@ export default function Dashboard() {
     showReceiver,
     showPositions,
     showLabels,
+    showRangeLines,
     showEvents,
     selectedHexIdents,
     lastSelectedHexIdent,
@@ -1053,6 +1065,10 @@ export default function Dashboard() {
 
   function handleToggleLabels() {
     setShowLabels((prev: boolean) => !prev);
+  }
+
+  function handleToggleRangeLines() {
+    setShowRangeLines((prev: boolean) => !prev);
   }
 
   function handleToggleEvents() {
@@ -1478,7 +1494,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
+              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel
@@ -1493,6 +1509,8 @@ export default function Dashboard() {
                    gets the wind of the hour recorded nearest its own last_seen. */
                 wind={selectedWind}
                 receiverLocation={receiverLocation}
+                rangeLineOn={showRangeLines}
+                onToggleRangeLine={handleToggleRangeLines}
               />
             )}
             {/* DB History panel — docked mode (in flex row) */}

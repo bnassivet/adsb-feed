@@ -13,7 +13,7 @@ export function WindSpeedLegend({ theme }: { theme: MapTheme }) {
   const buckets = colors.map((_, bucket) => bucket).reverse();
 
   return (
-    <div className="absolute top-[17rem] right-2.5 z-[1000] flex flex-col items-start gap-0.5 pointer-events-none text-[10px] leading-none">
+    <div className="absolute top-[19.25rem] right-2.5 z-[1000] flex flex-col items-start gap-0.5 pointer-events-none text-[10px] leading-none">
       <span className={`text-[9px] text-white/70 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] mb-0.5`}>kt</span>
       {buckets.map((bucket) => (
         <div key={bucket} className="flex items-center gap-1">

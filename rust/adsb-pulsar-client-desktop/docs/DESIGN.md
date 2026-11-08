@@ -730,6 +730,7 @@ accumulation even when users navigate to Settings or other pages.
 - `trajectoryStyle: "line" | "dots"`: Trajectory rendering mode (persisted)
 - `showPositions: boolean`: Draw the trail of past positions (dots or line, per `trajectoryStyle`) behind **live** aircraft; icons always render. History/DB history/imported keep their own toggles. Chat: `setLayerVisibility({ positions })` (persisted as `adsb-show-positions`)
 - `showLabels: boolean`: Draw `HEX/CALLSIGN` labels (`-` when no callsign) beside **live** aircraft, auto-placed so they never overlap — see *Track labels*. Chat: `setLayerVisibility({ labels })` (persisted as `adsb-show-labels`, default off)
+- `showRangeLines: boolean`: Range-line **mode**. While on, every selected aircraft on the map gets a receiver → aircraft line labelled distance / bearing / elevation. See *Range lines*. Toggled from the map control under *Center on antenna*, from the details panel's Distance row, or from chat via `setLayerVisibility({ rangeLines })` (persisted as `adsb-show-range-lines`, default off)
 - `showHistory: boolean`: Whether to display expired aircraft (persisted)
 - `showDensity: boolean`: H3 density overlay toggle (persisted)
 - `densityMetric: DensityMetric`: Which metric to display in H3 hexagons (persisted)
@@ -3676,6 +3677,7 @@ The application includes a built-in simulation mode that animates 20 aircraft al
 | `adsb-trajectory-style` | `"line" \| "dots"` | `"line"` | Trajectory rendering mode |
 | `adsb-show-positions` | `boolean` | `true` | Toggle the position trail behind live aircraft |
 | `adsb-show-labels` | `boolean` | `false` | Toggle `HEX/CALLSIGN` labels beside live aircraft |
+| `adsb-show-range-lines` | `boolean` | `false` | Range-line mode: receiver → selected aircraft |
 | `adsb-show-history` | `boolean` | `false` | Toggle visibility of history tracks |
 | `adsb-show-density` | `boolean` | `false` | Toggle H3 density overlay |
 | `adsb-density-metric` | `DensityMetric` | `"positions"` | Which metric for H3 hexagons |
@@ -3914,6 +3916,32 @@ time per layout on a 1920×1080 viewport:
 Both versions placed exactly the same number of labels. `label-layout.perf.test.ts` pins this:
 loose time budgets that catch a return to quadratic behaviour, plus a full overlap check on a
 2,000-aircraft random fleet.
+
+### Range lines
+
+A dashed magenta (receiver colour) line from the receiver to **every selected aircraft**,
+with a midpoint chip such as `111 km / 60.0 NM · 180.0° · el 5.0°`.
+
+| Piece | Role |
+|-------|------|
+| `lib/range-line.ts` | Pure: `greatCirclePoints`, `midpoint`, `rangeLineLabel`, `rangeLineTargets` |
+| `RangeLineButton.tsx` | Map control (`top-20`, under *Center on antenna*); exports the shared icon and `rangeLineTitle` |
+| `RangeLinesLayer` (`MapInner.tsx`) | One non-interactive `Polyline` + chip `Marker` per target |
+
+- **A mode, not an action.** The target moves at 2 Hz and selection already says "these
+  aircraft", so the toggle persists across selections and restarts and the lines follow
+  their aircraft. With the mode on and nothing selected, nothing is drawn and the button
+  title says so.
+- **Great circle, not a Leaflet straight line.** A two-point polyline is a rhumb line in Web
+  Mercator, and its direction at the receiver would disagree with the azimuth in its own label.
+  The line is interpolated with 32 segments of spherical linear interpolation (slerp).
+- **The origin is not gated by *Show receiver*.** `page.tsx` passes the map `receiverLocation`
+  only while the receiver marker is shown, so range lines get their own `rangeLineOrigin`. The
+  button is disabled only when no receiver location is configured.
+- **One formatter set.** The chip is built from the details panel's helpers in `lib/aircraft-details.ts`,
+  so the two can never disagree.
+- The map's right-hand control stack moved down one slot to make room: theme toggle
+  `top-[7.25rem]`, altitude legend `top-[10.25rem]`, wind legend `top-[19.25rem]`.
 
 ### Map Filtering
 

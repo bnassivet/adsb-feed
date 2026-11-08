@@ -3,6 +3,7 @@ import dynamic from "next/dynamic";
 import type { AircraftTrack, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventOfInterest, MapPickResult } from "@/lib/types";
 import type { AgentTrajectory } from "@/lib/simulation-data";
 import type { WeatherLevel, WeatherSnapshot } from "@/lib/weather";
+import type { ReceiverPoint } from "@/lib/aircraft-details";
 
 // Dynamic import to prevent SSR (Leaflet requires window/document)
 const MapInner = dynamic(
@@ -27,6 +28,11 @@ interface Props {
   showPositions?: boolean;
   /** Draw `HEX/CALLSIGN` labels beside live aircraft. Defaults to false. */
   showLabels?: boolean;
+  /** Receiver for range lines — not gated by "Show receiver". */
+  rangeLineOrigin?: ReceiverPoint;
+  rangeLineTargets?: AircraftTrack[];
+  showRangeLines?: boolean;
+  onToggleRangeLines?: () => void;
   showDensity: boolean;
   densityMetric: DensityMetric;
   densityTracks: AircraftTrack[];
@@ -56,6 +62,6 @@ interface Props {
   weatherParticles?: boolean;
 }
 
-export function Map({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showPositions, showLabels, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, importedTracks, dbHistoryTracks, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest, onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather, weatherLevel, weatherBarbs, weatherParticles }: Props) {
-  return <MapInner tracks={tracks} historyTracks={historyTracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} showDensity={showDensity} densityMetric={densityMetric} densityTracks={densityTracks} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} liveColorMode={liveColorMode} historyColorMode={historyColorMode} importedTracks={importedTracks} dbHistoryTracks={dbHistoryTracks} selectedHexIdents={selectedHexIdents} onSelectTrack={onSelectTrack} receiverLocation={receiverLocation} simulatedRoutes={simulatedRoutes} eventsOfInterest={eventsOfInterest} onContextMenu={onContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={onMapPickComplete} onMapPickCancel={onMapPickCancel} onFlyToReady={onFlyToReady} weather={weather} weatherLevel={weatherLevel} weatherBarbs={weatherBarbs} weatherParticles={weatherParticles} />;
+export function Map({ tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showPositions, showLabels, rangeLineOrigin, rangeLineTargets, showRangeLines, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, importedTracks, dbHistoryTracks, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest, onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather, weatherLevel, weatherBarbs, weatherParticles }: Props) {
+  return <MapInner tracks={tracks} historyTracks={historyTracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={rangeLineOrigin} rangeLineTargets={rangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={onToggleRangeLines} showDensity={showDensity} densityMetric={densityMetric} densityTracks={densityTracks} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} liveColorMode={liveColorMode} historyColorMode={historyColorMode} importedTracks={importedTracks} dbHistoryTracks={dbHistoryTracks} selectedHexIdents={selectedHexIdents} onSelectTrack={onSelectTrack} receiverLocation={receiverLocation} simulatedRoutes={simulatedRoutes} eventsOfInterest={eventsOfInterest} onContextMenu={onContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={onMapPickComplete} onMapPickCancel={onMapPickCancel} onFlyToReady={onFlyToReady} weather={weather} weatherLevel={weatherLevel} weatherBarbs={weatherBarbs} weatherParticles={weatherParticles} />;
 }

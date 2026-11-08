@@ -42,6 +42,9 @@ import { CARTO_API_KEY, tileConfig } from "@/lib/basemap";
 import { MapTileToggle } from "./MapTileToggle";
 
 import { CenterOnAntennaButton } from "./CenterOnAntennaButton";
+import { RangeLineButton, RANGE_LINE_COLOR } from "./RangeLineButton";
+import { greatCirclePoints, midpoint, rangeLineLabel } from "@/lib/range-line";
+import type { ReceiverPoint } from "@/lib/aircraft-details";
 import { AltitudeLegend } from "./AltitudeLegend";
 import { WindSpeedLegend } from "./WindSpeedLegend";
 
@@ -540,6 +543,12 @@ interface Props {
   showPositions?: boolean;
   /** Draw `HEX/CALLSIGN` labels beside live aircraft. Defaults to false. */
   showLabels?: boolean;
+  /** Receiver for range lines — deliberately NOT gated by "Show receiver". */
+  rangeLineOrigin?: ReceiverPoint;
+  /** Selected aircraft with a position; one range line each while the mode is on. */
+  rangeLineTargets?: AircraftTrack[];
+  showRangeLines?: boolean;
+  onToggleRangeLines?: () => void;
   showDensity: boolean;
   densityMetric: DensityMetric;
   densityTracks: AircraftTrack[];
@@ -663,6 +672,66 @@ function toLatLngs(positions: Positions): [number, number][] {
 }
 
 const LABEL_PANE = "trackLabels";
+
+/**
+ * Receiver → aircraft range lines: a dashed great-circle polyline in receiver
+ * magenta plus a distance/bearing/elevation chip at its midpoint. Declarative —
+ * there are only ever as many as there are selected aircraft. Nothing here is
+ * interactive, so a line or chip never takes a click meant for an aircraft.
+ */
+function RangeLinesLayer({
+  origin,
+  targets,
+  theme,
+}: {
+  origin: ReceiverPoint;
+  targets: AircraftTrack[];
+  theme: MapTheme;
+}) {
+  const dark = theme === "dark";
+  return (
+    <>
+      {targets.map((t) => {
+        const label = rangeLineLabel(t, origin);
+        if (label === null) return null;
+        const points = greatCirclePoints([origin.lat, origin.lng], [t.latitude!, t.longitude!]);
+        const mid = midpoint(points);
+        const chipStyle = [
+          "position:absolute",
+          "transform:translate(-50%,-50%)",
+          "white-space:nowrap",
+          "padding:0 4px",
+          "line-height:14px",
+          "font-family:ui-monospace,SFMono-Regular,Menlo,monospace",
+          "font-size:10px",
+          "border-radius:2px",
+          `border-left:2px solid ${RANGE_LINE_COLOR}`,
+          dark ? "background:rgba(15,23,42,0.85);color:#f9a8d4" : "background:rgba(255,255,255,0.92);color:#0f172a",
+        ].join(";");
+        return (
+          <div key={trackKey(t)}>
+            <Polyline
+              positions={points}
+              interactive={false}
+              pathOptions={{ color: RANGE_LINE_COLOR, weight: 1.5, opacity: 0.9, dashArray: "6 4" }}
+            />
+            <Marker
+              position={mid}
+              interactive={false}
+              keyboard={false}
+              icon={L.divIcon({
+                html: `<div style="${chipStyle}">${label}</div>`,
+                className: "range-line-label",
+                iconSize: [0, 0],
+                iconAnchor: [0, 0],
+              })}
+            />
+          </div>
+        );
+      })}
+    </>
+  );
+}
 
 /**
  * `HEX/CALLSIGN` labels beside live aircraft, placed by `layoutLabels`.
@@ -952,7 +1021,7 @@ function DotsLayer({
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
+export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
   const tile = tileConfig(mapTheme, CARTO_API_KEY);
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
@@ -1187,6 +1256,11 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         {/* Events of interest markers */}
         {eventsOfInterest.length > 0 && <EventMarkersLayer events={eventsOfInterest} theme={mapTheme} />}
 
+        {/* Range lines: receiver → every selected aircraft */}
+        {showRangeLines && rangeLineOrigin && rangeLineTargets.length > 0 && (
+          <RangeLinesLayer origin={rangeLineOrigin} targets={rangeLineTargets} theme={mapTheme} />
+        )}
+
         {/* Live track labels — auto-placed, live mode only (tracks is empty otherwise) */}
         {showLabels && tracks.length > 0 && (
           <TrackLabelsLayer tracks={tracks} selectedHexIdents={selectedHexIdents} theme={mapTheme} />
@@ -1241,6 +1315,14 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
 
       <MapTileToggle theme={mapTheme} onToggle={onToggleTheme} />
       <CenterOnAntennaButton onClick={handleCenterOnAntenna} disabled={!receiverLocation} />
+      {onToggleRangeLines && (
+        <RangeLineButton
+          active={showRangeLines}
+          onToggle={onToggleRangeLines}
+          disabled={!rangeLineOrigin}
+          hasTargets={rangeLineTargets.length > 0}
+        />
+      )}
       <AltitudeLegend theme={mapTheme} />
       {weather && weatherParticles && <WindSpeedLegend theme={mapTheme} />}
     </div>

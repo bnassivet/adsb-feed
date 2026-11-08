@@ -25,6 +25,7 @@ function makeConfig(overrides: Partial<CopilotContextConfig> = {}): CopilotConte
     showReceiver: true,
     showPositions: false,
     showLabels: true,
+    showRangeLines: true,
     showEvents: true,
     selectedHexIdents: new Set(["A1B2C3"]),
     lastSelectedHexIdent: "A1B2C3",
@@ -97,10 +98,11 @@ describe("useCopilotContext", () => {
 
   it("registers visible layers", () => {
     const v = registeredReadables.get(
-      "Visible map layers (positions, labels, history, density, simulation, imported, receiver, events)",
+      "Visible map layers (positions, labels, rangeLines, history, density, simulation, imported, receiver, events)",
     ) as Record<string, boolean>;
     expect(v.positions).toBe(false);
     expect(v.labels).toBe(true);
+    expect(v.rangeLines).toBe(true);
     expect(v.history).toBe(false);
     expect(v.imported).toBe(true);
     expect(v.events).toBe(true);
