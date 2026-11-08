@@ -5,7 +5,13 @@
  * latency never lands in a measured interval.
  */
 import type { AircraftTrack } from "@/lib/types";
-import { generateTracks, liveStep } from "./data";
+import { generateTracks, liveStep, BENCH_CENTER } from "./data";
+
+/**
+ * Same view as MapInner (DEFAULT_CENTER, DEFAULT_ZOOM = 8). MapLibre counts zoom
+ * in 512 px tiles, so the identical view is one zoom level lower there.
+ */
+export const BENCH_VIEW = { center: BENCH_CENTER, zoom: 8, maplibreZoom: 7 } as const;
 import { summarizeFrames, median, type FrameSummary, type Scenario, type Style } from "./stats";
 
 export const LIVE_AIRCRAFT = 500;
@@ -114,6 +120,7 @@ declare global {
   interface Window {
     __bench?: BenchApi;
     __benchError?: string;
+    __benchPageErrors?: string[];
   }
 }
 

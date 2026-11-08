@@ -26,3 +26,6 @@ next-env.d.ts
 
 # Next.js local env (e.g. NEXT_PUBLIC_CARTO_API_KEY) -- never committed
 .env*.local
+
+# Map render benchmark raw results (machine-specific; findings go in docs/)
+bench/results/

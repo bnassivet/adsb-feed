@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "bench": "node --no-warnings bench/run.mjs"
   },
   "dependencies": {
     "@copilotkit/react-core": "^1.55.3",
