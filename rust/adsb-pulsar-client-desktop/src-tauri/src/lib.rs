@@ -9,6 +9,7 @@ mod commands;
 mod state;
 mod storage_mode;
 mod weather;
+mod webview_storage;
 
 /// Default loopback port for the agent tool server. Override with
 /// `ADSB_AGENT_TOOL_SERVER_PORT`. The Python agent must point
@@ -153,6 +154,7 @@ pub fn run() {
             commands::get_status,
             commands::get_metrics,
             commands::get_stack,
+            commands::locate_tile_cache,
             commands::get_config,
             commands::save_config,
             commands::validate_config,

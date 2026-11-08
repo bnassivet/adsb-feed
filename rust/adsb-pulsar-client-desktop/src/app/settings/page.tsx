@@ -13,10 +13,15 @@ import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
 import { TRACK_HISTORY_HOURS_KEY, DEFAULT_TRACK_HISTORY_HOURS } from "@/contexts/AircraftTrackingContext";
 import type { Config } from "@/lib/types";
+import { CARTO_API_KEY } from "@/lib/basemap";
+import { TileCacheSection } from "@/components/TileCacheSection";
 import Link from "next/link";
 
 export default function SettingsPage() {
   const [config, setConfig] = useState<Config | null>(null);
+  // The receiver location as last loaded or saved. The tile cache prunes
+  // around it, so it must never see a half-typed, unsaved value.
+  const [savedReceiver, setSavedReceiver] = useState<{ lat: number; lon: number } | null>(null);
   const [message, setMessage] = useState<{
     type: "success" | "error";
     text: string;
@@ -34,7 +39,10 @@ export default function SettingsPage() {
 
   useEffect(() => {
     getConfig()
-      .then(setConfig)
+      .then((c) => {
+        setConfig(c);
+        setSavedReceiver(receiverOf(c));
+      })
       .catch((e) =>
         setMessage({ type: "error", text: `Failed to load config: ${e}` }),
       );
@@ -105,6 +113,7 @@ export default function SettingsPage() {
     if (!config) return;
     try {
       await saveConfig(config);
+      setSavedReceiver(receiverOf(config));
       const status = await getStatus();
       const text = status.is_running
         ? "Configuration saved. Connection changes will apply on next restart."
@@ -442,6 +451,12 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          {/* Map tile cache (IndexedDB; applies immediately, not on Save) */}
+          <TileCacheSection
+            receiver={savedReceiver}
+            cartoApiKey={CARTO_API_KEY}
+          />
+
           {/* Advanced settings (collapsible) */}
           <section className="bg-slate-900 rounded-lg border border-slate-800">
             <button
@@ -487,6 +502,12 @@ export default function SettingsPage() {
       </div>
     </div>
   );
+}
+
+function receiverOf(c: Config): { lat: number; lon: number } | null {
+  return c.receiver_latitude != null && c.receiver_longitude != null
+    ? { lat: c.receiver_latitude, lon: c.receiver_longitude }
+    : null;
 }
 
 function Field({

@@ -522,7 +522,9 @@ agreement. Session-only — nothing is persisted, everything is visible again on
 ```
 
 **Content Security Policy (CSP)**:
-- Allows the basemap tile servers (OpenStreetMap, CARTO, Esri) for map rendering
+- Allows the basemap tile servers (OpenStreetMap, CARTO, Esri) for map rendering —
+  in `img-src` **and** `connect-src`, since the tile cache fetches tiles — plus
+  `blob:` images, which is how cached tiles are displayed
 - Permits IPC communication between frontend and backend
 - Restricts external scripts for security
 
@@ -1055,6 +1057,10 @@ gitignored `.env.local`). Next inlines it at dev-server start / `next build`, so
 changing it means restarting the desktop. CARTO's vector styles are keyless for
 now, but CARTO has said that may change, and they would need MapLibre GL in
 place of Leaflet raster layers, so they were not adopted.
+
+Every basemap goes through the offline tile cache — see
+[Map Tile Cache](#map-tile-cache). `TileConfig.provider` (`osm`, `esri-dark`,
+`carto-dark`) is the cache's key prefix, so a rotated CARTO key keeps its tiles.
 
 **Files**: `src/components/MapInner.tsx`, `src/lib/basemap.ts` (`tileConfig`)
 
@@ -2665,16 +2671,20 @@ const { tracks, history } = useAircraftTracks(filters);
 ```
 default-src 'self';
 img-src 'self' https://*.tile.openstreetmap.org https://*.openstreetmap.org
-        https://*.basemaps.cartocdn.com https://server.arcgisonline.com data:;
+        https://*.basemaps.cartocdn.com https://server.arcgisonline.com data: blob:;
 style-src 'self' 'unsafe-inline' https://unpkg.com;
 script-src 'self' 'unsafe-inline';
 connect-src 'self' ipc: http://ipc.localhost https://*.tile.openstreetmap.org
+            https://*.basemaps.cartocdn.com https://server.arcgisonline.com
             http://localhost:8000 http://127.0.0.1:8000;
 ```
 
 Mirrored by `scripts/tauri-dev-config.py` for per-stack `tauri dev -c` overrides;
-a new tile host must be added to **both**, and `scripts/tests/test_stack_paths.sh`
-checks the override still lists every basemap host.
+a new tile host must be added to **both**, in `img-src` **and** `connect-src`
+(the tile cache `fetch`es tiles). `src/lib/__tests__/csp.test.ts` derives the
+required sources from `basemap.ts` and checks both files, including that the
+override's `img-src`/`connect-src` match the committed CSP apart from the agent
+port; `scripts/tests/test_stack_paths.sh` checks the override too.
 
 **Purpose**:
 - Allow only necessary external resources (map tiles)
@@ -5110,6 +5120,212 @@ Incidentally confirming the two legs are independent: the SBS feed was down thro
 | `src/hooks/useCopilotTools.ts`, `src/hooks/useCopilotContext.ts` | `setWeatherLayer`, `getWindAloft`, weather readable |
 | `adsb-agent/src/adsb_agent/tools.py`, `prompt_sections.yaml` | Fallback schemas, routing guideline |
 | `scripts/render-config.py`, `scripts/stack.sh` | `[weather]` rendering, start/stop/doctor |
+
+---
+
+## Map Tile Cache
+
+Basemap tiles within a footprint around the receiver (default **500 NM**) are
+kept in the webview's **IndexedDB**, so the map loads fast on a slow edge link
+and still renders offline. Design and plan:
+`docs/plans/2026-11-08-offline-tile-cache.md`.
+
+### Where it lives, and why the client
+
+The cache is frontend — no custom URI scheme, and Rust never touches tiles
+(its one part is the read-only `locate_tile_cache`, below). A Rust cache
+behind `tiles://` was planned first and would have bought a hard size guarantee,
+a download that survives closing the app, and a per-stack directory of plain
+files. The client-side design was chosen for simplicity; its accepted costs:
+
+| Cost | Mitigation |
+|------|------------|
+| The webview owns the storage and may evict it under disk pressure | `navigator.storage.persist()` is requested once; Settings shows the quota and whether persistence was granted |
+| "Download area" runs in the webview, so closing the app stops it | It is the window's job (`prefetchJob.ts`), not page state: leaving Settings does not stop it, and coverage per zoom shows what a stopped run left |
+| Tiles are fetched, not `<img>`-loaded, so CORS and `connect-src` apply | All three providers send `Access-Control-Allow-Origin: *` (checked 2026-11-08); CSP updated in both files |
+
+### Pieces (`src/lib/tile-cache/`)
+
+| Module | Role |
+|--------|------|
+| `geometry.ts` | Pure Web Mercator maths: `tileBounds`, `tileIntersectsCircle`, `tilesInRadius` (a generator), `estimateTiles` |
+| `keys.ts` | `tileKey` = `provider/z/x/y[@2x]` (never the URL — it carries the CARTO key); `fillTileUrl` fills a Leaflet template |
+| `store.ts` | `TileStore` over IndexedDB: `get` (read-only; LRU bump batched), `flushAccess`, `put`, `pinIfCached`, `stats`, `evictTo`, `pruneOutside`, `coverage`, `clear` |
+| `validate.ts` | `checkTile`: image content type, and not a known provider placeholder |
+| `health.ts` | Window-wide log of failed tile writes, read by Settings |
+| `overzoom.ts` | Offline fallback: crop and scale the nearest cached ancestor |
+| `coverage.ts` | `formatCoverage` — "z0–8 complete · z9 63%" |
+| `settings.ts` | `TileCacheSettings` (`enabled`, `radiusNm`, `maxSizeMb`, `prefetchMaxZoom`), validation, tolerant normalisation |
+| `loadTile.ts` | Read-through load of one tile — the testable core of the layer |
+| `CachedTileLayer.ts` | `L.TileLayer.extend` overriding `createTile` only |
+| `prefetch.ts` | "Download area" — `prefetchArea`, `PrefetchRefusedError` |
+| `prefetchJob.ts` | The window's single download run, outside React (`useSyncExternalStore`) |
+| `shared.ts` | `sharedTileStore()` — the window's store, opened once, named per stack |
+
+`components/TileCacheSection.tsx` is the Settings card;
+`hooks/useTileCacheSettings.ts` is how both pages read the settings.
+
+### Storage layout
+
+One IndexedDB database **per stack**, `adsb-tile-cache-<stack>` (`default` for
+the unnamed one) from `get_stack`, so dev and prod never share tiles — the same
+separation the DuckDB file and settings get. Two object stores share one key:
+
+- `tiles` — `{key, data: ArrayBuffer, type}`. A buffer, not a `Blob`: Blob
+  storage in IndexedDB has a troubled history in WebKit (the macOS webview), and
+  jsdom Blobs cannot be structured-cloned in tests. The Blob is rebuilt on read.
+- `meta` — `{key, provider, z, x, y, bytes, lastAccess, storedAt, pinned}`,
+  indexed on `lastAccess`. Stats, LRU eviction, pruning and coverage walk
+  **only** this store, so sizing a 500 MB cache never loads 500 MB of images.
+  Records from before `storedAt`/`pinned` existed read as unpinned and due for a
+  refresh; no schema version bump was needed (no new store or index).
+
+**Reads never take a write lock.** IndexedDB serializes read-write transactions
+on overlapping stores but runs read-only ones concurrently. `get` is read-only;
+its LRU bump is kept in memory and written in one transaction by `flushAccess`
+(2 s after the first pending read, and always before `evictTo`, so LRU order
+stays exact). A flush never recreates a tile evicted meanwhile.
+
+### Read-through
+
+`CachedBasemap` (in `MapInner`) builds one `CachedTileLayer` per tile source.
+For each tile:
+
+1. Hit → serve the stored Blob as a `blob:` URL (revoked on load). If it was
+   stored more than **30 days** ago and the webview is online, refetch it in the
+   background and replace it (stale-while-revalidate). A tile is **never
+   deleted for its age**: offline, an old tile beats none.
+2. Miss → `fetch(url, {mode: "cors"})`, check it (below), show it, and **store
+   it only if** it passed, caching is enabled, a receiver location is known,
+   and the tile intersects the footprint.
+3. Fetch failure → the **nearest cached ancestor** (up to 5 levels up, same
+   pixel density) is cropped and scaled up on a canvas. Offline, zooming past
+   the downloaded levels shows a blurry map rather than a blank one.
+4. No ancestor either → set `img.src` to the plain URL (the webview's HTTP cache
+   may still have it), then Leaflet's normal error handling.
+
+Cache failures never blank the map: a failed read is a miss, a failed write
+still returns the tile — but is **recorded** (`health.ts`) and shown in
+Settings, because a silent one means an area believed offline-ready is not.
+
+#### Only real tiles are stored
+
+`checkTile` rejects two kinds of bad tile that pass `res.ok`, since offline a
+bad tile stored once is what the map shows:
+
+- **A non-image body** (captive portal, proxy error page) — not stored, and
+  treated as a failure.
+- **A provider placeholder.** CARTO answers a missing *or invalid* key with one
+  fixed "API KEY REQUIRED" PNG: 200 OK, `immutable` for 30 days, identical for
+  every tile. Its ETag (`"wm-…-dark"`) would identify it, but ETag is not
+  CORS-safelisted and CARTO does not expose it, so the page cannot read it.
+  It is recognised by size (2513 bytes) and SHA-256 instead; only same-size
+  responses are hashed. Shown, never stored; a download stops at the first one.
+
+The layer reads `{store, enabled, footprint}` through a **ref on every tile**,
+so changing settings never rebuilds the layer — a rebuild reloads every visible
+tile. The URL is filled with `fillTileUrl`, the same function prefetch uses,
+rather than Leaflet's `getTileUrl` (which reads `z` from layer state): the two
+must agree on the URL a key stands for. Retina follows Leaflet's own rule
+(`{r}` → `@2x` when `devicePixelRatio > 1`), and `@2x` is part of the key.
+
+The footprint centre is the `tileCacheOrigin` prop, fed the receiver location
+**ungated** by "Show receiver" — the same reason `rangeLineOrigin` exists:
+hiding the marker must not silently switch caching off.
+
+### Footprint and LRU
+
+A tile is in the footprint when the haversine distance from the receiver to the
+**nearest point of its box** is within the radius (`haversineDistanceNm` from
+`lib/geo.ts`). Testing tile centres would leave a ragged, gappy edge: a z6
+tile is ~300 NM across here.
+
+- **Eviction**: `evictTo(maxSizeMb)` deletes least-recently-used tiles until
+  under the cap — **browsed tiles first; downloaded (pinned) ones only if that
+  is not enough**. Without the two passes, panning around in town would
+  silently push out the area downloaded for the field. After new tiles are
+  stored it runs **debounced** (5 s) — one scan per burst, not per tile.
+- **Pruning**: `pruneOutside(receiver, radius)` deletes tiles that no longer
+  touch the footprint. It runs on map mount (covers a receiver that moved while
+  the app was closed), whenever radius, cap or receiver change, and on Apply in
+  Settings.
+
+### Settings → Map Tile Cache
+
+Shows used MB against the cap with a bar, the tile count, the downloaded
+(pinned) share, a per-provider breakdown, the webview quota/persistence, and
+**offline coverage per zoom** for the selected provider (`TileStore.coverage`:
+footprint tiles cached vs needed; percentages round down, so "complete" means
+every tile). Warnings: write failures since launch (count and last error), and
+a cap larger than the webview's quota lets the cache grow to.
+
+The receiver location it is given is the **saved** one, not the form being
+edited: Apply prunes around it, and a half-typed latitude must not delete the
+downloaded area. Controls:
+
+- **Cache tiles as the map loads them**, **Radius (NM)** (10–1000), **Max size
+  (MB)** (50–10,000), **Prefetch max zoom** (0–12), with a live tile/size
+  estimate. They take effect on **Apply**, not per keystroke: applying prunes,
+  and typing "1" on the way to "150" must not delete everything beyond 1 NM.
+- **Clear cache**, behind a confirmation step.
+- **Download area**: prefetches the footprint up to the zoom cap from Esri or
+  (with a key) CARTO, with progress and Cancel. It keeps running after leaving
+  Settings; returning shows its progress or outcome.
+
+### Location on disk
+
+Settings shows where the database is, with a Copy button. The page cannot know
+this — IndexedDB hides it, and WebKit names the directories by a salted hash
+of the origin — so `locate_tile_cache` (`src-tauri/src/webview_storage.rs`)
+searches the engine's data directories for the file that mentions the
+database name (UTF-8 or UTF-16, first 4 MiB, depth ≤ 8):
+
+| Platform | Searched | Database files |
+|----------|----------|----------------|
+| macOS (WKWebView) | `~/Library/WebKit/<bundle id>` and `~/Library/WebKit/<executable>` — `tauri dev` runs a bare binary, so it is the second | `WebsiteData/Default/<hash>/<hash>/IndexedDB/<hash>/IndexedDB.sqlite3` |
+| Windows (WebView2) | `<local app data>/EBWebView` | `…/IndexedDB/<origin>.indexeddb.leveldb/` |
+| Linux (WebKitGTK) | the app's data and local data directories | `IndexedDB.sqlite3`, as on macOS |
+
+Only the macOS layout was checked on a real machine (2026-11-08, ~31 MB
+cache, name at byte 49,085 of the SQLite file). The command only accepts
+`adsb-tile-cache-*` names, opens nothing for writing, and returns `path: null`
+until the first tile is stored. **The origin is part of the path**: `tauri dev`
+serves `http://localhost:<port>`, a bundled app a different origin, so changing
+the dev port or switching to a release build starts a fresh, empty cache.
+
+### Download area
+
+`prefetchArea` enumerates `tilesInRadius` **coarse zooms first**, four requests
+at a time. Every tile it fetches is stored **pinned**, and a tile already
+cached by browsing is pinned in place (`pinIfCached`) instead of refetched.
+It stops rather than overflow the cap (`cap-reached`), on the first provider
+placeholder (`placeholder`), and on `QuotaExceededError` (`storage-full`) —
+each later tile would fail the same way. Other failures are counted, and a run
+that ends with any is reported as such, not as "complete".
+Coarse-first means a cancelled or capped run still leaves a usable low-zoom map
+of the whole area. At 500 NM a z10 run is ~5k tiles / ~75 MB; each extra zoom
+level is ~4×.
+
+**OpenStreetMap is never prefetched** — its tile usage policy forbids bulk
+downloading. `prefetchArea` throws `PrefetchRefusedError` for `osm` and the
+Settings picker does not offer it. Tiles viewed in the light theme are still
+cached read-through.
+
+The run is the window's single **job** (`prefetchJob.ts`), held at module level
+and read with `useSyncExternalStore`. Settings is reached by client-side
+navigation, so the JS context — and the run — outlives the page; only closing
+the app stops it. A second start while one runs is refused.
+
+Cancel is available from the first instant, not from the first finished tile:
+the job is `running` before the first report, and `prefetchArea` reports once
+before fetching anything. Deriving it from progress hid Cancel exactly when the
+network hangs.
+
+**Prefetch in the build you will use offline.** The cache belongs to the
+webview origin: tiles downloaded under `tauri dev` (`http://localhost:<port>`)
+are not in the release app's cache. The light theme uses OpenStreetMap, which
+is never prefetched, so offline it has only the tiles already viewed — use the
+dark theme in the field.
 
 ---
 

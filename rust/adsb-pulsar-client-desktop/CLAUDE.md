@@ -520,7 +520,15 @@ Requires `adsb-agent` (:8000) and `adsb-simulation-agent` (:8300) running; witho
 - **CARTO raster tiles need `?key=` since 2026-09-25** — keyless requests render an "API KEY REQUIRED"
   tile, not an error. `src/lib/basemap.ts::tileConfig` uses CARTO only when `NEXT_PUBLIC_CARTO_API_KEY`
   is set (`[desktop] carto_api_key`), otherwise Esri's keyless Dark Gray Canvas. A new tile host goes in
-  the CSP `img-src` of **both** `tauri.conf.json` and `scripts/tauri-dev-config.py`.
+  the CSP `img-src` **and `connect-src`** of **both** `tauri.conf.json` and `scripts/tauri-dev-config.py`
+  — the tile cache `fetch`es tiles, so a host only in `img-src` silently loads uncached via the
+  fallback. `src/lib/__tests__/csp.test.ts` pins both files against `basemap.ts`.
+- **Map tile cache** (`src/lib/tile-cache/`, DESIGN.md → Map Tile Cache) is client-side IndexedDB, one
+  database per stack (`adsb-tile-cache-<stack>`). OSM is **never** bulk-prefetched (its tile policy
+  forbids it); only read-through. The layer reads settings through a ref — do not make it rebuild on a
+  settings change, that reloads every visible tile. Tests need `import "fake-indexeddb/auto"`. Its files
+  live under the **webview's** data dir, keyed by origin (`~/Library/WebKit/adsb-pulsar-client-desktop/…`
+  under `tauri dev`), not in `<app-data>`; `locate_tile_cache` finds them for the Settings display.
 - Root `.gitignore` has `lib/` which silently ignores `src/lib/`. Negated with `!**/src/lib/`
 - Tauri v2 commands silently fail without proper permissions in `capabilities/default.json`
 - `create-next-app` fails if `src-tauri/` exists — scaffold manually or use temp dir

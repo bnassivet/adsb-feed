@@ -35,6 +35,17 @@ describe("tileConfig", () => {
     expect(tileConfig("dark").url).toMatch(/\/tile\/\{z\}\/\{y\}\/\{x\}$/);
   });
 
+  it("names each provider, which the tile cache keys by", () => {
+    expect(tileConfig("light").provider).toBe("osm");
+    expect(tileConfig("dark").provider).toBe("esri-dark");
+    expect(tileConfig("dark", "k").provider).toBe("carto-dark");
+  });
+
+  it("returns the same object for keyless themes, so a memoised layer is not rebuilt", () => {
+    expect(tileConfig("dark")).toBe(tileConfig("dark"));
+    expect(tileConfig("light")).toBe(tileConfig("light"));
+  });
+
   it("caps zoom at what each provider actually serves", () => {
     expect(tileConfig("dark").maxZoom).toBe(16);
     expect(tileConfig("dark", "k").maxZoom).toBe(20);

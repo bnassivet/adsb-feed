@@ -68,6 +68,19 @@ export async function getStack(): Promise<string | null> {
   return invoke("get_stack");
 }
 
+/** Where an IndexedDB database lives on disk, as found by `locate_tile_cache`. */
+export interface DatabaseLocation {
+  /** Directory holding the database's files; null until the first tile is stored. */
+  path: string | null;
+  /** The webview data directories searched. */
+  searched: string[];
+}
+
+/** Find the tile cache's IndexedDB on disk. Display only; the webview owns the files. */
+export async function locateTileCache(dbName: string): Promise<DatabaseLocation> {
+  return invoke("locate_tile_cache", { dbName });
+}
+
 /** The last good weather snapshot, or null before one has arrived. */
 export async function getWeatherSnapshot(): Promise<WeatherSnapshot | null> {
   return invoke("get_weather_snapshot");
