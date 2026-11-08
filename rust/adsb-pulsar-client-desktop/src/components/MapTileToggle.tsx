@@ -10,7 +10,7 @@ export function MapTileToggle({ theme, onToggle }: Props) {
     <button
       onClick={onToggle}
       title={`Switch to ${theme === "dark" ? "light" : "dark"} map`}
-      className="absolute top-20 right-2.5 z-[1000] w-8 h-8 bg-white rounded shadow-md border border-gray-300 flex items-center justify-center hover:bg-gray-100 transition"
+      className="absolute top-[7.25rem] right-2.5 z-[1000] w-8 h-8 bg-white rounded shadow-md border border-gray-300 flex items-center justify-center hover:bg-gray-100 transition"
     >
       {theme === "dark" ? (
         // Sun icon — currently dark, click to go light

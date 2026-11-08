@@ -62,6 +62,7 @@ function makeConfig(overrides: Partial<DisplayToolsConfig> = {}): DisplayToolsCo
     showReceiver: true,
     showPositions: true,
     showLabels: false,
+    showRangeLines: false,
     showEvents: true,
     liveColorMode: "track",
     historyColorMode: "track",
@@ -84,6 +85,7 @@ function makeConfig(overrides: Partial<DisplayToolsConfig> = {}): DisplayToolsCo
     setShowReceiver: vi.fn(),
     setShowPositions: vi.fn(),
     setShowLabels: vi.fn(),
+    setShowRangeLines: vi.fn(),
     setShowEvents: vi.fn(),
     setLiveColorMode: vi.fn(),
     setHistoryColorMode: vi.fn(),
@@ -460,6 +462,25 @@ describe("useCopilotTools — display control tools", () => {
       const updater = vi.mocked(config.setShowLabels).mock.calls[0][0];
       expect(updater(false)).toBe(true);
       expect(config.setShowPositions).not.toHaveBeenCalled();
+    });
+
+    it("toggles range lines without touching other layers", async () => {
+      const result = JSON.parse(
+        (await getHandler("setLayerVisibility")({ rangeLines: true })) as string
+      );
+      expect(result.updated).toEqual({ rangeLines: true });
+      expect(config.setShowRangeLines).toHaveBeenCalledOnce();
+      const updater = vi.mocked(config.setShowRangeLines).mock.calls[0][0];
+      expect(updater(false)).toBe(true);
+      expect(config.setShowLabels).not.toHaveBeenCalled();
+    });
+
+    it("describes range lines as receiver-to-selected-aircraft distance and bearing", () => {
+      const tool = registeredTools.get("setLayerVisibility");
+      expect(tool?.description).toMatch(/rangeLines/);
+      const shape = (tool?.parameters as { shape: Record<string, { description?: string }> }).shape;
+      expect(shape.rangeLines.description).toMatch(/receiver/i);
+      expect(shape.rangeLines.description).toMatch(/selected aircraft/i);
     });
 
     it("describes labels as hex ident / callsign beside live aircraft", () => {

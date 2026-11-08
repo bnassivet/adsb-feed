@@ -430,6 +430,10 @@ TOOLS: list[dict] = [
                         "type": "boolean",
                         "description": "Show hex ident / callsign labels next to live aircraft",
                     },
+                    "rangeLines": {
+                        "type": "boolean",
+                        "description": "Show distance/bearing lines from the receiver to the selected aircraft",
+                    },
                     "history": {
                         "type": "boolean",
                         "description": "Show tracks of aircraft no longer live",

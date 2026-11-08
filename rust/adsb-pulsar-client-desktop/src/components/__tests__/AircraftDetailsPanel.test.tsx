@@ -440,3 +440,41 @@ describe("AircraftDetailsPanel distance from receiver", () => {
     expect(screen.getByTestId("receiver-elevation")).toHaveTextContent("—");
   });
 });
+
+describe("AircraftDetailsPanel range-line toggle", () => {
+  function renderPanel(props: Partial<React.ComponentProps<typeof AircraftDetailsPanel>> = {}) {
+    return render(
+      <AircraftDetailsPanel
+        track={makeTrack()}
+        isOpen={true}
+        width={280}
+        onToggle={vi.fn()}
+        onWidthChange={vi.fn()}
+        receiverLocation={{ lat: 46.5, lng: -73.6, alt: 0 }}
+        {...props}
+      />,
+    );
+  }
+
+  it("shows a toggle on the Distance row reflecting the mode", () => {
+    renderPanel({ rangeLineOn: true, onToggleRangeLine: vi.fn() });
+    expect(screen.getByRole("button", { name: /range lines to receiver/i })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("switches the mode when clicked", async () => {
+    const onToggleRangeLine = vi.fn();
+    renderPanel({ rangeLineOn: false, onToggleRangeLine });
+    const button = screen.getByRole("button", { name: /range lines to receiver/i });
+    expect(button).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(button);
+    expect(onToggleRangeLine).toHaveBeenCalledOnce();
+  });
+
+  it("has no toggle without a receiver or without a handler", () => {
+    const { unmount } = renderPanel({ receiverLocation: undefined, onToggleRangeLine: vi.fn() });
+    expect(screen.queryByRole("button", { name: /range lines to receiver/i })).not.toBeInTheDocument();
+    unmount();
+    renderPanel({ rangeLineOn: true });
+    expect(screen.queryByRole("button", { name: /range lines to receiver/i })).not.toBeInTheDocument();
+  });
+});

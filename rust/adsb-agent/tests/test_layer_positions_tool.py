@@ -40,3 +40,13 @@ def test_labels_are_hex_and_callsign_beside_live_aircraft():
     description = _layer_props()["labels"]["description"].lower()
     assert "callsign" in description
     assert "live aircraft" in description
+
+
+def test_declares_range_lines_as_a_boolean_layer():
+    assert _layer_props()["rangeLines"]["type"] == "boolean"
+
+
+def test_range_lines_run_from_the_receiver_to_selected_aircraft():
+    description = _layer_props()["rangeLines"]["description"].lower()
+    assert "receiver" in description
+    assert "selected aircraft" in description

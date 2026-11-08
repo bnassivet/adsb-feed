@@ -10,7 +10,7 @@ export function AltitudeLegend({ theme }: { theme: MapTheme }) {
     .join(", ");
 
   return (
-    <div className="absolute top-32 right-2.5 z-[1000] flex items-start gap-1 pointer-events-none">
+    <div className="absolute top-[10.25rem] right-2.5 z-[1000] flex items-start gap-1 pointer-events-none">
       {/* Gradient bar */}
       <div
         className="w-3 h-[120px] rounded-sm border border-white/30"

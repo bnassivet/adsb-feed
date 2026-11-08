@@ -18,6 +18,7 @@ import {
 import { timeAgo } from "@/lib/format";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
 import type { AircraftWind } from "@/lib/aircraft-wind";
+import { RangeLineIcon, rangeLineTitle, RANGE_LINE_COLOR } from "@/components/RangeLineButton";
 import { formatAlongTrack, formatCrosswind, formatWind } from "@/lib/wind-format";
 
 const MIN_PANEL_WIDTH = 200;
@@ -43,6 +44,10 @@ interface Props {
   wind?: AircraftWind | null;
   /** Receiver position (alt in ft); the Distance/Azimuth/Elevation rows are omitted without it. */
   receiverLocation?: ReceiverPoint | null;
+  /** Range-line mode (map lines receiver → selected aircraft). */
+  rangeLineOn?: boolean;
+  /** Toggles the mode; the Distance-row toggle is omitted without it. */
+  onToggleRangeLine?: () => void;
 }
 
 export function AircraftDetailsPanel({
@@ -55,6 +60,8 @@ export function AircraftDetailsPanel({
   isDbHistory = false,
   wind = null,
   receiverLocation = null,
+  rangeLineOn = false,
+  onToggleRangeLine,
 }: Props) {
   if (track === null) return null;
 
@@ -68,6 +75,8 @@ export function AircraftDetailsPanel({
       isDbHistory={isDbHistory}
       wind={wind}
       receiverLocation={receiverLocation}
+      rangeLineOn={rangeLineOn}
+      onToggleRangeLine={onToggleRangeLine}
     />
   ) : (
     <CollapsedStrip onToggle={onToggle} />
@@ -100,6 +109,8 @@ function ExpandedPanel({
   isDbHistory = false,
   wind = null,
   receiverLocation = null,
+  rangeLineOn = false,
+  onToggleRangeLine,
 }: {
   track: AircraftTrack;
   width: number;
@@ -109,6 +120,8 @@ function ExpandedPanel({
   isDbHistory?: boolean;
   wind?: AircraftWind | null;
   receiverLocation?: ReceiverPoint | null;
+  rangeLineOn?: boolean;
+  onToggleRangeLine?: () => void;
 }) {
   const { resolvedTzName } = useDisplayTz();
   // Self-contained drag: listeners created on mousedown capture the start width/x and are removed
@@ -231,6 +244,19 @@ function ExpandedPanel({
                 <span data-testid="receiver-distance" className={distanceNm === null ? "text-slate-500" : undefined}>
                   {distanceNm !== null ? formatDistance(distanceNm) : "—"}
                 </span>
+                {onToggleRangeLine && (
+                  <button
+                    onClick={onToggleRangeLine}
+                    aria-pressed={rangeLineOn}
+                    aria-label="Range lines to receiver"
+                    title={rangeLineTitle({ active: rangeLineOn, hasTargets: true })}
+                    className={`ml-1.5 p-0.5 rounded transition ${
+                      rangeLineOn ? "bg-pink-500/20 ring-1 ring-pink-400/60" : "hover:bg-slate-700"
+                    }`}
+                  >
+                    <RangeLineIcon size={14} color={rangeLineOn ? RANGE_LINE_COLOR : "#94a3b8"} />
+                  </button>
+                )}
               </Row>
               <Row label="Azimuth">
                 <span data-testid="receiver-azimuth" className={azimuthDeg === null ? "text-slate-500" : undefined}>
