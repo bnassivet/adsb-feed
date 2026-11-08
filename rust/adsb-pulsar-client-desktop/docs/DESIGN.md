@@ -1027,7 +1027,7 @@ or zoom, and for 1.8 s at 1M points.
   `locateDot` binary-searches the per-track `starts` to find the track and position. The
   content comes from `dotTooltipHtml` (`src/lib/dot-tooltip.ts`, which escapes callsigns). The deck
   canvas has `pointer-events: none`, so drag, click-to-deselect and the context menu stay
-  Leaflet's. Picking is skipped while the map is moving.
+  Leaflet's. Picking is skipped while the map is moving. It is also skipped when the pointer is over anything with its own hover (`isBareMapTarget`): aircraft icons, tooltips, popups and controls. The newest live dot sits under its icon, and without this rule hovering the icon opened two tooltips.
 - There is **no subsampling**: the GPU draws every point every frame, so `subsamplePositions`
   is no longer on the dots path.
 
