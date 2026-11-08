@@ -1,0 +1,11 @@
+# Build output graphify's built-in skip list misses because it only matches
+# exact names (.next, target). Indexing these grew graph.json past GitHub's
+# 100 MB file limit: .next-dev alone was 75k of 108k nodes.
+
+# Next.js dist dirs: named stacks (.next-<stack>) and the map bench (.next-bench)
+.next*/
+# Cargo target dirs per stack / platform (target-desktop-dev, target-linux-arm64, ...)
+target*/
+# Tauri-generated schemas and map-bench result dumps
+**/src-tauri/gen/
+**/bench/results/

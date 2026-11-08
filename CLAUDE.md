@@ -84,3 +84,4 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+- **`graph.json` must stay under GitHub's 100 MB file limit.** graphify's built-in skip list only matches `.next` and `target` by exact name. The variants `.next-dev`, `.next-bench` and `target-*` are excluded by `.graphifyignore`; add any new build or output dir there. Unexcluded, they were 97k of 108k nodes and made the push fail at 116 MB. `update` never evicts nodes from files it no longer indexes. So after widening the ignore list, prune `graph.json` by `source_file`, then run `graphify cluster-only .`. `--force` doesn't help here.
