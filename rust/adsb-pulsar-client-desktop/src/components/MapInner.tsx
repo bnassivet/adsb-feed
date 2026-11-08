@@ -706,7 +706,12 @@ function RangeLinesLayer({
           "font-size:10px",
           "border-radius:2px",
           `border-left:2px solid ${RANGE_LINE_COLOR}`,
-          dark ? "background:rgba(15,23,42,0.85);color:#f9a8d4" : "background:rgba(255,255,255,0.92);color:#0f172a",
+          // Light-handed backdrop: the map stays visible through the chip, and a
+          // slight blur keeps the opaque text readable over busy tiles. The
+          // -webkit- prefix is for older WKWebView (Tauri on macOS).
+          dark ? "background:rgba(15,23,42,0.45);color:#f9a8d4" : "background:rgba(255,255,255,0.5);color:#0f172a",
+          "backdrop-filter:blur(2px)",
+          "-webkit-backdrop-filter:blur(2px)",
         ].join(";");
         return (
           <div key={trackKey(t)}>
