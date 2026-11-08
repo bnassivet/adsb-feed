@@ -9,6 +9,7 @@ import type { Variant } from "./stats";
 
 const LOADERS: Record<Variant, () => Promise<{ default: ComponentType<{ params: BenchParams }> }>> = {
   leaflet: () => import("./variants/LeafletBaseline"),
+  canvas: () => import("./variants/CanvasDots"),
   deckgl: () => import("./variants/DeckGlLeaflet"),
   maplibre: () => import("./variants/MapLibre"),
   openlayers: () => import("./variants/OpenLayers"),

@@ -1,7 +1,7 @@
 /** Statistics and reporting for the map render benchmark. Pure: shared by the page and the Node driver. */
 
 export const BASELINE = "leaflet";
-export const VARIANTS = ["leaflet", "deckgl", "maplibre", "openlayers"] as const;
+export const VARIANTS = ["leaflet", "canvas", "deckgl", "maplibre", "openlayers"] as const;
 export type Variant = (typeof VARIANTS)[number];
 export type Scenario = "initial" | "panzoom" | "settle" | "live" | "memory";
 export type Style = "dots" | "line";

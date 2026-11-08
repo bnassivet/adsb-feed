@@ -9,7 +9,7 @@
  *
  * Options: --engines webkit,chromium  --sizes 10000,50000,200000,1000000
  *          --styles dots,line  --scenarios initial,panzoom,live
- *          --variants leaflet,deckgl,maplibre,openlayers  --reps 5
+ *          --variants leaflet,canvas,deckgl,maplibre,openlayers  --reps 5
  *          --timeout 60000  --headless  --no-build
  *
  * Runs HEADED by default: headless Chromium renders WebGL in software
