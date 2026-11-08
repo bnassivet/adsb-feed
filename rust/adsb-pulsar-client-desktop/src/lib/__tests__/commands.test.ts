@@ -523,3 +523,21 @@ describe("Historical query commands", () => {
     });
   });
 });
+
+describe("locateTileCache", () => {
+  beforeEach(() => clearMockResponses());
+
+  it("sends the database name as dbName (Tauri camelCases db_name)", async () => {
+    let seen: unknown;
+    mockInvokeResponse("locate_tile_cache", (args: unknown) => {
+      seen = args;
+      return { path: "/x/IndexedDB/A", searched: ["/x"] };
+    });
+    const { locateTileCache } = await import("../commands");
+    await expect(locateTileCache("adsb-tile-cache-prod")).resolves.toEqual({
+      path: "/x/IndexedDB/A",
+      searched: ["/x"],
+    });
+    expect(seen).toEqual({ dbName: "adsb-tile-cache-prod" });
+  });
+});

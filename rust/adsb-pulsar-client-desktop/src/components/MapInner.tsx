@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useCallback, useRef, useState } from "react";
-import { MapContainer, TileLayer, Marker, Polyline, GeoJSON, Tooltip, useMap, useMapEvents } from "react-leaflet";
+import { MapContainer, Marker, Polyline, GeoJSON, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import { routeLegs, type AgentTrajectory } from "@/lib/simulation-data";
 import L from "leaflet";
 import type { AircraftTrack, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventOfInterest, MapPickResult, Positions } from "@/lib/types";
@@ -38,7 +38,11 @@ import {
   type Particles,
 } from "@/lib/wind-particles";
 import { formatWind } from "@/lib/wind-format";
-import { CARTO_API_KEY, tileConfig } from "@/lib/basemap";
+import { CARTO_API_KEY, tileConfig, type TileConfig } from "@/lib/basemap";
+import { createCachedTileLayer, type CacheContext } from "@/lib/tile-cache/CachedTileLayer";
+import { sharedTileStore } from "@/lib/tile-cache/shared";
+import { recordStoreFailure } from "@/lib/tile-cache/health";
+import { useTileCacheSettings } from "@/hooks/useTileCacheSettings";
 import { MapTileToggle } from "./MapTileToggle";
 
 import { CenterOnAntennaButton } from "./CenterOnAntennaButton";
@@ -274,6 +278,74 @@ function MapPickerLayer({ mode, onComplete, onCancel }: {
       }
     },
   });
+
+  return null;
+}
+
+/** Debounce for the LRU pass after new tiles are stored: one scan per burst, not per tile. */
+const EVICT_DEBOUNCE_MS = 5000;
+
+/**
+ * The basemap, loaded through the IndexedDB tile cache (`lib/tile-cache/`).
+ *
+ * Imperative, like `DotsLayer`: the layer is built once per tile source and
+ * reads the cache settings through a ref on every tile, so changing the radius
+ * or the cap never reloads the visible map. Changing the footprint or the cap
+ * prunes the store straight away -- including on mount, which covers a
+ * receiver that moved while the app was closed.
+ */
+function CachedBasemap({ tile, origin }: { tile: TileConfig; origin?: ReceiverPoint }) {
+  const map = useMap();
+  const [{ enabled, radiusNm, maxSizeMb }] = useTileCacheSettings();
+  const lat = origin?.lat;
+  const lon = origin?.lng;
+  const maxBytes = maxSizeMb * 1024 * 1024;
+  const ctxRef = useRef<CacheContext | null>(null);
+  const evictTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const store = sharedTileStore();
+    const footprint = lat != null && lon != null ? { lat, lon, radiusNm } : null;
+    ctxRef.current = {
+      store,
+      enabled,
+      footprint,
+      onStoreError: recordStoreFailure,
+      onStored: () => {
+        if (evictTimer.current) return;
+        evictTimer.current = setTimeout(() => {
+          evictTimer.current = null;
+          void store.then((s) => s?.evictTo(maxBytes)).catch(() => {});
+        }, EVICT_DEBOUNCE_MS);
+      },
+    };
+    void store
+      .then(async (s) => {
+        if (!s) return;
+        if (footprint) await s.pruneOutside(footprint.lat, footprint.lon, footprint.radiusNm);
+        await s.evictTo(maxBytes);
+      })
+      .catch(() => {});
+  }, [enabled, radiusNm, maxBytes, lat, lon]);
+
+  useEffect(
+    () => () => {
+      if (evictTimer.current) clearTimeout(evictTimer.current);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const layer = createCachedTileLayer(
+      tile,
+      () => ctxRef.current ?? { store: sharedTileStore(), enabled: false, footprint: null },
+    );
+    layer.addTo(map);
+    layer.bringToBack();
+    return () => {
+      layer.remove();
+    };
+  }, [map, tile]);
 
   return null;
 }
@@ -545,6 +617,8 @@ interface Props {
   showLabels?: boolean;
   /** Receiver for range lines — deliberately NOT gated by "Show receiver". */
   rangeLineOrigin?: ReceiverPoint;
+  /** Centre of the tile cache footprint — like `rangeLineOrigin`, NOT gated by "Show receiver". */
+  tileCacheOrigin?: ReceiverPoint;
   /** Selected aircraft with a position; one range line each while the mode is on. */
   rangeLineTargets?: AircraftTrack[];
   showRangeLines?: boolean;
@@ -1026,8 +1100,9 @@ function DotsLayer({
   return null;
 }
 
-export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
-  const tile = tileConfig(mapTheme, CARTO_API_KEY);
+export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
+  // Memoised: the basemap layer is rebuilt (and every tile reloaded) when this changes.
+  const tile = useMemo(() => tileConfig(mapTheme, CARTO_API_KEY), [mapTheme]);
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
     : DEFAULT_CENTER;
@@ -1072,13 +1147,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         <MapResizeHandler />
         <MapClickHandler onDeselect={handleDeselect} />
         <FlyToHandler onReady={handleFlyToReady} />
-        <TileLayer
-          key={tile.url}
-          attribution={tile.attribution}
-          url={tile.url}
-          maxZoom={tile.maxZoom}
-          {...(tile.subdomains && { subdomains: tile.subdomains })}
-        />
+        <CachedBasemap tile={tile} origin={tileCacheOrigin} />
 
         {/* Density hexagons — zoom-adaptive H3 resolution */}
         <DensityLayer showDensity={showDensity} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} receiverLocation={receiverLocation} theme={mapTheme} />

@@ -33,11 +33,12 @@ def csp(agent_port: str) -> str:
         "default-src 'self'; "
         "img-src 'self' https://*.tile.openstreetmap.org "
         "https://*.openstreetmap.org https://*.basemaps.cartocdn.com "
-        "https://server.arcgisonline.com data:; "
+        "https://server.arcgisonline.com data: blob:; "
         "style-src 'self' 'unsafe-inline' https://unpkg.com; "
         "script-src 'self' 'unsafe-inline'; "
         "connect-src 'self' ipc: http://ipc.localhost "
         "https://*.tile.openstreetmap.org "
+        "https://*.basemaps.cartocdn.com https://server.arcgisonline.com "
         f"http://localhost:{agent_port} http://127.0.0.1:{agent_port}"
     )
 

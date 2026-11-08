@@ -694,6 +694,73 @@ second. Keep per-frame state in closure variables inside the effect; React only 
 
 ---
 
+### Pattern 13: Leaflet Layer Configured Through a Ref
+
+**Use case**: an imperative Leaflet layer whose behaviour depends on settings that
+change while it is on the map — here `CachedBasemap`, whose tile cache settings
+are edited in Settings. Rebuilding a tile layer reloads every visible tile, so
+settings must reach it **without** a rebuild.
+
+```typescript
+const ctxRef = useRef<CacheContext | null>(null);
+
+// 1. Settings → ref. Cheap, runs on every change, never touches the layer.
+useEffect(() => {
+  ctxRef.current = { store, enabled, footprint };
+}, [store, enabled, footprint]);
+
+// 2. Layer lifecycle keyed only on what genuinely needs a new layer.
+useEffect(() => {
+  const layer = createCachedTileLayer(tile, () => ctxRef.current ?? FALLBACK);
+  layer.addTo(map);
+  return () => { layer.remove(); };
+}, [map, tile]);
+```
+
+**Rules**:
+- Declare the ref-writing effect **before** the layer effect: effects run in order,
+  so the first tile already sees the settings.
+- Pass a **getter**, not the value: the layer reads the context per tile.
+- Memoise the inputs of the layer effect (`useMemo(() => tileConfig(theme), [theme])`):
+  an object rebuilt each render would rebuild the layer each render.
+- Put the per-item logic (`loadTile`) in `src/lib/` as a pure async function and
+  test it directly; the Leaflet shell then only wires DOM events.
+
+---
+
+### Pattern 14: Long-Running Work That Outlives Its Page
+
+**Use case**: work started from one route that must keep going after the user
+navigates away — here "Download area" in Settings (`lib/tile-cache/prefetchJob.ts`).
+Navigation is client-side, so the JS context survives; only component state does
+not. Hold the run at **module level** and let pages subscribe.
+
+```typescript
+let state: JobState | null = null;
+const listeners = new Set<() => void>();
+function publish(next: JobState | null) { state = next; listeners.forEach((l) => l()); }
+
+export const job = () => state;
+export const subscribe = (l: () => void) => (listeners.add(l), () => listeners.delete(l));
+
+// In the page:
+const current = useSyncExternalStore(subscribe, job, job);
+```
+
+**Rules**:
+- **Replace** the snapshot on every change, never mutate it:
+  `useSyncExternalStore` compares by identity, and a mutated object never re-renders.
+- Keep the `AbortController` in the module, not a `useRef`, so Cancel works from
+  a later visit to the page; do **not** abort on unmount.
+- Refuse a second start while one runs; keep the outcome after it ends, so a
+  returning user sees "Download complete", not a blank card.
+- React to the job *ending* by subscribing in an effect (the callback may set
+  state), not by an effect keyed on the snapshot — that sets state in an effect
+  body and trips `react-hooks/set-state-in-effect`.
+- Provide a `reset…()` for tests: module state leaks between test cases otherwise.
+
+---
+
 ### Pattern 7: Agent Tool Registration (AG-UI)
 
 When adding a new capability the AI assistant can use, the **first decision is which

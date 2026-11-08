@@ -1,4 +1,5 @@
 import type { MapTheme } from "./colors";
+import type { TileProvider } from "./tile-cache/keys";
 
 /**
  * Basemap tile sources, one per map theme.
@@ -14,13 +15,16 @@ import type { MapTheme } from "./colors";
  * restarting the desktop. `scripts/stack.sh` sets it from
  * `[desktop] carto_api_key`.
  *
- * Every host here must also be in the CSP's `img-src`, in BOTH
+ * Every host here must also be in the CSP's `img-src` AND `connect-src` (the
+ * tile cache fetches tiles rather than letting `<img>` load them), in BOTH
  * `src-tauri/tauri.conf.json` and `scripts/tauri-dev-config.py`, or tiles are
  * blocked with nothing but a console message.
  */
 export const CARTO_API_KEY = process.env.NEXT_PUBLIC_CARTO_API_KEY?.trim() || undefined;
 
 export interface TileConfig {
+  /** Stable provider id: the tile cache keys tiles by it, never by URL. */
+  provider: TileProvider;
   url: string;
   attribution: string;
   maxZoom: number;
@@ -28,6 +32,7 @@ export interface TileConfig {
 }
 
 const OSM: TileConfig = {
+  provider: "osm",
   url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   maxZoom: 19,
@@ -35,6 +40,7 @@ const OSM: TileConfig = {
 
 // ArcGIS REST tiles are addressed {z}/{y}/{x} -- row before column.
 const ESRI_DARK_GRAY: TileConfig = {
+  provider: "esri-dark",
   url: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
   attribution: "Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors",
   maxZoom: 16,
@@ -42,6 +48,7 @@ const ESRI_DARK_GRAY: TileConfig = {
 
 function cartoDarkMatter(key: string): TileConfig {
   return {
+    provider: "carto-dark",
     url: `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(key)}`,
     attribution:
       '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',

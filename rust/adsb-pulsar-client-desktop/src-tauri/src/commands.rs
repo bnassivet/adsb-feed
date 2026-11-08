@@ -254,6 +254,32 @@ pub fn get_stack() -> Option<String> {
     crate::stack_from_env()
 }
 
+/// Where the webview keeps the map tile cache's IndexedDB database on disk.
+///
+/// Display only (Settings → Map Tile Cache): the page can name its database
+/// but not find it. Read-only, and `path` is `None` until the first tile is
+/// stored. See `webview_storage` for how the engine directories are searched.
+#[tauri::command]
+pub async fn locate_tile_cache(
+    app: tauri::AppHandle,
+    db_name: String,
+) -> Result<crate::webview_storage::DatabaseLocation, String> {
+    let path = app.path();
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()));
+    let roots = crate::webview_storage::candidate_roots(
+        &app.config().identifier,
+        exe.as_deref(),
+        path.home_dir().ok().as_deref(),
+        path.app_data_dir().ok().as_deref(),
+        path.app_local_data_dir().ok().as_deref(),
+    );
+    tokio::task::spawn_blocking(move || crate::webview_storage::locate(&roots, &db_name))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Returns the current metrics snapshot, including bridge-level counters
 /// (`lines_received`, `messages_parsed`, `positions_parsed`) that the TS `MetricsSnapshot` type expects to be present.
 #[tauri::command]
