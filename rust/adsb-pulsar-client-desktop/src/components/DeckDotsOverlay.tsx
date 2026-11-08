@@ -27,6 +27,7 @@ import { DeckLayer } from "@/lib/deck-leaflet/leaflet-layer";
 import { buildDotBuffers, locateDot, type DotBuffers } from "@/lib/deck-dots";
 import { dotTooltipHtml, type DotSetType } from "@/lib/dot-tooltip";
 import { isBareMapTarget } from "@/lib/map-hover-target";
+import { DotTooltipArbiter } from "@/lib/tooltip-arbiter";
 import type { MapTheme } from "@/lib/colors";
 import type { AircraftTrack, AltitudeColorMode } from "@/lib/types";
 
@@ -99,9 +100,15 @@ export function DeckDotsOverlay({ sets, selected, theme }: { sets: DotSet[]; sel
     let moving = false;
     let frame = 0;
     let last: L.Point | null = null;
+    // A hovered dot outranks a density hex or line tooltip underneath, as on the old shared canvas.
+    const arbiter = new DotTooltipArbiter(map);
 
-    const hide = () => {
-      if (shown !== null) tooltip.remove();
+    /** `cursor`: where a displaced path tooltip may come back; omitted when the pointer left the surface. */
+    const hide = (cursor?: L.LatLng) => {
+      if (shown !== null) {
+        tooltip.remove();
+        arbiter.setDotActive(false, cursor);
+      }
       shown = null;
       map.getContainer().style.cursor = "";
     };
@@ -111,14 +118,17 @@ export function DeckDotsOverlay({ sets, selected, theme }: { sets: DotSet[]; sel
       const info = deck.pickObject({ x: last.x, y: last.y, radius: PICK_RADIUS_PX });
       const owner = info?.layer ? pickables.current.get(info.layer.id) : undefined;
       const dot = owner && info ? locateDot(owner.buf, info.index) : null;
-      if (!owner || !dot) return hide();
+      if (!owner || !dot) return hide(map.containerPointToLatLng(last));
       const id = `${info!.layer!.id}:${info!.index}`;
       map.getContainer().style.cursor = "pointer";
       if (id === shown) return;
       tooltip
         .setLatLng([dot.lat, dot.lng])
         .setContent(dotTooltipHtml(owner.type, dot.track, dot.alt, dot.isLast));
-      if (shown === null) tooltip.addTo(map);
+      if (shown === null) {
+        tooltip.addTo(map);
+        arbiter.setDotActive(true);
+      }
       shown = id;
     };
     const onMove = (e: L.LeafletMouseEvent) => {
@@ -148,6 +158,7 @@ export function DeckDotsOverlay({ sets, selected, theme }: { sets: DotSet[]; sel
 
     return () => {
       if (frame) cancelAnimationFrame(frame);
+      arbiter.dispose();
       map.off("mousemove", onMove);
       map.off("mouseout", onOut);
       map.off("movestart zoomstart", onStart);
