@@ -529,6 +529,9 @@ Requires `adsb-agent` (:8000) and `adsb-simulation-agent` (:8300) running; witho
   settings change, that reloads every visible tile. Tests need `import "fake-indexeddb/auto"`. Its files
   live under the **webview's** data dir, keyed by origin (`~/Library/WebKit/adsb-pulsar-client-desktop/…`
   under `tauri dev`), not in `<app-data>`; `locate_tile_cache` finds them for the Settings display.
+- **Map render benchmark** (`npm run bench`, findings in `docs/MAP_BENCH.md`). Bench pages exist only when `BENCH=1` (`pageExtensions` includes `bench.tsx`), and the GPU libraries are devDependencies, so the shipped app is unchanged. Two lessons from the first run:
+  - Frame-time metrics measure the **display** as much as the code. On this machine the display sleeps after 10 min, and the 4K monitor runs at 30 Hz. Halfway through, every variant dropped together from 432 to 35 frames per gesture. A shift that hits all variants at once is the environment. Trust frame numbers only when each result's `idleHz` is ≥ 45. The driver logs a `⚠` below that and holds `caffeinate` for the whole run.
+  - **p95 hides freeze-type costs.** `DotsLayer` rebuilds every marker on `moveend`, which shows up as one 2.4 s frame at 1M points while p95 stays at 10 ms. Read the worst frame and the settle time too.
 - Root `.gitignore` has `lib/` which silently ignores `src/lib/`. Negated with `!**/src/lib/`
 - Tauri v2 commands silently fail without proper permissions in `capabilities/default.json`
 - `create-next-app` fails if `src-tauri/` exists — scaffold manually or use temp dir

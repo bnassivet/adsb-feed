@@ -15,7 +15,7 @@
  * Runs HEADED by default: headless Chromium renders WebGL in software
  * (SwiftShader), which would make every GPU variant look slow.
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { readFile, mkdir, writeFile, stat } from "node:fs/promises";
 import { extname, join, resolve, dirname } from "node:path";
@@ -117,6 +117,19 @@ async function gesture(page) {
   }
 }
 
+/**
+ * Idle refresh rate just before measuring. A sleeping display or an occluded
+ * window throttles requestAnimationFrame for EVERY variant alike (seen: 60 Hz
+ * collapsing to ~1 Hz ten minutes into a run), which would pass for a result.
+ */
+function idleRefreshHz() {
+  return new Promise((ok) => {
+    const ts = [];
+    const tick = (t) => (ts.push(t) < 31 ? requestAnimationFrame(tick) : ok(30_000 / (ts[30] - ts[0])));
+    requestAnimationFrame(tick);
+  });
+}
+
 async function runOne(browser, base, engine, variant, cfg) {
   const { size, style, scenario, rep, timeout } = cfg;
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
@@ -148,6 +161,7 @@ async function runOne(browser, base, engine, variant, cfg) {
   const out = [];
   let gpu = null;
   let pageErrors = null;
+  let idleHz = null;
   try {
     const pageScenario = scenario === "live" ? "live" : scenario;
     await page.goto(`${base}/bench/${variant}/?size=${size}&style=${style}&scenario=${pageScenario}&seed=${rep + 1}`);
@@ -155,6 +169,7 @@ async function runOne(browser, base, engine, variant, cfg) {
     const err = await page.evaluate(() => window.__benchError);
     if (err) throw new Error(err);
     gpu = await page.evaluate(() => window.__bench.gpu);
+    idleHz = await page.evaluate(idleRefreshHz);
 
     if (scenario === "live") {
       out.push(mk("live", await withTimeout(page.evaluate(() => window.__bench.live()), timeout, "live")));
@@ -184,12 +199,16 @@ async function runOne(browser, base, engine, variant, cfg) {
   }
   if (consoleErrors.length) out.forEach((r) => (r.consoleErrors = consoleErrors.slice(0, 3)));
   if (pageErrors?.length) out.forEach((r) => (r.pageErrors = pageErrors.slice(0, 3)));
+  if (idleHz !== null) out.forEach((r) => (r.idleHz = Math.round(idleHz)));
   return { results: out, gpu };
 }
 
 // ---------------------------------------------------------------- main
 const opts = parseArgs(process.argv.slice(2));
 if (opts.build) build();
+// Keep the display awake for the whole run (macOS sleeps it after N minutes,
+// which throttles rAF in every browser window).
+if (os.platform() === "darwin") spawn("caffeinate", ["-dimsu", "-w", String(process.pid)], { stdio: "ignore" }).unref();
 const server = await serve();
 const base = `http://127.0.0.1:${server.address().port}`;
 const engines = { webkit, chromium };
@@ -219,8 +238,9 @@ for (const engineName of opts.engines) {
             if (gpu) gpus[engineName] = gpu;
             all.push(...results);
             const r = results[0];
+            const hz = r.idleHz != null && r.idleHz < 45 ? ` ⚠ idle ${r.idleHz} Hz (throttled?)` : "";
             const summary = r.dnf ? `DNF (${r.error})` : Object.entries(r.metrics).slice(0, 3).map(([k, v]) => `${k}=${Number(v).toFixed(1)}`).join(" ");
-            console.log(`${scenario.padEnd(8)} ${style.padEnd(5)} ${String(size || 25_000).padStart(8)} rep${rep} ${variant.padEnd(11)} ${summary}`);
+            console.log(`${scenario.padEnd(8)} ${style.padEnd(5)} ${String(size || 25_000).padStart(8)} rep${rep} ${variant.padEnd(11)} ${summary}${hz}`);
           }
         }
       }
