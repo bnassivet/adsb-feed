@@ -8,6 +8,12 @@ import {
   altitudeSparklinePoints,
   altitudeRange,
   formatTrackTime,
+  receiverDistanceNm,
+  formatDistance,
+  receiverAzimuthDeg,
+  receiverElevationDeg,
+  formatAngle,
+  type ReceiverPoint,
 } from "@/lib/aircraft-details";
 import { timeAgo } from "@/lib/format";
 import { useDisplayTz } from "@/hooks/useDisplayTz";
@@ -35,6 +41,8 @@ interface Props {
   isDbHistory?: boolean;
   /** Wind at the aircraft, when a current weather snapshot covers it. */
   wind?: AircraftWind | null;
+  /** Receiver position (alt in ft); the Distance/Azimuth/Elevation rows are omitted without it. */
+  receiverLocation?: ReceiverPoint | null;
 }
 
 export function AircraftDetailsPanel({
@@ -46,6 +54,7 @@ export function AircraftDetailsPanel({
   isImported = false,
   isDbHistory = false,
   wind = null,
+  receiverLocation = null,
 }: Props) {
   if (track === null) return null;
 
@@ -58,6 +67,7 @@ export function AircraftDetailsPanel({
       isImported={isImported}
       isDbHistory={isDbHistory}
       wind={wind}
+      receiverLocation={receiverLocation}
     />
   ) : (
     <CollapsedStrip onToggle={onToggle} />
@@ -89,6 +99,7 @@ function ExpandedPanel({
   isImported = false,
   isDbHistory = false,
   wind = null,
+  receiverLocation = null,
 }: {
   track: AircraftTrack;
   width: number;
@@ -97,6 +108,7 @@ function ExpandedPanel({
   isImported?: boolean;
   isDbHistory?: boolean;
   wind?: AircraftWind | null;
+  receiverLocation?: ReceiverPoint | null;
 }) {
   const { resolvedTzName } = useDisplayTz();
   // Self-contained drag: listeners created on mousedown capture the start width/x and are removed
@@ -132,6 +144,9 @@ function ExpandedPanel({
   const sparklinePoints = altitudeSparklinePoints(recentAlt, 120, 40);
   const altBounds = altitudeRange(recentAlt);
   const squawkLabel = track.squawk ? SQUAWK_LABELS[track.squawk] : undefined;
+  const distanceNm = receiverDistanceNm(track, receiverLocation);
+  const azimuthDeg = receiverAzimuthDeg(track, receiverLocation);
+  const elevationDeg = receiverElevationDeg(track, receiverLocation);
 
   return (
     <div
@@ -210,6 +225,25 @@ function ExpandedPanel({
               <span className="text-slate-500">—</span>
             )}
           </Row>
+          {receiverLocation && (
+            <>
+              <Row label="Distance">
+                <span data-testid="receiver-distance" className={distanceNm === null ? "text-slate-500" : undefined}>
+                  {distanceNm !== null ? formatDistance(distanceNm) : "—"}
+                </span>
+              </Row>
+              <Row label="Azimuth">
+                <span data-testid="receiver-azimuth" className={azimuthDeg === null ? "text-slate-500" : undefined}>
+                  {azimuthDeg !== null ? formatAngle(azimuthDeg, { wrap360: true }) : "—"}
+                </span>
+              </Row>
+              <Row label="Elevation">
+                <span data-testid="receiver-elevation" className={elevationDeg === null ? "text-slate-500" : undefined}>
+                  {elevationDeg !== null ? formatAngle(elevationDeg) : "—"}
+                </span>
+              </Row>
+            </>
+          )}
         </div>
 
         {/* Wind at the aircraft, from the weather snapshot */}

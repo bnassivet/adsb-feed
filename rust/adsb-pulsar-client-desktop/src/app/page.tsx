@@ -1492,6 +1492,7 @@ export default function Dashboard() {
                 /* Routed, not suppressed: an imported or DB-history track now
                    gets the wind of the hour recorded nearest its own last_seen. */
                 wind={selectedWind}
+                receiverLocation={receiverLocation}
               />
             )}
             {/* DB History panel — docked mode (in flex row) */}
