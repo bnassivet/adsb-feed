@@ -7,7 +7,8 @@
  * so a plain import resolves `LeafletLayer` to undefined; its last release was
  * 2024 and it pins `@deck.gl/core ^9`. Changes from upstream: view maths moved
  * to ./view.ts (tested), private-field access typed in one place, the
- * `_animate` pause/resume dropped (no deck.gl transitions are used here).
+ * `_animate` pause/resume dropped (no deck.gl transitions are used here), and a
+ * `pane` option added.
  */
 import L from "leaflet";
 import { Deck, type DeckProps } from "@deck.gl/core";
@@ -21,8 +22,11 @@ export class DeckLayer extends L.Layer {
   private container?: HTMLDivElement;
   private deck?: Deck;
 
-  constructor(props: DeckProps) {
+  /** `pane`: the Leaflet pane to draw in (default `overlayPane`). */
+  constructor(props: DeckProps, options: { pane?: string } = {}) {
     super();
+    // L.Layer has no initialize(), so constructor options are not applied for us.
+    L.setOptions(this, options);
     this.props = props;
   }
 
@@ -44,7 +48,7 @@ export class DeckLayer extends L.Layer {
       ...this.props,
       parent: this.container,
       controller: false,
-      style: { zIndex: "auto" },
+      style: { zIndex: "auto", ...(this.props.style ?? {}) },
       viewState: leafletToDeckViewState(this.m.getCenter(), this.m.getZoom()),
     });
     this.update();

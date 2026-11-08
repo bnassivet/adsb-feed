@@ -163,6 +163,31 @@ Either one also makes `subsamplePositions` and the rebuild on every `moveend` un
 
 **Why the bridge is vendored.** The npm `deck.gl-leaflet` 1.3.1 hasn't had a release since 2024, and it pins `@deck.gl/core ^9`. Its package is also mis-declared: its CommonJS `main` sits inside a `"type": "module"` package, so a plain import resolves `LeafletLayer` to `undefined`. Its 232 lines now live in `src/lib/deck-leaflet/`, with the view maths split out and tested.
 
+## After integration: `DeckDotsOverlay` in the shipped map (2026-11-08 21:59)
+
+`DotsLayer` was replaced by `DeckDotsOverlay`, which draws all four dot sets from one deck.gl overlay
+(plan: `docs/plans/2026-11-08-deckgl-map-dots.md`). The bench's `leaflet` variant
+mounts the real `MapInner`, so it now measures the new code. This run compared the shipped map with
+the `deckgl` prototype, using 3 reps, every run at full refresh rate, and no failures:
+
+| Dots, WebKit unless noted | shipped map **before** | shipped map **after** | `deckgl` prototype |
+|---|---:|---:|---:|
+| load, 200k / 1M | 141 / 721 ms | 69 / 231 ms | 41 / 73 ms |
+| load in Chromium, 200k / 1M | 252 / 1242 ms | 98 / 294 ms | — |
+| worst pan/zoom frame, 200k / 1M | 346 / 1789 ms | **22 / 33 ms** | 18 / 32 ms |
+| settle after `moveend`, 1M (median) | 1297 ms | **33 ms** | 28 ms |
+| JS heap at 1M (Chromium) | 1166 MB | 114 MB | 75 MB |
+| live, 500 aircraft: worst frame / p95 | 126 / 41 ms | 59 / 18 ms | 20 / 18 ms |
+
+The freezes are gone: pan and zoom now match the prototype. Two gaps remain, and both
+are outside the dot renderer:
+
+- **Load is slower than the prototype by about 150 ms at 1M.** `MapInner` also derives the
+  track lists, labels and table ordering from the same `AircraftTrack` objects.
+- **The heap is 39 MB higher.** Those `AircraftTrack` objects stay alive alongside the buffers.
+
+The live worst frame (59 ms) includes the DOM aircraft icons, which the prototype doesn't draw.
+
 ## Measuring frame rates reliably
 
 The frame-rate results from the first full run were discarded. Partway through it, every variant's frame rate changed together (432 → 35 frames per gesture, 950 → 269). That happened because:
