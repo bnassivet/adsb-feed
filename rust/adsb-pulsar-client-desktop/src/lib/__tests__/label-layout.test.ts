@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { contrastRatio } from "../colors";
 import {
   formatTrackLabel,
   trackLabelHtml,
@@ -269,6 +270,15 @@ describe("trackLabelHtml", () => {
     expect(html).toContain("<line");
     expect(html).toContain('x1="12"');
     expect(html).toContain('x2="40"');
+  });
+
+  it("keeps low-altitude (dark blue) text readable on the dark chip", () => {
+    const html = trackLabelHtml(inner, "X/-", "rgb(0,0,255)", false, "dark");
+    const text = html.match(/;color:(rgb\([^)]*\))/)![1];
+    expect(text).not.toBe("rgb(0,0,255)");
+    expect(contrastRatio(text, "#0f172a")).toBeGreaterThanOrEqual(4.5);
+    // The border keeps the true altitude colour.
+    expect(html).toContain("border-left:2px solid rgb(0,0,255)");
   });
 
   it("is bold when selected and adapts to the light theme", () => {

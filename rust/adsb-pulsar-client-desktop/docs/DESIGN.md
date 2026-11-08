@@ -3901,6 +3901,13 @@ best inner slot. Labels use a 10px monospace font with an explicit width, so the
 the reserved box with no DOM measuring. The layout re-runs on every feed update and on
 `zoomend`/`moveend`/`resize`, and `setIcon` is called only when slot, text, colour or selection changes.
 
+**Readable text in dark mode.** Dark-theme label text uses the altitude colour, and the scale
+starts at pure blue, which is about 2:1 contrast on the slate chip. That is unreadable for anything
+below roughly 6,000 ft. `readableOn` (`lib/colors.ts`) lifts a colour toward white only as far as needed
+to reach WCAG 4.5:1 (0 ft: `rgb(0,0,255)` → `rgb(110,110,255)`). It leaves colours that already pass
+unchanged (everything from about 8,000 ft up). The chip's left border keeps the true altitude colour,
+and light-theme text is near-black anyway.
+
 **Cost.** The layout runs on the main thread at 2 Hz. Collision checks go through a uniform
 48px `ObstacleGrid`: each icon and each placed label is filed under the cells it touches, and
 icons outside the viewport are never filed, since a label cannot leave the viewport. The first,

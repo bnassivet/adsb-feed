@@ -12,6 +12,11 @@
  * All coordinates are container pixels (`map.latLngToContainerPoint`).
  */
 
+import { readableOn } from "./colors";
+
+/** Dark-theme chip background (slate-900) that label text must stay readable on. */
+const DARK_CHIP_BG = "#0f172a";
+
 /** Monospace 10px: every glyph is the same width, so box sizes need no DOM measuring. */
 export const LABEL_CHAR_WIDTH = 6;
 export const LABEL_PADDING_X = 4;
@@ -312,7 +317,9 @@ export function trackLabelHtml(
     "overflow:hidden",
     "border-radius:2px",
     dark ? "background:rgba(15,23,42,0.78)" : "background:rgba(255,255,255,0.88)",
-    dark ? `color:${color}` : "color:#0f172a",
+    // The altitude scale starts at pure blue, ~2:1 on this chip, so dark-theme
+    // text is lifted toward white until readable; the border keeps the true colour.
+    dark ? `color:${readableOn(color, DARK_CHIP_BG, 4.5)}` : "color:#0f172a",
     `border-left:2px solid ${color}`,
   ].join(";");
 
