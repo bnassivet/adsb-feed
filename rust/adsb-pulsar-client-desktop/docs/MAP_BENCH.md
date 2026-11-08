@@ -1,13 +1,14 @@
 # Map render benchmark — findings
 
 Question: should the desktop map leave Leaflet for speed, and if so for what?
-Four variants were measured on identical synthetic data (seeded, 10k → 1M
+Five variants were measured on identical synthetic data (seeded, 10k → 1M
 positions, Montréal bbox), with the same colours and sizes:
 
 | Variant | What it is |
 |---|---|
 | **leaflet** | the shipping `MapInner`, unmodified (canvas `DotsLayer`, react-leaflet `Polyline`s) |
-| **deckgl** | Leaflet kept for the map; dots/lines drawn by a deck.gl overlay (`deck.gl-leaflet`, binary attributes) |
+| **canvas** | Leaflet kept; dots/lines drawn from typed arrays on ONE `L.Canvas` subclass (`src/lib/canvas-dots*.ts`), no GPU, no per-point objects. Added after the first runs |
+| **deckgl** | Leaflet kept for the map; dots/lines drawn by a deck.gl overlay (vendored bridge, `src/lib/deck-leaflet/`; binary attributes) |
 | **maplibre** | MapLibre GL 6, GeoJSON sources, circle/line layers |
 | **openlayers** | OpenLayers 10 `WebGLVectorLayer`, flat styles, one `Feature` per point |
 
@@ -91,18 +92,50 @@ In WebKit, the engine the app actually ships on, live dots with Leaflet drop to 
 
 The live baseline draws DOM triangle icons for the heads, while the GPU variants draw circles, so the baseline is doing slightly more work.
 
+## Canvas renderer vs deck.gl (separate run, 2026-11-08 18:18)
+
+Is the baseline's cost the per-point **objects** or the **drawing**? The
+canvas variant keeps Leaflet and its 2D canvas and only drops the objects:
+
+- positions are projected once to zoom-0 world pixels;
+- they are counting-sorted into 1000 ft altitude bins;
+- the canvas is redrawn with one `fill()` per colour after each `moveend`.
+
+The run compared leaflet, canvas and deckgl only, with 5 repetitions, every run at
+full refresh rate and no failures.
+
+| 1M dots | load WebKit / Chromium | heap | worst pan/zoom frame WebKit / Chromium | settle WebKit (median / max) | live p95 WebKit / update cost |
+|---|---:|---:|---:|---:|---:|
+| leaflet | 731 / 1194 ms | 1169 MB | 1847 / 2542 ms | 1320 / 2058 ms | 43 ms / 71 ms (25k pts) |
+| **canvas** | 120 / 101 ms | **77 MB** | 472 / 125 ms | 282 / 370 ms | 30 ms / 22 ms |
+| deckgl | **53 / 42 ms** | 75 MB | **30 / 33 ms** | **27 / 30 ms** | **18 ms / 15 ms** |
+
+At 200k dots, canvas has a worst frame of 118 ms in WebKit and 34 ms in Chromium, and settles in 76 ms in WebKit. deckgl manages 22 / 33 ms and settles in 28 ms. At 50k and below, canvas matches deckgl and loads 2–5× faster, because it has no GPU upload. With lines, canvas is the fastest variant to load, at 71 ms in WebKit and 36 ms in Chromium at 1M.
+
+What this shows:
+
+- **The objects were most of the cost.** The same Leaflet canvas, with no `L.CircleMarker` objects, loads 6–12× faster and uses 15× less heap.
+- **The rest of the cost is the CPU redraw.** It grows with the number of points on screen. WebKit's 2D canvas is about 4× slower at it than Chromium's (472 vs 125 ms worst frame at 1M), and WebKit is the engine the app ships on. deck.gl's cost stays flat with size, because the GPU redraws on every frame.
+- **Canvas has no hover tooltips or click-to-select yet.** The baseline attaches a tooltip to every marker, which is part of its cost. Canvas would need its own lookup of the point under the cursor, for example a grid index over the projected pixels. deck.gl provides this already (`pickable`).
+
 ## Findings
 
 1. **Leaflet + deck.gl overlay is the fastest variant on every measure that matters here.** At 1M points it loads in 40–50 ms instead of 0.7–1.2 s. It uses 79 MB of heap instead of 1.2 GB. Its worst frame during pan or zoom is 33 ms, against Leaflet's 1.8–2.6 s freeze. With 500 live aircraft it updates in 8–15 ms, the only variant with no stall. Below about 50k points every variant is fine, so the difference only matters for DB history and density-scale data.
 2. **MapLibre gives the smoothest interaction but the slowest data load.** Its worst frame is 10 ms at any size. But converting to GeoJSON and tiling it in the worker makes it 3–6× slower than Leaflet to show new data (4–4.7 s at 1M). Getting that back would need a non-GeoJSON data path. All of that would come on top of rewriting the whole map, including tiles, weather, labels, tooltips and selection.
 3. **OpenLayers WebGL, the original question, doesn't pay for itself.** It settles quickly after a pan, but creating one `Feature` per point makes it about 2× slower than Leaflet to load and 1.6× heavier in memory at 1M points. A full migration would trade one bottleneck for two.
 4. **Line style is not the problem.** Leaflet draws 1M positions as lines in 120–180 ms. The problem is per-point dots.
+5. **A canvas renderer with no GPU removes most of the problem.** Removing the per-point objects alone cuts load time 6–12× and heap 15× (section above). What remains is a CPU redraw after each pan or zoom: under about 120 ms up to 200k points, but 0.3–0.5 s at 1M in WebKit.
 
 ## Recommendation
 
-Keep Leaflet for the map: tiles, controls, live aircraft icons, labels and weather. Move only the **dense point layers** (`DotsLayer` for DB history and density-scale data) onto a deck.gl `ScatterplotLayer` with binary attributes. That would also make `subsamplePositions` and the rebuild on every `moveend` unnecessary for those layers.
+Keep Leaflet for the map: tiles, controls, live aircraft icons, labels and weather. Replace only the per-point `L.CircleMarker` objects in `DotsLayer`. There are two ways to do that, and both are now in the repo:
 
-Before adopting it, decide how to depend on the bridge. `deck.gl-leaflet` 1.3.1 hasn't had a release since 2024, and its package is mis-declared: its CommonJS `main` sits inside a `"type": "module"` package, so a plain import resolves `LeafletLayer` to `undefined`. The bench imports `dist/deck.gl-leaflet.esm.js` directly to work around this. The bridge is small, so a thin in-house overlay (a Leaflet layer that syncs a `Deck` view state on `move`/`zoom`) is a reasonable alternative to vendoring it.
+- **deck.gl overlay** (`src/lib/deck-leaflet/`, a vendored copy of deck.gl-leaflet 1.3.1, MIT). This is the choice if DB-history views can reach about 200k points or more. It is the only variant that stays at full frame rate in WebKit at every size. Hover and click picking are built in. It costs a dependency: `@deck.gl/core` and `@deck.gl/layers` move from devDependencies to dependencies.
+- **Canvas renderer** (`src/lib/canvas-dots*.ts`). This is the choice if realistic views stay under about 200k points. It adds no dependency and loads fastest at small sizes, but tooltips and selection would need a hit-test index.
+
+Either one also makes `subsamplePositions` and the rebuild on every `moveend` unnecessary for those layers. The deciding question is the typical point count of a DB-history view in real use, which this synthetic benchmark can't answer.
+
+**Why the bridge is vendored.** The npm `deck.gl-leaflet` 1.3.1 hasn't had a release since 2024, and it pins `@deck.gl/core ^9`. Its package is also mis-declared: its CommonJS `main` sits inside a `"type": "module"` package, so a plain import resolves `LeafletLayer` to `undefined`. Its 232 lines now live in `src/lib/deck-leaflet/`, with the view maths split out and tested.
 
 ## Measuring frame rates reliably
 
