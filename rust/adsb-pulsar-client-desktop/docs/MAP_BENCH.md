@@ -47,26 +47,53 @@ Leaflet 119 ms (WebKit) / 183 ms (Chromium) at 1M, deck.gl 28 / 27, OpenLayers
 
 GPU buffers are not in these figures; for deck.gl they are a few bytes per point.
 
-### Pan/zoom stalls — Chromium, dots, 120 Hz throughout (ms)
+## Frame-rate results (rerun, display verified)
 
-The p95 frame time is the same for all four (~10 ms), because Leaflet's cost is
-one long freeze per `moveend`, not many slow frames. The worst frame and the
-`moveend` → painted time show it:
+These come from a separate run (`npm run bench -- --scenarios panzoom,live`,
+2026-11-08 15:52). The refresh rate was checked before every measurement:
 
-| Dots | worst frame 200k | worst frame 1M | settle 1M (median / max) |
+- **Chromium** was at 119–121 Hz in every run.
+- **WebKit** was at 60 Hz (its cap), except the first 21 runs (dots at 10k, and one repetition at 50k). Those were throttled to 30 Hz for all four variants equally, so that cell is left out.
+
+### Pan/zoom, dots: one identical gesture (4 drags and 4 zooms), times in ms
+
+The p95 frame time hides Leaflet's cost, because the cost is **one long freeze
+per `moveend`**, not many slow frames. The worst frame, the frame count and the
+settle time show it.
+
+| Dots | worst frame 200k | worst frame 1M | frames in gesture at 1M | settle at 1M (median / max) |
+|---|---:|---:|---:|---:|
+| **WebKit** leaflet | 346 | **1789** | 278 (p95 222) | 1297 / 1976 |
+| WebKit deckgl | 21 | 29 | 453 | 27 / 30 |
+| WebKit maplibre | 18 | 44 | 437 | 33 / 34 |
+| WebKit openlayers | 102 | 312 | 373 | 22 / 26 |
+| **Chromium** leaflet | 500 | **2550** | 588 | 1065 / 2520 |
+| Chromium deckgl | 24 | 33 | 957 | 10 / 29 |
+| Chromium maplibre | 10 | 9 | 942 | 16 / 17 |
+| Chromium openlayers | 58 | 126 | 890 | 4 / 7 |
+
+This is `DotsLayer` deleting and recreating every marker on each `moveend`/`zoomend`, even though `subsamplePositions` has already culled them to the viewport. At 200k the freeze is already about a third of a second. With lines, Leaflet stays smooth (worst frame 105–125 ms at 1M), and so do all the others.
+
+OpenLayers reports fewer `moveend`s for the same gesture (4–6 vs 8), because it merges consecutive interactions into one. Its settle medians are therefore over fewer samples.
+
+### Live — 500 aircraft, trails appended every 500 ms for 10 s
+
+| | WebKit p95 | WebKit worst | update cost (WebKit / Chromium) |
 |---|---:|---:|---:|
-| leaflet | 418 | **2417** | 1069 / 2355 |
-| deckgl | 25 | 27 | 12 / 28 |
-| maplibre | 10 | 10 | 17 / 17 |
-| openlayers | 50 | 126 | 4 / 8 |
+| leaflet, dots | **41 ms** | 126 ms | 69 / 89 ms |
+| deckgl, dots | 18 ms | 23 ms | **15 / 8 ms** |
+| maplibre, dots | 18 ms | 95 ms | 149 / 140 ms |
+| openlayers, dots | 19 ms | 107 ms | 85 / 107 ms |
+| leaflet, line | 33 ms | 122 ms | 32 / 30 ms |
+| deckgl, line | 18 ms | 24 ms | 15 / 8 ms |
 
-Leaflet also delivers a third fewer frames during the same 1M gesture (≈620 vs
-≈960). This is `DotsLayer` deleting and recreating every marker on each
-`moveend`/`zoomend` — even with `subsamplePositions` already culling to the viewport.
+In WebKit, the engine the app actually ships on, live dots with Leaflet drop to about 25 fps at p95. Every GPU variant holds 60 fps at p95, but only deck.gl also never stalls: MapLibre and OpenLayers rebuild their GeoJSON or `Feature` objects on every update. In Chromium at 120 Hz the p95 is about 10 ms for all variants, and the difference shows only in the worst frame and the update cost.
+
+The live baseline draws DOM triangle icons for the heads, while the GPU variants draw circles, so the baseline is doing slightly more work.
 
 ## Findings
 
-1. **Leaflet + deck.gl overlay is the fastest variant on every measure that matters here.** At 1M points it loads in 40–50 ms instead of 0.7–1.2 s. It uses 79 MB of heap instead of 1.2 GB, and it never freezes during pan or zoom. Below about 50k points every variant is fine, so the difference only matters for DB history and density-scale data.
+1. **Leaflet + deck.gl overlay is the fastest variant on every measure that matters here.** At 1M points it loads in 40–50 ms instead of 0.7–1.2 s. It uses 79 MB of heap instead of 1.2 GB. Its worst frame during pan or zoom is 33 ms, against Leaflet's 1.8–2.6 s freeze. With 500 live aircraft it updates in 8–15 ms, the only variant with no stall. Below about 50k points every variant is fine, so the difference only matters for DB history and density-scale data.
 2. **MapLibre gives the smoothest interaction but the slowest data load.** Its worst frame is 10 ms at any size. But converting to GeoJSON and tiling it in the worker makes it 3–6× slower than Leaflet to show new data (4–4.7 s at 1M). Getting that back would need a non-GeoJSON data path. All of that would come on top of rewriting the whole map, including tiles, weather, labels, tooltips and selection.
 3. **OpenLayers WebGL, the original question, doesn't pay for itself.** It settles quickly after a pan, but creating one `Feature` per point makes it about 2× slower than Leaflet to load and 1.6× heavier in memory at 1M points. A full migration would trade one bottleneck for two.
 4. **Line style is not the problem.** Leaflet draws 1M positions as lines in 120–180 ms. The problem is per-point dots.
@@ -77,29 +104,24 @@ Keep Leaflet for the map: tiles, controls, live aircraft icons, labels and weath
 
 Before adopting it, decide how to depend on the bridge. `deck.gl-leaflet` 1.3.1 hasn't had a release since 2024, and its package is mis-declared: its CommonJS `main` sits inside a `"type": "module"` package, so a plain import resolves `LeafletLayer` to `undefined`. The bench imports `dist/deck.gl-leaflet.esm.js` directly to work around this. The bridge is small, so a thin in-house overlay (a Leaflet layer that syncs a `Deck` view state on `move`/`zoom`) is a reasonable alternative to vendoring it.
 
-## Not concluded from this run, and why
+## Measuring frame rates reliably
 
-The tables for pan/zoom p95, live updates, and WebKit settle/pan-zoom are **not used** above. Partway through the run, every variant's frame rate changed together, for example 432 → 35 frames per gesture, and 950 → 269. That happened because:
+The frame-rate results from the first full run were discarded. Partway through it, every variant's frame rate changed together (432 → 35 frames per gesture, 950 → 269). That happened because:
 
 - the display went to sleep after 10 minutes (`pmset displaysleep 10`), and
-- the browser windows opened on different monitors on a three-display setup (120 Hz ProMotion, 120 Hz, and a **30 Hz** 4K).
+- the browser windows opened on different monitors of a three-display setup, one of them a **30 Hz** 4K.
 
 A shift that hits all variants at once is the environment, not the code. The driver now:
 
-- runs `caffeinate -dimsu` for the duration of the run;
-- records the idle refresh rate before each measurement (`idleHz` on every result); and
-- flags any run below 45 Hz in the log (`⚠ idle 30 Hz (throttled?)`).
+- holds `caffeinate -dimsu` for the duration of the run;
+- pins Chromium to the main display (`--window-position=0,0`); and
+- records the idle refresh rate before each measurement (`idleHz` on every result), flagging any run below 45 Hz in the log (`⚠ idle 30 Hz (throttled?)`).
 
-To re-measure the frame-rate scenarios, keep the active screen (where new windows open) on a display running at 60 Hz or more, then run:
-
-```bash
-npm run bench -- --scenarios panzoom,live
-```
+WebKit's window position can't be set, and macOS denies moving it from a script without Accessibility permission. So keep the active screen at 60 Hz or more, and check the log for `⚠`.
 
 Other caveats:
 
 - WebKit caps at 60 Hz and Chromium follows the display, so compare variants within one engine, not across engines.
-- In the live scenario, the baseline draws DOM triangle icons for aircraft heads while the GPU variants draw circles.
 - MapLibre zooms one level lower for the same view (512 px tiles).
 - The CopilotKit overlay from the root layout is on every page, so it affects all variants equally.
 - No basemap tiles are loaded by any variant.

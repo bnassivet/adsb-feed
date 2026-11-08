@@ -220,7 +220,7 @@ for (const engineName of opts.engines) {
   const browser = await engines[engineName].launch({
     headless: opts.headless,
     args: engineName === "chromium"
-      ? ["--js-flags=--expose-gc", "--enable-precise-memory-info", "--ignore-gpu-blocklist", "--enable-gpu"]
+      ? ["--js-flags=--expose-gc", "--enable-precise-memory-info", "--ignore-gpu-blocklist", "--enable-gpu", "--window-position=0,0"]
       : [],
   });
   console.log(`\n== ${engineName} ${browser.version()}`);
