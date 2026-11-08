@@ -1,5 +1,6 @@
 import type { Positions } from "./types";
 import { isColumnar } from "./types";
+import { haversineDistanceNm } from "./geo";
 
 /** Vertical tendency threshold in ft/min. */
 const VERTICAL_RATE_THRESHOLD = 200;
@@ -95,4 +96,91 @@ export function altitudeSparklinePoints(
       return `${x},${y}`;
     })
     .join(" ");
+}
+
+/** Exact, by definition of the international nautical mile. */
+const KM_PER_NM = 1.852;
+
+/**
+ * Great-circle distance from the receiver to the aircraft's latest position, in NM.
+ * Null when either end is unknown: a track with no position yet, or no receiver configured.
+ */
+export function receiverDistanceNm(
+  track: { latitude: number | null; longitude: number | null },
+  receiver: { lat: number; lng: number; alt?: number | null } | null | undefined,
+): number | null {
+  if (!receiver || track.latitude === null || track.longitude === null) return null;
+  return haversineDistanceNm(receiver.lat, receiver.lng, track.latitude, track.longitude);
+}
+
+/** One decimal below 100, whole numbers from 100 up, per unit. */
+function formatUnit(v: number): string {
+  return v >= 100 ? Math.round(v).toString() : v.toFixed(1);
+}
+
+/** `"18.5 km / 10.0 NM"`. */
+export function formatDistance(nm: number): string {
+  return `${formatUnit(nm * KM_PER_NM)} km / ${formatUnit(nm)} NM`;
+}
+
+/** Receiver position; `alt` in feet like aircraft altitudes (`receiver_altitude`), null = sea level. */
+export interface ReceiverPoint {
+  lat: number;
+  lng: number;
+  alt?: number | null;
+}
+
+const FT_TO_M = 0.3048;
+/** Same sphere as `haversineDistanceNm` (3440.065 NM), in metres. */
+const EARTH_RADIUS_M = 3440.065 * KM_PER_NM * 1000;
+const toRad = (deg: number) => (deg * Math.PI) / 180;
+const toDeg = (rad: number) => (rad * 180) / Math.PI;
+
+/**
+ * Initial great-circle bearing from the receiver to the aircraft, degrees true, 0..360.
+ * Null when either position is unknown, or when the aircraft is exactly over the receiver
+ * (no bearing exists there).
+ */
+export function receiverAzimuthDeg(
+  track: { latitude: number | null; longitude: number | null },
+  receiver: ReceiverPoint | null | undefined,
+): number | null {
+  if (!receiver || track.latitude === null || track.longitude === null) return null;
+  if (track.latitude === receiver.lat && track.longitude === receiver.lng) return null;
+  const p1 = toRad(receiver.lat);
+  const p2 = toRad(track.latitude);
+  const dl = toRad(track.longitude - receiver.lng);
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+/**
+ * Elevation angle of the aircraft above the receiver's local horizon, degrees
+ * (negative = below it). Geometric, on a spherical Earth: curvature is included,
+ * so a distant aircraft sinks toward the horizon, but atmospheric refraction is not.
+ * Uses the reported (barometric) altitude as height above sea level, a few hundred feet
+ * of error at most, which is well under 0.1° beyond a few NM.
+ */
+export function receiverElevationDeg(
+  track: { latitude: number | null; longitude: number | null; altitude: number | null },
+  receiver: ReceiverPoint | null | undefined,
+): number | null {
+  if (track.altitude === null) return null;
+  const nm = receiverDistanceNm(track, receiver);
+  if (nm === null) return null;
+  const theta = nm / 3440.065; // central angle, rad
+  const rAircraft = EARTH_RADIUS_M + track.altitude * FT_TO_M;
+  const rReceiver = EARTH_RADIUS_M + (receiver!.alt ?? 0) * FT_TO_M;
+  // Receiver-local frame: "up" along the receiver's radius, "out" toward the aircraft.
+  const up = rAircraft * Math.cos(theta) - rReceiver;
+  const out = rAircraft * Math.sin(theta);
+  return toDeg(Math.atan2(up, out));
+}
+
+/** `"89.6°"`; with `wrap360`, a value that rounds to 360.0 reads as 0.0 (an azimuth). */
+export function formatAngle(deg: number, opts: { wrap360?: boolean } = {}): string {
+  let v = Math.round(deg * 10) / 10;
+  if (opts.wrap360 && v >= 360) v -= 360;
+  return `${v.toFixed(1)}°`;
 }

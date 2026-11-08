@@ -6,6 +6,11 @@ import {
   altitudeSparklinePoints,
   altitudeRange,
   formatTrackTime,
+  receiverDistanceNm,
+  formatDistance,
+  receiverAzimuthDeg,
+  receiverElevationDeg,
+  formatAngle,
 } from "../aircraft-details";
 
 describe("verticalTendency", () => {
@@ -183,5 +188,104 @@ describe("formatTrackTime", () => {
     const result = formatTrackTime(ms, "UTC");
     expect(result).toMatch(/^\d{2}:\d{2}:\d{2}$/);
     expect(result).toBe("15:30:45");
+  });
+});
+
+describe("receiverDistanceNm", () => {
+  const receiver = { lat: 45.5, lng: -73.6 };
+
+  it("is zero over the receiver", () => {
+    expect(receiverDistanceNm({ latitude: 45.5, longitude: -73.6 }, receiver)).toBeCloseTo(0, 6);
+  });
+
+  it("measures the great-circle distance: one degree of latitude is 60 NM", () => {
+    expect(receiverDistanceNm({ latitude: 46.5, longitude: -73.6 }, receiver)).toBeCloseTo(60.04, 1);
+  });
+
+  it("is null without a position or a receiver", () => {
+    expect(receiverDistanceNm({ latitude: null, longitude: -73.6 }, receiver)).toBeNull();
+    expect(receiverDistanceNm({ latitude: 45.5, longitude: null }, receiver)).toBeNull();
+    expect(receiverDistanceNm({ latitude: 45.5, longitude: -73.6 }, null)).toBeNull();
+    expect(receiverDistanceNm({ latitude: 45.5, longitude: -73.6 }, undefined)).toBeNull();
+  });
+});
+
+describe("formatDistance", () => {
+  it("shows kilometres and nautical miles (1 NM = 1.852 km)", () => {
+    expect(formatDistance(10)).toBe("18.5 km / 10.0 NM");
+  });
+
+  it("keeps one decimal at short range", () => {
+    expect(formatDistance(0.27)).toBe("0.5 km / 0.3 NM");
+  });
+
+  it("drops the decimal from 100 upward", () => {
+    expect(formatDistance(150)).toBe("278 km / 150 NM");
+    expect(formatDistance(60)).toBe("111 km / 60.0 NM");
+  });
+});
+
+describe("receiverAzimuthDeg", () => {
+  const receiver = { lat: 45.5, lng: -73.6 };
+  const at = (latitude: number | null, longitude: number | null) => ({ latitude, longitude });
+
+  it("is the true bearing from the receiver, 0..360", () => {
+    expect(receiverAzimuthDeg(at(46.5, -73.6), receiver)).toBeCloseTo(0, 6);
+    expect(receiverAzimuthDeg(at(44.5, -73.6), receiver)).toBeCloseTo(180, 6);
+    // Great-circle initial bearing: due east along a parallel is not quite 90°.
+    expect(receiverAzimuthDeg(at(45.5, -72.6), receiver)).toBeCloseTo(89.643, 2);
+    expect(receiverAzimuthDeg(at(45.0, -74.3), receiver)).toBeCloseTo(224.834, 2);
+  });
+
+  it("is null without a position, a receiver, or any separation", () => {
+    expect(receiverAzimuthDeg(at(null, -73.6), receiver)).toBeNull();
+    expect(receiverAzimuthDeg(at(46.5, -73.6), null)).toBeNull();
+    expect(receiverAzimuthDeg(at(45.5, -73.6), receiver)).toBeNull();
+  });
+});
+
+describe("receiverElevationDeg", () => {
+  const track = (altitude: number | null, latitude: number | null = 46.5, longitude: number | null = -73.6) =>
+    ({ latitude, longitude, altitude });
+
+  it("accounts for Earth curvature (60 NM out at 35,000 ft)", () => {
+    // Flat-earth would say atan(10668 m / 111 km) = 5.48°.
+    expect(receiverElevationDeg(track(35000), { lat: 45.5, lng: -73.6, alt: 0 })).toBeCloseTo(4.975, 2);
+  });
+
+  it("subtracts the receiver's own altitude (both in feet)", () => {
+    expect(receiverElevationDeg(track(35000), { lat: 45.5, lng: -73.6, alt: 1000 })).toBeCloseTo(4.82, 2);
+  });
+
+  it("goes negative below the receiver's horizon", () => {
+    expect(receiverElevationDeg(track(0, 45.5, -72.32), { lat: 45.5, lng: -73.6, alt: 0 })).toBeCloseTo(-0.449, 2);
+  });
+
+  it("treats an unknown receiver altitude as sea level", () => {
+    expect(receiverElevationDeg(track(35000), { lat: 45.5, lng: -73.6, alt: null }))
+      .toBeCloseTo(receiverElevationDeg(track(35000), { lat: 45.5, lng: -73.6, alt: 0 })!, 9);
+    expect(receiverElevationDeg(track(35000), { lat: 45.5, lng: -73.6 })).toBeCloseTo(4.975, 2);
+  });
+
+  it("is 90° straight overhead", () => {
+    expect(receiverElevationDeg(track(10000, 45.5, -73.6), { lat: 45.5, lng: -73.6, alt: 0 })).toBeCloseTo(90, 6);
+  });
+
+  it("is null without an altitude, a position or a receiver", () => {
+    expect(receiverElevationDeg(track(null), { lat: 45.5, lng: -73.6 })).toBeNull();
+    expect(receiverElevationDeg(track(35000, null), { lat: 45.5, lng: -73.6 })).toBeNull();
+    expect(receiverElevationDeg(track(35000), null)).toBeNull();
+  });
+});
+
+describe("formatAngle", () => {
+  it("shows one decimal and a degree sign, keeping the sign", () => {
+    expect(formatAngle(89.643)).toBe("89.6°");
+    expect(formatAngle(-0.449)).toBe("-0.4°");
+    expect(formatAngle(0)).toBe("0.0°");
+  });
+
+  it("wraps an azimuth that rounds up to 360 back to 0", () => {
+    expect(formatAngle(359.97, { wrap360: true })).toBe("0.0°");
   });
 });

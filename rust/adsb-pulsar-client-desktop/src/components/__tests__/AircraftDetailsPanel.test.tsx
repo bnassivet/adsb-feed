@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AircraftDetailsPanel } from "../AircraftDetailsPanel";
 import type { AircraftTrack } from "@/lib/types";
+import type { ReceiverPoint } from "@/lib/aircraft-details";
 
 function makeTrack(overrides?: Partial<AircraftTrack>): AircraftTrack {
   return {
@@ -390,5 +391,52 @@ describe("AircraftDetailsPanel content", () => {
       />,
     );
     expect(screen.queryByText("IMPORTED")).not.toBeInTheDocument();
+  });
+});
+
+describe("AircraftDetailsPanel distance from receiver", () => {
+  function renderWith(receiverLocation: ReceiverPoint | null | undefined, track = makeTrack()) {
+    return render(
+      <AircraftDetailsPanel
+        track={track}
+        isOpen={true}
+        width={280}
+        onToggle={vi.fn()}
+        onWidthChange={vi.fn()}
+        receiverLocation={receiverLocation}
+      />,
+    );
+  }
+
+  it("shows the distance in km and NM", () => {
+    // One degree of latitude north of the aircraft ≈ 60 NM.
+    renderWith({ lat: 46.5, lng: -73.6 });
+    expect(screen.getByText("Distance")).toBeInTheDocument();
+    expect(screen.getByTestId("receiver-distance")).toHaveTextContent("111 km / 60.0 NM");
+  });
+
+  it("shows a dash when the aircraft has no position", () => {
+    renderWith({ lat: 46.5, lng: -73.6 }, makeTrack({ latitude: null, longitude: null }));
+    expect(screen.getByTestId("receiver-distance")).toHaveTextContent("—");
+  });
+
+  it("omits the row when no receiver location is configured", () => {
+    renderWith(undefined);
+    expect(screen.queryByText("Distance")).not.toBeInTheDocument();
+    expect(screen.queryByText("Azimuth")).not.toBeInTheDocument();
+    expect(screen.queryByText("Elevation")).not.toBeInTheDocument();
+  });
+
+  it("shows azimuth and elevation from the receiver in degrees", () => {
+    // Receiver one degree north: the aircraft (45.5, -73.6, 35,000 ft) bears due south.
+    renderWith({ lat: 46.5, lng: -73.6, alt: 0 });
+    expect(screen.getByTestId("receiver-azimuth")).toHaveTextContent("180.0°");
+    expect(screen.getByTestId("receiver-elevation")).toHaveTextContent("5.0°");
+  });
+
+  it("shows a dash for elevation when the altitude is unknown", () => {
+    renderWith({ lat: 46.5, lng: -73.6 }, makeTrack({ altitude: null }));
+    expect(screen.getByTestId("receiver-azimuth")).toHaveTextContent("180.0°");
+    expect(screen.getByTestId("receiver-elevation")).toHaveTextContent("—");
   });
 });

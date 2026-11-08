@@ -1186,6 +1186,10 @@ place of Leaflet raster layers, so they were not adopted.
 1. **Header**: "Aircraft Details" label + optional `IMPORTED` badge (indigo, shown when `isImported === true`) + optional `DB HISTORY` badge (cyan, shown when `isDbHistory === true`) + fold button `<<`
 2. **Identity**: ICAO hex (monospace, prominent), callsign (or "—")
 3. **Altitude / Speed / Heading**: altitude ft, ground_speed kts, track °, on-ground badge
+   - **Distance** from the receiver to the latest position, great-circle (`receiverDistanceNm` → `haversineDistanceNm`), shown as `km / NM` (1 NM = 1.852 km; one decimal below 100, whole above) by `formatDistance` in `lib/aircraft-details.ts`. It comes from the configured receiver location (`receiverLocation` prop), regardless of the *Show receiver* toggle, and applies to live, imported and DB-history selections alike. The row is omitted when no receiver is configured, and shows `—` for a track with no position yet.
+   - **Azimuth**: initial great-circle bearing from the receiver, degrees true (`receiverAzimuthDeg`). It shows `—` exactly overhead, where no bearing exists.
+   - **Elevation**: angle above the receiver's local horizon, degrees, negative below it (`receiverElevationDeg`). It is geometric on the same sphere as the distance, so curvature is included (an aircraft at ground level 100 km away reads −0.45°) and refraction is not. Aircraft altitude and `receiver_altitude` are both **feet** (null receiver altitude = sea level). It shows `—` without an aircraft altitude.
+   - All three rows are omitted when no receiver location is configured.
 4. **Vertical Tendency**: arrow icon (▲ green / ▼ red / → slate) + formatted rate; SVG sparkline with axes:
    - **Y-axis**: min/max altitude labels (`data-testid="sparkline-alt-min/max"`)
    - **SVG** (120×40 viewBox): `<polyline>` coloured by tendency
