@@ -1,8 +1,8 @@
 "use client";
-/** Leaflet kept as the map; dots and lines drawn by deck.gl through deck.gl-leaflet. */
+/** Leaflet kept as the map; dots and lines drawn by deck.gl through the vendored overlay (src/lib/deck-leaflet). */
 import { useEffect, useRef } from "react";
 import L from "leaflet";
-import { LeafletLayer } from "deck.gl-leaflet/dist/deck.gl-leaflet.esm.js";
+import { DeckLayer } from "@/lib/deck-leaflet/leaflet-layer";
 import type { Layer } from "@deck.gl/core";
 import { ScatterplotLayer, PathLayer } from "@deck.gl/layers";
 import { flatten } from "../flatten";
@@ -69,7 +69,7 @@ export default function DeckGlLeaflet({ params }: { params: BenchParams }) {
     if (!el.current) return;
     const map = L.map(el.current, { center: BENCH_VIEW.center, zoom: BENCH_VIEW.zoom, preferCanvas: true });
     let pending: (() => void) | null = null;
-    const deck = new LeafletLayer({
+    const deck = new DeckLayer({
       layers: [],
       onAfterRender: () => {
         pending?.();
