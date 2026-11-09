@@ -1002,25 +1002,42 @@ on a single `<canvas>` element instead of individual SVG `<path>` nodes. This re
 count from O(n) to O(1) and is critical for smooth pan/zoom with thousands of trajectory dots.
 Tooltips and mouse events still work via Leaflet's canvas hit-testing.
 
-**Imperative Dots Layer (`DotsLayer`)**:
+**GPU dots (`DeckDotsOverlay`)**:
 
-When `trajectoryStyle === "dots"`, trajectory dots are rendered imperatively via Leaflet's
-native API instead of React `<CircleMarker>` components. This avoids React VDOM reconciliation
-of 10,000+ component instances every 500ms.
+When `trajectoryStyle === "dots"`, every dot set (live, history, DB History, imported) is drawn
+by one deck.gl overlay (`src/components/DeckDotsOverlay.tsx`). It sits on the vendored
+Leaflet bridge in `src/lib/deck-leaflet/`, so Leaflet stays the map and its tiles, markers and
+lines are unchanged. It replaced `DotsLayer`, which made one `L.CircleMarker` per point and rebuilt
+all of them on every `moveend`. At the real 24 h view of about 200k points
+(docs/MAP_BENCH.md → *Real view sizes*), that rebuild froze the map for 0.3 s on every pan
+or zoom, and for 1.8 s at 1M points.
 
-Implementation:
-- Uses `useMap()` to get the Leaflet map instance
-- Creates `L.circleMarker()` objects in a `useEffect` cleanup cycle
-- Tooltips bound via `marker.bindTooltip(() => html)` — lazy (content built only on hover)
-- Cleanup removes all markers when `tracks`, `colorMode`, or `type` change
-- Combined with canvas renderer, creating/destroying 5,000 markers is ~5ms (lightweight JS objects)
+- **One `Deck`, one WebGL context**, in a custom pane `deckDots` at z-index 450. That places it
+  above Leaflet's vector canvas (density hexes, range lines, polylines; overlayPane, 400) and
+  below the aircraft icons (markerPane, 600).
+- **Binary attributes**: `buildDotBuffers` (`src/lib/deck-dots.ts`) packs each set into Float32
+  lng/lat and RGBA bytes, 12 B per point. The colours come from `cachedAltitudeToColor`, so
+  both themes match the legend exactly.
+- **Per-set cache** keyed by the identity of `(tracks, colorMode, theme)`. A 500 ms live flush
+  rebuilds only the live set. The history set's `data` object stays the same, so deck.gl
+  uploads nothing for it.
+- **Selection**: one extra layer per set holds only the selected tracks, drawn at `radius + 2`
+  and opacity 0.9 above that set. Selecting a track never touches the big buffers.
+- **Hover tooltips**: a rAF-throttled `pickObject` runs on the map's own `mousemove`, then
+  `locateDot` binary-searches the per-track `starts` to find the track and position. The
+  content comes from `dotTooltipHtml` (`src/lib/dot-tooltip.ts`, which escapes callsigns). The deck
+  canvas has `pointer-events: none`, so drag, click-to-deselect and the context menu stay
+  Leaflet's. Picking is skipped while the map is moving. It is also skipped when the pointer is over anything with its own hover (`isBareMapTarget`): aircraft icons, tooltips, popups and controls. The newest live dot sits under its icon, and without this rule hovering the icon opened two tooltips. A hovered dot also **outranks vector-path tooltips** (density hexes, range lines, polylines). On the old shared canvas the dots were added last, so Leaflet's hit-test gave them the hover. `DotTooltipArbiter` (`src/lib/tooltip-arbiter.ts`) recreates that: it closes path tooltips while a dot is hovered, then reopens them at the cursor if the pointer is still on the path (no `mouseout`).
+- There is **no subsampling**: the GPU draws every point every frame, so `subsamplePositions`
+  is no longer on the dots path.
 
 ```
-DotsLayer({ tracks, colorMode, type: "history" | "live" })
-  → useMap() to get map instance
-  → useEffect([tracks, colorMode]) creates L.CircleMarker objects
-  → Each marker gets bindTooltip with lazy content
-  → Cleanup removes all markers
+MapInner
+  → dotSets = [history, dbHistory, imported, live]   (bottom → top, non-empty only)
+  → <DeckDotsOverlay sets selected theme>
+       mount:  createPane("deckDots") → new DeckLayer({pane}) → map mousemove → pickObject
+       render: per set → cached buildDotBuffers → ScatterplotLayer(id=type)
+                                                 + ScatterplotLayer(id=type-selected)
 ```
 
 **Active Marker Behavior**:
@@ -2635,9 +2652,9 @@ const { tracks, history } = useAircraftTracks(filters);
 
 1. **Event Batching**: Messages batched into 500ms intervals (reduce React re-renders)
 2. **Canvas Renderer**: `MapContainer preferCanvas={true}` draws all vector layers on a single `<canvas>` element instead of individual SVG `<path>` nodes — reduces DOM node count from ~5,000 to 1
-3. **Imperative Dots Layer**: Trajectory dots created via `L.circleMarker()` + `useMap()`/`useEffect()` instead of React `<CircleMarker>` components — eliminates VDOM reconciliation of 10,000+ components every 500ms
+3. **GPU Dots**: Trajectory dots drawn by one deck.gl `ScatterplotLayer` per set from cached typed arrays (`DeckDotsOverlay`). There are no per-point objects, and nothing is rebuilt on pan or zoom, which matters at the real 24 h view of about 200k points (docs/MAP_BENCH.md)
 4. **Cached Altitude Colors**: `cachedAltitudeToColor()` uses a bounded `Map` cache (512 entries, FIFO eviction) to avoid recomputing `rgb()` strings — ~98% hit rate due to altitude clustering around flight levels
-5. **Lazy Tooltips**: `marker.bindTooltip(() => html)` builds tooltip content only on hover, not on creation — avoids building 5,000 HTML strings per render cycle
+5. **Lazy Tooltips**: dot tooltip HTML is built only for the dot picked under the cursor (`dotTooltipHtml`), never per point
 6. **Lazy Loading**: Map component loaded dynamically (no SSR overhead)
 7. **In-Place Track Mutation**: Existing tracks are mutated via `mergePositionInto()` instead of allocating new objects per position update
 8. **Zero-Allocation Position Append**: `push()`+`shift()` replaces `[...spread, newItem]` for position arrays — eliminates ~800 array allocations/sec with 40 aircraft
@@ -3480,9 +3497,9 @@ Clicking an aircraft marker on the map or a row in the table selects it. Selecti
 
 #### 7. No Click Handlers on Dots
 
-**Decision**: Only `<Marker>` icons (active aircraft) are clickable on the map. The `DotsLayer` circles are not clickable for selection.
+**Decision**: Only `<Marker>` icons (active aircraft) are clickable on the map. Dots are not clickable for selection.
 
-**Rationale**: The `DotsLayer` renders thousands of `L.circleMarker` objects imperatively for performance. Adding individual click handlers to each dot would negate the performance benefit and create a confusing UX (which dot represents "the aircraft"?). Users select via the aircraft marker icon or the table row.
+**Rationale**: Dots were originally thousands of `L.circleMarker` objects, and click handlers would have negated their performance benefit. They are now GPU-drawn by `DeckDotsOverlay`, and picking is cheap (hover already uses it), so this is no longer a cost. It remains a UX choice: which dot represents "the aircraft"? Users select via the aircraft marker icon or the table row.
 
 ### Files
 

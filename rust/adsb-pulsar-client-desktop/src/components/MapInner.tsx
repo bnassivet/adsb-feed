@@ -12,7 +12,8 @@ import type { DensityProperties, DensityAltitudeRange } from "@/lib/h3-density";
 import { useMapZoom } from "@/hooks/useMapZoom";
 import { aircraftIconHtml } from "@/lib/aircraft-icon";
 import { orderTracksWithSelectedLast } from "@/lib/track-ordering";
-import { subsamplePositions } from "@/lib/subsample";
+import { formatAlt, timeAgo } from "@/lib/dot-tooltip";
+import { DeckDotsOverlay, type DotSet } from "./DeckDotsOverlay";
 import { formatTrackLabel, layoutLabels, trackLabelHtml, type LabelItem, type LabelPlacement } from "@/lib/label-layout";
 import {
   fieldsAt,
@@ -74,17 +75,6 @@ function aircraftIcon(heading: number, color: string, selected: boolean = false)
     iconSize: result.iconSize,
     iconAnchor: result.iconAnchor,
   });
-}
-
-/** Formats a relative time string from a timestamp. */
-function timeAgo(lastSeen: number): string {
-  const seconds = Math.floor((Date.now() - lastSeen) / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  const remainMin = minutes % 60;
-  return `${hours}h ${remainMin}m ago`;
 }
 
 /** Watches container size changes and tells Leaflet to recalculate. */
@@ -288,7 +278,7 @@ const EVICT_DEBOUNCE_MS = 5000;
 /**
  * The basemap, loaded through the IndexedDB tile cache (`lib/tile-cache/`).
  *
- * Imperative, like `DotsLayer`: the layer is built once per tile source and
+ * Imperative, like `DeckDotsOverlay`: the layer is built once per tile source and
  * reads the cache settings through a ref on every tile, so changing the radius
  * or the cap never reloads the visible map. Changing the footprint or the cap
  * prunes the store straight away -- including on mount, which covers a
@@ -442,7 +432,7 @@ const NO_SEGMENT = 255;
 /**
  * Particles drifting with the wind on one level, drawn on a canvas.
  *
- * Imperative, like DotsLayer: a frame loop has no business in React state.
+ * Imperative, like DeckDotsOverlay: a frame loop has no business in React state.
  * The canvas is cleared while the map pans or zooms and re-seeded when it
  * stops -- particle positions are geographic, but the trails on the canvas
  * are pixels and would smear across a moving map.
@@ -716,12 +706,6 @@ function DensityLayer({
   );
 }
 
-/** Format altitude for tooltip display. */
-function formatAlt(alt: number | null | undefined): string {
-  if (alt == null) return "N/A"; // handles both null and undefined
-  return `${alt.toLocaleString()} ft`;
-}
-
 /**
  * Cached [lat, lng] extraction from positions.
  * Supports both tuple arrays (live tracks) and ColumnarPositions (batch tracks).
@@ -815,7 +799,7 @@ function RangeLinesLayer({
 /**
  * `HEX/CALLSIGN` labels beside live aircraft, placed by `layoutLabels`.
  *
- * Imperative like `DotsLayer`: one zero-size, non-interactive marker per label in
+ * Imperative like `DeckDotsOverlay`: one zero-size, non-interactive marker per label in
  * its own pane (above aircraft icons, `pointer-events: none` so a label never
  * steals a click). Re-laid out on every feed update and on zoom/move/resize,
  * feeding the previous result back so labels keep their slot; an icon is only
@@ -927,179 +911,6 @@ function labelIcon(p: LabelPlacement, text: string, color: string, selected: boo
   });
 }
 
-/**
- * Renders dots imperatively via Leaflet API — bypasses React per-dot reconciliation.
- *
- * Split into two effects:
- * 1. Marker creation: runs when tracks/colorMode/type/theme change (heavy — creates all markers)
- * 2. Selection restyle: runs when selectedHexIdents change (light — only updates radius/opacity
- *    on the 2 affected tracks: previously selected + newly selected)
- */
-function DotsLayer({
-  tracks,
-  colorMode,
-  type,
-  selectedHexIdents,
-  theme,
-}: {
-  tracks: AircraftTrack[];
-  colorMode: AltitudeColorMode;
-  type: "history" | "live" | "imported" | "dbHistory";
-  selectedHexIdents: Set<string>;
-  theme: MapTheme;
-}) {
-  const map = useMap();
-  // Per-track marker groups for targeted restyle on selection change
-  const markersByTrack = useRef<Map<string, L.CircleMarker[]>>(new Map());
-  const prevSelected = useRef<Set<string>>(new Set());
-  // Track zoom/bounds for subsampling — triggers re-render on viewport change
-  const [viewState, setViewState] = useState({ zoom: map.getZoom(), bounds: map.getBounds() });
-  useMapEvents({
-    zoomend: () => setViewState({ zoom: map.getZoom(), bounds: map.getBounds() }),
-    moveend: () => setViewState({ zoom: map.getZoom(), bounds: map.getBounds() }),
-  });
-
-  const baseRadius = type === "history" ? 2 : type === "imported" ? 2.5 : type === "dbHistory" ? 2.5 : 3;
-  const baseFillOpacity = type === "history" ? 0.2 : type === "imported" ? 0.35 : type === "dbHistory" ? 0.4 : 0.6;
-
-  // Effect 1: Create/destroy markers when tracks or visual config change
-  useEffect(() => {
-    const groupMap = markersByTrack.current;
-    // Clear previous markers
-    for (const markers of groupMap.values()) {
-      for (const m of markers) m.remove();
-    }
-    groupMap.clear();
-
-    const mapBounds = {
-      north: viewState.bounds.getNorth(),
-      south: viewState.bounds.getSouth(),
-      east: viewState.bounds.getEast(),
-      west: viewState.bounds.getWest(),
-    };
-
-    for (const t of tracks) {
-      if (t.positions.length < 2) continue;
-      const key = trackKey(t);
-      const trackColor = cachedAltitudeToColor(t.altitude, theme);
-      const isSelected = selectedHexIdents.has(key);
-      const radius = isSelected ? baseRadius + 2 : baseRadius;
-      const fillOpacity = isSelected ? 0.9 : baseFillOpacity;
-      const trackMarkers: L.CircleMarker[] = [];
-
-      // Extract position accessors — columnar (Float64Array) or tuple ([lat,lng,alt][])
-      const positions = t.positions;
-      const columnar = isColumnar(positions);
-      const pLat = columnar ? positions.lat : null;
-      const pLng = columnar ? positions.lng : null;
-      const pAlt = columnar ? positions.alt : null;
-
-      // Subsample: skip positions that map to the same pixel at current zoom
-      // Selected tracks render at full detail for inspection
-      const indices = isSelected
-        ? null  // full detail
-        : subsamplePositions(positions, viewState.zoom, mapBounds);
-
-      const count = indices ? indices.length : positions.length;
-
-      for (let idx = 0; idx < count; idx++) {
-        const i = indices ? indices[idx] : idx;
-        let lat: number, lng: number, alt: number | null;
-        if (columnar) {
-          lat = pLat![i]; lng = pLng![i];
-          const a = pAlt![i]; alt = Number.isNaN(a) ? null : a;
-        } else {
-          const p = (positions as [number, number, number | null][])[i];
-          lat = p[0]; lng = p[1]; alt = p[2];
-        }
-        const dotColor = colorMode === "plot" ? cachedAltitudeToColor(alt, theme) : trackColor;
-        const isLast = i === t.positions.length - 1;
-
-        const marker = L.circleMarker([lat, lng], {
-          radius,
-          color: dotColor,
-          fillColor: dotColor,
-          fillOpacity,
-          weight: 0,
-        });
-
-        // Lazy tooltip — content built only on hover
-        const label = t.callsign ?? t.hex_ident;
-        if (type === "history") {
-          marker.bindTooltip(() => {
-            const parts = [
-              `<div style="font-weight:600;color:#fff">${label}</div>`,
-              `<div>Hex: ${t.hex_ident}</div>`,
-              `<div>Alt: <span style="color:#fff">${formatAlt(alt)}</span></div>`,
-            ];
-            if (isLast) parts.push(`<div>Last seen: ${timeAgo(t.last_seen)}</div>`);
-            return parts.join("");
-          });
-        } else if (type === "dbHistory") {
-          marker.bindTooltip(() =>
-            `<div style="font-weight:600;color:#fff">${label}</div><div>Hex: ${t.hex_ident}</div><div>Alt: <span style="color:#fff">${formatAlt(alt)}</span></div><div style="color:#22d3ee;margin-top:2px">DB History</div>`
-          );
-        } else if (type === "imported") {
-          marker.bindTooltip(() =>
-            `<div style="font-weight:600;color:#fff">${label}</div><div>Hex: ${t.hex_ident}</div><div>Alt: <span style="color:#fff">${formatAlt(alt)}</span></div><div style="color:#818cf8;margin-top:2px">Imported</div>`
-          );
-        } else {
-          marker.bindTooltip(() =>
-            `<div style="font-weight:600;color:#fff">${label}</div><div>Alt: <span style="color:#fff">${formatAlt(alt)}</span></div>`
-          );
-        }
-
-        marker.addTo(map);
-        trackMarkers.push(marker);
-      }
-      groupMap.set(key, trackMarkers);
-    }
-
-    prevSelected.current = new Set(selectedHexIdents);
-
-    return () => {
-      for (const markers of groupMap.values()) {
-        for (const m of markers) m.remove();
-      }
-      groupMap.clear();
-    };
-    // Intentionally excludes selectedHexIdents — handled by Effect 2
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, tracks, colorMode, type, theme, baseRadius, baseFillOpacity, viewState]);
-
-  // Effect 2: Restyle only changed tracks on selection change (no marker recreation)
-  useEffect(() => {
-    const groupMap = markersByTrack.current;
-    if (groupMap.size === 0) return;
-
-    const prev = prevSelected.current;
-    // Find tracks that changed selection state
-    const changed = new Set<string>();
-    for (const key of selectedHexIdents) {
-      if (!prev.has(key)) changed.add(key);
-    }
-    for (const key of prev) {
-      if (!selectedHexIdents.has(key)) changed.add(key);
-    }
-
-    for (const key of changed) {
-      const markers = groupMap.get(key);
-      if (!markers) continue;
-      const isNowSelected = selectedHexIdents.has(key);
-      const radius = isNowSelected ? baseRadius + 2 : baseRadius;
-      const fillOpacity = isNowSelected ? 0.9 : baseFillOpacity;
-      for (const m of markers) {
-        m.setRadius(radius);
-        m.setStyle({ fillOpacity });
-      }
-    }
-
-    prevSelected.current = new Set(selectedHexIdents);
-  }, [selectedHexIdents, baseRadius, baseFillOpacity]);
-
-  return null;
-}
-
 export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
   // Memoised: the basemap layer is rebuilt (and every tile reloaded) when this changes.
   const tile = useMemo(() => tileConfig(mapTheme, CARTO_API_KEY), [mapTheme]);
@@ -1116,6 +927,18 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
     () => orderTracksWithSelectedLast(historyTracks, selectedHexIdents),
     [historyTracks, selectedHexIdents],
   );
+
+  // Drawn bottom to top, as the DotsLayers were mounted.
+  const dotSets = useMemo<DotSet[]>(() => {
+    if (trajectoryStyle !== "dots") return [];
+    const sets: DotSet[] = [
+      { type: "history", tracks: historyTracks, colorMode: historyColorMode },
+      { type: "dbHistory", tracks: dbHistoryTracks, colorMode: "plot" },
+      { type: "imported", tracks: importedTracks, colorMode: "plot" },
+      { type: "live", tracks: showPositions ? tracks : [], colorMode: liveColorMode },
+    ];
+    return sets.filter((s) => s.tracks.length > 0);
+  }, [trajectoryStyle, historyTracks, historyColorMode, dbHistoryTracks, importedTracks, showPositions, tracks, liveColorMode]);
 
   const handleDeselect = useCallback(() => onSelectTrack(null), [onSelectTrack]);
 
@@ -1159,9 +982,8 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         {weather && weatherBarbs && <WeatherBarbsLayer snapshot={weather} level={weatherLevel} theme={mapTheme} />}
 
         {/* History tracks — rendered first so active tracks layer on top */}
-        {trajectoryStyle === "dots" && historyTracks.length > 0 && (
-          <DotsLayer tracks={historyTracks} colorMode={historyColorMode} type="history" selectedHexIdents={selectedHexIdents} theme={mapTheme} />
-        )}
+        {/* Every dot set (history, DB History, imported, live) on the GPU, in its own pane */}
+        {dotSets.length > 0 && <DeckDotsOverlay sets={dotSets} selected={selectedHexIdents} theme={mapTheme} />}
         {trajectoryStyle === "line" && orderedHistory.map((t) => {
           if (t.positions.length < 2) return null;
           const trackColor = cachedAltitudeToColor(t.altitude, mapTheme);
@@ -1192,9 +1014,6 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         })}
 
         {/* DB History tracks — cyan polylines/dots */}
-        {trajectoryStyle === "dots" && dbHistoryTracks.length > 0 && (
-          <DotsLayer tracks={dbHistoryTracks} colorMode="plot" type="dbHistory" selectedHexIdents={selectedHexIdents} theme={mapTheme} />
-        )}
         {trajectoryStyle === "line" && dbHistoryTracks.map((t) => {
           if (t.positions.length < 2) return null;
           const isSelected = selectedHexIdents.has(trackKey(t));
@@ -1224,9 +1043,6 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         })}
 
         {/* Imported tracks — dots or dashed indigo polylines */}
-        {trajectoryStyle === "dots" && importedTracks.length > 0 && (
-          <DotsLayer tracks={importedTracks} colorMode="plot" type="imported" selectedHexIdents={selectedHexIdents} theme={mapTheme} />
-        )}
         {trajectoryStyle === "line" && importedTracks.map((t) => {
           if (t.positions.length < 2) return null;
           const isSelected = selectedHexIdents.has(trackKey(t));
@@ -1257,9 +1073,6 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         })}
 
         {/* Active track dots — imperative layer for performance */}
-        {trajectoryStyle === "dots" && showPositions && tracks.length > 0 && (
-          <DotsLayer tracks={tracks} colorMode={liveColorMode} type="live" selectedHexIdents={selectedHexIdents} theme={mapTheme} />
-        )}
 
         {/* Planned routes of agent-generated trajectories.
             Dashed and dimmed so they read as *intent* rather than as flown

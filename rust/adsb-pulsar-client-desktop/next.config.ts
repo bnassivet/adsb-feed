@@ -10,6 +10,10 @@ const nextConfig: NextConfig = {
   // required anyway: two dev servers sharing one `.next` would fight over the
   // same build output. scripts/stack.sh sets this for named stacks.
   distDir: process.env.NEXT_DIST_DIR ?? ".next",
+  // Map render benchmark routes (src/app/bench/*/page.bench.tsx) exist only when
+  // BENCH=1. Under the default extensions `page.bench.tsx` is named "page.bench",
+  // which is not a route, so the shipped export never contains them.
+  pageExtensions: process.env.BENCH ? ["bench.tsx", "tsx", "ts"] : ["tsx", "ts"],
   images: {
     unoptimized: true,
   },
