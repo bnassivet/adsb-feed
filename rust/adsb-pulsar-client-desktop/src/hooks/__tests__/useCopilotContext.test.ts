@@ -45,6 +45,7 @@ function makeConfig(overrides: Partial<CopilotContextConfig> = {}): CopilotConte
     storageStatus: "available",
     receiverLocation: null,
     agentSimulatedCount: 0,
+    historyWindow: { retentionHours: 24, fromHoursAgo: 4, toHoursAgo: 0 },
     ...overrides,
   };
 }
@@ -106,6 +107,13 @@ describe("useCopilotContext", () => {
     expect(v.history).toBe(false);
     expect(v.imported).toBe(true);
     expect(v.events).toBe(true);
+  });
+
+  it("registers the history layer's time window", () => {
+    const v = registeredReadables.get(
+      "History layer time window (hours ago; retentionHours is the deepest available)",
+    );
+    expect(v).toEqual({ retentionHours: 24, fromHoursAgo: 4, toHoursAgo: 0 });
   });
 
   it("registers live track count", () => {

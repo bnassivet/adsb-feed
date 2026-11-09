@@ -51,6 +51,7 @@ import type {
   ScenarioTrack,
 } from "@/lib/types";
 import { trackKey } from "@/lib/types";
+import { historyWindowToSlider } from "@/lib/history-time-filter";
 import {
   availableLevels,
   describeRecordedValidity,
@@ -158,7 +159,13 @@ export interface DisplayToolsConfig {
   eventUpcomingDays: number;
   eventTimeRangeStart: number;
   eventTimeRangeEnd: number;
+  /** History retention in hours (Settings → Track History); the deepest window available. */
+  trackHistoryHours: number;
+  /** History layer time-window slider positions, 0..trackHistoryHours (see history-time-filter.ts). */
+  historySliderMin: number;
+  historySliderMax: number;
   // Setters
+  setHistoryTimeRange: (min: number, max: number) => void;
   setMapTheme: (v: "light" | "dark") => void;
   setSidebarOpen: (v: boolean) => void;
   setActiveMode: (v: ActiveMode) => void;
@@ -974,7 +981,7 @@ export function useCopilotTools(config: DisplayToolsConfig) {
   useSafeFrontendTool({
     name: "setLayerVisibility",
     description:
-      "Show or hide map layers. Only provided layers are changed; omitted layers keep their current state. Available layers: positions, labels, rangeLines, history, density, simulation, imported, receiver, events. Weather and wind are not among them: use setWeatherLayer.",
+      "Show or hide map layers. Only provided layers are changed; omitted layers keep their current state. Available layers: positions, labels, rangeLines, history, density, simulation, imported, receiver, events. Weather and wind are not among them: use setWeatherLayer. To change how far back the history layer reaches (e.g. 'last 4 hours'), use setHistoryWindow.",
     parameters: z.object({
       positions: z
         .boolean()
@@ -1056,6 +1063,51 @@ export function useCopilotTools(config: DisplayToolsConfig) {
     render: (props) =>
       createElement(DisplaySettingCard, {
         setting: "Layer Visibility",
+        status: toCardStatus(props.status),
+        result: props.result,
+      }),
+  });
+
+  useSafeFrontendTool({
+    name: "setHistoryWindow",
+    description:
+      "Set the time depth of the history tracks layer: show only aircraft last seen within a window of hours before now " +
+      "(e.g. 'history from the last 4 hours' → depthHours=4). Also turns the history layer on. " +
+      "The window cannot reach further back than the history retention (retentionHours in context); a deeper request " +
+      "is clamped and the result says so. Use setLayerVisibility only to hide the layer.",
+    parameters: z.object({
+      depthHours: z
+        .number()
+        .describe("How many hours of history to show, counted back from the window's newer end"),
+      endHoursAgo: z
+        .number()
+        .optional()
+        .describe("Newer end of the window in hours before now; omit or 0 for 'until now'"),
+    }),
+    handler: async (args: { depthHours: number; endHoursAgo?: number }) => {
+      if (!(args.depthHours > 0)) {
+        return JSON.stringify({ error: "depthHours must be a positive number of hours" });
+      }
+      const c = configRef.current;
+      const w = historyWindowToSlider(c.trackHistoryHours, args.depthHours, args.endHoursAgo ?? 0);
+      c.setHistoryTimeRange(w.sliderMin, w.sliderMax);
+      c.setShowHistory(() => true);
+      return JSON.stringify({
+        fromHoursAgo: w.fromHoursAgo,
+        toHoursAgo: w.toHoursAgo,
+        retentionHours: c.trackHistoryHours,
+        clamped: w.clamped,
+        historyLayerShown: true,
+        ...(w.clamped && {
+          note:
+            `History only holds the last ${c.trackHistoryHours} h. To go further back, the user must raise ` +
+            "Track History in Settings (1–72 h); older data appears after the app restarts.",
+        }),
+      });
+    },
+    render: (props) =>
+      createElement(DisplaySettingCard, {
+        setting: "History Window",
         status: toCardStatus(props.status),
         result: props.result,
       }),

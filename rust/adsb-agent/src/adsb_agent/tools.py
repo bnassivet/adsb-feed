@@ -414,7 +414,8 @@ TOOLS: list[dict] = [
             "description": (
                 "Show or hide map layers. Only provided layers are changed; "
                 "omitted layers keep their current state. Weather and wind are "
-                "not among them: use setWeatherLayer."
+                "not among them: use setWeatherLayer. To change how far back the "
+                "history layer reaches (e.g. 'last 4 hours'), use setHistoryWindow."
             ),
             "parameters": {
                 "type": "object",
@@ -450,6 +451,40 @@ TOOLS: list[dict] = [
                     "receiver": {"type": "boolean", "description": "Show receiver location"},
                     "events": {"type": "boolean", "description": "Show events of interest"},
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "setHistoryWindow",
+            "description": (
+                "Set the time depth of the history tracks layer: show only aircraft "
+                "last seen within a window of hours before now (e.g. 'history from "
+                "the last 4 hours' -> depthHours=4). Also turns the history layer on. "
+                "The window cannot reach further back than the history retention "
+                "(retentionHours in context); a deeper request is clamped and the "
+                "result says so. Use setLayerVisibility only to hide the layer."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "depthHours": {
+                        "type": "number",
+                        "description": (
+                            "How many hours of history to show, counted back from "
+                            "the window's newer end"
+                        ),
+                    },
+                    "endHoursAgo": {
+                        "type": "number",
+                        "description": (
+                            "Newer end of the window in hours before now; omit or 0 "
+                            "for 'until now'"
+                        ),
+                    },
+                },
+                "required": ["depthHours"],
             },
         },
     },

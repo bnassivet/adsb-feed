@@ -32,3 +32,62 @@ export function filterHistoryByTimeRange(
     return hoursAgo >= minHoursAgo && hoursAgo <= maxHoursAgo;
   });
 }
+
+/** A history window expressed the way people (and the agent) say it. */
+export interface HistoryWindow {
+  /** Older bound, in hours before now. */
+  fromHoursAgo: number;
+  /** Newer bound, in hours before now (0 = now). */
+  toHoursAgo: number;
+}
+
+/**
+ * Convert "the last `depthHours`, ending `endHoursAgo` before now" into slider
+ * positions for {@link filterHistoryByTimeRange}.
+ *
+ * The slider moves in whole hours, so fractional bounds are widened outward
+ * (1.5 h shows 2 h) and the window is never narrower than one hour. Nothing
+ * older than `trackHistoryHours` is held in memory, so a deeper request is
+ * clamped to retention and reported with `clamped: true`. Widening retention
+ * is a Settings change, not something this window can do.
+ */
+export function historyWindowToSlider(
+  trackHistoryHours: number,
+  depthHours: number,
+  endHoursAgo = 0,
+): HistoryWindow & { sliderMin: number; sliderMax: number; clamped: boolean } {
+  const retention = Math.max(1, Math.floor(trackHistoryHours));
+  const end = Math.max(0, endHoursAgo);
+  let clamped = false;
+
+  let to = Math.floor(end);
+  if (to > retention - 1) {
+    to = retention - 1;
+    clamped = true;
+  }
+  let from = Math.max(Math.ceil(end + Math.max(0, depthHours)), to + 1);
+  if (from > retention) {
+    from = retention;
+    clamped = true;
+  }
+
+  return {
+    sliderMin: retention - from,
+    sliderMax: retention - to,
+    fromHoursAgo: from,
+    toHoursAgo: to,
+    clamped,
+  };
+}
+
+/** Inverse of {@link historyWindowToSlider}: slider positions → hours ago. */
+export function sliderToHistoryWindow(
+  trackHistoryHours: number,
+  sliderMin: number,
+  sliderMax: number,
+): HistoryWindow {
+  return {
+    fromHoursAgo: trackHistoryHours - sliderMin,
+    toHoursAgo: trackHistoryHours - sliderMax,
+  };
+}

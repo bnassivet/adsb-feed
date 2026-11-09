@@ -74,6 +74,10 @@ function makeConfig(overrides: Partial<DisplayToolsConfig> = {}): DisplayToolsCo
     eventUpcomingDays: 7,
     eventTimeRangeStart: 1000,
     eventTimeRangeEnd: 2000,
+    trackHistoryHours: 24,
+    historySliderMin: 0,
+    historySliderMax: 24,
+    setHistoryTimeRange: vi.fn(),
     setMapTheme: vi.fn(),
     setSidebarOpen: vi.fn(),
     setActiveMode: vi.fn(),
@@ -127,9 +131,9 @@ describe("useCopilotTools — display control tools", () => {
     renderHook(() => useCopilotTools(config));
   });
 
-  it("registers all 37 tools", () => {
-    // 26 display/query tools + 9 simulation-scenario tools + 2 weather tools.
-    expect(registeredTools.size).toBe(37);
+  it("registers all 38 tools", () => {
+    // 27 display/query tools + 9 simulation-scenario tools + 2 weather tools.
+    expect(registeredTools.size).toBe(38);
   });
 
   describe("weather tools", () => {
@@ -510,6 +514,59 @@ describe("useCopilotTools — display control tools", () => {
       expect(config.setShowImported).toHaveBeenCalled();
       expect(config.setShowReceiver).toHaveBeenCalled();
       expect(config.setShowEvents).toHaveBeenCalled();
+    });
+  });
+
+  describe("setHistoryWindow", () => {
+    it("shows the last 4 hours of a 24 h history", async () => {
+      const result = JSON.parse(
+        (await getHandler("setHistoryWindow")({ depthHours: 4 })) as string,
+      );
+      expect(config.setHistoryTimeRange).toHaveBeenCalledWith(20, 24);
+      expect(result).toMatchObject({ fromHoursAgo: 4, toHoursAgo: 0, retentionHours: 24, clamped: false });
+    });
+
+    it("accepts a window that ends in the past", async () => {
+      await getHandler("setHistoryWindow")({ depthHours: 4, endHoursAgo: 2 });
+      expect(config.setHistoryTimeRange).toHaveBeenCalledWith(18, 22);
+    });
+
+    it("turns the history layer on, since a window on a hidden layer shows nothing", async () => {
+      const result = JSON.parse((await getHandler("setHistoryWindow")({ depthHours: 4 })) as string);
+      expect(config.setShowHistory).toHaveBeenCalledOnce();
+      expect(vi.mocked(config.setShowHistory).mock.calls[0][0](false)).toBe(true);
+      expect(result.historyLayerShown).toBe(true);
+    });
+
+    it("clamps to retention and explains how to go deeper", async () => {
+      registeredTools.clear();
+      config = makeConfig({ trackHistoryHours: 2, historySliderMax: 2 });
+      renderHook(() => useCopilotTools(config));
+      const result = JSON.parse((await getHandler("setHistoryWindow")({ depthHours: 4 })) as string);
+      expect(config.setHistoryTimeRange).toHaveBeenCalledWith(0, 2);
+      expect(result).toMatchObject({ fromHoursAgo: 2, clamped: true, retentionHours: 2 });
+      expect(result.note).toMatch(/Settings/);
+    });
+
+    it("rejects a non-positive depth without touching the slider", async () => {
+      const result = JSON.parse((await getHandler("setHistoryWindow")({ depthHours: 0 })) as string);
+      expect(result.error).toBeTruthy();
+      expect(config.setHistoryTimeRange).not.toHaveBeenCalled();
+    });
+
+    it("reads the latest retention, not the value captured at registration", async () => {
+      registeredTools.clear();
+      let cfg = makeConfig();
+      const { rerender } = renderHook(() => useCopilotTools(cfg));
+      cfg = makeConfig({ trackHistoryHours: 48, historySliderMax: 48 });
+      rerender();
+      await getHandler("setHistoryWindow")({ depthHours: 4 });
+      expect(cfg.setHistoryTimeRange).toHaveBeenCalledWith(44, 48);
+    });
+
+    it("is what setLayerVisibility points to for history depth", () => {
+      expect(registeredTools.get("setLayerVisibility")?.description).toMatch(/setHistoryWindow/);
+      expect(registeredTools.get("setHistoryWindow")?.description).toMatch(/hours/i);
     });
   });
 
