@@ -6,13 +6,18 @@ Deployment and operational tooling for the supporting services:
 
 | Path | Description |
 |------|-------------|
-| `docker-compose.yml` | Docker Compose stack for local Pulsar broker |
-| `DockerCompose/pulsar/` | Pulsar consumer test scripts |
-| `Grafana/dashboards/` | Pre-built Grafana dashboard definitions |
+| `mqtt/` | Mosquitto broker (Compose file + `mosquitto.conf`) — the live transport, started by `make up` |
+| `docker-compose.yml` | Optional Pulsar broker (+ init) with Prometheus and Grafana monitoring |
+| `docker-compose.pi.yml` | Raspberry Pi override: Prometheus on the host network, so loopback-bound services need not open their ports |
+| `DockerCompose/pulsar/` | Pulsar consumer test script |
+| `grafana/` | Dashboards (pipeline, recorder, weather, agents) and auto-provisioning of the Prometheus datasource |
+| `prometheus/` | Prometheus scrape configuration (`prometheus.yml`, plus `prometheus.pi.yml` for the Pi) |
 | `Spark/` | Dockerfile for Spark + Delta Lake experimentation |
-| `kubernetes/` | Kubernetes manifest for production deployment |
-| `prometheus/` | Prometheus scrape configuration |
+| `kubernetes/` | Spark standalone cluster + S3-compatible store for `spark-adsb` — Kustomize `base/` with per-version `overlays/`, or the `helm/adsb-spark` chart |
 | `pulsar/` | Pulsar setup scripts (standalone broker, topic config, monitoring) |
+
+Pulsar is optional and off by default; see [`QUICKSTART.md`](QUICKSTART.md) for running the
+MQTT stack and [`infrastructure/README.md`](infrastructure/README.md) for details.
 
 ### `rust/`
 
@@ -20,8 +25,10 @@ Higher-performance and desktop components (Cargo workspace):
 
 | Crate / Directory | Description |
 |-------------------|-------------|
-| `adsb-pulsar-client/` | Rust Pulsar client library + CLI binary (~5 MB, ~50k msg/s) |
+| `adsb-pulsar-client/` | Feed client library + CLI binary: reads dump1090 SBS-1 and publishes to MQTT, with Pulsar as an optional extra leg (the name predates MQTT) |
 | `adsb-data-engine/` | Shared SBS-1 parser, geo utilities, and DuckDB local storage |
+| `adsb-data-server/` | Headless recorder: subscribes over MQTT, writes DuckDB, serves it over Quack and a read-only HTTP query API |
+| `adsb-weather-server/` | Optional weather service: gridded winds aloft and MSL pressure from Open-Meteo, published as a retained MQTT snapshot |
 | `adsb-pulsar-client-desktop/` | Tauri v2 desktop app (Rust backend + Next.js 16 / React 19 frontend) |
 | `adsb-agent/` | AI agent layer (LangGraph ReAct loop, AG-UI chat, voice/audio models) — Python, not a Cargo member |
 | `adsb-simulation-agent/` | A2A agent generating kinematically plausible simulated trajectories — Python, not a Cargo member |
