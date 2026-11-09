@@ -90,39 +90,122 @@ jobs:
           cargo build -p adsb-pulsar-client --no-default-features --features cli,mqtt
           cargo build -p adsb-pulsar-client --no-default-features
 
+  # The Pi fleet is Raspberry Pi 3 (Cortex-A53) on Raspberry Pi OS bookworm,
+  # both 64-bit and 32-bit. What makes a binary run there is the target triple
+  # (default baseline CPU -- no target-cpu=native anywhere) and glibc, NOT the
+  # machine that compiled it. Both edge jobs therefore build inside
+  # rust:*-bookworm (glibc 2.36) and assert the binary needs nothing newer:
+  # building directly on the Ubuntu 24.04 runner would link against 2.39.
+  #
+  # RUSTUP_TOOLCHAIN=1.92.0 selects the image's preinstalled toolchain. Without
+  # it rust-toolchain.toml's "1.92" counts as a different toolchain and rustup
+  # downloads it again on every run.
   edge-arm64:
-    name: Edge build (aarch64, Raspberry Pi artifacts)
-    runs-on: ubuntu-latest
+    name: Edge build (aarch64, 64-bit Raspberry Pi)
+    # Native arm64 runner (free for public repos): the bookworm arm64 container
+    # runs without emulation. On an x86_64 runner the same build ran under QEMU
+    # and took ~14 min; natively it is about a minute.
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@main
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
         with:
-          tool-cache: false
-          large-packages: true
-          docker-images: false
-          swap-storage: true
+          path: |
+            ~/.cache/edge-cargo-registry
+            rust/target-linux-arm64
+          key: edge-arm64-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}
+          restore-keys: |
+            edge-arm64-
 
-      - uses: docker/setup-qemu-action@v3
-
-      # The same arm64 container the Makefile uses. On an x86_64 runner this is
-      # emulated, so it is slower than on an Apple Silicon workstation -- but it
-      # is the only thing that proves the Pi artifacts still build.
+      # Same container and features as `make feed-arm64` (rust/Makefile).
       - name: Build feed client (no Pulsar, no protoc)
         run: |
+          mkdir -p ~/.cache/edge-cargo-registry
           docker run --rm --platform linux/arm64 \
             -v "$PWD/rust":/work -w /work \
+            -v ~/.cache/edge-cargo-registry:/usr/local/cargo/registry \
+            -e RUSTUP_TOOLCHAIN=1.92.0 \
             -e CARGO_TARGET_DIR=/work/target-linux-arm64 \
             -e CARGO_PROFILE_RELEASE_DEBUG=0 \
             rust:1.92-bookworm \
-            cargo build --release -p adsb-pulsar-client -j 2 \
-              --no-default-features --features cli,mqtt
+            cargo build --release -p adsb-pulsar-client \
+              --no-default-features --features cli,mqtt,metrics
+
+      # The container ran as root; actions/cache must be able to read these.
+      - name: Hand cached dirs back to the runner user
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" ~/.cache/edge-cargo-registry rust/target-linux-arm64 || true
 
       - name: Verify the artifact is an aarch64 ELF
         run: |
           file rust/target-linux-arm64/release/adsb-pulsar-client
           file rust/target-linux-arm64/release/adsb-pulsar-client | grep -q "ARM aarch64"
+
+      - name: Verify glibc ceiling (Raspberry Pi OS bookworm = 2.36)
+        run: .github/scripts/check-glibc-ceiling.sh rust/target-linux-arm64/release/adsb-pulsar-client 2.36
+
+      # Possible only because the runner is native arm64: proves the binary
+      # loads, links and parses its CLI, not merely that it compiled.
+      - name: Smoke-run the binary
+        run: rust/target-linux-arm64/release/adsb-pulsar-client --help
+
+  edge-armv7:
+    name: Edge build (armv7, 32-bit Raspberry Pi, feed only)
+    # A plain cross-compile on x86_64: the feed client with cli,mqtt,metrics has
+    # no C dependencies, so only a linker is needed. (DuckDB has no 32-bit ARM
+    # support, so the data server is never built for this target.) Not run on
+    # the arm64 runner: AArch32 execution is not guaranteed on server arm64 cores.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/edge-cargo-registry
+            rust/target-linux-armv7
+          key: edge-armv7-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}
+          restore-keys: |
+            edge-armv7-
+
+      # bookworm's gcc-arm-linux-gnueabihf links against glibc 2.36, the same
+      # as 32-bit Raspberry Pi OS bookworm.
+      - name: Build feed client (no Pulsar, no protoc)
+        run: |
+          mkdir -p ~/.cache/edge-cargo-registry
+          docker run --rm \
+            -v "$PWD/rust":/work -w /work \
+            -v ~/.cache/edge-cargo-registry:/usr/local/cargo/registry \
+            -e RUSTUP_TOOLCHAIN=1.92.0 \
+            -e CARGO_TARGET_DIR=/work/target-linux-armv7 \
+            -e CARGO_PROFILE_RELEASE_DEBUG=0 \
+            -e CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc \
+            rust:1.92-bookworm \
+            bash -euc '
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
+              rustup target add armv7-unknown-linux-gnueabihf
+              cargo build --release -p adsb-pulsar-client \
+                --target armv7-unknown-linux-gnueabihf \
+                --no-default-features --features cli,mqtt,metrics
+            '
+
+      - name: Hand cached dirs back to the runner user
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" ~/.cache/edge-cargo-registry rust/target-linux-armv7 || true
+
+      - name: Verify the artifact is a 32-bit hard-float ARM ELF
+        run: |
+          BIN=rust/target-linux-armv7/armv7-unknown-linux-gnueabihf/release/adsb-pulsar-client
+          file "$BIN"
+          file "$BIN" | grep -q "ELF 32-bit LSB .* ARM, EABI5"
+          readelf -A "$BIN" | grep -q "Tag_ABI_VFP_args: VFP registers"
+
+      - name: Verify glibc ceiling (Raspberry Pi OS bookworm = 2.36)
+        run: .github/scripts/check-glibc-ceiling.sh rust/target-linux-armv7/armv7-unknown-linux-gnueabihf/release/adsb-pulsar-client 2.36
 
   # rust-desktop:
   #   name: Rust desktop (adsb-pulsar-client-desktop / Tauri)

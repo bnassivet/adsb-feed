@@ -59,6 +59,34 @@ feed client, which a 32-bit node runs alone, stays at 2.1 MB.
   server. Measured good at 2: peak ~1.1 GiB, 9m44s. Cap parallelism rather than
   weakening the profile — the profile is what keeps the shipped binary small.
 
+### What CI proves for the Pi 3 fleet
+
+The fleet is Raspberry Pi 3 (Cortex-A53) on Raspberry Pi OS bookworm, both
+64-bit and 32-bit. Two jobs in `.github/workflows/ci.yml` build the feed client
+(`cli,mqtt,metrics`, the same as `make feed-arm64`):
+
+| Job | Runner | Target | Checks |
+|---|---|---|---|
+| `edge-arm64` | `ubuntu-24.04-arm` (native) | `aarch64-unknown-linux-gnu` | ELF aarch64, glibc ≤ 2.36, `--help` runs |
+| `edge-armv7` | `ubuntu-latest` (cross) | `armv7-unknown-linux-gnueabihf` | ELF 32-bit EABI5 hard-float, glibc ≤ 2.36 |
+
+The build host's CPU does not affect the binary: nothing sets
+`target-cpu=native`, so the default baselines apply, and the A53 runs both.
+**glibc is what decides compatibility.** Both jobs build inside
+`rust:1.92-bookworm` (glibc 2.36), and `.github/scripts/check-glibc-ceiling.sh`
+fails the job if the binary needs a newer symbol version. Building directly on
+the Ubuntu 24.04 runner would link against 2.39, and the binary would then fail
+on the Pi with `GLIBC_2.xx not found`.
+
+The armv7 build is a plain cross-compile with no `cross` tool and no QEMU.
+With these features the feed client has no C dependencies, so the only extra
+piece is bookworm's `gcc-arm-linux-gnueabihf`, used as the linker. The arm64
+job used to run under QEMU on an x86_64 runner and took about 14 minutes;
+running natively, each job takes about a minute.
+
+Not covered: running on real Pi 3 hardware with 1 GB of RAM, and ARMv6 boards
+(Pi Zero/1), which would need `arm-unknown-linux-gnueabihf`.
+
 ### Feed client without Pulsar
 
 Omitting Pulsar drops the `pulsar` crate and with it the **`protoc` build
