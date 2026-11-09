@@ -46,6 +46,46 @@ named scenarios that replay offline. Both Python services are optional.
 See the [simulation agent README](rust/adsb-simulation-agent/README.md) and the
 [desktop app README](rust/adsb-pulsar-client-desktop/README.md).
 
+### `deploy/`
+
+Fleet configuration for **deployed nodes**: Raspberry Pis running systemd units,
+configured under `/etc/adsb/`. This is separate from `adsb-stack.toml`, which
+configures the development stack on this machine.
+
+| Path | Description |
+|------|-------------|
+| `fleet-template.toml` | Tracked template. Copy it to `<stage>.toml` (gitignored) and fill in hostnames, ids and the share token |
+| `.rendered/<node>/` | Gitignored per-node configs produced by `make render-fleet F=deploy/<stage>.toml`; `make deploy` ships from here |
+
+One file per stage, not per node. The values that must agree across hosts
+(`source_id`, `mqtt_topic`, `share_token`) are written once, because a mismatch
+fails silently. See [`deploy/README.md`](deploy/README.md) and
+[`rust/docs/DEPLOYMENT.md`](rust/docs/DEPLOYMENT.md).
+
+### `scripts/`
+
+Tooling behind the root `Makefile`. Run `make` to list targets. You normally go
+through `make` rather than calling these directly:
+
+| Script | Description |
+|--------|-------------|
+| `stack.sh` | Starts, stops and inspects the local stack (`make up`, `down`, `verify`, `doctor`, ...). Kills only the PIDs it started |
+| `render-config.py` | Expands `adsb-stack[-<name>].toml` into per-binary configs under `.run/` (or `.run/<name>/` with `STACK=<name>`), and renders fleet configs for `deploy/` |
+| `tauri-dev-config.py` | Emits the `tauri dev -c` override (ports, CSP) that lets a second named stack run its own desktop instance |
+| `install-skills.sh` | Symlinks `skills/*` into `.claude/skills/` (`make skills`) |
+| `tests/` | Tests for the tooling itself: config rendering, stack paths, metrics, weather |
+
+### `skills/`
+
+Claude Code skills for operating this repo, kept in a tracked directory because
+`.claude/` is gitignored. Run `make skills` once per checkout to link them in.
+They are links, not copies, so edits take effect immediately.
+
+| Skill | Description |
+|-------|-------------|
+| `run-adsb-stack/` | Configure, launch, verify and stop the local stack (broker, feed, data server, desktop, agents), or point the desktop at a remote data server |
+| `run-adsb-desktop/` | Build, launch and verify the Tauri desktop app on macOS, with a mock dump1090 and verification helpers |
+
 ### `graphify-out/`
 
 A navigable knowledge graph of this codebase produced by [graphify](https://github.com/safishamsi/graphify).
