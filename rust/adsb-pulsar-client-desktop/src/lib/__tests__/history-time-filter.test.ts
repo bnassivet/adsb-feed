@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { filterHistoryByTimeRange } from "../history-time-filter";
+import {
+  filterHistoryByTimeRange,
+  historyWindowToSlider,
+  sliderToHistoryWindow,
+} from "../history-time-filter";
 import type { AircraftTrack } from "@/lib/types";
 
 function makeTrack(lastSeenMs: number): AircraftTrack {
@@ -87,5 +91,66 @@ describe("filterHistoryByTimeRange", () => {
     // Slider: min=6, max=18 → window is 6h ago to 18h ago
     const result = filterHistoryByTimeRange(tracks, 24, 6, 18, now);
     expect(result).toEqual([t8h, t15h]);
+  });
+});
+
+describe("historyWindowToSlider", () => {
+  it("maps 'the last 4 hours' onto the newest end of the slider", () => {
+    expect(historyWindowToSlider(24, 4)).toEqual({
+      sliderMin: 20,
+      sliderMax: 24,
+      fromHoursAgo: 4,
+      toHoursAgo: 0,
+      clamped: false,
+    });
+  });
+
+  it("supports a window that ends in the past", () => {
+    // From 6 h ago to 2 h ago
+    expect(historyWindowToSlider(24, 4, 2)).toMatchObject({
+      sliderMin: 18,
+      sliderMax: 22,
+      fromHoursAgo: 6,
+      toHoursAgo: 2,
+      clamped: false,
+    });
+  });
+
+  it("clamps a depth beyond retention and says so", () => {
+    expect(historyWindowToSlider(2, 4)).toEqual({
+      sliderMin: 0,
+      sliderMax: 2,
+      fromHoursAgo: 2,
+      toHoursAgo: 0,
+      clamped: true,
+    });
+  });
+
+  it("widens fractional hours outward to whole slider steps", () => {
+    // 1.5 h → the slider moves in whole hours, so show 2 h rather than 1
+    expect(historyWindowToSlider(24, 1.5)).toMatchObject({ sliderMin: 22, sliderMax: 24, fromHoursAgo: 2 });
+  });
+
+  it("never produces an empty window", () => {
+    const r = historyWindowToSlider(24, 0);
+    expect(r.sliderMax - r.sliderMin).toBeGreaterThanOrEqual(1);
+    // An end bound at or past retention still leaves the oldest hour visible
+    const past = historyWindowToSlider(24, 4, 30);
+    expect(past).toMatchObject({ sliderMin: 0, sliderMax: 1, clamped: true });
+  });
+
+  it("round-trips through the filter: 4 h depth keeps a 3 h-old track, drops a 5 h-old one", () => {
+    const now = 100 * 3_600_000;
+    const t3h = makeTrack(now - 3 * 3_600_000);
+    const t5h = makeTrack(now - 5 * 3_600_000);
+    const { sliderMin, sliderMax } = historyWindowToSlider(24, 4);
+    expect(filterHistoryByTimeRange([t3h, t5h], 24, sliderMin, sliderMax, now)).toEqual([t3h]);
+  });
+});
+
+describe("sliderToHistoryWindow", () => {
+  it("reports the window in hours ago", () => {
+    expect(sliderToHistoryWindow(24, 20, 24)).toEqual({ fromHoursAgo: 4, toHoursAgo: 0 });
+    expect(sliderToHistoryWindow(24, 0, 24)).toEqual({ fromHoursAgo: 24, toHoursAgo: 0 });
   });
 });

@@ -110,6 +110,8 @@ export interface CopilotContextConfig {
   receiverLocation: { lat: number; lng: number } | null;
   /** How many agent-generated simulated aircraft are currently playing. */
   agentSimulatedCount: number;
+  /** History layer time window, in hours ago, and the retention bounding it. */
+  historyWindow: { retentionHours: number; fromHoursAgo: number; toHoursAgo: number };
   /** The weather layer. Absent when the page does not provide one. */
   weather?: CopilotWeatherContext;
 }
@@ -164,6 +166,12 @@ export function useCopilotContext(config: CopilotContextConfig) {
       receiver: config.showReceiver,
       events: config.showEvents,
     },
+  });
+
+  useAgentContext({
+    description:
+      "History layer time window (hours ago; retentionHours is the deepest available)",
+    value: config.historyWindow,
   });
 
   useAgentContext({

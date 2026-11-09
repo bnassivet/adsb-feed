@@ -56,7 +56,7 @@ import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
 import { listen } from "@tauri-apps/api/event";
 import { ask, message, save, open } from "@tauri-apps/plugin-dialog";
 import { sortTracks, type SortKey } from "@/lib/sort-tracks";
-import { filterHistoryByTimeRange } from "@/lib/history-time-filter";
+import { filterHistoryByTimeRange, sliderToHistoryWindow } from "@/lib/history-time-filter";
 import { DEFAULT_FILTERS, trackKey } from "@/lib/types";
 import type { AircraftTrack, ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, TrackSection, StorageAvailability, ShareStatus, CreateEventOfInterest, UpdateEventOfInterest, EventOfInterest, EventFilterMode, MapPickResult } from "@/lib/types";
 import type { SelectEvent } from "@/components/AircraftTable";
@@ -273,6 +273,13 @@ export default function Dashboard() {
     setHistorySliderMin(0);
     setHistorySliderMax(null);
   }
+  // Declared here, beside the state it sets: useCopilotTools (further down)
+  // receives it, and a const referenced before its declaration is a TDZ throw.
+  const handleHistoryTimeChange = useCallback((min: number, max: number) => {
+    setHistorySliderMin(min);
+    setHistorySliderMax(max);
+  }, []);
+
   const simulatedTracks = useSimulatedTracks(showSimulation, receiverLocation);
   // Agent-generated trajectories: additive to the hardcoded demo flights above.
   //
@@ -928,6 +935,10 @@ export default function Dashboard() {
     eventUpcomingDays,
     eventTimeRangeStart,
     eventTimeRangeEnd,
+    trackHistoryHours,
+    historySliderMin,
+    historySliderMax: effectiveSliderMax,
+    setHistoryTimeRange: handleHistoryTimeChange,
     setMapTheme,
     setSidebarOpen,
     setActiveMode,
@@ -994,6 +1005,10 @@ export default function Dashboard() {
     tracks: allTracks,
     receiverLocation: simReceiverLocation,
     agentSimulatedCount: agentSimulatedTracks.length,
+    historyWindow: {
+      retentionHours: trackHistoryHours,
+      ...sliderToHistoryWindow(trackHistoryHours, historySliderMin, effectiveSliderMax),
+    },
     storageStatus,
     weather: {
       snapshot: viewWeatherSnapshot,
@@ -1044,11 +1059,6 @@ export default function Dashboard() {
   function handleToggleIncludeImportedInDensity() {
     setIncludeImportedInDensity((prev: boolean) => !prev);
   }
-
-  const handleHistoryTimeChange = useCallback((min: number, max: number) => {
-    setHistorySliderMin(min);
-    setHistorySliderMax(max);
-  }, []);
 
   const handleDensityAltitudeChange = useCallback((min: number, max: number) => {
     setDensityAltitudeMin(min);
