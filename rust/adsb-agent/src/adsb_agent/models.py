@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .voice.base import VoiceBackendStatus
 
@@ -14,8 +14,46 @@ class HealthResponse(BaseModel):
     service: str
 
 
+class ToolDefinition(BaseModel):
+    """An AG-UI ``Tool``: name, description and a JSON Schema for its arguments."""
+
+    name: str
+    description: str
+    parameters: dict[str, Any]
+
+
+class ToolsCapabilities(BaseModel):
+    """AG-UI ``ToolsCapabilities`` (``@ag-ui/core`` 1.0.x).
+
+    The Python ``ag_ui`` package (0.1.x) has no capability types yet, so this
+    mirrors the TypeScript one, with camelCase on the wire.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    supported: bool = Field(description="The agent can make tool calls at all.")
+    items: list[ToolDefinition] = Field(
+        description="Tools the agent provides on its own, distinct from client-provided RunAgentInput.tools."
+    )
+    client_provided: bool = Field(
+        alias="clientProvided",
+        description="The agent also accepts and uses tools provided by the client at runtime.",
+    )
+    parallel_calls: bool = Field(
+        alias="parallelCalls",
+        description="The agent can invoke several tools concurrently within one step.",
+    )
+
+
+class AgentCapabilities(BaseModel):
+    """AG-UI ``AgentCapabilities``, limited to the categories this agent declares."""
+
+    tools: ToolsCapabilities
+
+
 class AgentDescription(BaseModel):
     description: str
+    capabilities: AgentCapabilities | None = None
 
 
 class RuntimeInfoResponse(BaseModel):

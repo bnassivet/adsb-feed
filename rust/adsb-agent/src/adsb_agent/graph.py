@@ -46,29 +46,15 @@ from ag_ui.core import (
 
 from .a2a_client import call_simulation_agent
 from .config import settings
+from .server_tools import SERVER_TOOL_NAMES, effective_tools
 from .tracing import make_span
 
 logger = logging.getLogger("adsb_agent.graph")
 
-# Tools executed inside the reasoning loop (the DuckDB-backed data plane plus the
-# local clock). Must match the routes exposed by the Tauri `tool_server.rs`
-# (except getCurrentDateTime, which is resolved locally).
-SERVER_TOOL_NAMES: frozenset[str] = frozenset(
-    {
-        "getStorageStats",
-        "getAircraftSummary",
-        "getFlightSummary",
-        "getTrajectory",
-        "getTimeDistribution",
-        "getHourlyHeatmap",
-        "getEventsOfInterest",
-        "getCurrentDateTime",
-        # Proxied over A2A to `adsb-simulation-agent` rather than the Tauri
-        # tool server — see `_execute_server_tool_inner`.
-        "generateSimulatedTrajectory",
-    }
-)
-
+# Tools executed inside the reasoning loop (the DuckDB-backed data plane, the
+# local clock, and the A2A simulation proxy). Owned by this agent and defined in
+# `server_tools.py` -- never by the frontend. Re-exported here because the graph
+# is where they are routed, and tests address them as `graph.SERVER_TOOL_NAMES`.
 SIMULATION_TOOL_NAME = "generateSimulatedTrajectory"
 """Server-executed: calls the simulation agent over A2A."""
 
@@ -89,19 +75,16 @@ def _camel_to_snake(name: str) -> str:
 
 
 def partition_tool_names(tools: Iterable[Any] | None) -> tuple[set[str], set[str]]:
-    """Split frontend-supplied tools into (server-executed, client-executed) names.
+    """Split one run's tool surface into (server-executed, client-executed) names.
 
-    A tool is server-executed iff its name is in ``SERVER_TOOL_NAMES``; everything
-    else is forwarded to the client. When ``tools`` is None/empty, the server set
-    is the full known server surface (CLI/test fallback) and client set is empty.
+    The server set is always the agent's own ``SERVER_TOOL_NAMES``, whatever
+    the client sent: per AG-UI, backend tools are not supplied by the client.
+    The client set is every frontend tool that is not a backend tool. A client
+    copy of a backend tool, from an older desktop, stays server-side.
     """
-    if not tools:
-        return set(SERVER_TOOL_NAMES), set()
-    names = {getattr(t, "name", None) for t in tools}
+    names = {getattr(t, "name", None) for t in (tools or [])}
     names.discard(None)
-    server = {n for n in names if n in SERVER_TOOL_NAMES}
-    client = {n for n in names if n not in SERVER_TOOL_NAMES}
-    return server, client
+    return set(SERVER_TOOL_NAMES), names - SERVER_TOOL_NAMES
 
 
 def transform_server_args(args: dict[str, Any]) -> dict[str, Any]:
@@ -337,8 +320,9 @@ def convert_agui_messages_to_lc(messages: Iterable[Any]) -> list[Any]:
 def build_agent_graph(tools: Iterable[Any] | None, *, model: Any | None = None):
     """Compile a per-request LangGraph ReAct agent.
 
-    A fresh graph is built per turn because the available tool surface arrives
-    with each request (``RunAgentInput.tools``). Compilation is cheap.
+    A fresh graph is built per turn because the *client* tool surface arrives
+    with each request (``RunAgentInput.tools``). The agent's own backend tools
+    are always bound alongside it (``effective_tools``). Compilation is cheap.
 
     ``model`` lets tests inject a fake chat model (returning canned ``AIMessage``s)
     so the node-span instrumentation can be exercised without a live LLM. In
@@ -358,6 +342,7 @@ def build_agent_graph(tools: Iterable[Any] | None, *, model: Any | None = None):
 
         pending_client_tool_calls: list[dict]
 
+    tools = effective_tools(tools)
     schemas = _to_openai_tools(tools)
     server_names, _client_names = partition_tool_names(tools)
 

@@ -442,10 +442,13 @@ is its only caller. The shared `EyeIcon` lives in `components/EyeIcon.tsx`.
 themselves in terms of "simulated flights", so "start simulated flights" made the
 model call `toggleDemoFlights` — 20 canned routes started and nothing was
 generated. `generateSimulatedTrajectory` now claims the start/run/create verbs and
-`toggleDemoFlights` reads as a fixed built-in layer that "creates no aircraft",
-in **both** `useCopilotTools.ts` and the Python `tools.py` (plus a guideline in
-`prompt_sections.yaml`). Descriptions are the interface the model programs
-against; there are prose assertions in `useCopilotTools.test.ts` and
+`toggleDemoFlights` reads as a fixed built-in layer that "creates no aircraft"
+(plus a guideline in `prompt_sections.yaml`). Each description has **one**
+home: `generateSimulatedTrajectory` is a backend tool, defined in the agent's
+`server_tools.py`, and `toggleDemoFlights` is a client tool in
+`useCopilotTools.ts` (mirrored in `tools.py` for frontend-less runs).
+Descriptions are the interface the model programs against; there are prose
+assertions in `useCopilotTools.test.ts` and
 `test_simulation_tool_disambiguation.py` because this regressed silently once.
 
 **Trajectories arrive selected.** Every transport button acts on the panel's
@@ -468,7 +471,7 @@ was what finally caught it — the hook-only StrictMode test did not).
 Chat-generated trajectories auto-start via `requestAutoStart` — asking the agent to "simulate a helicopter" should show it flying. Panel-generated ones stay stopped until the user presses Start. `requestAutoStart` exists because playback entries only appear after the sync effect, so calling `start()` immediately after handing over trajectories would find nothing. Agent coordinates are **absolute** — the agent already generated around the receiver, so no `SIMULATION_ORIGIN` offset is applied (applying it would double-shift the route).
 
 **Agent trajectories reach the app two ways**, both ending at `setAgentTrajectories`:
-- **Chat**: the Python agent proxies `generateSimulatedTrajectory` over A2A, then synthesizes an `applySimulatedTrajectory` client-tool call carrying the payload. Both tools are registered in `useCopilotTools.ts` — `generateSimulatedTrajectory` executes *server*-side but must still be declared here, since `partition_tool_names` intersects against the frontend-supplied tool list (same as `getStorageStats`).
+- **Chat**: the Python agent proxies `generateSimulatedTrajectory` over A2A, then synthesizes an `applySimulatedTrajectory` client-tool call carrying the payload. Only `applySimulatedTrajectory` is registered in `useCopilotTools.ts`. `generateSimulatedTrajectory` is a **backend tool**: the agent defines it in `server_tools.py`, always binds it, and advertises it in `/info` capabilities. The same applies to the data tools (`getStorageStats`, `getTrajectory`, …). **Never register a backend tool name as a frontend tool.** AG-UI reserves `RunAgentInput.tools` for client tools, and `useCopilotTools.test.ts` pins the boundary. These names used to be declared here because `partition_tool_names` intersected with the frontend list, and that silently hid `getTimeDistribution` and `getHourlyHeatmap`.
 - **Panel**: `SimulationPanel.tsx` → `simulate-api.ts` → `POST /simulate/trajectory` on adsb-agent, bypassing chat.
 
 Requires `adsb-agent` (:8000) and `adsb-simulation-agent` (:8300) running; without them the panel shows a readable error and the rest of the app is unaffected.

@@ -131,9 +131,11 @@ describe("useCopilotTools — display control tools", () => {
     renderHook(() => useCopilotTools(config));
   });
 
-  it("registers all 38 tools", () => {
-    // 27 display/query tools + 9 simulation-scenario tools + 2 weather tools.
-    expect(registeredTools.size).toBe(38);
+  it("registers all 31 client tools", () => {
+    // 20 display/query tools + 9 simulation-scenario tools + 2 weather tools.
+    // The 7 backend tools the app used to declare now live in the agent
+    // (server_tools.py) — see "backend tools are the agent's, not the app's".
+    expect(registeredTools.size).toBe(31);
   });
 
   describe("weather tools", () => {
@@ -248,34 +250,33 @@ describe("useCopilotTools — display control tools", () => {
     });
   });
 
+  describe("backend tools are the agent's, not the app's", () => {
+    /* AG-UI: "RunAgentInput.tools is only for these client-provided tools. It
+       is not intended to contain every tool available to the backend agent."
+       These are defined, advertised (/info capabilities) and executed by the
+       Python agent -- see adsb-agent/src/adsb_agent/server_tools.py, which
+       this list mirrors. Registering one here would put a dead handler in the
+       app and resend its schema on every chat turn. Their wording is pinned on
+       the Python side (test_server_tools.py,
+       test_simulation_tool_disambiguation.py). */
+    const BACKEND_TOOLS = [
+      "getStorageStats",
+      "getAircraftSummary",
+      "getFlightSummary",
+      "getTrajectory",
+      "getTimeDistribution",
+      "getHourlyHeatmap",
+      "getEventsOfInterest",
+      "getCurrentDateTime",
+      "generateSimulatedTrajectory",
+    ];
+
+    it.each(BACKEND_TOOLS)("does not register %s as a frontend tool", (name) => {
+      expect(registeredTools.has(name)).toBe(false);
+    });
+  });
+
   describe("simulation agent tools", () => {
-    it("declares generateSimulatedTrajectory so the model can see its schema", () => {
-      /* It executes server-side (SERVER_TOOL_NAMES in the Python agent), but
-         partition_tool_names intersects against the frontend-supplied tool
-         list — an undeclared tool is invisible to the model. */
-      expect(registeredTools.has("generateSimulatedTrajectory")).toBe(true);
-    });
-
-    it("tells the model not to pre-structure the route", () => {
-      /* The simulation agent owns hint interpretation. If this LLM converts
-         "circle the port" into coordinates, the agent's own classifier never
-         sees the user's intent. */
-      const desc = registeredTools.get("generateSimulatedTrajectory")?.description ?? "";
-      expect(desc.toLowerCase()).toContain("do not convert");
-      expect(desc.toLowerCase()).toContain("routehint");
-    });
-
-    it("claims the verbs users actually type", () => {
-      /* Regression: "start simulated flights" went to toggleDemoFlights, which
-         launched the 20 canned routes and generated nothing. */
-      const desc = (
-        registeredTools.get("generateSimulatedTrajectory")?.description ?? ""
-      ).toLowerCase();
-      for (const verb of ["start", "run", "create"]) {
-        expect(desc).toContain(verb);
-      }
-    });
-
     it("keeps toggleDemoFlights from absorbing generation requests", () => {
       const desc = registeredTools.get("toggleDemoFlights")?.description ?? "";
       expect(desc.toLowerCase()).toContain("built-in");
@@ -332,37 +333,6 @@ describe("useCopilotTools — display control tools", () => {
       expect(desc).toMatch(/\bLive\b/);
       expect(desc).toMatch(/\btotal\b/);
       expect(desc.toLowerCase()).toContain("how many");
-    });
-
-    it("getFlightSummary is labeled Historical and advertises total", () => {
-      const desc = descOf("getFlightSummary");
-      expect(desc).toMatch(/\bHistorical\b/);
-      expect(desc).toMatch(/\btotal\b/);
-    });
-
-    it("getAircraftSummary is labeled Historical and advertises total", () => {
-      const desc = descOf("getAircraftSummary");
-      expect(desc).toMatch(/\bHistorical\b/);
-      expect(desc).toMatch(/\btotal\b/);
-    });
-
-    it("getStorageStats advertises flight_count for in-total questions", () => {
-      const desc = descOf("getStorageStats");
-      expect(desc).toContain("flight_count");
-    });
-  });
-
-  describe("getCurrentDateTime", () => {
-    it("returns current date, time, timezone, and epoch ms", async () => {
-      const before = Date.now();
-      const result = JSON.parse(await getHandler("getCurrentDateTime")());
-      const after = Date.now();
-      expect(result.epochMs).toBeGreaterThanOrEqual(before);
-      expect(result.epochMs).toBeLessThanOrEqual(after);
-      expect(result.iso8601).toBeDefined();
-      expect(result.timezone).toBeDefined();
-      expect(result.date).toBeDefined();
-      expect(result.time).toBeDefined();
     });
   });
 
@@ -639,35 +609,6 @@ describe("useCopilotTools — display control tools", () => {
       await getHandler("setEventFilter")({ timeRangeStartMs: 5000, timeRangeEndMs: 10000 });
       expect(config.setEventTimeRangeStart).toHaveBeenCalledWith(5000);
       expect(config.setEventTimeRangeEnd).toHaveBeenCalledWith(10000);
-    });
-  });
-
-  describe("getEventsOfInterest", () => {
-    it("calls command and returns events", async () => {
-      const result = JSON.parse(await getHandler("getEventsOfInterest")({}));
-      expect(result).toEqual([
-        { id: "e1", title: "Test Event", category: "test", timestamp_ms: 1000 },
-      ]);
-    });
-
-    it("accepts optional time range params", async () => {
-      await getHandler("getEventsOfInterest")({ startMs: 1000, endMs: 2000 });
-      const { getEventsOfInterest } = await import("@/lib/commands");
-      expect(getEventsOfInterest).toHaveBeenCalledWith({
-        start_ms: 1000,
-        end_ms: 2000,
-        category: null,
-      });
-    });
-
-    it("accepts optional category param", async () => {
-      await getHandler("getEventsOfInterest")({ category: "surveillance" });
-      const { getEventsOfInterest } = await import("@/lib/commands");
-      expect(getEventsOfInterest).toHaveBeenCalledWith({
-        start_ms: null,
-        end_ms: null,
-        category: "surveillance",
-      });
     });
   });
 

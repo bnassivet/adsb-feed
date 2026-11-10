@@ -12,28 +12,18 @@ import { createElement, useEffect, useRef } from "react";
 import { useFrontendTool, type ReactFrontendTool } from "@copilotkit/react-core/v2";
 import { z } from "zod";
 import {
-  getStorageStats,
-  getAircraftSummary,
-  getFlightSummary,
   getStatus,
   getMetrics,
-  getTrajectory,
   startFeed,
   stopFeed,
-  getEventsOfInterest,
   createEventOfInterest,
   getScenario as getScenarioCommand,
 } from "@/lib/commands";
 import {
-  StorageStatsCard,
   FeedStatusCard,
   FeedMetricsCard,
-  AircraftSummaryTable,
-  FlightSummaryTable,
-  TrajectoryCard,
   ActionConfirmCard,
   DisplaySettingCard,
-  EventsCard,
   LiveFlightsCard,
   ScenarioCard,
 } from "@/components/chat";
@@ -264,78 +254,6 @@ export function useCopilotTools(config: DisplayToolsConfig) {
   });
 
   useSafeFrontendTool({
-    name: "getStorageStats",
-    description:
-      "Historical — database overview. Returns counts and metadata for the persistent store: row_count (position records), flight_count (segmented flights ever recorded), event_count (events of interest), file size, and date range. Use flight_count to answer 'how many flights in the database / in total'. Does not reflect currently-active aircraft — use searchLiveFlights for that.",
-    handler: async () => {
-      const stats = await getStorageStats();
-      return JSON.stringify(stats);
-    },
-    render: (props) =>
-      createElement(StorageStatsCard, {
-        status: toCardStatus(props.status),
-        result: props.result,
-      }),
-  });
-
-  useSafeFrontendTool({
-    name: "getAircraftSummary",
-    description:
-      "Historical — queries the database. Summary of unique aircraft (by hex_ident) seen in a time range. Returns hex_ident, callsign, position count, altitude/speed ranges, first/last seen timestamps. Either an array (≤50) or { total, showing, data, note }; use total (or array length) to answer 'how many distinct aircraft did we see in [time range]'.",
-    parameters: z.object({
-      startMs: z.number().optional().describe("Start time in ms since epoch"),
-      endMs: z.number().optional().describe("End time in ms since epoch"),
-    }),
-    handler: async (args) => {
-      const summary = await getAircraftSummary(args.startMs, args.endMs);
-      if (summary.length > 50) {
-        return JSON.stringify({
-          total: summary.length,
-          showing: 50,
-          data: summary.slice(0, 50),
-          note: "Showing first 50. Ask to filter by time range or callsign for specific results.",
-        });
-      }
-      return JSON.stringify(summary);
-    },
-    render: (props) =>
-      createElement(AircraftSummaryTable, {
-        status: toCardStatus(props.status),
-        result: props.result,
-      }),
-  });
-
-  useSafeFrontendTool({
-    name: "getFlightSummary",
-    description:
-      "Historical — queries the database. Get a summary of flights in a time range, automatically segmented by >1 hour gaps in coverage. Returns either an array of flights (≤30) or { total, showing, data, note }; use total (or array length) to answer 'how many flights were there in [time range]'. Provide startMs/endMs to bound the query — without them this can be expensive.",
-    parameters: z.object({
-      startMs: z.number().optional().describe("Start time in ms since epoch"),
-      endMs: z.number().optional().describe("End time in ms since epoch"),
-    }),
-    handler: async (args) => {
-      const summary = await getFlightSummary({
-        start_ms: args.startMs ?? null,
-        end_ms: args.endMs ?? null,
-      });
-      if (summary.length > 30) {
-        return JSON.stringify({
-          total: summary.length,
-          showing: 30,
-          data: summary.slice(0, 30),
-          note: "Showing first 30 flights.",
-        });
-      }
-      return JSON.stringify(summary);
-    },
-    render: (props) =>
-      createElement(FlightSummaryTable, {
-        status: toCardStatus(props.status),
-        result: props.result,
-      }),
-  });
-
-  useSafeFrontendTool({
     name: "getFeedStatus",
     description:
       "Get the current feed connection status (socket and Pulsar connection states, running/stopped).",
@@ -360,70 +278,6 @@ export function useCopilotTools(config: DisplayToolsConfig) {
     },
     render: (props) =>
       createElement(FeedMetricsCard, {
-        status: toCardStatus(props.status),
-        result: props.result,
-      }),
-  });
-
-  useSafeFrontendTool({
-    name: "getTrajectory",
-    description:
-      "Get the position history (trajectory) of a specific aircraft. Returns list of lat/lon/altitude/speed/timestamp records.",
-    parameters: z.object({
-      hexIdent: z.string().describe("Aircraft hex identifier (ICAO)"),
-      startMs: z.number().optional().describe("Start time in ms since epoch"),
-      endMs: z.number().optional().describe("End time in ms since epoch"),
-    }),
-    handler: async (args) => {
-      const trajectory = await getTrajectory({
-        hex_ident: args.hexIdent,
-        start_ms: args.startMs ?? null,
-        end_ms: args.endMs ?? null,
-      });
-      if (trajectory.length > 200) {
-        return JSON.stringify({
-          total: trajectory.length,
-          showing: 200,
-          data: trajectory.slice(0, 200),
-          note: "Showing first 200 positions. Narrow the time range for more detail.",
-        });
-      }
-      return JSON.stringify(trajectory);
-    },
-    render: (props) =>
-      createElement(TrajectoryCard, {
-        status: toCardStatus(props.status),
-        result: props.result,
-      }),
-  });
-
-  useSafeFrontendTool({
-    name: "getEventsOfInterest",
-    description:
-      "Search events of interest stored in the database. Filter by time range and/or category. Returns event title, description, location, category, linked aircraft, and timestamps.",
-    parameters: z.object({
-      startMs: z.number().optional().describe("Start time in ms since epoch"),
-      endMs: z.number().optional().describe("End time in ms since epoch"),
-      category: z.string().optional().describe("Filter by event category"),
-    }),
-    handler: async (args: { startMs?: number; endMs?: number; category?: string }) => {
-      const events = await getEventsOfInterest({
-        start_ms: args.startMs ?? null,
-        end_ms: args.endMs ?? null,
-        category: args.category ?? null,
-      });
-      if (events.length > 20) {
-        return JSON.stringify({
-          total: events.length,
-          showing: 20,
-          data: events.slice(0, 20),
-          note: "Showing first 20 events. Narrow the time range or add a category filter for more specific results.",
-        });
-      }
-      return JSON.stringify(events);
-    },
-    render: (props) =>
-      createElement(EventsCard, {
         status: toCardStatus(props.status),
         result: props.result,
       }),
@@ -753,28 +607,6 @@ export function useCopilotTools(config: DisplayToolsConfig) {
 
   // --- Date/time utility ---
 
-  useSafeFrontendTool({
-    name: "getCurrentDateTime",
-    description:
-      "Get the current date, time, timezone, and epoch milliseconds. Use this to resolve relative time references (e.g. 'last hour', 'today') into absolute timestamps for other tools.",
-    handler: async () => {
-      const now = new Date();
-      return JSON.stringify({
-        epochMs: now.getTime(),
-        iso8601: now.toISOString(),
-        date: now.toLocaleDateString(),
-        time: now.toLocaleTimeString(),
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      });
-    },
-    render: (props) =>
-      createElement(DisplaySettingCard, {
-        setting: "Current Date/Time",
-        status: toCardStatus(props.status),
-        result: props.result,
-      }),
-  });
-
   // --- Display control tools ---
 
   useSafeFrontendTool({
@@ -892,56 +724,16 @@ export function useCopilotTools(config: DisplayToolsConfig) {
   /*
    * Simulation-agent pair.
    *
-   * `generateSimulatedTrajectory` executes SERVER-side (it is listed in the
-   * Python agent's SERVER_TOOL_NAMES, which proxies it over A2A to
-   * adsb-simulation-agent). It is still declared here because
-   * `partition_tool_names` intersects against the frontend-supplied tool list —
-   * a tool the frontend never declares is invisible to the model. Same pattern
-   * as getStorageStats. The handler below is a fallback that should not run.
+   * `generateSimulatedTrajectory` is NOT declared here. It is a backend tool:
+   * defined, advertised and executed by the Python agent (server_tools.py),
+   * which proxies it over A2A to adsb-simulation-agent. The same applies to
+   * the historical data tools (getStorageStats, getTrajectory, ...). Per AG-UI,
+   * RunAgentInput.tools carries client tools only; a test pins this boundary.
    *
    * `applySimulatedTrajectory` is the real client tool. The model never calls
    * it; the agent synthesizes the call after a successful generation so the
    * waypoint payload reaches us without passing through the LLM's context.
    */
-  useSafeFrontendTool({
-    name: "generateSimulatedTrajectory",
-    description:
-      "Generate new simulated aircraft with realistic flight paths and show them flying " +
-      "on the map. THE tool for any request to start, run, create, add, simulate or fake " +
-      "flights or aircraft — do not use toggleDemoFlights for these. Pass the user's own " +
-      "wording as routeHint — do not convert it into coordinates or headings.",
-    parameters: z.object({
-      category: z
-        .enum(["airliner", "ga", "helicopter", "fighter"])
-        .optional()
-        .describe(
-          "Aircraft performance class to simulate. Optional — defaults to 'ga'. " +
-            "Infer it from the request when the user names an aircraft type; otherwise " +
-            "omit it rather than asking them which type they want.",
-        ),
-      count: z.number().optional().describe("How many aircraft (default 1, max 20)"),
-      routeHint: z
-        .string()
-        .optional()
-        .describe("The user's own words describing the route, passed verbatim"),
-      originLat: z.number().optional().describe("Receiver latitude"),
-      originLng: z.number().optional().describe("Receiver longitude"),
-      cruiseAltitudeFt: z.number().optional().describe("Optional target altitude in feet"),
-    }),
-    handler: async () =>
-      // Reached only if the Python agent stopped treating this as a server
-      // tool; generation genuinely requires the A2A service.
-      JSON.stringify({
-        error: "Trajectory generation runs on the simulation agent, not in the app.",
-      }),
-    render: (props) =>
-      createElement(DisplaySettingCard, {
-        setting: "Simulated Aircraft",
-        status: toCardStatus(props.status),
-        result: props.result,
-      }),
-  });
-
   useSafeFrontendTool({
     name: "applySimulatedTrajectory",
     description:

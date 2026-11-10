@@ -1,101 +1,22 @@
-"""Dev/test fallback tool definitions for the ADS-B agent.
+"""Dev/test fallback tool surface for the ADS-B agent.
 
-In production, the canonical tool surface is the frontend `useFrontendTool`
-registrations in `useCopilotTools.ts`; CopilotKit transmits them on every
-chat turn via `RunAgentInput.tools` and the agent forwards them to the LLM.
-This list is only used when the agent is invoked without a frontend
-(CLI / unit tests / health checks). Keep it broadly representative but do
-not treat it as the source of truth — it is not, and it will atrophy.
+Two kinds of tool, per AG-UI:
+
+* **Backend tools** live in ``server_tools.py``. That is their single source of
+  truth: the agent always binds them, and ``/info`` advertises them. They are
+  included in ``TOOLS`` below rather than copied here.
+* **Client tools** (``_CLIENT_TOOLS``) are copies of what the desktop
+  registers in ``useCopilotTools.ts``. In production CopilotKit sends the real
+  ones on every run in ``RunAgentInput.tools``. These copies serve only the
+  frontend-less paths (CLI, unit tests, LangGraph Studio). Keep them broadly
+  representative, but they are not the source of truth and they will atrophy.
 """
 
+from .server_tools import SERVER_TOOLS
+
 # OpenAI function-calling format
-TOOLS: list[dict] = [
+_CLIENT_TOOLS: list[dict] = [
     # --- Read-only queries (Tier 1) ---
-    {
-        "type": "function",
-        "function": {
-            "name": "getStorageStats",
-            "description": (
-                "Get database storage statistics: total position count, raw message count, "
-                "flight count, event count, file size in bytes, and time range of stored data."
-            ),
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "getAircraftSummary",
-            "description": (
-                "Get summary of all aircraft seen in a time range. Returns per-aircraft: "
-                "hex_ident (ICAO code), callsign, position_count, min/max altitude (feet), "
-                "min/max ground_speed (knots), first_seen and last_seen timestamps (ms epoch)."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "startMs": {
-                        "type": "integer",
-                        "description": "Start time in milliseconds since epoch",
-                    },
-                    "endMs": {
-                        "type": "integer",
-                        "description": "End time in milliseconds since epoch",
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "getFlightSummary",
-            "description": (
-                "Get flight-level summaries with automatic segmentation (gaps >1 hour split "
-                "into separate flights). Returns: flight_id, hex_ident, callsign, "
-                "position_count, first/last_seen, min/max altitude, duration."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "hexIdent": {
-                        "type": "string",
-                        "description": "ICAO hex identifier to filter by (optional)",
-                    },
-                    "startMs": {
-                        "type": "integer",
-                        "description": "Start time in milliseconds since epoch",
-                    },
-                    "endMs": {
-                        "type": "integer",
-                        "description": "End time in milliseconds since epoch",
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "getTimeDistribution",
-            "description": (
-                "Get temporal distribution of aircraft activity as histogram buckets. "
-                "Shows how many aircraft/positions/flights were seen per time bucket."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "metric": {
-                        "type": "string",
-                        "enum": ["Positions", "Aircraft", "RawMessages", "Flights"],
-                        "description": "What to count per bucket",
-                    },
-                    "startMs": {"type": "integer", "description": "Start time ms epoch"},
-                    "endMs": {"type": "integer", "description": "End time ms epoch"},
-                },
-            },
-        },
-    },
     {
         "type": "function",
         "function": {
@@ -104,62 +25,6 @@ TOOLS: list[dict] = [
                 "Get detection range analysis by compass sector (10-degree sectors). "
                 "Shows the maximum distance (nautical miles) aircraft were detected "
                 "in each direction from the receiver."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "startMs": {"type": "integer", "description": "Start time ms epoch"},
-                    "endMs": {"type": "integer", "description": "End time ms epoch"},
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "getHourlyHeatmap",
-            "description": (
-                "Get hourly heatmap: aircraft and message counts per day-of-week x hour grid. "
-                "Useful for identifying peak activity patterns."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "startMs": {"type": "integer", "description": "Start time ms epoch"},
-                    "endMs": {"type": "integer", "description": "End time ms epoch"},
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "getTrajectory",
-            "description": (
-                "Get position history for a single aircraft by hex_ident. "
-                "Returns: list of (lat, lon, altitude, speed, track, timestamp) records."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "hexIdent": {
-                        "type": "string",
-                        "description": "ICAO hex identifier (e.g. 'A1B2C3')",
-                    },
-                    "startMs": {"type": "integer", "description": "Start time ms epoch"},
-                    "endMs": {"type": "integer", "description": "End time ms epoch"},
-                },
-                "required": ["hexIdent"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "getEventsOfInterest",
-            "description": (
-                "Get user-created events of interest. Returns events with title, "
-                "description, time range, location, category, and linked aircraft."
             ),
             "parameters": {
                 "type": "object",
@@ -188,19 +53,6 @@ TOOLS: list[dict] = [
             "description": (
                 "Get current feed throughput metrics: messages received, parsed, "
                 "errors, messages per second, uptime."
-            ),
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    # --- Date/time utility ---
-    {
-        "type": "function",
-        "function": {
-            "name": "getCurrentDateTime",
-            "description": (
-                "Get the current date, time, timezone, and epoch milliseconds. "
-                "Use this to resolve relative time references (e.g. 'last hour', "
-                "'today', 'since midnight') into absolute timestamps for other tools."
             ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
@@ -658,72 +510,20 @@ TOOLS: list[dict] = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "generateSimulatedTrajectory",
-            "description": (
-                "Generate new simulated aircraft with realistic flight paths and "
-                "show them flying on the map. This is THE tool for any request to "
-                "start, run, create, add, simulate or fake flights or aircraft — "
-                "e.g. 'start simulated flights', 'run three simulated flights', "
-                "'simulate a helicopter circling downtown', 'show me a fighter "
-                "doing aerobatics'. Do not use toggleDemoFlights for these. "
-                "The aircraft appear on the map automatically; "
-                "just confirm what you generated. These are simulated, not real "
-                "traffic — never mix them into answers about observed aircraft."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "category": {
-                        "type": "string",
-                        "enum": ["airliner", "ga", "helicopter", "fighter"],
-                        "description": (
-                            "Aircraft performance class to simulate. Optional — "
-                            "defaults to 'ga'. Infer it from the request when the "
-                            "user names an aircraft type; otherwise omit it rather "
-                            "than asking them which type they want."
-                        ),
-                    },
-                    "count": {
-                        "type": "integer",
-                        "description": "How many aircraft to generate (default 1, max 20)",
-                    },
-                    "routeHint": {
-                        "type": "string",
-                        "description": (
-                            "The user's own words describing the desired route, passed "
-                            "verbatim. Copy the WHOLE route description, including every "
-                            "leg of a multi-leg request ('come from here, circle there, "
-                            "then head over there') and every latitude/longitude the "
-                            "user wrote, exactly as they wrote them. Do not summarise "
-                            "it, do not drop the coordinates, and do not invent "
-                            "coordinates, headings or distances of your own. The "
-                            "simulation agent interprets the whole thing."
-                        ),
-                    },
-                    "originLat": {
-                        "type": "number",
-                        "description": "Receiver latitude; the routes are built around this point",
-                    },
-                    "originLng": {
-                        "type": "number",
-                        "description": "Receiver longitude; the routes are built around this point",
-                    },
-                    "cruiseAltitudeFt": {
-                        "type": "integer",
-                        "description": "Optional target altitude in feet",
-                    },
-                },
-                # Nothing is required: every field has a sensible default, so a
-                # bare "start simulated flights" generates aircraft instead of
-                # stalling to ask which type the user wants.
-                "required": [],
-            },
-        },
-    },
 ]
+
+TOOLS: list[dict] = [
+    *(
+        {
+            "type": "function",
+            "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
+        }
+        for t in SERVER_TOOLS
+    ),
+    *_CLIENT_TOOLS,
+]
+"""Backend tools first, then the client copies (OpenAI function-calling format)."""
+
 
 def get_tool_names() -> list[str]:
     """Return list of all tool names."""
