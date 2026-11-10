@@ -13,8 +13,8 @@
     "bench": "node --no-warnings bench/run.mjs"
   },
   "dependencies": {
-    "@copilotkit/react-core": "^1.55.3",
-    "@copilotkit/react-ui": "^1.55.3",
+    "@copilotkit/react-core": "^1.85.0",
+    "@copilotkit/react-ui": "^1.85.0",
     "@deck.gl/core": "9.4.1",
     "@deck.gl/layers": "9.4.1",
     "@tanstack/react-virtual": "^3.13.23",
@@ -56,5 +56,10 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.0.18"
+  },
+  "overrides": {
+    "@copilotkit/react-core": {
+      "maplibre-gl": "$maplibre-gl"
+    }
   }
 }
