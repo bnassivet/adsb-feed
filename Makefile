@@ -33,6 +33,8 @@ help:
 	@echo "  make client       desktop + agents only, no local broker/feed/recorder"
 	@echo "  make down         stop everything the stack started"
 	@echo "  make down-desktop stop just the desktop app"
+	@echo "  make down-agents  stop just the AI agents"
+	@echo "  make restart-agents  restart (or start) just the AI agents"
 	@echo "  make up-weather   start just the weather service ([weather] enabled = true)"
 	@echo "  make down-weather stop just the weather service"
 	@echo "  make restart-weather  pick up an edited [weather]"
@@ -93,6 +95,14 @@ up-desktop: up
 .PHONY: down-desktop
 down-desktop:
 	@$(SH) stop-desktop
+
+# The two AI agents on their own, without restarting the stack: after changing
+# agent code or [agents] (read once, at startup). restart-agents also starts
+# them when they are down. A recipe, not prerequisites, so -j cannot run the
+# start before the stop. (`up-agents` is the whole stack plus the agents.)
+.PHONY: down-agents restart-agents
+down-agents:    ; @$(SH) stop-agents
+restart-agents: ; @$(SH) stop-agents && $(SH) agents
 
 # The weather service on its own. `make up` already starts it when
 # [weather].enabled is true and `make down` always stops it; these change it
@@ -172,6 +182,7 @@ test-scripts:
 	@python3 scripts/tests/test_render_config.py
 	@bash scripts/tests/test_stack_paths.sh
 	@bash scripts/tests/test_stack_weather.sh
+	@bash scripts/tests/test_stack_agents.sh
 	@bash scripts/tests/test_stack_metrics.sh
 
 # Prometheus + Grafana, WITHOUT the Pulsar analytics leg -- that is behind a

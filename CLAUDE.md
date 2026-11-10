@@ -28,6 +28,7 @@ make paths  STACK=prod     # which files does this resolve to?
 | `make up-desktop` | ...and the desktop app |
 | `make up-weather` | the weather service alone (`[weather] enabled = true`); `down-weather`, `restart-weather` after editing `[weather]` |
 | `make up-agents` | ...and the AI agents |
+| `make restart-agents` | just the two AI agents, without touching the stack (also starts them if down); `down-agents` stops them |
 | `make client` | desktop + agents ONLY — for a machine whose data lives elsewhere |
 
 Keyed by the stack name: rendered configs, PIDs, logs, the DuckDB file, the

@@ -212,6 +212,18 @@ sim_agent_env() {
     "ADSB_SIM_AGENT_MLFLOW_TRACKING_URI=$(cfg agents mlflow_uri http://localhost:5010)"
 }
 
+# Both agents, sim-agent first: the chat agent proxies generateSimulatedTrajectory
+# to it. Shared by `up --agents`, `client` and `agents`.
+start_agents() {
+  echo "Agents:"
+  # shellcheck disable=SC2046  # word splitting is the point: one VAR=x per line
+  start sim-agent env $(sim_agent_env) \
+    sh -c "cd '$REPO/rust/adsb-simulation-agent' && exec uv run python -m adsb_simulation_agent"
+  # shellcheck disable=SC2046
+  start agent env $(agent_env) \
+    sh -c "cd '$REPO/rust/adsb-agent' && exec uv run python -m adsb_agent"
+}
+
 # The desktop is single-instance, for now.
 #
 # Two would need more than a free port: the Next dev server is pinned to :3200
@@ -686,12 +698,7 @@ up)
   fi
 
   if [ "${2-}" = "--agents" ] || [ "$(cfg agents enabled false)" = "true" ]; then
-    echo "Agents:"
-    # shellcheck disable=SC2046  # word splitting is the point: one VAR=x per line
-    start sim-agent env $(sim_agent_env) \
-      sh -c "cd '$REPO/rust/adsb-simulation-agent' && exec uv run python -m adsb_simulation_agent"
-    start agent env $(agent_env) \
-      sh -c "cd '$REPO/rust/adsb-agent' && exec uv run python -m adsb_agent"
+    start_agents
   fi
 
   echo
@@ -736,15 +743,11 @@ client)
     "ADSB_REMOTE_URI=$uri" "ADSB_REMOTE_TOKEN=$tok" \
     "ADSB_SOURCE_KIND=mqtt" $(desktop_live_env) || exit 1
 
-  echo "Agents:"
   # The agent defaults its tool server to :8787, which in the all-local stack
   # resolves to the data server. There is no data server on this machine, so
-  # without this every one of its data tools fails with connection-refused.
-  # shellcheck disable=SC2046
-  start sim-agent env $(sim_agent_env) \
-    sh -c "cd '$REPO/rust/adsb-simulation-agent' && exec uv run python -m adsb_simulation_agent"
-  start agent env $(agent_env) \
-    sh -c "cd '$REPO/rust/adsb-agent' && exec uv run python -m adsb_agent"
+  # without agent_env's tool-server URL every one of its data tools fails with
+  # connection-refused.
+  start_agents
 
   echo
   echo "Client up. 'make logs N=desktop' to watch it, 'make down' to stop."
@@ -753,6 +756,21 @@ client)
 stop-desktop)
   echo "Desktop:"
   stop desktop
+  ;;
+
+agents)
+  # The two AI agents on their own -- to pick up agent code or [agents] edits
+  # (both are read once, at startup) without restarting the stack. Whether or
+  # not [agents].enabled is set: `make up-agents` starts them regardless too.
+  require_config
+  start_agents
+  echo "  watch them with: make logs N=agent  (or N=sim-agent)"
+  ;;
+
+stop-agents)
+  echo "Agents:"
+  stop agent
+  stop sim-agent
   ;;
 
 weather)
@@ -923,6 +941,8 @@ usage: stack.sh <command>
   desktop-env  the MQTT broker/topic the desktop is launched with
   client       desktop + agents ONLY, attached to [remote] -- no local stack
   stop-desktop stop just the desktop app
+  agents       start just the two AI agents
+  stop-agents  stop just the two AI agents
   weather      start just the weather service (needs [weather] enabled = true)
   stop-weather stop just the weather service
   weather-status   what the weather service is doing (its control API)
