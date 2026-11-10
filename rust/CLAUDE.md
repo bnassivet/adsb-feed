@@ -37,11 +37,30 @@ Client tools still travel on every run. That is the protocol's design, not an
 inefficiency to optimise away. A "register once, send a digest" scheme was rejected
 as a private extension (see `docs/plans/2026-11-10-agent-owned-backend-tools.md`).
 
-Findings for a future CopilotKit upgrade (1.55.3 → 1.85.0 / 2.0-rc):
+CopilotKit is on **1.85** (upgraded from 1.55.3). Thread binding changed:
 
-- `useAgent({ agentId, threadId })` **throws** unless `runtimeAgentId` is also
-  passed. `AIChatContent.tsx` uses that form today.
-- `selfManagedAgents` logs an *Enterprise Intelligence tier* licence warning.
+- `CopilotChat` uses the **shared** registry agent and writes
+  `agent.threadId = threadId` onto it. Anything that must act on the chat's
+  conversation (voice auto-send in `AIChatContent.tsx`) calls
+  `useAgent({ agentId: AGENT_ID })` with **no** `threadId`.
+- `useAgent({ agentId, threadId })` **throws** without `runtimeAgentId`. With
+  one, it registers a separate proxy agent, which is a different conversation
+  from the chat's. `AIChatContent.threadId.test.tsx` pins this.
+- On 1.55, `useAgent({ threadId })` ran on an unregistered per-thread clone, so
+  the dev inspector (AG-UI Events / Agent tabs) never saw any event. On 1.85
+  the run is on the registry agent, which is the one the inspector subscribes to.
+- 1.85's `CopilotChat` calls AG-UI **`connect`** on an explicit `threadId`
+  before the first run: `POST /ag-ui/agent/{id}/connect`, or `agent/connect` on
+  the single endpoint. A 404 there aborts the chat with *"Could not load saved
+  conversation"*. The agent stores no threads, so it answers with an **empty SSE
+  stream**, which the protocol reads as "no history" (`test_connect.py`). Never
+  return JSON there; the single endpoint used to return the `/info` payload.
+- 1.85 lists `maplibre-gl@^5` as an optional peer, and the app pins 6.x for the
+  map bench. The `overrides` entry in `package.json` points CopilotKit at the
+  app's copy. Remove it once CopilotKit accepts 6.x.
+- Without a licence key, `checkFeature("chat")` is true, so there is no
+  warning. `selfManagedAgents` still logs an *Enterprise Intelligence tier*
+  licence warning, so don't use it.
 - `ProxiedCopilotRuntimeAgent.clone()` drops AG-UI middlewares, so attach any
   middleware to the instance that actually runs.
 
