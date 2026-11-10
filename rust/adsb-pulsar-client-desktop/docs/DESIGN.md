@@ -4188,13 +4188,44 @@ decision below.
 
 ### Tool-Plane Split
 
-The agent partitions every tool into one of two planes (`SERVER_TOOL_NAMES` in
-`adsb-agent/src/adsb_agent/graph.py`):
+The agent partitions every tool into one of two planes:
 
-| Plane | Executed by | Examples | Why |
-|-------|-------------|----------|-----|
-| **Server tools** | Agent loop, via Tauri tool server (`:8787`) — except `getCurrentDateTime`, resolved locally | `getStorageStats`, `getAircraftSummary`, `getFlightSummary`, `getTrajectory`, `getTimeDistribution`, `getHourlyHeatmap`, `getEventsOfInterest` | Read-only DuckDB queries. Chaining them in-loop lets the agent gather data and reason over multiple hops **without** a frontend round-trip per call. |
-| **Client tools** | Frontend, via AG-UI round-trip | `selectAircraft`, `panMapTo`, `setFilters`, `setMapTheme`, `setActiveMode`, `toggleSidebar`, `setLayerVisibility`, `setHistoryWindow`, `setColorMode`, `setDensityConfig`, `setEventFilter`, `toggleDemoFlights`, `searchLiveFlights`, `startFeed`, `stopFeed`, `createEventOfInterest`, `setWeatherLayer`, `getWindAloft` | UI mutations and state changes. Keeping these client-side preserves **user-in-the-loop** control and direct access to live React state. |
+| Plane | Defined by | Executed by | Examples | Why |
+|-------|-----------|-------------|----------|-----|
+| **Server (backend) tools** | The agent: `adsb-agent/src/adsb_agent/server_tools.py` (`SERVER_TOOLS`, `SERVER_TOOL_NAMES`) | Agent loop, via the tool server (`:8787`). `getCurrentDateTime` is resolved locally and `generateSimulatedTrajectory` goes over A2A | `getStorageStats`, `getAircraftSummary`, `getFlightSummary`, `getTrajectory`, `getTimeDistribution`, `getHourlyHeatmap`, `getEventsOfInterest`, `getCurrentDateTime`, `generateSimulatedTrajectory` | Read-only DuckDB queries, plus the simulation proxy. Chaining them in-loop lets the agent gather data and reason over multiple hops **without** a frontend round-trip per call. |
+| **Client tools** | The desktop: `useCopilotTools.ts`, sent in `RunAgentInput.tools` on every run | Frontend, via AG-UI round-trip | `selectAircraft`, `panMapTo`, `setFilters`, `setMapTheme`, `setActiveMode`, `toggleSidebar`, `setLayerVisibility`, `setHistoryWindow`, `setColorMode`, `setDensityConfig`, `setEventFilter`, `toggleDemoFlights`, `searchLiveFlights`, `startFeed`, `stopFeed`, `createEventOfInterest`, `setWeatherLayer`, `getWindAloft` | UI mutations and state changes. Keeping these client-side preserves **user-in-the-loop** control and direct access to live React state. |
+
+**Backend tools are owned by the agent, not supplied by the client.** That follows
+AG-UI: "`RunAgentInput.tools` is only for these client-provided tools. It is not
+intended to contain every tool available to the backend agent… advertise them through
+agent capabilities instead of sending their schemas from the client"
+(docs.ag-ui.com/concepts/tools). In practice:
+
+- `effective_tools(client_tools)` binds `SERVER_TOOLS` plus the client tools on every
+  run. A client copy of a backend tool, from an older desktop, is dropped, so the agent's
+  schema wins.
+- `/ag-ui/info`, `/info` and the single-endpoint `info` method advertise them as
+  `agents.adsb_agent.capabilities.tools`:
+  `{ supported, items: SERVER_TOOLS, clientProvided: true, parallelCalls: false }`
+  (AG-UI `ToolsCapabilities`). CopilotKit ≥ 1.85 exposes this as
+  `agent.getCapabilities()`, and 1.55 ignores it.
+- `useCopilotTools.test.ts` pins that the desktop registers **none** of the backend
+  names.
+
+This used to be the other way round. A server tool was callable only if the desktop
+had sent its schema (`partition_tool_names` intersected with `RunAgentInput.tools`), so
+the desktop declared seven backend tools whose handlers and renders never ran.
+`getTimeDistribution` and `getHourlyHeatmap` were silently unreachable, because no
+frontend declared them. Their schemas now match the Rust query types:
+`TimeDistributionQuery` requires `startMs`, `endMs` and `numBuckets`, and
+`HourlyHeatmapQuery` requires `startMs` and `endMs`.
+
+**Client tools still travel on every run**, as the protocol intends. Uploading them once
+and sending a digest was considered and rejected. AG-UI has no mechanism for
+registering client tools, so it would have been a private extension, and runs would no
+longer be self-describing. Removing backend tools from the payload does not reduce
+token use either, since the model still sees every schema.
+See `docs/plans/2026-11-10-agent-owned-backend-tools.md`.
 
 The `route()` function loops back into the agent **only when every pending tool call is
 server-side**. As soon as one client tool is requested, the graph hits `END` and
@@ -4225,8 +4256,8 @@ The Rust backend exposes the read-only data plane over a **loopback-only** HTTP 
 |---------|------|-------|
 | Provider | `src/components/CopilotKitProvider.tsx` | Wraps the app in `<CopilotKit runtimeUrl="http://localhost:8000/ag-ui" agent="adsb_agent">`. `AGENT_ID` must match the agent runtime info. |
 | Ambient context | `src/hooks/useCopilotContext.ts` | Registers 7 readables (active mode, connection status, storage status, selected aircraft, active filters, UI/theme/layers, live track count). Bundled into `RunAgentInput.context` each turn and rendered into the system prompt — the LLM always "sees" current UI state. |
-| Tool registration | `src/hooks/useCopilotTools.ts` | ~27 frontend tools via `useFrontendTool`. `useSafeFrontendTool` wraps each handler: catches exceptions → error JSON (prevents tool-call short-circuit), coerces results to string (AG-UI contract), emits a debug breadcrumb. |
-| Result rendering | `src/components/chat/` | Each data tool has a `render()` callback that displays a rich card (e.g. `StorageStatsCard`, `AircraftSummaryTable`) keyed off CopilotKit status (`in_progress` / `executing` / `complete`). |
+| Tool registration | `src/hooks/useCopilotTools.ts` | The 31 **client** tools via `useFrontendTool`. Backend tools are deliberately absent; see Tool-Plane Split. `useSafeFrontendTool` wraps each handler: catches exceptions → error JSON (prevents tool-call short-circuit), coerces results to string (AG-UI contract), emits a debug breadcrumb. |
+| Result rendering | `src/components/chat/` | Client tools have a `render()` callback that displays a card keyed off CopilotKit status (`in_progress` / `executing` / `complete`). The data cards (`StorageStatsCard`, `AircraftSummaryTable`, `FlightSummaryTable`, `TrajectoryCard`, `EventsCard`) are currently unused. Server tools run inside the graph and emit no `TOOL_CALL_*` events. They would come back if the agent streamed its server calls and the app rendered them through `useRenderToolCall`. |
 | Chat panel shell | `src/components/AIChatPanel.tsx` | Three docking modes — collapsed (32px strip), docked (resizable 280–560px), floating (draggable window). State persisted via `useLocalStorage` keys `adsb-aichat-open` / `-docked-expanded` / `-width` / `-floating` / `-float-x/y/w/h`. |
 
 ### Simulation Agent (A2A)
@@ -4312,7 +4343,8 @@ discovery), plus the `/voice/*` routes above. See `adsb-agent/src/adsb_agent/mai
 
 | File | Purpose |
 |------|---------|
-| `adsb-agent/src/adsb_agent/graph.py` | LangGraph ReAct loop, `SERVER_TOOL_NAMES`, `route()`, arg transform |
+| `adsb-agent/src/adsb_agent/server_tools.py` | Backend tool definitions (`SERVER_TOOLS`), `effective_tools()`; advertised in `/info` capabilities |
+| `adsb-agent/src/adsb_agent/graph.py` | LangGraph ReAct loop, `partition_tool_names`, `route()`, arg transform |
 | `adsb-simulation-agent/src/adsb_simulation_agent/` | A2A trajectory generator: `graph.py`, `intent.py`, `trajectory.py`, `kinematics.py`, `geometry.py`, `validate.py` |
 | `src/lib/simulate-api.ts` / `scenario-describe-api.ts` | Direct HTTP calls to `adsb-agent`, usable with the chat panel closed |
 | `adsb-agent/src/adsb_agent/main.py` | FastAPI service: AG-UI + voice endpoints |
@@ -5479,7 +5511,7 @@ This design prioritizes developer experience (hot reload, TypeScript, TDD), user
 
 ---
 
-*Last updated: September 2026 — Added **browsing recorded weather**: the map, the
+*Last updated: November 2026 — **Backend tools are agent-owned** (AG-UI conformance): `server_tools.py` defines the nine server-executed tools, the agent always binds them and advertises them as `/info` `capabilities.tools`, and the desktop no longer sends their schemas. This also makes `getTimeDistribution` and `getHourlyHeatmap` reachable, with schemas matching the Rust query types. Previous: **browsing recorded weather**: the map, the
 per-aircraft wind rows and the chat agent now describe the weather of the time being
 viewed rather than the current model hour — two instants (the browsed window's end for the
 map, each aircraft's own `last_seen` for its wind), a two-hop metadata-then-payload fetch

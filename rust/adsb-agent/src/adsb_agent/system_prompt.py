@@ -2,12 +2,13 @@
 
 The agent's system prompt is built per request from:
   - prompt_sections.yaml — intro, data conventions, guidelines (hand-edited prose)
-  - the tools the frontend sent over the wire as RunAgentInput.tools
+  - the agent's own backend tools (server_tools.py), always
+  - the client tools the frontend sent over the wire as RunAgentInput.tools
 
 This eliminates a long-standing drift surface where a hand-written SYSTEM_PROMPT
-listed capabilities that no longer matched the actual TOOLS / frontend
-registrations. The frontend (useCopilotTools.ts) is now the single source of
-truth for the tool surface; this module just reflects what arrived.
+listed capabilities that no longer matched the actual tool surface. Each half
+has one source of truth: server_tools.py for backend tools, useCopilotTools.ts
+for client tools. This module just reflects them.
 
 CLI / unit-test paths that don't supply tools fall back to the dev TOOLS list
 in tools.py so the prompt stays usable for offline development.
@@ -21,6 +22,8 @@ from typing import Any, Iterable
 
 import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+
+from .server_tools import effective_tools
 
 logger = logging.getLogger(__name__)
 
@@ -100,14 +103,19 @@ def render_system_prompt(
     """Render the system prompt for the current chat turn.
 
     Args:
-        tools: AG-UI Tool objects from RunAgentInput.tools (frontend-supplied).
+        tools: AG-UI Tool objects from RunAgentInput.tools (client-supplied).
+               The agent's backend tools (``server_tools.py``) are always
+               listed in addition; a client copy of one is ignored.
                If None or empty, falls back to the dev TOOLS list so CLI and
                unit-test invocations still produce a usable prompt.
         context: AG-UI Context entries from RunAgentInput.context — ambient
                UI state the LLM should know without making a tool call.
                If None or empty, the "Ambient context" section is omitted.
     """
-    capabilities = _capabilities_from_agui_tools(tools) if tools else []
+    # Backend tools are the agent's own and always present; the client's tools
+    # are appended. With no client tools at all (CLI/tests) the dev list below
+    # is used instead, which already includes the backend tools.
+    capabilities = _capabilities_from_agui_tools(effective_tools(tools)) if tools else []
     if not capabilities:
         logger.warning(
             "render_system_prompt: no frontend tools supplied, "

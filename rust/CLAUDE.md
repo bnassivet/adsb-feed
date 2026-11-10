@@ -19,6 +19,32 @@ Cargo workspace containing the ADS-B feed client library, adsd-data-engine and T
 | `adsb-agent` | `adsb-agent/` | Optional **Python** AI agent (LangGraph + FastAPI) providing AG-UI chat + voice for the desktop app. Built/run with `uv` (`uv sync --all-extras`, `uv run python -m adsb_agent`), **not** part of the Cargo workspace — `cargo` commands ignore it. Lives here as a sibling component (moved out of `adsb-pulsar-client-desktop/agent/`). Serves on **:8000**, including `/metrics` (`include_in_schema=False`, and skipped by `RequestLoggingMiddleware` — unskipped, a 15 s scrape would write the whole exposition into the log forever). |
 | `adsb-simulation-agent` | `adsb-simulation-agent/` | Optional **Python** agent (LangGraph + Starlette) generating kinematically plausible simulated flight trajectories, exposed over the **A2A protocol** and called by `adsb-agent` as an A2A client. Built/run with `uv` (`uv sync --all-extras`, `uv run python -m adsb_simulation_agent`), **not** part of the Cargo workspace. Serves on **:8300**. Serves `/metrics` beside `/health`. See its `CLAUDE.md` for a2a-sdk v1.x gotchas. |
 
+## AG-UI tool ownership (adsb-agent)
+
+**Backend tools belong to the agent**: `adsb-agent/src/adsb_agent/server_tools.py`
+(`SERVER_TOOLS`, with `SERVER_TOOL_NAMES` derived from it).
+
+- The agent always binds them through `effective_tools()`.
+- `/info` advertises them as `capabilities.tools.items`, with `clientProvided: true`.
+- The desktop must **not** register them as frontend tools. AG-UI reserves
+  `RunAgentInput.tools` for client tools, and `useCopilotTools.test.ts` pins this.
+
+A schema there must match its Rust query type in `adsb-data-engine/src/types.rs`.
+Serde rejects a missing non-`Option` field ("Invalid arguments: missing field")
+rather than defaulting it.
+
+Client tools still travel on every run. That is the protocol's design, not an
+inefficiency to optimise away. A "register once, send a digest" scheme was rejected
+as a private extension (see `docs/plans/2026-11-10-agent-owned-backend-tools.md`).
+
+Findings for a future CopilotKit upgrade (1.55.3 → 1.85.0 / 2.0-rc):
+
+- `useAgent({ agentId, threadId })` **throws** unless `runtimeAgentId` is also
+  passed. `AIChatContent.tsx` uses that form today.
+- `selfManagedAgents` logs an *Enterprise Intelligence tier* licence warning.
+- `ProxiedCopilotRuntimeAgent.clone()` drops AG-UI middlewares, so attach any
+  middleware to the instance that actually runs.
+
 ## AG-UI run lifecycle (adsb-agent)
 
 `RUN_ERROR` is **terminal**: CopilotKit rejects anything after it with

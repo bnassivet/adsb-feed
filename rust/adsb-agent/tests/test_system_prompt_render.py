@@ -89,3 +89,19 @@ def test_render_omits_ambient_section_when_no_context():
     assert "Ambient context" not in render_system_prompt(
         [_tool("noop", "Does nothing.")], context=[]
     )
+
+
+def test_backend_tool_capabilities_are_listed_when_the_client_sends_only_its_own():
+    """Backend tools are the agent's own (server_tools.py), so the prompt must
+    advertise them even though the desktop no longer sends their schemas."""
+    prompt = render_system_prompt([_tool("panMapTo", "Pan the map to a location.")])
+
+    assert "pan the map" in prompt.lower()
+    assert "database overview" in prompt.lower()  # getStorageStats
+    assert "simulated aircraft" in prompt.lower()  # generateSimulatedTrajectory
+
+
+def test_a_client_copy_of_a_backend_tool_is_not_listed_twice():
+    stale = _tool("getStorageStats", "Stale frontend copy of the storage tool.")
+    prompt = render_system_prompt([stale])
+    assert "stale frontend copy" not in prompt.lower()

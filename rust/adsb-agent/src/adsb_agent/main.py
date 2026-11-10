@@ -28,10 +28,13 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from . import metrics
 from .config import settings
 from .llm import stream_llm_response
+from .server_tools import SERVER_TOOLS
 from .tracing import make_span, set_session_tag
 from .a2a_client import call_simulation_agent
 from .describe import describe_scenario
 from .models import (
+    AgentCapabilities,
+    AgentDescription,
     AgUiErrorResponse,
     AgUiRequest,
     DescribeScenarioRequest,
@@ -41,6 +44,8 @@ from .models import (
     SimulateTrajectoryRequest,
     SimulateTrajectoryResponse,
     SSE_RESPONSES,
+    ToolDefinition,
+    ToolsCapabilities,
     VOICE_SSE_RESPONSES,
     VoiceBackendsResponse,
     VoiceErrorResponse,
@@ -399,13 +404,28 @@ async def agentic_chat(input_data: RunAgentInput, request: Request):
     return await _run_agent(input_data, request)
 
 
-_RUNTIME_INFO = {
-    "agents": {
-        "adsb_agent": {
-            "description": "ADS-B Aircraft Tracker assistant — answers questions about aircraft, flights, and database statistics using local LLM.",
-        },
+# Backend tools are advertised here rather than supplied by the client, per
+# AG-UI ("advertise them through agent capabilities instead of sending their
+# schemas from the client"). CopilotKit 1.85 surfaces this as
+# `agent.getCapabilities()`; older versions read only `description`.
+# Dumped once, by alias: the single-endpoint `info` method returns this dict
+# as-is, so it must already be in wire (camelCase) form.
+_RUNTIME_INFO = RuntimeInfoResponse(
+    agents={
+        "adsb_agent": AgentDescription(
+            description="ADS-B Aircraft Tracker assistant — answers questions about aircraft, flights, and database statistics using local LLM.",
+            capabilities=AgentCapabilities(
+                tools=ToolsCapabilities(
+                    supported=True,
+                    items=[ToolDefinition(**t.model_dump()) for t in SERVER_TOOLS],
+                    client_provided=True,
+                    # The graph executes a step's server calls one after another.
+                    parallel_calls=False,
+                )
+            ),
+        ),
     },
-}
+).model_dump(by_alias=True, exclude_none=True)
 
 
 @app.get(

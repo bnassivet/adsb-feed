@@ -32,7 +32,9 @@ def test_partition_splits_server_and_client():
         _tool("selectAircraft"),
     ]
     server, client = g.partition_tool_names(tools)
-    assert server == {"getAircraftSummary", "getTrajectory"}
+    # Backend tools are the agent's own, not the intersection with what the
+    # client sent (see test_server_tools.py).
+    assert server == set(g.SERVER_TOOL_NAMES)
     assert client == {"panMapTo", "selectAircraft"}
 
 

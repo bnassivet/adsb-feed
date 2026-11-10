@@ -69,8 +69,14 @@ class TestToolRegistration:
 
     def test_partition_routes_the_pair_correctly(self):
         server, client = g.partition_tool_names([_tool(SIM_TOOL), _tool(APPLY_TOOL)])
-        assert server == {SIM_TOOL}
+        assert SIM_TOOL in server
+        assert APPLY_TOOL not in server
         assert client == {APPLY_TOOL}
+
+    def test_generation_needs_no_frontend_declaration(self):
+        """The desktop no longer declares this tool; the agent owns it."""
+        server, _client = g.partition_tool_names([_tool(APPLY_TOOL)])
+        assert SIM_TOOL in server
 
 
 class TestServerToolExecution:
