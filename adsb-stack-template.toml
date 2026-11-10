@@ -197,6 +197,14 @@ tool_port = 8788
 # restart it (make down-desktop / up-desktop) after changing this.
 carto_api_key = ""
 
+# CopilotKit's developer inspector (the floating CopilotKit button). It exists
+# only in dev builds on localhost, and it is the app's only third-party traffic
+# there: news feeds from cdn.copilotkit.ai, Google Fonts, and promo videos. No
+# app data is sent. false sets NEXT_PUBLIC_COPILOTKIT_DISABLE_INSPECTOR=true;
+# true leaves it unset, so the desktop's .env.local can still decide. Read when
+# the desktop starts: restart it after changing this.
+copilotkit_inspector = true
+
 [remote]
 # For `make remote`: run the desktop app against a data server on another host
 # (typically a Raspberry Pi) instead of recording locally. Leave uri empty for

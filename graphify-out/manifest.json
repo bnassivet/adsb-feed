@@ -745,8 +745,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/CLAUDE.md": {
-    "mtime": 1794334313.7885985,
-    "ast_hash": "d75fe216cf63ff659287e88aecc8f715",
+    "mtime": 1794337263.4412444,
+    "ast_hash": "63b9dbb9cd23a2d45d3132744c74aa32",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client/QUICKSTART.md": {
@@ -785,8 +785,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/README.md": {
-    "mtime": 1788135882.6614237,
-    "ast_hash": "0fd6e28cb634a170ac1ab789ecc31996",
+    "mtime": 1794337826.9023194,
+    "ast_hash": "fd46bf710ad711c007b49d64554a81c3",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/CLAUDE.md": {
@@ -805,8 +805,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/DESIGN.md": {
-    "mtime": 1794296863.8398948,
-    "ast_hash": "ecadf1c35870aefc4c44603e38105a0a",
+    "mtime": 1794337263.4410524,
+    "ast_hash": "524e8aa29035c85d24deeb98785a2574",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/2026-02-22-imported-tracks-selection-design.md": {
@@ -1320,8 +1320,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/CopilotKitProvider.tsx": {
-    "mtime": 1788135882.6631484,
-    "ast_hash": "c187f627c5a5035273320cb1f4ee179f",
+    "mtime": 1794337214.637168,
+    "ast_hash": "2dd63b5c49968639d0b5d1f4245ac2aa",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/MicButton.tsx": {
@@ -2430,8 +2430,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/scripts/stack.sh": {
-    "mtime": 1794334558.1502466,
-    "ast_hash": "5ee47b99cb2e8d5cc43b6774d4bce997",
+    "mtime": 1794337751.562008,
+    "ast_hash": "ba291fa54589c3f9fe29db654944a048",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/skills/run-adsb-desktop/driver.sh": {
@@ -7615,8 +7615,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/.run/weather-cache.json": {
-    "mtime": 1794334057.457394,
-    "ast_hash": "a85ab173604794efa02f9f4dc4027365",
+    "mtime": 1794337658.333814,
+    "ast_hash": "f9eef3c800604deba3a22a3059561020",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/2026-09-14-weather-layer-design.md": {
@@ -8397,6 +8397,26 @@
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/scripts/tests/test_stack_agents.sh": {
     "mtime": 1794334529.725832,
     "ast_hash": "0bc1b616943c31b05423f9e68941aaf2",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/__tests__/CopilotKitProvider.test.tsx": {
+    "mtime": 1794337198.395713,
+    "ast_hash": "84af9c9547ff008e4aa366a5ab03f559",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/copilotkit-inspector.ts": {
+    "mtime": 1794337214.3619204,
+    "ast_hash": "639d9d833438527247cb72633bdc6945",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/copilotkit-inspector.test.ts": {
+    "mtime": 1794337198.2277262,
+    "ast_hash": "c1a575cfac0083edec9e9a98b728e314",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/scripts/tests/test_stack_inspector.sh": {
+    "mtime": 1794337732.9961944,
+    "ast_hash": "f7c750ed0b775d8b670682bdae1cb6d7",
     "semantic_hash": ""
   }
 }
