@@ -124,7 +124,9 @@ export function AIChatContent({ threadId }: { threadId?: string } = {}) {
   }, [autoSend, finalTranscript]);
 
   return (
-    <div ref={chatContainerRef} className="flex-1 overflow-hidden flex flex-col [&_.copilotkit-chat-messages]:bg-slate-900 [&_.copilotkit-chat-input]:bg-slate-800">
+    // `dark` turns on CopilotKit's built-in dark theme for the chat only;
+    // `adsb-chat` tints it to the app's slate (globals.css).
+    <div ref={chatContainerRef} className="adsb-chat dark flex-1 overflow-hidden flex flex-col">
       <CopilotChat
         threadId={threadId}
         // No per-message "View in Inspector" wrench (CopilotKit 1.85, dev

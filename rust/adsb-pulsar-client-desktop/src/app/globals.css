@@ -65,3 +65,27 @@
   border-radius: 50%;
   pointer-events: none;
 }
+
+/* AI chat: CopilotKit's dark theme (turned on by the `dark` class in
+   AIChatContent), tinted from its neutral black to the app's slate.
+   CopilotKit sets these tokens on [data-copilotkit] itself with
+   `.dark [data-copilotkit]`, so an override must target that element with a
+   more specific selector; values on an ancestor would be shadowed. */
+.adsb-chat.dark [data-copilotkit] {
+  --background: #0f172a;        /* slate-900 */
+  --card: #0f172a;
+  --popover: #1e293b;           /* slate-800 */
+  --secondary: #1e293b;
+  --muted: #1e293b;
+  --accent: #334155;            /* slate-700 */
+  --border: #334155;
+  --input: #334155;
+  --muted-foreground: #94a3b8;  /* slate-400 */
+}
+
+/* The input box ignores those tokens: CopilotKit hard-codes
+   `dark:bg-[#303030]`. Match the app's own inputs (slate-800, slate-600 border). */
+.adsb-chat.dark .copilotKitInput {
+  background-color: #1e293b;
+  border: 1px solid #475569;
+}

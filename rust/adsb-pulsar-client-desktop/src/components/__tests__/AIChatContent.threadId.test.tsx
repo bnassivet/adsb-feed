@@ -66,6 +66,16 @@ describe("AIChatContent threadId forwarding", () => {
   });
 
   /**
+   * CopilotKit 1.85 ships a dark theme that turns on when an ancestor of
+   * `[data-copilotkit]` has the class `dark`. The app is dark, so the chat must be.
+   */
+  it("renders the chat in CopilotKit's dark theme", () => {
+    const { container } = render(<AIChatContent threadId="thread-xyz" />);
+
+    expect(container.firstElementChild).toHaveClass("dark");
+  });
+
+  /**
    * CopilotKit >= 1.85: CopilotChat resolves the SHARED agent
    * (`useAgent({ agentId })`) and writes `agent.threadId = threadId` onto it.
    * The voice path must take that same instance, or its messages land in a
