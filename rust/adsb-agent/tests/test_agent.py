@@ -94,11 +94,15 @@ async def test_agui_single_endpoint_info(client: AsyncClient):
 
 
 async def test_agui_single_endpoint_connect(client: AsyncClient):
-    """POST /ag-ui with method=agent/connect returns runtime info (CopilotKit lifecycle)."""
+    """POST /ag-ui with method=agent/connect replays the thread as an (empty) SSE stream.
+
+    It used to return runtime info, which is not an AG-UI event stream; see
+    test_connect.py.
+    """
     resp = await client.post("/ag-ui", json={"method": "agent/connect", "params": {}, "body": {}})
     assert resp.status_code == 200
-    data = resp.json()
-    assert "agents" in data
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    assert resp.text.strip() == ""
 
 
 async def test_chat_endpoint_handles_error(client: AsyncClient, monkeypatch):

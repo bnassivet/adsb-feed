@@ -392,6 +392,41 @@ async def agent_run(agent_id: str, input_data: RunAgentInput, request: Request):
     return await _run_agent(input_data, request)
 
 
+def _connect_agent() -> StreamingResponse:
+    """AG-UI `connect`: replay a thread's history as an SSE event stream.
+
+    CopilotKit >= 1.85's `CopilotChat` connects to an explicit `threadId` before
+    its first run; a 404 here aborts the chat ("Could not load saved
+    conversation"). This agent keeps no threads -- the client sends the full
+    message list on every run, and the desktop mints a fresh thread id each time
+    the chat opens -- so there is never history to replay. An empty stream is
+    the protocol's "no history": the client supplies the empty
+    MESSAGES_SNAPSHOT/STATE_SNAPSHOT itself.
+    """
+
+    async def no_events():
+        return
+        yield  # pragma: no cover -- makes this an (empty) async generator
+
+    return StreamingResponse(
+        no_events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post(
+    "/ag-ui/agent/{agent_id}/connect",
+    tags=["ag-ui"],
+    response_class=StreamingResponse,
+    responses=SSE_RESPONSES,
+    summary="CopilotKit REST transport — rejoin a thread (empty: stateless agent)",
+)
+async def agent_connect(agent_id: str, input_data: RunAgentInput) -> StreamingResponse:
+    """CopilotKit REST transport — POST /ag-ui/agent/{agent_id}/connect."""
+    return _connect_agent()
+
+
 @app.post(
     "/ag-ui/chat",
     tags=["ag-ui"],
@@ -458,8 +493,11 @@ async def runtime_info_root() -> RuntimeInfoResponse:
 )
 async def runtime_single_endpoint(body: AgUiRequest, request: Request):
     """CopilotKit single-endpoint transport — handles method dispatch."""
-    if body.method in ("info", "agent/connect"):
+    if body.method == "info":
         return _RUNTIME_INFO
+
+    if body.method == "agent/connect":
+        return _connect_agent()
 
     if body.method == "agent/run":
         input_data = RunAgentInput(**body.body)
