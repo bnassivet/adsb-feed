@@ -56,6 +56,7 @@ make down        # stops EVERYTHING it started, including the desktop
 |---|---|
 | `make up-desktop` | stack + the desktop app, backgrounded (`make logs N=desktop`) |
 | `make down-desktop` | stop just the desktop |
+| `make down-agents` / `make restart-agents` | stop just the AI agents / restart them (or start them alone) after agent code or `[agents]` changes |
 | `make up-weather` | start just the weather service — refuses unless `[weather] enabled = true`, and says `make build` if the binary is missing |
 | `make down-weather` / `make restart-weather` | stop it / pick up an edited `[weather]`, which is only read at startup |
 | `make weather-status` / `weather-enable` / `weather-disable` | ask a running weather service what it is doing, or pause/resume fetching through its control API. A disable persists across restarts (`state_path`), and the last grid stays on the map. The API is browsable at `http://127.0.0.1:8789/swagger-ui/` |
