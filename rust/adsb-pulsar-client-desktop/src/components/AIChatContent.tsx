@@ -54,9 +54,12 @@ export function AIChatContent({ threadId }: { threadId?: string } = {}) {
   // true = auto-fill the input and submit the transcript with no clicks.
   const [autoSend, setAutoSend] = useLocalStorage("adsb-voice-autosend", false);
 
-  // Same agent instance CopilotChat renders (keyed by threadId) — lets us add a
-  // user message and run it programmatically, exactly like the chat input does.
-  const { agent } = useAgent({ agentId: AGENT_ID, threadId });
+  // Same agent instance CopilotChat renders — lets us add a user message and run
+  // it programmatically, exactly like the chat input does. Since CopilotKit 1.85,
+  // CopilotChat uses the SHARED agent and writes `agent.threadId = threadId` onto
+  // it, so no threadId here (passing one without `runtimeAgentId` throws, and
+  // with one we'd get a separate proxy agent, i.e. a different conversation).
+  const { agent } = useAgent({ agentId: AGENT_ID });
   // Core runner injects the registered frontend tools into the run; calling
   // agent.runAgent() directly omits them (agent warns "no frontend tools supplied").
   const { copilotkit } = useCopilotKit();
