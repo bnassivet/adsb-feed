@@ -24,9 +24,13 @@ async function renderWithEnv(value: string | undefined) {
 describe("CopilotKitProvider inspector switch", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("leaves the dev inspector on by default", async () => {
+  it("leaves the dev inspector on by default, without overriding the chat", async () => {
+    // Unset, not true: CopilotKit gives a provider-level value priority over
+    // CopilotChat's `inspectorTools` (`providerEnableInspector ?? inspectorTools`),
+    // so `true` here would bring back the per-message wrench the chat hides.
+    // Unset still shows the floating inspector (`enableInspector !== false`).
     const props = await renderWithEnv(undefined);
-    expect(props.enableInspector).toBe(true);
+    expect(props.enableInspector).toBeUndefined();
   });
 
   it("turns it off with NEXT_PUBLIC_COPILOTKIT_DISABLE_INSPECTOR=true", async () => {

@@ -15,10 +15,12 @@ export function CopilotKitProvider({ children }: { children: ReactNode }) {
   return (
     // enableInspector: NEXT_PUBLIC_COPILOTKIT_DISABLE_INSPECTOR, see
     // lib/copilotkit-inspector.ts. Off stops its third-party requests in dev.
+    // Only ever `false` or unset: a provider-level `true` would take priority
+    // over CopilotChat's inspectorTools={false} and bring back the wrench.
     <CopilotKit
       runtimeUrl={AGENT_AG_UI_URL}
       agent={AGENT_ID}
-      enableInspector={COPILOTKIT_INSPECTOR_ENABLED}
+      enableInspector={COPILOTKIT_INSPECTOR_ENABLED ? undefined : false}
     >
       {children}
     </CopilotKit>
