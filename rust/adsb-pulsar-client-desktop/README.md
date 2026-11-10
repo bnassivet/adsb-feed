@@ -159,6 +159,31 @@ npm run tauri dev
 
 See [QUICKSTART.md](QUICKSTART.md) for full setup instructions including `protoc` installation and build options.
 
+### Frontend settings (`.env.local`)
+
+```bash
+cp .env.local.template .env.local   # git-ignored; restart the app after editing
+```
+
+| Variable | Default | `adsb-stack.toml` | Purpose |
+|---|---|---|---|
+| `NEXT_PUBLIC_AGENT_URL` | `http://localhost:8000` | from `[agents] agent_port`, always set | AI agent base URL (AG-UI runtime at `/ag-ui`) |
+| `NEXT_PUBLIC_CARTO_API_KEY` | unset (Esri tiles) | `[desktop] carto_api_key`, set when not empty | CARTO basemap key, needed for CARTO raster tiles since 2026-09-25 |
+| `NEXT_PUBLIC_COPILOTKIT_DISABLE_INSPECTOR` | unset (inspector available) | `[desktop] copilotkit_inspector = false`, set only then | `true` turns off CopilotKit's dev inspector, the app's only third-party traffic in dev |
+
+These are compiled in when the app starts, so a change needs a restart. A variable set in
+the environment wins over `.env.local`, and `make up-desktop` / `make client` set them from
+`adsb-stack.toml` as shown, so with the stack, change them there. `make desktop-env` prints
+what the stack passes, except the CARTO key.
+
+**Privacy.** CopilotKit (MIT) sends no telemetry from this app: its Segment telemetry is in
+`@copilotkit/runtime`, a Node server this app doesn't use, and it never calls CopilotKit Cloud
+without a key. Chat messages go only to the agent above. The dev inspector, which exists only in
+dev builds on localhost, downloads news feeds from `cdn.copilotkit.ai`, fonts from Google, and
+promo videos. Set `NEXT_PUBLIC_COPILOTKIT_DISABLE_INSPECTOR=true` to stop those requests. In a
+release build the inspector doesn't exist, and the CSP in `src-tauri/tauri.conf.json` blocks
+those hosts anyway.
+
 ## Documentation
 
 | Document | Description |

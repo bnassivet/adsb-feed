@@ -55,6 +55,13 @@ CopilotKit is on **1.85** (upgraded from 1.55.3). Thread binding changed:
   conversation"*. The agent stores no threads, so it answers with an **empty SSE
   stream**, which the protocol reads as "no history" (`test_connect.py`). Never
   return JSON there; the single endpoint used to return the `/info` payload.
+- The dev inspector is CopilotKit's only third-party traffic: `cdn.copilotkit.ai`
+  feeds, Google Fonts and Loom videos, in dev builds on localhost only.
+  `NEXT_PUBLIC_COPILOTKIT_DISABLE_INSPECTOR=true` turns it off; default unset
+  means on (`src/lib/copilotkit-inspector.ts`). Stack setting:
+  `[desktop] copilotkit_inspector = false`, exported only when false so a
+  `.env.local` value still applies at the default. CopilotKit's Segment telemetry
+  lives in `@copilotkit/runtime` (Node), which this app does not use.
 - 1.85 lists `maplibre-gl@^5` as an optional peer, and the app pins 6.x for the
   map bench. The `overrides` entry in `package.json` points CopilotKit at the
   app's copy. Remove it once CopilotKit accepts 6.x.

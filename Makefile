@@ -50,7 +50,7 @@ help:
 	@echo "  make render       regenerate .run/*.toml from adsb-stack.toml"
 	@echo "  make paths        which config and state dir this STACK resolves to"
 	@echo "  make tauri-config the desktop's tauri -c override for this STACK"
-	@echo "  make desktop-env  the MQTT broker/topic the desktop is launched with"
+	@echo "  make desktop-env  the environment the desktop is launched with"
 	@echo "  make render-fleet F=deploy/prod.toml   render per-node fleet configs"
 	@echo ""
 	@echo "Build:"
@@ -183,6 +183,7 @@ test-scripts:
 	@bash scripts/tests/test_stack_paths.sh
 	@bash scripts/tests/test_stack_weather.sh
 	@bash scripts/tests/test_stack_agents.sh
+	@bash scripts/tests/test_stack_inspector.sh
 	@bash scripts/tests/test_stack_metrics.sh
 
 # Prometheus + Grafana, WITHOUT the Pulsar analytics leg -- that is behind a

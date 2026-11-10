@@ -292,6 +292,19 @@ desktop_target_dir() {
 
 # Start the desktop with everything this stack needs. Any extra env pairs the
 # caller wants (remote mode, live source) are passed as arguments.
+# Frontend settings from [desktop], one VAR=value per line. Printed by
+# `desktop-env` too, so keep secrets (the CARTO key) out of it.
+#
+# copilotkit_inspector = false turns off CopilotKit's dev inspector, the app's
+# only third-party traffic in dev (cdn.copilotkit.ai feeds, Google Fonts, promo
+# videos). Exported only when off: at the default the variable stays unset, so
+# a value in the shell or the desktop's .env.local still applies.
+desktop_frontend_env() {
+  [ "$(cfg desktop copilotkit_inspector true)" = "false" ] && \
+    echo "NEXT_PUBLIC_COPILOTKIT_DISABLE_INSPECTOR=true"
+  return 0
+}
+
 start_desktop() { # start_desktop [VAR=value ...]
   dev="$(desktop_dev_port)"
   if port_busy "$dev"; then
@@ -330,6 +343,9 @@ start_desktop() { # start_desktop [VAR=value ...]
     "NEXT_PUBLIC_AGENT_URL=$(agent_base_url)" \
     "NEXT_DIST_DIR=$dist" \
     "CARGO_TARGET_DIR=$target"
+
+  # shellcheck disable=SC2046  # word splitting is the point: one VAR=x per line
+  set -- "$@" $(desktop_frontend_env)
 
   # Only when set: an empty value would override a key exported in the shell
   # or kept in the desktop's .env.local.
@@ -399,6 +415,7 @@ desktop-env)
   # the app actually subscribe to?"
   require_config
   desktop_live_env
+  desktop_frontend_env
   ;;
 
 paths)
@@ -938,7 +955,7 @@ usage: stack.sh <command>
   doctor    preflight: binaries, docker, ports, skills, LLM
   up        broker -> recorder -> feed (add --agents for the AI agents)
   desktop      start the desktop app (backgrounded; make logs N=desktop)
-  desktop-env  the MQTT broker/topic the desktop is launched with
+  desktop-env  the environment the desktop is launched with (MQTT, frontend)
   client       desktop + agents ONLY, attached to [remote] -- no local stack
   stop-desktop stop just the desktop app
   agents       start just the two AI agents
