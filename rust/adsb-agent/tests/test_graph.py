@@ -137,7 +137,7 @@ def test_convert_messages_roles():
             tool_calls=[
                 SimpleNamespace(
                     id="call_1",
-                    function=SimpleNamespace(name="getTrajectory", arguments='{"hexIdent":"A"}'),
+                    function=SimpleNamespace(name="panMapTo", arguments='{"latitude":1}'),
                 )
             ],
         ),
@@ -149,13 +149,111 @@ def test_convert_messages_roles():
     assert isinstance(lc[0], SystemMessage)
     assert isinstance(lc[1], HumanMessage)
     assert isinstance(lc[2], AIMessage)
-    assert lc[2].tool_calls[0]["name"] == "getTrajectory"
-    assert lc[2].tool_calls[0]["args"] == {"hexIdent": "A"}
+    # A client tool: server tool calls are stripped (see the tests below).
+    assert lc[2].tool_calls[0]["name"] == "panMapTo"
+    assert lc[2].tool_calls[0]["args"] == {"latitude": 1}
     assert isinstance(lc[3], ToolMessage)
     assert lc[3].tool_call_id == "call_1"
 
 
+# --- server tool calls are display-only ---------------------------------
+#
+# The agent streams its own tool calls to the chat (cards and chips), so they
+# come back in the history of every later run. The LLM sees none of them:
+# follow-ups re-query, which is cheap and gives fresh data. Same as before
+# they were streamed, when they never left the agent.
+
+
+def _assistant(content, *calls):
+    return SimpleNamespace(
+        role="assistant",
+        content=content,
+        tool_calls=[
+            SimpleNamespace(id=cid, function=SimpleNamespace(name=name, arguments="{}"))
+            for name, cid in calls
+        ],
+    )
+
+
+def _result(cid, content="{}"):
+    return SimpleNamespace(role="tool", content=content, tool_call_id=cid)
+
+
+def _user(text):
+    return SimpleNamespace(role="user", content=text)
+
+
+def test_server_calls_and_results_are_not_replayed_to_the_llm():
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    lc = g.convert_agui_messages_to_lc(
+        [
+            _user("what time?"),
+            _assistant("Checking", ("getCurrentDateTime", "s1")),
+            _result("s1", '{"iso": "2026-11-10T19:11"}'),
+            _assistant("It is 19:11."),
+            _user("and the date?"),
+        ]
+    )
+    assert not any(isinstance(m, ToolMessage) for m in lc)
+    ais = [m for m in lc if isinstance(m, AIMessage)]
+    assert [m.content for m in ais] == ["Checking", "It is 19:11."]
+    assert all(not m.tool_calls for m in ais)
+
+
+def test_an_envelope_with_only_server_calls_disappears():
+    from langchain_core.messages import AIMessage
+
+    lc = g.convert_agui_messages_to_lc(
+        [_user("q"), _assistant("", ("getStorageStats", "s1")), _result("s1"), _assistant("A")]
+    )
+    assert [m.content for m in lc if isinstance(m, AIMessage)] == ["A"]
+
+
+def test_client_calls_and_results_are_kept_and_paired():
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    lc = g.convert_agui_messages_to_lc(
+        [_user("q"), _assistant("Panning", ("panMapTo", "c1")), _result("c1", "ok")]
+    )
+    (ai,) = [m for m in lc if isinstance(m, AIMessage)]
+    (tool,) = [m for m in lc if isinstance(m, ToolMessage)]
+    assert [tc["id"] for tc in ai.tool_calls] == ["c1"]
+    assert tool.tool_call_id == "c1"
+
+
+def test_mixed_message_keeps_only_its_client_call():
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    lc = g.convert_agui_messages_to_lc(
+        [
+            _user("q"),
+            _assistant("", ("getStorageStats", "s1"), ("panMapTo", "c1")),
+            _result("s1"),
+            _result("c1", "ok"),
+        ]
+    )
+    (ai,) = [m for m in lc if isinstance(m, AIMessage)]
+    assert [tc["name"] for tc in ai.tool_calls] == ["panMapTo"]
+    assert [m.tool_call_id for m in lc if isinstance(m, ToolMessage)] == ["c1"]
+
+
 # --- run_graph_to_agui ----------------------------------------------------
+
+
+AGENT_META = {"langgraph_node": "agent", "langgraph_step": 1}
+
+
+def _ended_with(final, pending=None):
+    """The `updates` LangGraph streams at the end of a run: the server_tools
+    node's out-of-band calls (if any), then the agent's final message."""
+    steps = []
+    if pending:
+        steps.append(
+            ("updates", {"server_tools": {"messages": [], "pending_client_tool_calls": pending}})
+        )
+    steps.append(("updates", {"agent": {"messages": [final]}}))
+    return steps
 
 
 class _FakeGraph:
@@ -173,9 +271,9 @@ class _FakeGraph:
 async def test_run_graph_streams_text_then_ends():
     final = SimpleNamespace(tool_calls=[])
     steps = [
-        ("messages", (SimpleNamespace(content="Hel"), {})),
-        ("messages", (SimpleNamespace(content="lo"), {})),
-        ("values", {"messages": [final]}),
+        ("messages", (SimpleNamespace(content="Hel"), AGENT_META)),
+        ("messages", (SimpleNamespace(content="lo"), AGENT_META)),
+        *_ended_with(final),
     ]
     events = [e async for e in g.run_graph_to_agui(_FakeGraph(steps), [])]
     types = [e.type for e in events]
@@ -196,7 +294,7 @@ async def test_run_graph_forwards_client_tool_call():
     final = SimpleNamespace(
         tool_calls=[{"name": "panMapTo", "args": {"latitude": 1.0, "longitude": 2.0}, "id": "c1"}]
     )
-    steps = [("values", {"messages": [final]})]
+    steps = [*_ended_with(final)]
     events = [e async for e in g.run_graph_to_agui(_FakeGraph(steps), [])]
     types = [e.type for e in events]
     # Empty assistant-message envelope, then the tool-call triplet.

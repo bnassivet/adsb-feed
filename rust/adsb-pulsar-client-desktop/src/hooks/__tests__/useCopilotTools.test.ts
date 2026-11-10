@@ -14,7 +14,14 @@ const registeredTools = new Map<
 // times with the same name (e.g. on every render) does NOT replace the handler
 // — the first registration wins. Tests that rely on "latest handler wins" are
 // lying about production behavior and will hide stale-closure bugs.
+// Render-only registrations (useRenderTool): the agent's own tool calls, which
+// are streamed to the chat for display and never executed here.
+const registeredRenderers = new Map<string, (props: Record<string, unknown>) => unknown>();
+
 vi.mock("@copilotkit/react-core/v2", () => ({
+  useRenderTool: (opts: { name: string; render: (props: Record<string, unknown>) => unknown }) => {
+    if (!registeredRenderers.has(opts.name)) registeredRenderers.set(opts.name, opts.render);
+  },
   useFrontendTool: (opts: {
     name: string;
     handler: (...args: unknown[]) => unknown;
@@ -273,6 +280,57 @@ describe("useCopilotTools — display control tools", () => {
 
     it.each(BACKEND_TOOLS)("does not register %s as a frontend tool", (name) => {
       expect(registeredTools.has(name)).toBe(false);
+    });
+
+    /* The agent streams its own calls (TOOL_CALL_* + TOOL_CALL_RESULT) to the
+       chat. CopilotKit never executes a call that already has a result, so the
+       app only draws them: a card for these five, a chip for any other call. */
+    const CARDS: [string, string][] = [
+      ["getStorageStats", "StorageStatsCard"],
+      ["getAircraftSummary", "AircraftSummaryTable"],
+      ["getFlightSummary", "FlightSummaryTable"],
+      ["getTrajectory", "TrajectoryCard"],
+      ["getEventsOfInterest", "EventsCard"],
+    ];
+
+    it.each(CARDS)("renders %s calls as %s", (name, component) => {
+      const render = registeredRenderers.get(name);
+      expect(render).toBeDefined();
+      const el = render!({ name, status: "complete", result: "[]", parameters: {} }) as {
+        type: { name: string };
+        props: { status: string; result: string };
+      };
+      expect(el.type.name).toBe(component);
+      expect(el.props).toMatchObject({ status: "complete", result: "[]" });
+    });
+
+    it("maps CopilotKit's statuses onto the cards'", () => {
+      const render = registeredRenderers.get("getStorageStats")!;
+      const status = (s: string) =>
+        (render({ name: "getStorageStats", status: s, parameters: {} }) as {
+          props: { status: string };
+        }).props.status;
+      expect(status("inProgress")).toBe("in_progress");
+      expect(status("executing")).toBe("executing");
+      expect(status("complete")).toBe("complete");
+    });
+
+    it("draws every other tool call as a chip", () => {
+      const render = registeredRenderers.get("*");
+      expect(render).toBeDefined();
+      const el = render!({
+        name: "getHourlyHeatmap",
+        status: "complete",
+        parameters: { startMs: 1 },
+        result: "{}",
+      }) as { type: { name: string }; props: Record<string, unknown> };
+      expect(el.type.name).toBe("ToolCallChip");
+      expect(el.props).toMatchObject({
+        name: "getHourlyHeatmap",
+        status: "complete",
+        parameters: { startMs: 1 },
+      });
+      expect(el.props).not.toHaveProperty("result");
     });
   });
 

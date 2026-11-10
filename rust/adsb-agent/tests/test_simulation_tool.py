@@ -48,6 +48,21 @@ def _tool(name: str):
     return SimpleNamespace(name=name, description="d", parameters={})
 
 
+AGENT_META = {"langgraph_node": "agent", "langgraph_step": 1}
+
+
+def _ended_with(final, pending=None):
+    """The `updates` LangGraph streams at the end of a run: the server_tools
+    node's out-of-band calls (if any), then the agent's final message."""
+    steps = []
+    if pending:
+        steps.append(
+            ("updates", {"server_tools": {"messages": [], "pending_client_tool_calls": pending}})
+        )
+    steps.append(("updates", {"agent": {"messages": [final]}}))
+    return steps
+
+
 class _FakeGraph:
     """Mimics a compiled LangGraph: dual-mode astream of (mode, chunk)."""
 
@@ -161,15 +176,7 @@ class TestEventForwarding:
     async def test_pending_call_is_emitted_from_the_values_chunk(self):
         final = SimpleNamespace(tool_calls=[])
         steps = [
-            (
-                "values",
-                {
-                    "messages": [final],
-                    "pending_client_tool_calls": [
-                        {"name": APPLY_TOOL, "args": TRAJECTORY_DATA, "id": "p1"}
-                    ],
-                },
-            )
+            *_ended_with(final, [{"name": APPLY_TOOL, "args": TRAJECTORY_DATA, "id": "p1"}]),
         ]
         events = [e async for e in g.run_graph_to_agui(_FakeGraph(steps), [])]
         starts = [e for e in events if e.type == EventType.TOOL_CALL_START]
@@ -180,16 +187,8 @@ class TestEventForwarding:
         reply *and* the aircraft appear."""
         final = SimpleNamespace(tool_calls=[])
         steps = [
-            ("messages", (SimpleNamespace(content="Generated a helicopter orbit."), {})),
-            (
-                "values",
-                {
-                    "messages": [final],
-                    "pending_client_tool_calls": [
-                        {"name": APPLY_TOOL, "args": TRAJECTORY_DATA, "id": "p1"}
-                    ],
-                },
-            ),
+            ("messages", (SimpleNamespace(content="Generated a helicopter orbit."), AGENT_META)),
+            *_ended_with(final, [{"name": APPLY_TOOL, "args": TRAJECTORY_DATA, "id": "p1"}]),
         ]
         events = [e async for e in g.run_graph_to_agui(_FakeGraph(steps), [])]
         types = [e.type for e in events]
@@ -204,15 +203,7 @@ class TestEventForwarding:
     async def test_forwarded_args_contain_the_waypoints(self):
         final = SimpleNamespace(tool_calls=[])
         steps = [
-            (
-                "values",
-                {
-                    "messages": [final],
-                    "pending_client_tool_calls": [
-                        {"name": APPLY_TOOL, "args": TRAJECTORY_DATA, "id": "p1"}
-                    ],
-                },
-            )
+            *_ended_with(final, [{"name": APPLY_TOOL, "args": TRAJECTORY_DATA, "id": "p1"}]),
         ]
         events = [e async for e in g.run_graph_to_agui(_FakeGraph(steps), [])]
         args_evt = next(e for e in events if e.type == EventType.TOOL_CALL_ARGS)
@@ -225,7 +216,7 @@ class TestEventForwarding:
             tool_calls=[{"name": "panMapTo", "args": {"latitude": 1.0}, "id": "c1"}]
         )
         events = [
-            e async for e in g.run_graph_to_agui(_FakeGraph([("values", {"messages": [final]})]), [])
+            e async for e in g.run_graph_to_agui(_FakeGraph([*_ended_with(final)]), [])
         ]
         starts = [e for e in events if e.type == EventType.TOOL_CALL_START]
         assert [s.tool_call_name for s in starts] == ["panMapTo"]
@@ -235,15 +226,7 @@ class TestEventForwarding:
             tool_calls=[{"name": "panMapTo", "args": {}, "id": "c1"}]
         )
         steps = [
-            (
-                "values",
-                {
-                    "messages": [final],
-                    "pending_client_tool_calls": [
-                        {"name": APPLY_TOOL, "args": TRAJECTORY_DATA, "id": "p1"}
-                    ],
-                },
-            )
+            *_ended_with(final, [{"name": APPLY_TOOL, "args": TRAJECTORY_DATA, "id": "p1"}]),
         ]
         events = [e async for e in g.run_graph_to_agui(_FakeGraph(steps), [])]
         names = {e.tool_call_name for e in events if e.type == EventType.TOOL_CALL_START}
@@ -251,7 +234,7 @@ class TestEventForwarding:
 
     async def test_no_pending_calls_changes_nothing(self):
         final = SimpleNamespace(tool_calls=[])
-        steps = [("messages", (SimpleNamespace(content="hi"), {})), ("values", {"messages": [final]})]
+        steps = [("messages", (SimpleNamespace(content="hi"), AGENT_META)), *_ended_with(final)]
         events = [e async for e in g.run_graph_to_agui(_FakeGraph(steps), [])]
         assert not any(e.type == EventType.TOOL_CALL_START for e in events)
 
@@ -294,13 +277,12 @@ class TestPayloadSurvivesErrors:
     async def test_pending_calls_are_forwarded_before_the_error(self):
         steps = [
             (
-                "values",
-                {
-                    "messages": [SimpleNamespace(tool_calls=[])],
-                    "pending_client_tool_calls": [
+                # The simulation ran; the run then fails before the model's
+                # follow-up turn, so no final agent update arrives.
+                "updates",
+                {"server_tools": {"messages": [], "pending_client_tool_calls": [
                         {"name": APPLY_TOOL, "args": TRAJECTORY_DATA, "id": "p1"}
-                    ],
-                },
+                    ]}},
             )
         ]
         events = [
@@ -315,13 +297,12 @@ class TestPayloadSurvivesErrors:
     async def test_forwarded_payload_is_intact(self):
         steps = [
             (
-                "values",
-                {
-                    "messages": [SimpleNamespace(tool_calls=[])],
-                    "pending_client_tool_calls": [
+                # The simulation ran; the run then fails before the model's
+                # follow-up turn, so no final agent update arrives.
+                "updates",
+                {"server_tools": {"messages": [], "pending_client_tool_calls": [
                         {"name": APPLY_TOOL, "args": TRAJECTORY_DATA, "id": "p1"}
-                    ],
-                },
+                    ]}},
             )
         ]
         events = [
