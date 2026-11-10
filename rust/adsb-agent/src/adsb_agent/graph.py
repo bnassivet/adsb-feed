@@ -41,6 +41,7 @@ from ag_ui.core import (
     TextMessageStartEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
+    ToolCallResultEvent,
     ToolCallStartEvent,
 )
 
@@ -273,14 +274,39 @@ def _to_openai_tools(tools: Iterable[Any] | None) -> list[dict] | None:
     ]
 
 
+def _server_tool_call_ids(messages: list[Any]) -> set[str]:
+    """Ids of the agent's own (server) tool calls in an AG-UI history."""
+    ids: set[str] = set()
+    for msg in messages:
+        if msg.role != "assistant":
+            continue
+        for tc in getattr(msg, "tool_calls", None) or []:
+            fn = getattr(tc, "function", None)
+            if fn is not None and fn.name in SERVER_TOOL_NAMES:
+                ids.add(getattr(tc, "id", "") or "")
+    return ids
+
+
 def convert_agui_messages_to_lc(messages: Iterable[Any]) -> list[Any]:
-    """Convert AG-UI message objects to LangChain message objects."""
+    """Convert AG-UI message objects to LangChain message objects.
+
+    The agent's own tool calls and their results are dropped. They are streamed
+    to the chat for display only (cards and chips), so they come back with every
+    later run; the LLM never sees earlier ones and re-queries instead, which is
+    cheap and gives fresh data. That is also what it saw before they were
+    streamed. An assistant message left with no text and no tool calls -- the
+    envelope for a turn that only called server tools -- is dropped too. Client
+    calls stay paired with their results, as the chat history format requires.
+    """
     from langchain_core.messages import (
         AIMessage,
         HumanMessage,
         SystemMessage,
         ToolMessage,
     )
+
+    messages = list(messages)
+    server_ids = _server_tool_call_ids(messages)
 
     result: list[Any] = []
     for msg in messages:
@@ -289,6 +315,8 @@ def convert_agui_messages_to_lc(messages: Iterable[Any]) -> list[Any]:
         if role == "system":
             result.append(SystemMessage(content=content))
         elif role == "tool":
+            if (getattr(msg, "tool_call_id", "") or "") in server_ids:
+                continue
             result.append(
                 ToolMessage(
                     content=content,
@@ -298,6 +326,8 @@ def convert_agui_messages_to_lc(messages: Iterable[Any]) -> list[Any]:
         elif role == "assistant":
             tool_calls = []
             for tc in getattr(msg, "tool_calls", None) or []:
+                if (getattr(tc, "id", "") or "") in server_ids:
+                    continue
                 fn = getattr(tc, "function", None)
                 raw_args = getattr(fn, "arguments", "") if fn else ""
                 try:
@@ -311,6 +341,8 @@ def convert_agui_messages_to_lc(messages: Iterable[Any]) -> list[Any]:
                         "id": getattr(tc, "id", "") or "",
                     }
                 )
+            if not content and not tool_calls:
+                continue
             result.append(AIMessage(content=content, tool_calls=tool_calls))
         else:  # user or unknown → treat as human
             result.append(HumanMessage(content=content))
@@ -363,6 +395,11 @@ def build_agent_graph(tools: Iterable[Any] | None, *, model: Any | None = None):
         # under it via the fluent context (langchain autolog is intentionally off).
         with make_span("agent", span_type="AGENT"):
             response = await model.ainvoke(state["messages"])
+        # Fix missing ids once, here, before the message is shared: the
+        # ToolMessage, the streamed TOOL_CALL_* events and the history must all
+        # carry the same id, and `tool_call_id()` mints a fresh one per call.
+        for tc in getattr(response, "tool_calls", None) or []:
+            tc["id"] = tool_call_id(tc)
         return {"messages": [response]}
 
     async def server_tools_node(state: dict) -> dict:
@@ -424,65 +461,181 @@ def make_graph(config: Any | None = None):
 async def run_graph_to_agui(graph, lc_messages: list[Any]) -> AsyncIterator:
     """Drive a compiled graph and translate its stream into AG-UI events.
 
-    Streams assistant text token-by-token, then forwards any client tool calls
-    present on the final message (server tool calls have already been executed
-    and looped, so they never survive to the end state).
+    * Text: only the ``agent`` node's chunks. ``stream_mode="messages"`` emits
+      messages from every node, and the ``server_tools`` node's ToolMessages are
+      raw JSON that used to leak into the reply.
+    * One assistant message per agent turn, so a tool-calling turn's narration
+      ("Checking...") and the final answer stay separate.
+    * Server tool calls are streamed as TOOL_CALL_START/ARGS/END when the model
+      makes them, then TOOL_CALL_RESULT when they finish. The desktop renders
+      them (a card or a chip); CopilotKit never executes a call that already has
+      a result. They are display-only: ``convert_agui_messages_to_lc`` strips
+      them from the history the next run sends back.
+    * Client tool calls on the final message, and those synthesized out-of-band
+      by server tools, are forwarded at the end for the browser to execute.
     """
-    message_id = str(uuid.uuid4())
-    text_started = False
-    final_messages: list[Any] = lc_messages
+    turn = _TurnState()
+    final_ai: Any = None
     pending_client_calls: list[dict] = []
 
     try:
         async for mode, chunk in graph.astream(
             {"messages": lc_messages},
-            stream_mode=["messages", "values"],
+            stream_mode=["messages", "updates"],
             config={"recursion_limit": settings.agent_recursion_limit},
         ):
             if mode == "messages":
-                msg_chunk, _meta = chunk
+                msg_chunk, meta = chunk
+                if meta.get("langgraph_node") != "agent":
+                    continue
+                for event in turn.begin(meta.get("langgraph_step")):
+                    yield event
                 content = getattr(msg_chunk, "content", "") or ""
-                if content:
-                    if not text_started:
-                        yield TextMessageStartEvent(
-                            type=EventType.TEXT_MESSAGE_START,
-                            message_id=message_id,
-                            role="assistant",
+                if isinstance(content, str) and content:
+                    for event in turn.text(content):
+                        yield event
+            elif mode == "updates":
+                for node, output in (chunk or {}).items():
+                    output = output or {}
+                    if node == "agent":
+                        for event in turn.begin_if_unannounced():
+                            yield event
+                        turn.consume_announcement()
+                        msgs = output.get("messages") or []
+                        final_ai = msgs[-1] if msgs else final_ai
+                        calls = list(getattr(final_ai, "tool_calls", None) or [])
+                        # Mirrors `route`: the graph loops into server_tools only
+                        # when EVERY call is a server call; otherwise it ends and
+                        # the calls are forwarded below.
+                        if calls and all(tc.get("name") in SERVER_TOOL_NAMES for tc in calls):
+                            for event in turn.close_with_envelope():
+                                yield event
+                            for tc in calls:
+                                for event in _tool_call_events(tc, turn.message_id):
+                                    yield event
+                    elif node == "server_tools":
+                        for msg in output.get("messages") or []:
+                            yield ToolCallResultEvent(
+                                type=EventType.TOOL_CALL_RESULT,
+                                message_id=str(uuid.uuid4()),
+                                tool_call_id=getattr(msg, "tool_call_id", "") or "",
+                                content=str(getattr(msg, "content", "") or ""),
+                                role="tool",
+                            )
+                        # Out-of-band payloads from server tools. Latched rather
+                        # than overwritten: a later update may not carry the key.
+                        pending_client_calls = (
+                            output.get("pending_client_tool_calls") or pending_client_calls
                         )
-                        text_started = True
-                    yield TextMessageContentEvent(
-                        type=EventType.TEXT_MESSAGE_CONTENT,
-                        message_id=message_id,
-                        delta=content,
-                    )
-            elif mode == "values":
-                final_messages = chunk.get("messages", final_messages)
-                # Out-of-band payloads from server tools. Latched rather than
-                # overwritten: later state snapshots may omit the key.
-                pending_client_calls = (
-                    chunk.get("pending_client_tool_calls") or pending_client_calls
-                )
     except Exception as e:  # noqa: BLE001
         logger.error("Graph execution error: %s", e, exc_info=True)
-        if text_started:
-            yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
+        for event in turn.close():
+            yield event
         # Out-of-band results are already computed and paid for — a failure on
         # the *narration* path (typically a slow model stalling the follow-up
         # turn) must not discard them. Forward before reporting the error.
-        for event in _forward_tool_calls(pending_client_calls, message_id, text_started):
+        for event in _forward_tool_calls(
+            pending_client_calls, turn.message_id, turn.had_text_message
+        ):
             yield event
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=describe_run_error(e))
         return
 
-    if text_started:
-        yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
+    for event in turn.close():
+        yield event
 
     # Forward client tool calls: those the model asked for on the final
-    # assistant message, plus any synthesized out-of-band by server tools.
-    last = final_messages[-1] if final_messages else None
-    tool_calls = list(getattr(last, "tool_calls", None) or []) + list(pending_client_calls)
-    for event in _forward_tool_calls(tool_calls, message_id, text_started):
+    # assistant message (only reached when routing ended there), plus any
+    # synthesized out-of-band by server tools.
+    final_calls = list(getattr(final_ai, "tool_calls", None) or [])
+    if final_calls and all(tc.get("name") in SERVER_TOOL_NAMES for tc in final_calls):
+        final_calls = []  # already streamed and executed server-side
+    for event in _forward_tool_calls(
+        final_calls + list(pending_client_calls), turn.message_id, turn.had_text_message
+    ):
         yield event
+
+
+class _TurnState:
+    """The assistant message of the current agent turn.
+
+    A turn starts at a new ``langgraph_step`` of the agent node, as seen in
+    ``messages`` mode, or, if that mode emitted nothing for it, at the node's
+    update. Text messages never overlap, and tool events are only emitted with no
+    text message open.
+    """
+
+    def __init__(self) -> None:
+        self.message_id = str(uuid.uuid4())
+        self.step: Any = object()  # matches no real step
+        self.is_open = False  # TEXT_MESSAGE_START sent, END not yet
+        self.had_text_message = False  # this turn has a START/END pair already
+        self.announced = False  # messages mode began this turn before its update
+
+    def _new_turn(self) -> Iterable[Any]:
+        yield from self.close()
+        self.message_id = str(uuid.uuid4())
+        self.had_text_message = False
+
+    def begin(self, step: Any) -> Iterable[Any]:
+        if step != self.step:
+            self.step = step
+            yield from self._new_turn()
+            self.announced = True
+
+    def begin_if_unannounced(self) -> Iterable[Any]:
+        if not self.announced:
+            yield from self._new_turn()
+
+    def consume_announcement(self) -> None:
+        self.announced = False
+
+    def text(self, delta: str) -> Iterable[Any]:
+        if not self.is_open:
+            yield TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START,
+                message_id=self.message_id,
+                role="assistant",
+            )
+            self.is_open = True
+            self.had_text_message = True
+        yield TextMessageContentEvent(
+            type=EventType.TEXT_MESSAGE_CONTENT, message_id=self.message_id, delta=delta
+        )
+
+    def close(self) -> Iterable[Any]:
+        if self.is_open:
+            yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=self.message_id)
+            self.is_open = False
+
+    def close_with_envelope(self) -> Iterable[Any]:
+        """Close the text, or emit an empty message for tool calls to attach to."""
+        yield from self.close()
+        if not self.had_text_message:
+            yield TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START,
+                message_id=self.message_id,
+                role="assistant",
+            )
+            yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=self.message_id)
+            self.had_text_message = True
+
+
+def _tool_call_events(tc: dict[str, Any], parent_message_id: str) -> Iterable[Any]:
+    """START/ARGS/END for one tool call; the id is resolved once and reused."""
+    call_id = tool_call_id(tc)
+    yield ToolCallStartEvent(
+        type=EventType.TOOL_CALL_START,
+        tool_call_id=call_id,
+        tool_call_name=tc.get("name"),
+        parent_message_id=parent_message_id,
+    )
+    yield ToolCallArgsEvent(
+        type=EventType.TOOL_CALL_ARGS,
+        tool_call_id=call_id,
+        delta=json.dumps(tc.get("args", {})),
+    )
+    yield ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=call_id)
 
 
 def _forward_tool_calls(

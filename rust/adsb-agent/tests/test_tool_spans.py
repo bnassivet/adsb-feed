@@ -185,15 +185,15 @@ class _FakeMessage:
 
 
 class _FakeGraph:
-    """A graph whose ``astream`` yields a final ``values`` chunk with a client
-    tool call on the last message (and no text), mirroring the END-with-tool
+    """A graph whose ``astream`` yields the agent node's final update with a
+    client tool call on the message (and no text), mirroring the END-with-tool
     path that forwards to the frontend."""
 
     def __init__(self, tool_calls):
         self._tool_calls = tool_calls
 
     async def astream(self, *args, **kwargs):
-        yield "values", {"messages": [_FakeMessage(self._tool_calls)]}
+        yield "updates", {"agent": {"messages": [_FakeMessage(self._tool_calls)]}}
 
 
 class _RecordingSpan:

@@ -8,5 +8,6 @@ export { TrajectoryCard } from "./TrajectoryCard";
 export { ActionConfirmCard } from "./ActionConfirmCard";
 export { DisplaySettingCard } from "./DisplaySettingCard";
 export { EventsCard } from "./EventsCard";
+export { ToolCallChip } from "./ToolCallChip";
 export { LiveFlightsCard } from "./LiveFlightsCard";
 export { ScenarioCard } from "./ScenarioCard";

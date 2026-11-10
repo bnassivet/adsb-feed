@@ -9,7 +9,11 @@
  * a rich card component in the chat instead of raw JSON.
  */
 import { createElement, useEffect, useRef } from "react";
-import { useFrontendTool, type ReactFrontendTool } from "@copilotkit/react-core/v2";
+import {
+  useFrontendTool,
+  useRenderTool,
+  type ReactFrontendTool,
+} from "@copilotkit/react-core/v2";
 import { z } from "zod";
 import {
   getStatus,
@@ -20,6 +24,12 @@ import {
   getScenario as getScenarioCommand,
 } from "@/lib/commands";
 import {
+  AircraftSummaryTable,
+  EventsCard,
+  FlightSummaryTable,
+  StorageStatsCard,
+  ToolCallChip,
+  TrajectoryCard,
   FeedStatusCard,
   FeedMetricsCard,
   ActionConfirmCard,
@@ -201,6 +211,54 @@ function toCardStatus(s: string): RenderStatus {
 }
 
 /**
+ * The agent's own tools that have a result card. The agent streams its calls
+ * (TOOL_CALL_* + TOOL_CALL_RESULT) to the chat for display; CopilotKit never
+ * executes a call that already has a result, so these are render-only
+ * registrations -- never useFrontendTool (see the BACKEND_TOOLS test). Every
+ * other call, the agent's or the app's, without a render of its own gets a
+ * ToolCallChip from the wildcard renderer.
+ */
+const SERVER_TOOL_CARDS = [
+  ["getStorageStats", StorageStatsCard],
+  ["getAircraftSummary", AircraftSummaryTable],
+  ["getFlightSummary", FlightSummaryTable],
+  ["getTrajectory", TrajectoryCard],
+  ["getEventsOfInterest", EventsCard],
+] as const;
+
+/** Any parameters: these renderers only display what the agent sent. */
+const ANY_PARAMETERS = z.object({}).passthrough();
+
+/** Card renderers for the agent's tools, plus a chip for every other call. */
+function useAgentToolRenderers() {
+  for (const [name, Card] of SERVER_TOOL_CARDS) {
+    // A fixed list in a fixed order, so the hook calls are stable across renders.
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useRenderTool(
+      {
+        name,
+        parameters: ANY_PARAMETERS,
+        render: (props) =>
+          createElement(Card, { status: toCardStatus(props.status), result: props.result }),
+      },
+      [],
+    );
+  }
+  useRenderTool(
+    {
+      name: "*",
+      render: (props: { name: string; status: string; parameters?: Record<string, unknown> }) =>
+        createElement(ToolCallChip, {
+          name: props.name,
+          status: props.status,
+          parameters: props.parameters,
+        }),
+    },
+    [],
+  );
+}
+
+/**
  * Wraps useFrontendTool so every handler is guaranteed to:
  *   - return a string (CopilotKit feeds that string back to the LLM as the
  *     tool result message; undefined/null becomes "" and the LLM is left to
@@ -252,6 +310,8 @@ export function useCopilotTools(config: DisplayToolsConfig) {
   useEffect(() => {
     configRef.current = config;
   });
+
+  useAgentToolRenderers();
 
   useSafeFrontendTool({
     name: "getFeedStatus",

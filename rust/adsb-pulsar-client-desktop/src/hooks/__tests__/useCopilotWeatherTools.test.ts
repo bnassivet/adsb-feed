@@ -13,6 +13,8 @@ const registeredTools = new Map<
 >();
 
 vi.mock("@copilotkit/react-core/v2", () => ({
+  // Card/chip renderers for the agent's own tool calls; not under test here.
+  useRenderTool: () => {},
   useFrontendTool: (opts: {
     name: string;
     handler: (...args: unknown[]) => unknown;
