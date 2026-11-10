@@ -127,6 +127,11 @@ export function AIChatContent({ threadId }: { threadId?: string } = {}) {
     <div ref={chatContainerRef} className="flex-1 overflow-hidden flex flex-col [&_.copilotkit-chat-messages]:bg-slate-900 [&_.copilotkit-chat-input]:bg-slate-800">
       <CopilotChat
         threadId={threadId}
+        // No per-message "View in Inspector" wrench (CopilotKit 1.85, dev
+        // builds only). It also forced a toolbar with a useless copy button
+        // under messages that only carry a tool card. The floating inspector
+        // button stays.
+        inspectorTools={false}
         labels={{
           modalHeaderTitle: "ADS-B Assistant",
           welcomeMessageText: "Ask me about aircraft, flights, or database stats.",

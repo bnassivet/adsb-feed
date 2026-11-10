@@ -28,6 +28,19 @@ Cargo workspace containing the ADS-B feed client library, adsd-data-engine and T
 - `/info` advertises them as `capabilities.tools.items`, with `clientProvided: true`.
 - The desktop must **not** register them as frontend tools. AG-UI reserves
   `RunAgentInput.tools` for client tools, and `useCopilotTools.test.ts` pins this.
+- They are **shown** in the chat, not executed there. `run_graph_to_agui` streams each
+  server call as `TOOL_CALL_START/ARGS/END` + `TOOL_CALL_RESULT`, and CopilotKit skips
+  executing any call that already has a result (`processAgentResult`). The desktop draws
+  them with `useRenderTool` (five cards, plus a `"*"` chip for the rest), never
+  `useFrontendTool`.
+- **Only `agent`-node chunks are text.** `stream_mode="messages"` emits every node's
+  messages; forwarding them all streamed each server tool's raw JSON into the reply.
+  Each agent turn is its own assistant message.
+- **Display-only:** `convert_agui_messages_to_lc` drops server calls and their results
+  from inbound history, so the LLM never sees earlier ones (follow-ups re-query).
+- Tool-call ids are fixed in `agent_node`, right after the model returns.
+  `tool_call_id()` mints a new id per call, so resolving it in two places gave the call
+  and its result different ids.
 
 A schema there must match its Rust query type in `adsb-data-engine/src/types.rs`.
 Serde rejects a missing non-`Option` field ("Invalid arguments: missing field")
@@ -60,7 +73,13 @@ CopilotKit is on **1.85** (upgraded from 1.55.3). Thread binding changed:
   `NEXT_PUBLIC_COPILOTKIT_DISABLE_INSPECTOR=true` turns it off; default unset
   means on (`src/lib/copilotkit-inspector.ts`). Stack setting:
   `[desktop] copilotkit_inspector = false`, exported only when false so a
-  `.env.local` value still applies at the default. CopilotKit's Segment telemetry
+  `.env.local` value still applies at the default.
+- The chat hides 1.85's per-message "View in Inspector" wrench with
+  `CopilotChat inspectorTools={false}`. A provider-level `enableInspector` takes
+  priority over it (`providerEnableInspector ?? inspectorTools`), so the provider
+  only ever passes `false` or nothing, **never `true`**, or the wrench comes back.
+  The wrench also forced a toolbar with a dead copy button under messages that only
+  carry a tool card. CopilotKit's Segment telemetry
   lives in `@copilotkit/runtime` (Node), which this app does not use.
 - 1.85 lists `maplibre-gl@^5` as an optional peer, and the app pins 6.x for the
   map bench. The `overrides` entry in `package.json` points CopilotKit at the

@@ -53,6 +53,19 @@ describe("AIChatContent threadId forwarding", () => {
   });
 
   /**
+   * CopilotKit 1.85 adds a "View in Inspector" wrench to every assistant
+   * message's toolbar (dev builds on localhost only). It also forces a toolbar,
+   * with a useless copy button, under messages that only carry a tool card.
+   * The floating inspector button stays; only the per-message shortcut goes.
+   */
+  it("hides the per-message inspector wrench", () => {
+    copilotChatSpy.mockClear();
+    render(<AIChatContent threadId="thread-xyz" />);
+
+    expect(copilotChatSpy.mock.calls[0][0].inspectorTools).toBe(false);
+  });
+
+  /**
    * CopilotKit >= 1.85: CopilotChat resolves the SHARED agent
    * (`useAgent({ agentId })`) and writes `agent.threadId = threadId` onto it.
    * The voice path must take that same instance, or its messages land in a
