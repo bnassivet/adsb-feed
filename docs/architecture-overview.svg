@@ -1,0 +1,215 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1420 790" width="1420" height="790" role="img" aria-labelledby="title desc">
+<title id="title">ADS-B Feed: layered architecture</title>
+<desc id="desc">Infrastructure, messaging, storage, services and applications layers of the ADS-B stack, with the main data flows between components, including voice input.</desc>
+<style>
+  svg {
+    --bg:#ffffff; --fg:#1f2328; --muted:#59636e; --box:#ffffff; --edge:#57606a;
+    --apps:#0969da; --svc:#8250df; --sto:#1a7f37; --msg:#bc4c00; --inf:#6e7781; --ext:#9a6700;
+    font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    svg {
+      --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --box:#161b22; --edge:#8b949e;
+      --apps:#4493f8; --svc:#ab7df8; --sto:#3fb950; --msg:#f0883e; --inf:#9198a1; --ext:#d29922;
+    }
+  }
+  .bg { fill: var(--bg); }
+  .band { fill-opacity: .07; stroke-opacity: .35; stroke-width: 1; }
+  .band.apps, .box.apps { fill: var(--apps); stroke: var(--apps); }
+  .band.svc,  .box.svc  { fill: var(--svc);  stroke: var(--svc); }
+  .band.sto,  .box.sto  { fill: var(--sto);  stroke: var(--sto); }
+  .band.msg,  .box.msg  { fill: var(--msg);  stroke: var(--msg); }
+  .band.inf,  .box.inf  { fill: var(--inf);  stroke: var(--inf); }
+  .box { fill: var(--box) !important; stroke-width: 1.6; }
+  .box.opt { stroke-dasharray: 6 4; }
+  .ext-col { fill: var(--ext); fill-opacity: .05; stroke: var(--ext); stroke-dasharray: 3 4; stroke-width: 1.2; }
+  text { fill: var(--fg); }
+  .t-h1 { font-size: 19px; font-weight: 700; }
+  .t-sub { font-size: 12px; fill: var(--muted); }
+  .t-layer { font-size: 12.5px; font-weight: 700; letter-spacing: .08em; }
+  .t-layer.apps { fill: var(--apps); } .t-layer.svc { fill: var(--svc); }
+  .t-layer.sto { fill: var(--sto); }   .t-layer.msg { fill: var(--msg); }
+  .t-layer.inf { fill: var(--inf); }
+  .t-layer-sub { font-size: 11px; fill: var(--muted); }
+  .t-title { font-size: 14px; font-weight: 650; text-anchor: middle; }
+  .t-code { font-size: 11px; text-anchor: middle; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: var(--fg); }
+  .t-note { font-size: 11px; text-anchor: middle; fill: var(--muted); }
+  .t-ext { font-size: 11px; font-weight: 700; letter-spacing: .06em; fill: var(--ext); text-anchor: middle; }
+  .t-col { font-size: 11px; font-weight: 700; letter-spacing: .06em; fill: var(--muted); text-anchor: middle; }
+  .t-edge { font-size: 10.5px; fill: var(--muted); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
+  .edge, .edge-opt, .bridge { fill: none; stroke-width: 1.6; stroke-linejoin: round; }
+  .edge { stroke: var(--edge); }
+  .edge-opt { stroke: var(--edge); stroke-dasharray: 6 4; }
+  .bridge { stroke: var(--bg); stroke-width: 7; }
+  .head { fill: var(--edge); }
+</style>
+<defs>
+  <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path class="head" d="M0,0 L10,5 L0,10 z"/>
+  </marker>
+  <marker id="tail" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path class="head" d="M0,0 L10,5 L0,10 z"/>
+  </marker>
+</defs>
+<rect class="bg" x="0" y="0" width="1420" height="790"/>
+<text class="t-h1" x="20" y="34">ADS-B Feed: layered architecture</text>
+<text class="t-sub" x="20" y="52">MQTT is the live path. Pulsar and the Spark/Delta analytics path are optional.</text>
+<rect class="band apps" x="10" y="60" width="1400" height="130" rx="10"/>
+<text class="t-layer apps" x="22" y="86">APPLICATIONS</text>
+<text class="t-layer-sub" x="22" y="104">UIs and AI agents</text>
+<rect class="band svc" x="10" y="200" width="1400" height="130" rx="10"/>
+<text class="t-layer svc" x="22" y="226">SERVICES</text>
+<text class="t-layer-sub" x="22" y="244">Rust binaries,</text>
+<text class="t-layer-sub" x="22" y="258">Python agents</text>
+<rect class="band sto" x="10" y="340" width="1400" height="110" rx="10"/>
+<text class="t-layer sto" x="22" y="366">STORAGE</text>
+<text class="t-layer-sub" x="22" y="384">embedded,</text>
+<text class="t-layer-sub" x="22" y="398">file-based</text>
+<rect class="band msg" x="10" y="460" width="1400" height="100" rx="10"/>
+<text class="t-layer msg" x="22" y="486">MESSAGING</text>
+<text class="t-layer-sub" x="22" y="504">edge bus</text>
+<rect class="band inf" x="10" y="570" width="1400" height="130" rx="10"/>
+<text class="t-layer inf" x="22" y="596">INFRASTRUCTURE</text>
+<text class="t-layer-sub" x="22" y="614">sources, ops,</text>
+<text class="t-layer-sub" x="22" y="628">models</text>
+<rect class="ext-col" x="1205" y="64" width="180" height="632" rx="10"/>
+<text class="t-ext" x="1295.0" y="52">ANALYTICS (outside this repo)</text>
+<text class="t-col" x="1085.0" y="52">VOICE INPUT</text>
+<rect class="box apps" x="170" y="82" width="160" height="90" rx="8"/>
+<text class="t-title" x="250.0" y="107">Grafana</text>
+<text class="t-code" x="250.0" y="126">dashboards</text>
+<text class="t-note" x="250.0" y="143">pipeline · recorder · agents</text>
+<rect class="box apps" x="380" y="82" width="400" height="90" rx="8"/>
+<text class="t-title" x="580.0" y="107">Desktop app</text>
+<text class="t-code" x="580.0" y="126">Tauri v2 · Next.js 16 · React 19</text>
+<text class="t-note" x="580.0" y="143">live map · DB history · weather layer · AI chat · mic button</text>
+<rect class="box apps" x="830" y="82" width="160" height="90" rx="8"/>
+<text class="t-title" x="910.0" y="107">AI agent</text>
+<text class="t-code" x="910.0" y="126">adsb-agent · LangGraph</text>
+<text class="t-note" x="910.0" y="143">AG-UI chat · voice :8000</text>
+<rect class="box apps opt" x="1210" y="82" width="170" height="90" rx="8"/>
+<text class="t-title" x="1295.0" y="107">webapp</text>
+<text class="t-code" x="1295.0" y="126">Plotly Dash :8050</text>
+<text class="t-note" x="1295.0" y="143">real-time · historical</text>
+<rect class="box svc" x="170" y="222" width="160" height="90" rx="8"/>
+<text class="t-title" x="250.0" y="247">Feed client</text>
+<text class="t-code" x="250.0" y="266">adsb-pulsar-client</text>
+<text class="t-note" x="250.0" y="283">metrics :8790</text>
+<rect class="box svc" x="380" y="222" width="180" height="90" rx="8"/>
+<text class="t-title" x="470.0" y="247">Data server</text>
+<text class="t-code" x="470.0" y="266">adsb-data-server</text>
+<text class="t-note" x="470.0" y="283">HTTP :8787 · Quack :9494</text>
+<rect class="box svc opt" x="600" y="222" width="180" height="90" rx="8"/>
+<text class="t-title" x="690.0" y="247">Weather service</text>
+<text class="t-code" x="690.0" y="266">adsb-weather-server</text>
+<text class="t-note" x="690.0" y="283">Open-Meteo · :8789 · optional</text>
+<rect class="box svc" x="830" y="222" width="160" height="90" rx="8"/>
+<text class="t-title" x="910.0" y="247">Simulation agent</text>
+<text class="t-code" x="910.0" y="266">adsb-simulation-agent</text>
+<text class="t-note" x="910.0" y="283">A2A :8300</text>
+<rect class="box svc opt" x="1010" y="222" width="150" height="90" rx="8"/>
+<text class="t-title" x="1085.0" y="247">Voice server</text>
+<text class="t-code" x="1085.0" y="266">LFM2.5-Audio-1.5B</text>
+<text class="t-note" x="1085.0" y="283">llama.cpp · :2026</text>
+<rect class="box svc opt" x="1210" y="222" width="170" height="90" rx="8"/>
+<text class="t-title" x="1295.0" y="247">Spark streaming</text>
+<text class="t-code" x="1295.0" y="266">spark-adsb · PySpark</text>
+<text class="t-note" x="1295.0" y="283">Structured Streaming</text>
+<rect class="box sto" x="380" y="360" width="180" height="72" rx="8"/>
+<text class="t-title" x="470.0" y="385">DuckDB</text>
+<text class="t-code" x="470.0" y="404">adsb.db</text>
+<text class="t-note" x="470.0" y="421">via adsb-data-engine</text>
+<rect class="box sto opt" x="600" y="360" width="180" height="72" rx="8"/>
+<text class="t-title" x="690.0" y="385">Weather cache</text>
+<text class="t-code" x="690.0" y="404">weather-cache.json</text>
+<text class="t-note" x="690.0" y="421">snapshot + enabled state</text>
+<rect class="box sto opt" x="1010" y="360" width="150" height="72" rx="8"/>
+<text class="t-title" x="1085.0" y="385">Voice model</text>
+<text class="t-code" x="1085.0" y="404">4 GGUF files</text>
+<text class="t-note" x="1085.0" y="421">~1 GB · models/</text>
+<rect class="box sto opt" x="1210" y="360" width="170" height="72" rx="8"/>
+<text class="t-title" x="1295.0" y="385">Delta Lake</text>
+<text class="t-code" x="1295.0" y="404">bronze → silver → gold</text>
+<text class="t-note" x="1295.0" y="421">H3-indexed tracks</text>
+<rect class="box msg" x="290" y="478" width="520" height="62" rx="8"/>
+<text class="t-title" x="550.0" y="500">MQTT broker · Mosquitto :1883</text>
+<text class="t-code" x="550.0" y="516">adsb/&lt;stage&gt;/sbs/raw   ·   adsb/&lt;stage&gt;/weather/grid (retained)</text>
+<text class="t-note" x="550.0" y="531">QoS 0 · no persistence · the live path</text>
+<rect class="box msg opt" x="1210" y="478" width="170" height="62" rx="8"/>
+<text class="t-title" x="1295.0" y="500">Apache Pulsar :6650</text>
+<text class="t-code" x="1295.0" y="516">kradsb/adsb/sbs-topic</text>
+<text class="t-note" x="1295.0" y="531">optional fan-out leg</text>
+<rect class="box inf" x="170" y="592" width="160" height="90" rx="8"/>
+<text class="t-title" x="250.0" y="617">dump1090</text>
+<text class="t-code" x="250.0" y="636">SBS-1 · TCP :30003</text>
+<text class="t-note" x="250.0" y="653">RTL-SDR · Raspberry Pi</text>
+<rect class="box inf" x="380" y="592" width="180" height="90" rx="8"/>
+<text class="t-title" x="470.0" y="617">Orchestration</text>
+<text class="t-code" x="470.0" y="636">make up · Docker Compose</text>
+<text class="t-note" x="470.0" y="653">systemd units on the Pi fleet</text>
+<rect class="box inf" x="600" y="592" width="180" height="90" rx="8"/>
+<text class="t-title" x="690.0" y="617">Prometheus</text>
+<text class="t-code" x="690.0" y="636">scrapes /metrics</text>
+<text class="t-note" x="690.0" y="653">feed · recorder · weather · agents</text>
+<rect class="box inf" x="830" y="592" width="160" height="90" rx="8"/>
+<text class="t-title" x="910.0" y="617">MLflow :5010</text>
+<text class="t-code" x="910.0" y="636">LLM gateway · tracing</text>
+<text class="t-note" x="910.0" y="653">local LLM (LM Studio)</text>
+<rect class="box inf" x="1010" y="592" width="150" height="90" rx="8"/>
+<text class="t-title" x="1085.0" y="617">Microphone</text>
+<text class="t-code" x="1085.0" y="636">host audio input</text>
+<text class="t-note" x="1085.0" y="653">read by adsb-agent</text>
+<rect class="box inf opt" x="1210" y="592" width="170" height="90" rx="8"/>
+<text class="t-title" x="1295.0" y="617">Kubernetes · Helm</text>
+<text class="t-code" x="1295.0" y="636">Spark cluster</text>
+<text class="t-note" x="1295.0" y="653">S3-compatible store</text>
+<path class="edge-opt" d="M255,312 V552 H1295.0 V545" marker-end="url(#head)"/>
+<text class="t-edge" x="640" y="556" text-anchor="middle">optional Pulsar leg</text>
+<path class="edge" d="M210,592 V316" marker-end="url(#head)"/>
+<text class="t-edge" x="205" y="470" text-anchor="middle" transform="rotate(-90 205 470)">SBS-1 lines</text>
+<path class="edge" d="M310,312 V474" marker-end="url(#head)"/>
+<text class="t-edge" x="305" y="400" text-anchor="middle" transform="rotate(-90 305 400)">publish</text>
+<path class="edge" d="M355,478 V267 H376" marker-end="url(#head)"/>
+<text class="t-edge" x="350" y="400" text-anchor="middle" transform="rotate(-90 350 400)">subscribe</text>
+<path class="edge" d="M470,312 V356" marker-end="url(#head)"/>
+<text class="t-edge" x="476" y="338" text-anchor="start">write</text>
+<path class="edge" d="M470,172 V218" marker-end="url(#head)"/>
+<text class="t-edge" x="476" y="200" text-anchor="start">Quack · history</text>
+<path class="edge" d="M690,172 V218" marker-end="url(#head)"/>
+<text class="t-edge" x="696" y="200" text-anchor="start">PUT /v1/enabled</text>
+<path class="edge" d="M600,280 H580 V474" marker-end="url(#head)"/>
+<text class="t-edge" x="575" y="400" text-anchor="middle" transform="rotate(-90 575 400)">retained grid</text>
+<path class="edge" d="M690,312 V356" marker-end="url(#head)"/>
+<text class="t-edge" x="696" y="338" text-anchor="start">cache</text>
+<path class="edge" d="M800,478 V150 H784" marker-end="url(#head)"/>
+<text class="t-edge" x="795" y="330" text-anchor="middle" transform="rotate(-90 795 330)">live feed (subscribe)</text>
+<path class="edge" d="M786,127 H826" marker-end="url(#head)" marker-start="url(#tail)"/>
+<text class="t-edge" x="806" y="116" text-anchor="middle">AG-UI</text>
+<text class="t-edge" x="806" y="145" text-anchor="middle">tools</text>
+<path class="edge" d="M910,172 V218" marker-end="url(#head)"/>
+<text class="t-edge" x="916" y="200" text-anchor="start">A2A</text>
+<path class="bridge" d="M910,544 V560"/>
+<path class="edge" d="M910,312 V588" marker-end="url(#head)"/>
+<text class="t-edge" x="905" y="450" text-anchor="middle" transform="rotate(-90 905 450)">LLM calls · traces</text>
+<path class="bridge" d="M1174,544 V560"/>
+<path class="edge" d="M1160,637 H1174 V112 H994" marker-end="url(#head)"/>
+<text class="t-edge" x="1169" y="505" text-anchor="middle" transform="rotate(-90 1169 505)">audio capture</text>
+<path class="edge" d="M990,150 H1085.0 V218" marker-end="url(#head)"/>
+<text class="t-edge" x="1040" y="154" text-anchor="middle">audio → text</text>
+<path class="edge" d="M1085.0,312 V356" marker-end="url(#head)"/>
+<text class="t-edge" x="1091.0" y="338" text-anchor="start">load</text>
+<path class="edge" d="M1210,509 H1194 V267 H1206" marker-end="url(#head)"/>
+<text class="t-edge" x="1189" y="400" text-anchor="middle" transform="rotate(-90 1189 400)">consume</text>
+<path class="edge" d="M1295.0,312 V356" marker-end="url(#head)"/>
+<text class="t-edge" x="1301.0" y="338" text-anchor="start">write</text>
+<path class="edge" d="M1380,396 H1402 V127 H1384" marker-end="url(#head)"/>
+<text class="t-edge" x="1397" y="262" text-anchor="middle" transform="rotate(-90 1397 262)">queries</text>
+<path class="edge" d="M20,728 H58" marker-end="url(#head)"/>
+<text class="t-layer-sub" x="66" y="732">data / control flow</text>
+<path class="edge-opt" d="M200,728 H238" marker-end="url(#head)"/>
+<text class="t-layer-sub" x="246" y="732">optional flow</text>
+<rect class="box inf opt" x="350" y="719" width="34" height="18" rx="4"/>
+<text class="t-layer-sub" x="392" y="732">optional or off by default</text>
+<text class="t-layer-sub" x="20" y="754">Ports are the defaults from adsb-stack-template.toml. The desktop can also embed DuckDB itself instead of attaching remotely.</text>
+<text class="t-layer-sub" x="20" y="772">Voice needs the agent's voice extra. The agent starts the LFM2.5-Audio server on the first voice request; Voxtral is an alternative speech-to-text backend.</text>
+</svg>
