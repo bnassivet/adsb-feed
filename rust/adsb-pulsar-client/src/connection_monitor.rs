@@ -5,8 +5,8 @@
 //! - Heartbeat messages (dump1090 keepalive with hex_ident 000000)
 //! - Data messages (actual aircraft position reports)
 //!
-//! When no heartbeat or data message arrives within the configured timeout,
-//! the connection is declared stale. This catches half-open TCP connections
+//! When no bytes at all arrive within the configured timeout, the connection
+//! is declared stale. This catches half-open TCP connections
 //! faster than the raw socket read timeout alone.
 
 use crate::config::Config;
@@ -24,9 +24,9 @@ pub enum LineKind {
 /// Reason why the connection is considered stale.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StaleReason {
-    /// No heartbeat or data message received within the timeout.
+    /// No bytes (heartbeat, data, or bare line ending) received within the timeout.
     HeartbeatTimeout {
-        /// Time elapsed since the last heartbeat or data message.
+        /// Time elapsed since the last received bytes.
         elapsed: Duration,
     },
 }
@@ -35,7 +35,11 @@ impl std::fmt::Display for StaleReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             StaleReason::HeartbeatTimeout { elapsed } => {
-                write!(f, "no heartbeat/data for {:.0}s", elapsed.as_secs_f64())
+                write!(
+                    f,
+                    "no bytes (heartbeat or data) for {:.0}s",
+                    elapsed.as_secs_f64()
+                )
             }
         }
     }
@@ -101,13 +105,22 @@ impl ConnectionMonitor {
 
     /// Checks if the connection is stale.
     ///
-    /// Returns `Some(StaleReason)` if no heartbeat AND no data message
-    /// has been received within the configured heartbeat timeout.
+    /// Returns `Some(StaleReason)` if no bytes at all (heartbeat, data, or
+    /// anything else) have arrived within the configured heartbeat timeout.
     /// Returns `None` if the connection is healthy or the feature is disabled.
+    ///
+    /// Raw TCP activity counts because heartbeat formats differ between
+    /// dump1090 variants: dump1090-fa's `--net-heartbeat` sends a bare
+    /// `\r\n` on the SBS port, which is dropped as an empty line before
+    /// [`classify_line`](Self::classify_line) ever sees it. A half-open
+    /// connection delivers no bytes, so this still detects it.
     pub fn is_stale(&self) -> Option<StaleReason> {
         let timeout = self.heartbeat_timeout?;
-        let last_meaningful = std::cmp::max(self.last_heartbeat, self.last_data_message);
-        let elapsed = last_meaningful.elapsed();
+        let last_alive = self
+            .last_tcp_activity
+            .max(self.last_heartbeat)
+            .max(self.last_data_message);
+        let elapsed = last_alive.elapsed();
         if elapsed >= timeout {
             Some(StaleReason::HeartbeatTimeout { elapsed })
         } else {
@@ -206,6 +219,7 @@ mod tests {
         let past = Instant::now() - Duration::from_secs(2);
         monitor.last_heartbeat = past;
         monitor.last_data_message = past;
+        monitor.last_tcp_activity = past;
 
         let stale = monitor.is_stale();
         assert!(stale.is_some());
@@ -228,6 +242,7 @@ mod tests {
         let past = Instant::now() - Duration::from_secs(2);
         monitor.last_heartbeat = past;
         monitor.last_data_message = past;
+        monitor.last_tcp_activity = past;
         assert!(monitor.is_stale().is_some());
 
         // Receiving a heartbeat should clear staleness
@@ -247,6 +262,7 @@ mod tests {
         let past = Instant::now() - Duration::from_secs(2);
         monitor.last_heartbeat = past;
         monitor.last_data_message = past;
+        monitor.last_tcp_activity = past;
         assert!(monitor.is_stale().is_some());
 
         // Receiving a data message should also clear staleness
@@ -287,6 +303,7 @@ mod tests {
         let past = Instant::now() - Duration::from_secs(2);
         monitor.last_heartbeat = past;
         monitor.last_data_message = past;
+        monitor.last_tcp_activity = past;
         assert!(monitor.is_stale().is_some());
 
         monitor.reset();
@@ -303,6 +320,27 @@ mod tests {
 
         monitor.record_tcp_activity();
         assert!(monitor.since_last_tcp_activity() < Duration::from_secs(1));
+    }
+
+    /// dump1090-fa's SBS heartbeat (`--net-heartbeat`) is a bare `\r\n`,
+    /// which never reaches `classify_line`. Any received bytes prove the
+    /// link is alive, so they must hold off the stale verdict.
+    #[test]
+    fn test_tcp_activity_alone_prevents_stale() {
+        let config = Config {
+            heartbeat_timeout_secs: 1,
+            heartbeat_pattern: ",000000,".to_string(),
+            ..Config::default()
+        };
+        let mut monitor = ConnectionMonitor::new(&config);
+        let past = Instant::now() - Duration::from_secs(2);
+        monitor.last_heartbeat = past;
+        monitor.last_data_message = past;
+        monitor.last_tcp_activity = past;
+        assert!(monitor.is_stale().is_some());
+
+        monitor.record_tcp_activity();
+        assert!(monitor.is_stale().is_none());
     }
 
     #[test]

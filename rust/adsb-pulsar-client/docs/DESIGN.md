@@ -73,17 +73,28 @@ method taking `config: &Config` rather than borrowing `&self` across an `.await`
 ### 6. Heartbeat-aware connection monitoring
 
 The core client includes a `ConnectionMonitor` that performs lightweight byte-level pattern matching
-to detect dump1090 heartbeat messages (hex_ident `000000`, sent every ~60 seconds). This enables
-three-tier idle detection without full SBS parsing:
+to classify dump1090 heartbeat lines (hex_ident `000000`) apart from data, without full SBS parsing.
+Idle detection has three tiers:
 
 - **TCP-level**: Raw socket read timeout (`socket_read_timeout_secs`, default 75s) catches fully
-  dead connections where `stream.read()` blocks.
-- **Heartbeat-level**: `ConnectionMonitor` tracks the time since the last heartbeat or data message.
-  If `heartbeat_timeout_secs` (default 90s = 1.5x the 60s heartbeat interval) elapses with no
-  heartbeat or data, the connection is declared stale and reconnection is triggered. Checked every
-  1 second in the housekeeping tick.
+  dead connections where `stream.read()` blocks. The deadline is a single pinned `Sleep` created
+  outside the `select!` loop and reset only when bytes arrive. It used to be a `timeout()` wrapped
+  around each read inside the loop, which restarted whenever the 1s housekeeping tick won the
+  `select!`, so it never fired.
+- **Liveness-level**: `ConnectionMonitor` tracks the time since **any bytes** last arrived
+  (heartbeat, data, or a bare line ending). If `heartbeat_timeout_secs` (default 90s = 1.5x a 60s
+  heartbeat interval) elapses with nothing received, the connection is declared stale and
+  reconnection is triggered. Checked every 1 second in the housekeeping tick.
 - **UI-level** (desktop app only): Socket watchdog task emits Degraded/ConnectionLost status events
   based on elapsed time since the last parsed message.
+
+**Heartbeat formats differ between dump1090 variants**, which is why raw bytes, not matched
+heartbeat lines, are the liveness signal. dump1090-fa (11.0, measured) sends **no** SBS heartbeat
+unless started with `--net-heartbeat <secs>`, and then sends a bare `\r\n`. That empty line is
+dropped by `process_buffer` before `classify_line` sees it, so a pattern-only check declared every
+quiet night stale and reconnected every 90s. With `--net-heartbeat 60` the CRLF keeps the link
+alive; without it, a silent sky is indistinguishable from a dead link and the monitor reconnects
+(harmlessly) every `heartbeat_timeout_secs`.
 
 The heartbeat pattern (default `,000000,`) is matched via byte-level `windows()` scan — no CSV
 parsing or field splitting. All lines (including heartbeats) continue to be forwarded to backends
