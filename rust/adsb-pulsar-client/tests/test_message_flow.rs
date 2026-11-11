@@ -264,3 +264,82 @@ async fn test_heartbeat_messages_forwarded_and_counted() {
 
     client_handle.abort();
 }
+
+/// Accepts connections forever, counting them, and writes `payload` to each
+/// every `every` (or nothing when `payload` is empty), keeping it open.
+fn spawn_counting_mock(
+    mock: MockDump1090,
+    payload: &'static [u8],
+    every: Duration,
+) -> (
+    std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    tokio::task::JoinHandle<()>,
+) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let accepts = std::sync::Arc::new(AtomicUsize::new(0));
+    let counter = accepts.clone();
+    let handle = tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = mock.listener.accept().await.unwrap();
+            counter.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                loop {
+                    if !payload.is_empty() && stream.write_all(payload).await.is_err() {
+                        break;
+                    }
+                    tokio::time::sleep(every).await;
+                }
+            });
+        }
+    });
+    (accepts, handle)
+}
+
+/// dump1090-fa sends its SBS heartbeat as a bare CRLF. A link carrying only
+/// those must not be declared stale and torn down.
+#[tokio::test]
+async fn test_crlf_heartbeat_keeps_connection_alive() {
+    let mock = MockDump1090::new().await;
+    let mut config = test_config_for_port(mock.port());
+    config.heartbeat_timeout_secs = 1;
+    config.socket_read_timeout_secs = 0;
+    let (accepts, mock_handle) = spawn_counting_mock(mock, b"\r\n", Duration::from_millis(250));
+
+    let mut client = ADSBFeedClient::new(config, vec![Box::new(NoopForwarder)]).unwrap();
+    let client_handle = tokio::spawn(async move { client.run().await });
+
+    tokio::time::sleep(Duration::from_millis(3000)).await;
+    assert_eq!(
+        accepts.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "CRLF heartbeats should keep the first connection alive"
+    );
+
+    client_handle.abort();
+    mock_handle.abort();
+}
+
+/// A connection that delivers no bytes at all must be dropped once
+/// `socket_read_timeout_secs` elapses, even though the housekeeping and
+/// stats ticks keep winning the `select!` in between.
+#[tokio::test]
+async fn test_socket_read_timeout_fires_on_silent_connection() {
+    let mock = MockDump1090::new().await;
+    let mut config = test_config_for_port(mock.port());
+    config.heartbeat_timeout_secs = 0;
+    config.socket_read_timeout_secs = 2;
+    let (accepts, mock_handle) = spawn_counting_mock(mock, b"", Duration::from_millis(100));
+
+    let mut client = ADSBFeedClient::new(config, vec![Box::new(NoopForwarder)]).unwrap();
+    let client_handle = tokio::spawn(async move { client.run().await });
+
+    // 2s timeout + 1s initial retry delay, with margin.
+    tokio::time::sleep(Duration::from_millis(4500)).await;
+    assert!(
+        accepts.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+        "a silent connection should time out and reconnect"
+    );
+
+    client_handle.abort();
+    mock_handle.abort();
+}

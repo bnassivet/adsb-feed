@@ -311,6 +311,9 @@ impl ADSBFeedClient {
         let mut stats_interval = interval(Duration::from_secs(10));
         let mut housekeeping_interval = interval(Duration::from_secs(1));
         let socket_read_timeout = self.config.socket_read_timeout();
+        // When disabled, the branch is guarded off; the far-future value is never polled.
+        let read_deadline = sleep(socket_read_timeout.unwrap_or(Duration::from_secs(86_400 * 365)));
+        tokio::pin!(read_deadline);
 
         loop {
             tokio::select! {
@@ -322,20 +325,9 @@ impl ADSBFeedClient {
                     }
                 }
 
-                // Receive data from socket
-                result = async {
-                    match socket_read_timeout {
-                        Some(timeout) => match tokio::time::timeout(timeout, stream.read(&mut buffer)).await {
-                            Ok(Ok(n)) => Ok(n),
-                            Ok(Err(e)) => Err(ClientError::Socket(e)),
-                            Err(_) => Err(ClientError::Socket(std::io::Error::new(
-                                std::io::ErrorKind::TimedOut,
-                                "socket read timeout",
-                            ))),
-                        },
-                        None => Ok(stream.read(&mut buffer).await?),
-                    }
-                } => {
+                // Receive data from socket. `TcpStream::read` is cancel-safe,
+                // so losing a race to another branch drops no bytes.
+                result = stream.read(&mut buffer) => {
                     match result {
                         Ok(0) => {
                             info!("Connection closed by remote host");
@@ -347,6 +339,9 @@ impl ADSBFeedClient {
                         Ok(n) => {
                             self.metrics.add_bytes_received(n as u64);
                             self.connection_monitor.record_tcp_activity();
+                            if let Some(timeout) = socket_read_timeout {
+                                read_deadline.as_mut().reset(tokio::time::Instant::now() + timeout);
+                            }
 
                             let messages = self.process_buffer(&buffer[..n])?;
 
@@ -363,18 +358,23 @@ impl ADSBFeedClient {
                             }
                         }
                         Err(e) => {
-                            if matches!(e, ClientError::Socket(ref io_err) if io_err.kind() == std::io::ErrorKind::TimedOut) {
-                                warn!(
-                                    "No bytes received for {:?}; forcing reconnect",
-                                    self.config.socket_read_timeout().unwrap_or_else(|| Duration::from_secs(0))
-                                );
-                            } else {
-                                error!("Socket read error: {}", e);
-                            }
-
-                            return Err(e);
+                            error!("Socket read error: {}", e);
+                            return Err(ClientError::Socket(e));
                         }
                     }
+                }
+
+                // No bytes for `socket_read_timeout`. The deadline lives
+                // outside the loop and only moves when bytes arrive; a timeout
+                // built inside the read branch restarted every time the
+                // housekeeping tick won the `select!`, so it never fired.
+                _ = &mut read_deadline, if socket_read_timeout.is_some() => {
+                    let timeout = socket_read_timeout.unwrap_or_default();
+                    warn!("No bytes received for {:?}; forcing reconnect", timeout);
+                    return Err(ClientError::Socket(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "socket read timeout",
+                    )));
                 }
 
                 // Periodic stats logging
