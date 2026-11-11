@@ -26,8 +26,7 @@ which records from the host microphone and transcribes locally through an LFM2.5
 `llama.cpp` server that it starts itself. The resulting text enters the chat like a typed
 prompt. Dashed boxes are optional or off by default: the weather
 service, and the Pulsar → Spark → Delta Lake → webapp path, which lives outside this repo
-(`../spark-adsb`, `../webapp`). Ports shown are the defaults from
-[`adsb-stack-template.toml`](adsb-stack-template.toml).
+(`../spark-adsb`, `../webapp`).
 
 ### Compact mode: the desktop app embeds the services
 
@@ -84,8 +83,8 @@ See [`rust/README.md`](rust/README.md) for detailed setup, build commands, and c
 ### Flight simulation
 
 The desktop app can fly **simulated aircraft** described in plain language
-("police helicopter circling the old port"): `adsb-agent` (:8000) proxies the request
-over A2A to `adsb-simulation-agent` (:8300), which returns timed waypoints respecting
+("police helicopter circling the old port"): `adsb-agent` proxies the request
+over A2A to `adsb-simulation-agent`, which returns timed waypoints respecting
 real flight-dynamics limits. Trajectories play back per aircraft and can be saved as
 named scenarios that replay offline. Both Python services are optional.
 

@@ -86,31 +86,31 @@
 <rect class="box apps" x="830" y="82" width="160" height="90" rx="8"/>
 <text class="t-title" x="910.0" y="107">AI agent</text>
 <text class="t-code" x="910.0" y="126">adsb-agent · LangGraph</text>
-<text class="t-note" x="910.0" y="143">AG-UI chat · voice :8000</text>
+<text class="t-note" x="910.0" y="143">AG-UI chat · voice</text>
 <rect class="box apps opt" x="1210" y="82" width="170" height="90" rx="8"/>
 <text class="t-title" x="1295.0" y="107">webapp</text>
-<text class="t-code" x="1295.0" y="126">Plotly Dash :8050</text>
+<text class="t-code" x="1295.0" y="126">Plotly Dash</text>
 <text class="t-note" x="1295.0" y="143">real-time · historical</text>
 <rect class="box svc" x="170" y="222" width="160" height="90" rx="8"/>
 <text class="t-title" x="250.0" y="247">Feed client</text>
 <text class="t-code" x="250.0" y="266">adsb-pulsar-client</text>
-<text class="t-note" x="250.0" y="283">metrics :8790</text>
+<text class="t-note" x="250.0" y="283">Prometheus metrics</text>
 <rect class="box svc" x="380" y="222" width="180" height="90" rx="8"/>
 <text class="t-title" x="470.0" y="247">Data server</text>
 <text class="t-code" x="470.0" y="266">adsb-data-server</text>
-<text class="t-note" x="470.0" y="283">HTTP :8787 · Quack :9494</text>
+<text class="t-note" x="470.0" y="283">HTTP query API · Quack</text>
 <rect class="box svc opt" x="600" y="222" width="180" height="90" rx="8"/>
 <text class="t-title" x="690.0" y="247">Weather service</text>
 <text class="t-code" x="690.0" y="266">adsb-weather-server</text>
-<text class="t-note" x="690.0" y="283">Open-Meteo · :8789 · optional</text>
+<text class="t-note" x="690.0" y="283">Open-Meteo · optional</text>
 <rect class="box svc" x="830" y="222" width="160" height="90" rx="8"/>
 <text class="t-title" x="910.0" y="247">Simulation agent</text>
 <text class="t-code" x="910.0" y="266">adsb-simulation-agent</text>
-<text class="t-note" x="910.0" y="283">A2A :8300</text>
+<text class="t-note" x="910.0" y="283">A2A server</text>
 <rect class="box svc opt" x="1010" y="222" width="150" height="90" rx="8"/>
 <text class="t-title" x="1085.0" y="247">Voice server</text>
 <text class="t-code" x="1085.0" y="266">LFM2.5-Audio-1.5B</text>
-<text class="t-note" x="1085.0" y="283">llama.cpp · :2026</text>
+<text class="t-note" x="1085.0" y="283">llama.cpp server</text>
 <rect class="box svc opt" x="1210" y="222" width="170" height="90" rx="8"/>
 <text class="t-title" x="1295.0" y="247">Spark streaming</text>
 <text class="t-code" x="1295.0" y="266">spark-adsb · PySpark</text>
@@ -132,16 +132,16 @@
 <text class="t-code" x="1295.0" y="404">bronze → silver → gold</text>
 <text class="t-note" x="1295.0" y="421">H3-indexed tracks</text>
 <rect class="box msg" x="290" y="478" width="520" height="62" rx="8"/>
-<text class="t-title" x="550.0" y="500">MQTT broker · Mosquitto :1883</text>
+<text class="t-title" x="550.0" y="500">MQTT broker · Mosquitto</text>
 <text class="t-code" x="550.0" y="516">adsb/&lt;stage&gt;/sbs/raw   ·   adsb/&lt;stage&gt;/weather/grid (retained)</text>
 <text class="t-note" x="550.0" y="531">QoS 0 · no persistence · the live path</text>
 <rect class="box msg opt" x="1210" y="478" width="170" height="62" rx="8"/>
-<text class="t-title" x="1295.0" y="500">Apache Pulsar :6650</text>
+<text class="t-title" x="1295.0" y="500">Apache Pulsar</text>
 <text class="t-code" x="1295.0" y="516">kradsb/adsb/sbs-topic</text>
 <text class="t-note" x="1295.0" y="531">optional fan-out leg</text>
 <rect class="box inf" x="170" y="592" width="160" height="90" rx="8"/>
 <text class="t-title" x="250.0" y="617">dump1090</text>
-<text class="t-code" x="250.0" y="636">SBS-1 · TCP :30003</text>
+<text class="t-code" x="250.0" y="636">SBS-1 over TCP</text>
 <text class="t-note" x="250.0" y="653">RTL-SDR · Raspberry Pi</text>
 <rect class="box inf" x="380" y="592" width="180" height="90" rx="8"/>
 <text class="t-title" x="470.0" y="617">Orchestration</text>
@@ -152,7 +152,7 @@
 <text class="t-code" x="690.0" y="636">scrapes /metrics</text>
 <text class="t-note" x="690.0" y="653">feed · recorder · weather · agents</text>
 <rect class="box inf" x="830" y="592" width="160" height="90" rx="8"/>
-<text class="t-title" x="910.0" y="617">MLflow :5010</text>
+<text class="t-title" x="910.0" y="617">MLflow</text>
 <text class="t-code" x="910.0" y="636">LLM gateway · tracing</text>
 <text class="t-note" x="910.0" y="653">local LLM (LM Studio)</text>
 <rect class="box inf" x="1010" y="592" width="150" height="90" rx="8"/>
@@ -210,6 +210,6 @@
 <text class="t-layer-sub" x="246" y="732">optional flow</text>
 <rect class="box inf opt" x="350" y="719" width="34" height="18" rx="4"/>
 <text class="t-layer-sub" x="392" y="732">optional or off by default</text>
-<text class="t-layer-sub" x="20" y="754">Ports are the defaults from adsb-stack-template.toml. The desktop can also embed DuckDB itself instead of attaching remotely.</text>
+<text class="t-layer-sub" x="20" y="754">The desktop can also embed DuckDB itself instead of attaching remotely.</text>
 <text class="t-layer-sub" x="20" y="772">Voice needs the agent's voice extra. The agent starts the LFM2.5-Audio server on the first voice request; Voxtral is an alternative speech-to-text backend.</text>
 </svg>

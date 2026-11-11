@@ -73,7 +73,7 @@
 <rect class="box apps opt" x="800" y="92" width="300" height="84" rx="8"/>
 <text class="t-title" x="950.0" y="116">AI agent</text>
 <text class="t-code" x="950.0" y="134">adsb-agent · LangGraph</text>
-<text class="t-note" x="950.0" y="150">AG-UI chat · voice :8000</text>
+<text class="t-note" x="950.0" y="150">AG-UI chat · voice</text>
 <rect class="box svc" x="180" y="222" width="175" height="90" rx="8"/>
 <text class="t-title" x="267.5" y="247">Feed bridge</text>
 <text class="t-code" x="267.5" y="266">bridge.rs</text>
@@ -85,15 +85,15 @@
 <rect class="box svc" x="576" y="222" width="175" height="90" rx="8"/>
 <text class="t-title" x="663.5" y="247">Tool server</text>
 <text class="t-code" x="663.5" y="266">read-only data plane</text>
-<text class="t-note" x="663.5" y="283">loopback :8787</text>
+<text class="t-note" x="663.5" y="283">loopback only</text>
 <rect class="box svc opt" x="800" y="222" width="145" height="90" rx="8"/>
 <text class="t-title" x="872.5" y="247">Simulation agent</text>
-<text class="t-code" x="872.5" y="266">A2A :8300</text>
+<text class="t-code" x="872.5" y="266">A2A server</text>
 <text class="t-note" x="872.5" y="283">trajectories</text>
 <rect class="box svc opt" x="955" y="222" width="145" height="90" rx="8"/>
 <text class="t-title" x="1027.5" y="247">Voice server</text>
 <text class="t-code" x="1027.5" y="266">LFM2.5-Audio</text>
-<text class="t-note" x="1027.5" y="283">llama.cpp · :2026</text>
+<text class="t-note" x="1027.5" y="283">llama.cpp server</text>
 <rect class="box sto" x="378" y="360" width="175" height="72" rx="8"/>
 <text class="t-title" x="465.5" y="384">Embedded DuckDB</text>
 <text class="t-code" x="465.5" y="402">adsb_history.db</text>
@@ -108,14 +108,14 @@
 <text class="t-note" x="1027.5" y="418">~1 GB</text>
 <rect class="box inf" x="180" y="482" width="175" height="90" rx="8"/>
 <text class="t-title" x="267.5" y="507">dump1090</text>
-<text class="t-code" x="267.5" y="526">SBS-1 · TCP :30003</text>
+<text class="t-code" x="267.5" y="526">SBS-1 over TCP</text>
 <text class="t-note" x="267.5" y="543">local or on the LAN</text>
 <rect class="box inf" x="378" y="482" width="373" height="90" rx="8"/>
 <text class="t-title" x="564.5" y="507">Tauri v2 runtime</text>
 <text class="t-code" x="564.5" y="526">tokio · system WebView</text>
 <text class="t-note" x="564.5" y="543">a single desktop binary: no Docker, no JVM, no broker</text>
 <rect class="box inf" x="800" y="482" width="145" height="90" rx="8"/>
-<text class="t-title" x="872.5" y="507">MLflow :5010</text>
+<text class="t-title" x="872.5" y="507">MLflow</text>
 <text class="t-code" x="872.5" y="526">LLM gateway</text>
 <text class="t-note" x="872.5" y="543">local LLM</text>
 <rect class="box inf" x="955" y="482" width="145" height="90" rx="8"/>
@@ -155,6 +155,6 @@
 <text class="t-layer-sub" x="212" y="622">optional</text>
 <path class="edge" d="M290,618 H328" marker-end="url(#head)"/>
 <text class="t-layer-sub" x="336" y="622">data / control flow</text>
-<text class="t-layer-sub" x="20" y="644">The weather layer is unavailable here: its snapshots arrive over MQTT. Stacks started with make move the tool server to :8788, so it can sit beside the data server's :8787.</text>
+<text class="t-layer-sub" x="20" y="644">The weather layer is unavailable here: its snapshots arrive over MQTT. Stacks started with make give the tool server its own port, so it can run beside the data server.</text>
 <text class="t-layer-sub" x="20" y="662">History lives only while this app runs: close it and nothing is recorded. For always-on recording, use the MQTT topology above.</text>
 </svg>
