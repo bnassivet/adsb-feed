@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1140 680" width="1140" height="680" role="img" aria-labelledby="title desc">
+<title id="title">ADS-B Feed: compact mode</title>
+<desc id="desc">Compact mode: the desktop app reads dump1090 directly and records to its own embedded DuckDB, with no broker or data server. The AI agents remain optional separate processes.</desc>
+<style>
+  svg {
+    --bg:#ffffff; --fg:#1f2328; --muted:#59636e; --box:#ffffff; --edge:#57606a;
+    --apps:#0969da; --svc:#8250df; --sto:#1a7f37; --inf:#6e7781; --ext:#9a6700; --proc:#0969da;
+    font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    svg {
+      --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --box:#161b22; --edge:#8b949e;
+      --apps:#4493f8; --svc:#ab7df8; --sto:#3fb950; --inf:#9198a1; --ext:#d29922; --proc:#4493f8;
+    }
+  }
+  .bg { fill: var(--bg); }
+  .band { fill-opacity: .07; stroke-opacity: .35; stroke-width: 1; }
+  .band.apps, .box.apps { fill: var(--apps); stroke: var(--apps); }
+  .band.svc,  .box.svc  { fill: var(--svc);  stroke: var(--svc); }
+  .band.sto,  .box.sto  { fill: var(--sto);  stroke: var(--sto); }
+  .band.inf,  .box.inf  { fill: var(--inf);  stroke: var(--inf); }
+  .box { fill: var(--box) !important; stroke-width: 1.6; }
+  .box.opt { stroke-dasharray: 6 4; }
+  .proc { fill: none; stroke: var(--proc); stroke-width: 2.2; }
+  .ext-col { fill: var(--ext); fill-opacity: .05; stroke: var(--ext); stroke-dasharray: 3 4; stroke-width: 1.2; }
+  text { fill: var(--fg); }
+  .t-h1 { font-size: 19px; font-weight: 700; }
+  .t-sub { font-size: 12px; fill: var(--muted); }
+  .t-layer { font-size: 12.5px; font-weight: 700; letter-spacing: .08em; }
+  .t-layer.apps { fill: var(--apps); } .t-layer.svc { fill: var(--svc); }
+  .t-layer.sto { fill: var(--sto); }   .t-layer.inf { fill: var(--inf); }
+  .t-layer-sub { font-size: 11px; fill: var(--muted); }
+  .t-title { font-size: 14px; font-weight: 650; text-anchor: middle; }
+  .t-code { font-size: 11px; text-anchor: middle; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: var(--fg); }
+  .t-note { font-size: 11px; text-anchor: middle; fill: var(--muted); }
+  .t-proc { font-size: 11px; font-weight: 700; letter-spacing: .06em; fill: var(--proc); }
+  .t-ext { font-size: 11px; font-weight: 700; letter-spacing: .06em; fill: var(--ext); }
+  .t-edge { font-size: 10.5px; fill: var(--muted); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
+  .edge { fill: none; stroke: var(--edge); stroke-width: 1.6; stroke-linejoin: round; }
+  .head { fill: var(--edge); }
+</style>
+<defs>
+  <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path class="head" d="M0,0 L10,5 L0,10 z"/>
+  </marker>
+</defs>
+<rect class="bg" x="0" y="0" width="1140" height="680"/>
+<text class="t-h1" x="20" y="34">ADS-B Feed: compact mode</text>
+<text class="t-sub" x="20" y="52">source_kind = socket, storage = embedded. No broker, no data server, no Docker: one process reads dump1090 and records its own history.</text>
+<rect class="band apps" x="10" y="60" width="1120" height="130" rx="10"/>
+<text class="t-layer apps" x="22" y="86">APPLICATIONS</text>
+<text class="t-layer-sub" x="22" y="104">UI and AI agents</text>
+<rect class="band svc" x="10" y="200" width="1120" height="130" rx="10"/>
+<text class="t-layer svc" x="22" y="226">SERVICES</text>
+<text class="t-layer-sub" x="22" y="244">in-process Rust,</text>
+<text class="t-layer-sub" x="22" y="258">Python agents</text>
+<rect class="band sto" x="10" y="340" width="1120" height="110" rx="10"/>
+<text class="t-layer sto" x="22" y="366">STORAGE</text>
+<text class="t-layer-sub" x="22" y="384">embedded,</text>
+<text class="t-layer-sub" x="22" y="398">file-based</text>
+<rect class="band inf" x="10" y="460" width="1120" height="130" rx="10"/>
+<text class="t-layer inf" x="22" y="486">INFRASTRUCTURE</text>
+<text class="t-layer-sub" x="22" y="504">sources, runtime,</text>
+<text class="t-layer-sub" x="22" y="518">models</text>
+<rect class="proc" x="168" y="66" width="594" height="378" rx="12"/>
+<text class="t-proc" x="180" y="83">DESKTOP APP: one Tauri process (adsb-pulsar-client-desktop)</text>
+<rect class="ext-col" x="790" y="66" width="322" height="378" rx="12"/>
+<text class="t-ext" x="800" y="83">OPTIONAL: separate processes</text>
+<rect class="box apps" x="180" y="92" width="560" height="84" rx="8"/>
+<text class="t-title" x="460.0" y="116">Webview UI</text>
+<text class="t-code" x="460.0" y="134">Next.js 16 · React 19 · Leaflet</text>
+<text class="t-note" x="460.0" y="150">live map · DB History panel · analytics · AI chat · scenarios</text>
+<rect class="box apps opt" x="800" y="92" width="300" height="84" rx="8"/>
+<text class="t-title" x="950.0" y="116">AI agent</text>
+<text class="t-code" x="950.0" y="134">adsb-agent · LangGraph</text>
+<text class="t-note" x="950.0" y="150">AG-UI chat · voice</text>
+<rect class="box svc" x="180" y="222" width="175" height="90" rx="8"/>
+<text class="t-title" x="267.5" y="247">Feed bridge</text>
+<text class="t-code" x="267.5" y="266">bridge.rs</text>
+<text class="t-note" x="267.5" y="283">SocketSource · 500 ms flush</text>
+<rect class="box svc" x="378" y="222" width="175" height="90" rx="8"/>
+<text class="t-title" x="465.5" y="247">Commands</text>
+<text class="t-code" x="465.5" y="266">commands.rs</text>
+<text class="t-note" x="465.5" y="283">history queries · storage ops</text>
+<rect class="box svc" x="576" y="222" width="175" height="90" rx="8"/>
+<text class="t-title" x="663.5" y="247">Tool server</text>
+<text class="t-code" x="663.5" y="266">read-only data plane</text>
+<text class="t-note" x="663.5" y="283">loopback only</text>
+<rect class="box svc opt" x="800" y="222" width="145" height="90" rx="8"/>
+<text class="t-title" x="872.5" y="247">Simulation agent</text>
+<text class="t-code" x="872.5" y="266">A2A server</text>
+<text class="t-note" x="872.5" y="283">trajectories</text>
+<rect class="box svc opt" x="955" y="222" width="145" height="90" rx="8"/>
+<text class="t-title" x="1027.5" y="247">Voice server</text>
+<text class="t-code" x="1027.5" y="266">LFM2.5-Audio</text>
+<text class="t-note" x="1027.5" y="283">llama.cpp server</text>
+<rect class="box sto" x="378" y="360" width="175" height="72" rx="8"/>
+<text class="t-title" x="465.5" y="384">Embedded DuckDB</text>
+<text class="t-code" x="465.5" y="402">adsb_history.db</text>
+<text class="t-note" x="465.5" y="418">&lt;app-data&gt;/&lt;stack&gt;/</text>
+<rect class="box sto" x="596" y="360" width="155" height="72" rx="8"/>
+<text class="t-title" x="673.5" y="384">Snapshots</text>
+<text class="t-code" x="673.5" y="402">snapshots/*.db</text>
+<text class="t-note" x="673.5" y="418">swap · export · import</text>
+<rect class="box sto opt" x="955" y="360" width="145" height="72" rx="8"/>
+<text class="t-title" x="1027.5" y="384">Voice model</text>
+<text class="t-code" x="1027.5" y="402">4 GGUF files</text>
+<text class="t-note" x="1027.5" y="418">~1 GB</text>
+<rect class="box inf" x="180" y="482" width="175" height="90" rx="8"/>
+<text class="t-title" x="267.5" y="507">dump1090</text>
+<text class="t-code" x="267.5" y="526">SBS-1 over TCP</text>
+<text class="t-note" x="267.5" y="543">local or on the LAN</text>
+<rect class="box inf" x="378" y="482" width="373" height="90" rx="8"/>
+<text class="t-title" x="564.5" y="507">Tauri v2 runtime</text>
+<text class="t-code" x="564.5" y="526">tokio · system WebView</text>
+<text class="t-note" x="564.5" y="543">a single desktop binary: no Docker, no JVM, no broker</text>
+<rect class="box inf" x="800" y="482" width="145" height="90" rx="8"/>
+<text class="t-title" x="872.5" y="507">MLflow</text>
+<text class="t-code" x="872.5" y="526">LLM gateway</text>
+<text class="t-note" x="872.5" y="543">local LLM</text>
+<rect class="box inf" x="955" y="482" width="145" height="90" rx="8"/>
+<text class="t-title" x="1027.5" y="507">Microphone</text>
+<text class="t-code" x="1027.5" y="526">host audio input</text>
+<text class="t-note" x="1027.5" y="543">read by adsb-agent</text>
+<path class="edge" d="M230,482 V316" marker-end="url(#head)"/>
+<text class="t-edge" x="225" y="420" text-anchor="middle" transform="rotate(-90 225 420)">TCP read</text>
+<path class="edge" d="M267.5,222 V180" marker-end="url(#head)"/>
+<text class="t-edge" x="273.5" y="200" text-anchor="start">events · ~2 updates/s</text>
+<path class="edge" d="M310,312 V396 H374" marker-end="url(#head)"/>
+<text class="t-edge" x="305" y="360" text-anchor="middle" transform="rotate(-90 305 360)">persist batch</text>
+<path class="edge" d="M465.5,180 V218" marker-end="url(#head)" marker-start="url(#head)"/>
+<text class="t-edge" x="471.5" y="200" text-anchor="start">invoke · Arrow IPC</text>
+<path class="edge" d="M445,312 V356" marker-end="url(#head)"/>
+<text class="t-edge" x="451" y="338" text-anchor="start">SQL</text>
+<path class="edge" d="M600,312 V334 H520 V356" marker-end="url(#head)"/>
+<text class="t-edge" x="560" y="330" text-anchor="middle">read-only</text>
+<path class="edge" d="M553,396 H592" marker-end="url(#head)"/>
+<path class="edge" d="M744,120 H796" marker-end="url(#head)" marker-start="url(#head)"/>
+<text class="t-edge" x="770" y="110" text-anchor="middle">AG-UI</text>
+<path class="edge" d="M800,160 H776 V267 H755" marker-end="url(#head)"/>
+<text class="t-edge" x="771" y="236" text-anchor="middle" transform="rotate(-90 771 236)">tools</text>
+<path class="edge" d="M872.5,176 V218" marker-end="url(#head)"/>
+<text class="t-edge" x="878.5" y="200" text-anchor="start">A2A</text>
+<path class="edge" d="M1027.5,176 V218" marker-end="url(#head)"/>
+<text class="t-edge" x="1033.5" y="200" text-anchor="start">audio → text</text>
+<path class="edge" d="M1027.5,312 V356" marker-end="url(#head)"/>
+<text class="t-edge" x="1033.5" y="338" text-anchor="start">load</text>
+<path class="edge" d="M872.5,312 V478" marker-end="url(#head)"/>
+<text class="t-edge" x="867.5" y="400" text-anchor="middle" transform="rotate(-90 867.5 400)">LLM calls</text>
+<path class="edge" d="M1100,527 H1124 V140 H1104" marker-end="url(#head)"/>
+<text class="t-edge" x="1119" y="490" text-anchor="middle" transform="rotate(-90 1119 490)">audio capture</text>
+<rect class="proc" x="20" y="609" width="34" height="18" rx="4"/>
+<text class="t-layer-sub" x="62" y="622">one OS process</text>
+<rect class="box inf opt" x="170" y="609" width="34" height="18" rx="4"/>
+<text class="t-layer-sub" x="212" y="622">optional</text>
+<path class="edge" d="M290,618 H328" marker-end="url(#head)"/>
+<text class="t-layer-sub" x="336" y="622">data / control flow</text>
+<text class="t-layer-sub" x="20" y="644">The weather layer is unavailable here: its snapshots arrive over MQTT. Stacks started with make give the tool server its own port, so it can run beside the data server.</text>
+<text class="t-layer-sub" x="20" y="662">History lives only while this app runs: close it and nothing is recorded. For always-on recording, use the MQTT topology above.</text>
+</svg>

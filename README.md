@@ -1,3 +1,48 @@
+# ADS-B Feed
+
+Captures aircraft positions from a dump1090 receiver, moves them over an MQTT edge bus,
+records them in DuckDB, and shows them live and historically in a Tauri desktop app with
+AI agents on top. An optional Pulsar leg feeds the separate Spark/Delta analytics pipeline.
+
+| Flight Details & Short History | DB History & Analytics | AI Chat |
+|:---:|:---:|:---:|
+| <a href="rust/adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-flight-details-short-history.png"><img src="rust/adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-flight-details-short-history.png" alt="Flight details with short track history" width="260"></a> | <a href="rust/adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-dbhistory-analytics.png"><img src="rust/adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-dbhistory-analytics.png" alt="DB History panel with analytics" width="260"></a> | <a href="rust/adsb-pulsar-client-desktop/docs/screenshots/adsb-feed_chat-ai_2026-06-07.png"><img src="rust/adsb-pulsar-client-desktop/docs/screenshots/adsb-feed_chat-ai_2026-06-07.png" alt="AI chat assistant" width="260"></a> |
+
+| H3 Density Details | H3 Density Statistics |
+|:---:|:---:|
+| <a href="rust/adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-h3-density-details.png"><img src="rust/adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-h3-density-details.png" alt="H3 hexagonal density details" width="260"></a> | <a href="rust/adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-h3-density-statistics.png"><img src="rust/adsb-pulsar-client-desktop/docs/screenshots/adsb-tracker-h3-density-statistics.png" alt="H3 hexagonal density statistics" width="260"></a> |
+
+<sub>Click a screenshot for the full-size image.</sub>
+
+## Architecture Overview
+
+![Layered architecture: infrastructure, messaging, storage, services and applications](docs/architecture-overview.svg)
+
+Read the diagram from the bottom up. **dump1090** emits SBS-1 lines, which the **feed
+client** publishes to **MQTT**. The **data server** subscribes and records them in **DuckDB**,
+then serves that history over Quack. The **desktop app** takes the live feed from MQTT and its
+history from the data server. For **voice input**, the desktop's mic button drives `adsb-agent`,
+which records from the host microphone and transcribes locally through an LFM2.5-Audio
+`llama.cpp` server that it starts itself. The resulting text enters the chat like a typed
+prompt. Dashed boxes are optional or off by default: the weather
+service, and the Pulsar → Spark → Delta Lake → webapp path, which lives outside this repo
+(`../spark-adsb`, `../webapp`).
+
+### Compact mode: the desktop app embeds the services
+
+![Compact mode: one desktop process reads dump1090 and records to its own DuckDB](docs/architecture-compact.svg)
+
+The desktop app can also run with nothing else around it. With its defaults
+(`source_kind = socket`, embedded storage), it reads dump1090 directly over TCP and records
+to its own `adsb_history.db` inside the app-data directory. One Tauri process covers the
+feed client, recorder and storage, so there is no broker, data server or Docker. The
+in-process **tool server** keeps the AI agents working against that local database.
+
+What you give up: recording stops when the app closes, and the weather layer is unavailable
+because its snapshots only arrive over MQTT. To start it, run `npm run tauri dev` from
+[`rust/adsb-pulsar-client-desktop/`](rust/adsb-pulsar-client-desktop/README.md). Settings
+switches it to the MQTT topology later.
+
 ## Repository Structure
 
 ### `infrastructure/`
@@ -38,8 +83,8 @@ See [`rust/README.md`](rust/README.md) for detailed setup, build commands, and c
 ### Flight simulation
 
 The desktop app can fly **simulated aircraft** described in plain language
-("police helicopter circling the old port"): `adsb-agent` (:8000) proxies the request
-over A2A to `adsb-simulation-agent` (:8300), which returns timed waypoints respecting
+("police helicopter circling the old port"): `adsb-agent` proxies the request
+over A2A to `adsb-simulation-agent`, which returns timed waypoints respecting
 real flight-dynamics limits. Trajectories play back per aircraft and can be saved as
 named scenarios that replay offline. Both Python services are optional.
 

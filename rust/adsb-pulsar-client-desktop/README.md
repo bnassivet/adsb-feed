@@ -6,10 +6,13 @@ Connects to a [dump1090](https://github.com/flightaware/dump1090) receiver — d
 
 ## Overview
 
-<!-- Replace with actual screenshots -->
-| Live Tracking | DB History & Analysis | Aircraft Details |
+| Flight Details & Short History | DB History & Analytics | AI Chat |
 |:---:|:---:|:---:|
-| ![Live tracking map](docs/screenshots/live-tracking.png) | ![DB History panel](docs/screenshots/db-history.png) | ![Aircraft details](docs/screenshots/aircraft-details.png) |
+| ![Flight details with short track history](docs/screenshots/adsb-tracker-flight-details-short-history.png) | ![DB History panel with analytics](docs/screenshots/adsb-tracker-dbhistory-analytics.png) | ![AI chat assistant](docs/screenshots/adsb-feed_chat-ai_2026-06-07.png) |
+
+| H3 Density Details | H3 Density Statistics |
+|:---:|:---:|
+| ![H3 hexagonal density details](docs/screenshots/adsb-tracker-h3-density-details.png) | ![H3 hexagonal density statistics](docs/screenshots/adsb-tracker-h3-density-statistics.png) |
 
 ## Features
 
