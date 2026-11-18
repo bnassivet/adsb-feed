@@ -13,6 +13,10 @@ const LOADERS: Record<Variant, () => Promise<{ default: ComponentType<{ params: 
   deckgl: () => import("./variants/DeckGlLeaflet"),
   maplibre: () => import("./variants/MapLibre"),
   openlayers: () => import("./variants/OpenLayers"),
+  "openlayers-noindex": () => import("./variants/OpenLayersNoIndex"),
+  "openlayers-binned": () => import("./variants/OpenLayersBinned"),
+  "openlayers-deckgl": () => import("./variants/OpenLayersDeckGl"),
+  cesium: () => import("./variants/Cesium"),
 };
 
 export function BenchPage({ variant }: { variant: Variant }) {

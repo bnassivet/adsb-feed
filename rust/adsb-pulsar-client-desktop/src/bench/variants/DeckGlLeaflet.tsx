@@ -11,7 +11,7 @@ import { installBench, BENCH_VIEW, type BenchParams } from "../harness";
 import type { AircraftTrack } from "@/lib/types";
 import type { Style } from "../stats";
 
-function buildLayers(tracks: AircraftTrack[], style: Style, live: boolean): Layer[] {
+export function buildLayers(tracks: AircraftTrack[], style: Style, live: boolean): Layer[] {
   const f = flatten(tracks);
   const pos = new Float32Array(f.count * 2);
   for (let i = 0; i < f.count; i++) {
