@@ -1,4 +1,4 @@
-# Map engines: Leaflet, OpenLayers, Cesium
+# Map engines: Leaflet, OpenLayers, Cesium, MapLibre
 
 Question: should the desktop map move to a "more advanced" engine, OpenLayers
 or Cesium.js, and could the engine be a choice next to Leaflet?
@@ -8,7 +8,8 @@ It follows [MAP_BENCH.md](MAP_BENCH.md) (2026-11-08). That benchmark measured
 OpenLayers in its naive form, one `Feature` per point. It found OpenLayers 2×
 slower to load than Leaflet and 1.6× heavier. This second test checks
 whether that verdict was OpenLayers' fault or the variant's. It also measures
-Cesium for the first time.
+Cesium for the first time, and MapLibre + deck.gl (flat and pitched) in a
+second run.
 
 ## What was measured (2026-11-18)
 
@@ -191,14 +192,85 @@ move is then decided by OL's features, not its speed.
     post-process, and the picker a `ScreenSpaceEventHandler` with globe picking.
   - Tests: as with `MapInner.tsx`, the viewer itself is untestable in jsdom.
 
-### MapLibre + deck.gl (for comparison, not asked)
+### MapLibre + deck.gl (measured in a second run)
 
 MapLibre has pitch, rotation and a globe, and deck.gl integrates with it
-officially (`MapboxOverlay`, interleaved). A pitched 2.5D view with trails at
-altitude would therefore reuse the existing deck.gl layers almost unchanged.
-MAP_BENCH.md measured MapLibre's own GeoJSON path as slow (4 s at 1M), but with
-deck.gl drawing the data that path is never used. It is the cheapest way to "see
-altitude", short of Cesium's real 3D globe.
+officially (`@deck.gl/mapbox` `MapboxOverlay`). Two variants were added, both
+drawing the **same deck.gl layers** as **deckgl** (`buildLayers` in
+`DeckGlLeaflet.tsx`):
+
+| Variant | What it is |
+|---|---|
+| **maplibre-deckgl** | MapLibre 6.17 map, flat, deck.gl via `MapboxOverlay` (overlaid, not interleaved) |
+| **maplibre-deckgl-3d** | same, pitched 60°, positions carry **altitude as z** (feet → m, unknown altitude on the ground; `src/bench/deck-positions.ts`) |
+
+Run `bench/results/2026-11-18T21-20-56.*`, 3 repetitions, with leaflet, deckgl,
+maplibre (its own GeoJSON path, from MAP_BENCH.md) and openlayers-deckgl as
+references. No run failed. 31 of 648 runs were flagged at a 30 Hz idle refresh
+(the multi-monitor trap): 30 load runs and 1 pan/zoom run. Load time barely
+depends on refresh rate, and the frame numbers below agree with the first run.
+
+**Load, dots, `setData` until rendered (ms):**
+
+| | 10k | 50k | 200k | 1M |
+|---|---:|---:|---:|---:|
+| WebKit deckgl | 30 | 29 | 40 | 53 |
+| WebKit openlayers-deckgl | 30 | 28 | 40 | 46 |
+| WebKit **maplibre-deckgl** | 30 | 28 | 40 | **43** |
+| WebKit **maplibre-deckgl-3d** | 30 | 29 | 40 | **55** |
+| WebKit maplibre (GeoJSON) | 82 | 231 | 826 | 4171 |
+| Chromium deckgl | 24 | 29 | 31 | 47 |
+| Chromium **maplibre-deckgl** | 28 | 28 | 26 | **48** |
+| Chromium **maplibre-deckgl-3d** | 24 | 26 | 29 | **51** |
+| Chromium maplibre (GeoJSON) | 80 | 246 | 850 | 4639 |
+
+Lines are the same picture: at 1M, 29–30 ms in WebKit for every deck.gl variant,
+against 699 ms for MapLibre's GeoJSON path.
+
+**JS heap after GC, Chromium (MB):**
+
+| | dots 200k | dots 1M | lines 200k | lines 1M |
+|---|---:|---:|---:|---:|
+| deckgl | 34 | 79 | 42 | 131 |
+| maplibre-deckgl | 45 | 82 | 51 | 134 |
+| maplibre-deckgl-3d | 46 | 86 | 52 | 138 |
+| maplibre (GeoJSON) | 127 | 506 | 60 | 220 |
+
+MapLibre itself costs about 10 MB more than Leaflet as a base. The z
+coordinate costs 4 bytes per point (3–4 MB at 1M).
+
+**Pan/zoom and live:**
+- WebKit pan/zoom: every variant holds the frame rate, at 431–458 frames and
+  p95 17–19 ms. The worst frame at 1M is 25 ms dots and 32 ms lines for
+  maplibre-deckgl, 29 and 33 ms pitched, and 33 and 34 ms for deckgl.
+- Chromium pan/zoom: MapLibre's worst frame is 10–25 ms against about 33 ms
+  for the Leaflet and OL bridges. Its 1M lines peak at 42 ms flat and 52 ms
+  pitched, the only result where 3D costs anything visible.
+- Live (25k, an update every second): deck.gl applies the update in 15–16 ms
+  in WebKit and 7–8 ms in Chromium, the same as deckgl, with p95 18 ms and a
+  worst frame of 20–24 ms. MapLibre's own GeoJSON path takes 149 ms per update.
+
+**What it means for the app:**
+- **Performance is a non-issue.** MapLibre + deck.gl is level with Leaflet +
+  deck.gl everywhere, flat or pitched. Altitude in 3D is free at the data layer.
+- **It is the cheap 3D.** It gives a pitched, rotatable view with trails at
+  their true height, using the same `deck-dots` / binary-attribute code the app
+  already ships. Altitude is an attribute size of 3 instead of 2.
+- **Unlike Cesium,** it has no build workarounds (only the worker URL, already
+  solved for the bench), no Ion, and a bundle of about 1.6 MB
+  (≈ 440 KB gzipped: `maplibre-gl.mjs` plus its worker), against Cesium's 13 MB.
+- **What it does not give:** a true ellipsoid with terrain occlusion. Its globe
+  projection is good enough for a receiver's ~250 NM range. Vertical
+  exaggeration and ground "curtains" under the trails are deck.gl options
+  (`PathLayer` with z scaling, `ColumnLayer`), not engine features.
+- **Porting cost:** high, as for OpenLayers. Raster tiles and the IndexedDB
+  tile cache move to a MapLibre style plus a `addProtocol` handler. Leaflet
+  panes, popups and the context menu become MapLibre markers and events. The
+  data layers on deck.gl move almost unchanged. Labels and screen-space layout
+  need rework once the map is pitched, because screen projection is no longer
+  affine.
+- **CSP:** `worker-src blob:` is not needed when the worker is served as a
+  file, as in the bench. Both cases need WebGL, which deck.gl already requires.
 
 ## Engine as a runtime choice
 
@@ -238,5 +310,10 @@ surface.
    - live aircraft and trails at altitude, history, selection and fly-to;
    - capability flags for everything else;
    - a custom vertex-buffer `Primitive` once the ~200k history view matters.
-4. A cheaper middle ground is a **MapLibre + deck.gl** pitched view. Like
-   Cesium, it would need a benchmark of its own before any decision.
+4. **If 3D is wanted, MapLibre + deck.gl is the better first step than Cesium.**
+   Measured level with the shipping stack, flat and pitched with altitude, at
+   about an eighth of Cesium's download and with the deck.gl data layers
+   reused. Cesium remains the answer only if a true globe with terrain matters.
+   As with OL, MapLibre is better as a *replacement* for Leaflet than as a
+   second engine, because of the parity cost above. A pitched view is a camera
+   setting there, not a second engine.
