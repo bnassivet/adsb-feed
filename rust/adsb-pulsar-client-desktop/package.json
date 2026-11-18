@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "tauri": "tauri",
-    "bench": "node --no-warnings bench/run.mjs"
+    "bench": "node --no-warnings bench/run.mjs",
+    "bench:fixtures": "node --no-warnings bench/fixtures.mjs"
   },
   "dependencies": {
     "@copilotkit/react-core": "^1.85.0",
@@ -54,6 +55,7 @@
     "jsdom": "^28.1.0",
     "maplibre-gl": "6.17.0",
     "ol": "10.11.0",
+    "pmtiles": "4.5.0",
     "postcss": "^8",
     "tailwindcss": "^4",
     "typescript": "^5",
