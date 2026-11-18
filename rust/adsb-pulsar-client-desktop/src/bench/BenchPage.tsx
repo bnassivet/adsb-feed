@@ -17,6 +17,8 @@ const LOADERS: Record<Variant, () => Promise<{ default: ComponentType<{ params: 
   "openlayers-binned": () => import("./variants/OpenLayersBinned"),
   "openlayers-deckgl": () => import("./variants/OpenLayersDeckGl"),
   cesium: () => import("./variants/Cesium"),
+  "maplibre-deckgl": () => import("./variants/MapLibreDeckGl"),
+  "maplibre-deckgl-3d": () => import("./variants/MapLibreDeckGl3d"),
 };
 
 export function BenchPage({ variant }: { variant: Variant }) {

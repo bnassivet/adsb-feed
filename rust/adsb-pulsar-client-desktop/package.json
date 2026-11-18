@@ -33,6 +33,7 @@
     "uuid": "^14.0.0"
   },
   "devDependencies": {
+    "@deck.gl/mapbox": "9.4.1",
     "@playwright/test": "1.65.0",
     "@tailwindcss/postcss": "^4",
     "@tauri-apps/cli": "^2",

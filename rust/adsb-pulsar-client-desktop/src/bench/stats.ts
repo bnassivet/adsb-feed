@@ -5,6 +5,7 @@ export const VARIANTS = [
   "leaflet", "canvas", "deckgl", "maplibre", "openlayers",
   // Second OpenLayers test and first Cesium measurement (docs/MAP_ENGINES.md).
   "openlayers-noindex", "openlayers-binned", "openlayers-deckgl", "cesium",
+  "maplibre-deckgl", "maplibre-deckgl-3d",
 ] as const;
 export type Variant = (typeof VARIANTS)[number];
 export type Scenario = "initial" | "panzoom" | "settle" | "live" | "memory";

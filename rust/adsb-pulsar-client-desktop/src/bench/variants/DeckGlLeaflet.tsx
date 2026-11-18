@@ -6,18 +6,16 @@ import { DeckLayer } from "@/lib/deck-leaflet/leaflet-layer";
 import type { Layer } from "@deck.gl/core";
 import { ScatterplotLayer, PathLayer } from "@deck.gl/layers";
 import { flatten } from "../flatten";
+import { deckPositions } from "../deck-positions";
 import { altitudeRgb, LINE_RGB } from "../color";
 import { installBench, BENCH_VIEW, type BenchParams } from "../harness";
 import type { AircraftTrack } from "@/lib/types";
 import type { Style } from "../stats";
 
-export function buildLayers(tracks: AircraftTrack[], style: Style, live: boolean): Layer[] {
+/** `altitude`: positions carry z in metres, for pitched 3D views (maplibre-deckgl-3d). */
+export function buildLayers(tracks: AircraftTrack[], style: Style, live: boolean, altitude = false): Layer[] {
   const f = flatten(tracks);
-  const pos = new Float32Array(f.count * 2);
-  for (let i = 0; i < f.count; i++) {
-    pos[2 * i] = f.lng[i];
-    pos[2 * i + 1] = f.lat[i];
-  }
+  const { value: pos, size } = deckPositions(f, altitude);
   const layers: Layer[] = [];
 
   if (style === "dots") {
@@ -29,7 +27,7 @@ export function buildLayers(tracks: AircraftTrack[], style: Style, live: boolean
     }
     layers.push(new ScatterplotLayer({
       id: "dots",
-      data: { length: f.count, attributes: { getPosition: { value: pos, size: 2 }, getFillColor: { value: col, size: 4, normalized: true } } },
+      data: { length: f.count, attributes: { getPosition: { value: pos, size }, getFillColor: { value: col, size: 4, normalized: true } } },
       radiusUnits: "pixels",
       getRadius: live ? 3 : 2.5,
       stroked: false,
@@ -38,7 +36,7 @@ export function buildLayers(tracks: AircraftTrack[], style: Style, live: boolean
   } else {
     layers.push(new PathLayer({
       id: "lines",
-      data: { length: f.starts.length - 1, startIndices: f.starts, attributes: { getPath: { value: pos, size: 2 } } },
+      data: { length: f.starts.length - 1, startIndices: f.starts, attributes: { getPath: { value: pos, size } } },
       _pathType: "open",
       getColor: [...LINE_RGB, 128],
       widthUnits: "pixels",
@@ -48,11 +46,11 @@ export function buildLayers(tracks: AircraftTrack[], style: Style, live: boolean
   }
 
   if (live) {
-    const hp = new Float32Array(f.heads.length * 2);
-    f.heads.forEach((h, i) => { hp[2 * i] = f.lng[h]; hp[2 * i + 1] = f.lat[h]; });
+    const hp = new Float32Array(f.heads.length * size);
+    f.heads.forEach((h, i) => hp.set(pos.subarray(size * h, size * h + size), size * i));
     layers.push(new ScatterplotLayer({
       id: "heads",
-      data: { length: f.heads.length, attributes: { getPosition: { value: hp, size: 2 } } },
+      data: { length: f.heads.length, attributes: { getPosition: { value: hp, size } } },
       radiusUnits: "pixels",
       getRadius: 5,
       getFillColor: [255, 255, 255, 230],

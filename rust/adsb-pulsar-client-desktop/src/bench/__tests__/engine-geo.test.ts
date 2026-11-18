@@ -82,3 +82,26 @@ describe("cesium-geo", () => {
     expect(zoomToCameraHeight(9, 45.5, 1280, 800, fov)).toBeCloseTo(h / 2, 6);
   });
 });
+
+describe("deckPositions", () => {
+  it("packs lng/lat pairs for flat maps", async () => {
+    const { deckPositions } = await import("@/bench/deck-positions");
+    const f = flatten(generateTracks({ points: 50, seed: 5 }));
+    const p = deckPositions(f, false);
+    expect(p.size).toBe(2);
+    expect(p.value).toHaveLength(f.count * 2);
+    expect(p.value[2]).toBeCloseTo(f.lng[1], 4);
+    expect(p.value[3]).toBeCloseTo(f.lat[1], 4);
+  });
+
+  it("adds altitude in metres as z, unknown altitude on the ground", async () => {
+    const { deckPositions } = await import("@/bench/deck-positions");
+    const f = flatten(generateTracks({ points: 50, seed: 5 }));
+    f.alt[1] = NaN;
+    const p = deckPositions(f, true);
+    expect(p.size).toBe(3);
+    expect(p.value).toHaveLength(f.count * 3);
+    expect(p.value[2]).toBeCloseTo(f.alt[0] * FEET_TO_M, 0);
+    expect(p.value[5]).toBe(0);
+  });
+});
