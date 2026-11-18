@@ -9,7 +9,8 @@ OpenLayers in its naive form, one `Feature` per point. It found OpenLayers 2×
 slower to load than Leaflet and 1.6× heavier. This second test checks
 whether that verdict was OpenLayers' fault or the variant's. It also measures
 Cesium for the first time, and MapLibre + deck.gl (flat and pitched) in a
-second run.
+second run. A later section maps the wanted layers (terrain, ICAO charts,
+weather, sea, 3D buildings) to open sources, engines and a cache policy.
 
 ## What was measured (2026-11-18)
 
@@ -272,6 +273,160 @@ coordinate costs 4 bytes per point (3–4 MB at 1M).
 - **CSP:** `worker-src blob:` is not needed when the worker is served as a
   file, as in the bench. Both cases need WebGL, which deck.gl already requires.
 
+## Target layers: terrain, ICAO charts, weather, sea, 3D buildings
+
+The layers wanted next are terrain, ICAO/OACI aeronautical charts, weather,
+sea/ocean and 3D buildings. This section maps each to open sources, engine
+support and a cache policy. It is from documentation, not measured. Every
+link was checked on 2026-11-18. Licences and access rules change, so check
+them again before building on a source.
+
+### Sources
+
+**Basemap (OpenStreetMap, ODbL: "© OpenStreetMap contributors" must be shown)**
+- [OpenFreeMap](https://openfreemap.org/): hosted vector tiles, no key. Its
+  [Liberty style](https://tiles.openfreemap.org/styles/liberty) already draws
+  3D buildings. Online only.
+- [Protomaps](https://docs.protomaps.com/): PMTiles, a single file that works
+  offline. [Daily worldwide builds](https://maps.protomaps.com/builds/) can be
+  cut to a region with [`pmtiles extract`](https://github.com/protomaps/go-pmtiles).
+  [Styles](https://github.com/protomaps/basemaps) come in light, dark and
+  grayscale, with [fonts and icons](https://github.com/protomaps/basemaps-assets)
+  for offline use.
+- The [OSM tile servers' usage policy](https://operations.osmfoundation.org/policies/tiles/)
+  forbids downloading ahead, so the current raster OSM layer may only cache
+  viewed tiles.
+
+**Terrain and elevation**
+- [Terrarium tiles on AWS](https://registry.opendata.aws/terrain-tiles/), no
+  key, include sea depth:
+  `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png`
+  ([encoding](https://github.com/tilezen/joerd/blob/master/docs/formats.md)).
+- [Copernicus DEM GLO-30/90](https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM)
+  ([AWS mirror](https://registry.opendata.aws/copernicus-dem/)), to build your own
+  tiles. Cesium without Ion needs this route:
+  [cesium-terrain-builder](https://github.com/geo-data/cesium-terrain-builder).
+
+**Aeronautical (ICAO / OACI)**
+- [OpenAIP](https://www.openaip.net/) ([API](https://docs.openaip.net/)):
+  airspaces, airfields, navaids. It needs a free key, and its licence is
+  **non-commercial** (CC BY-NC-SA).
+- The OACI 1:500,000 chart (IGN / [SIA](https://www.sia.aviation-civile.gouv.fr/))
+  is listed in the [IGN catalogue](https://cartes.gouv.fr/decouvrir/rechercher-une-donnee/).
+  **Access is restricted**, so check its conditions first.
+- Airspaces are best drawn as deck.gl volumes from floor to ceiling, with
+  aircraft at their real altitude. That needs a pitched view.
+
+**Weather**
+- [AviationWeather.gov API](https://aviationweather.gov/data/api/): METAR,
+  TAF, SIGMET, no key.
+- [DWD open data](https://opendata.dwd.de/): radar and models over WMS, no key
+  (`https://maps.dwd.de/geoserver/ows?service=WMS&request=GetCapabilities`).
+- [Météo-France API portal](https://portail-api.meteofrance.fr/web/) (free key)
+  and [meteo.data.gouv.fr](https://meteo.data.gouv.fr/).
+- [EUMETSAT View](https://view.eumetsat.int/): satellite imagery over WMS.
+- [Open-Meteo](https://open-meteo.com/): forecast grids, free tier
+  non-commercial. [RainViewer](https://www.rainviewer.com/api.html): radar, free
+  tier reduced.
+- Gridded data (wind and the like) stays on deck.gl and the existing weather
+  layers, whatever the engine.
+
+**Sea and ocean**
+- [OpenSeaMap](https://map.openseamap.org/): seamarks as a transparent raster
+  overlay, CC BY-SA, `https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png`.
+- [EMODnet Bathymetry](https://emodnet.ec.europa.eu/en/bathymetry): European
+  waters (`https://ows.emodnet-bathymetry.eu/wms?service=WMS&request=GetCapabilities`).
+- [GEBCO](https://www.gebco.net/): worldwide depth over
+  [WMS](https://www.gebco.net/data-products/gebco-web-services/web-map-service).
+- The Terrarium tiles above already include sea depth, so one relief layer
+  can cover land and sea.
+
+**3D buildings**
+- OSM buildings with heights are already in the OpenFreeMap and Protomaps
+  tiles.
+- [IGN BD TOPO](https://cartes.gouv.fr/rechercher-une-donnee/dataset/IGNF_BD-TOPO):
+  France, measured heights, Etalab licence.
+- [Overture Maps buildings](https://docs.overturemaps.org/guides/buildings/):
+  worldwide ([download tool](https://github.com/OvertureMaps/overturemaps-py)).
+- Photorealistic tiles (Google, Cesium OSM Buildings) are **not open**: they
+  need a key or an Ion token and restrict offline use.
+
+### Engine support
+
+| Goal | Leaflet | OpenLayers | MapLibre + deck.gl | Cesium |
+|---|---|---|---|---|
+| Raster and WMS overlays (charts, weather, sea) | ✅ (`L.tileLayer.wms` built in) | ✅✅ best OGC support: WMS time steps, WMTS discovery, [OGC API Tiles](https://openlayers.org/en/latest/apidoc/module-ol_source_OGCMapTile-OGCMapTile.html), other projections | ✅ URL templates (`{bbox-epsg-3857}` for WMS) | ✅ imagery providers |
+| Shaded relief | pre-made raster only | ✅ computed live | ✅✅ built in: [`hillshade`](https://maplibre.org/maplibre-style-spec/layers/) | ✅ |
+| 3D terrain | ❌ | ❌ | ✅ [built in](https://maplibre.org/maplibre-gl-js/docs/examples/3d-terrain/), keyless | ✅✅ true globe, but terrain self-hosted |
+| 3D buildings | ~ old 2.5D plugin | ❌ | ✅ [`fill-extrusion`](https://maplibre.org/maplibre-gl-js/docs/examples/display-buildings-in-3d/), also on terrain | ✅✅ via 3D Tiles (best data not open) |
+| Airspace volumes with aircraft | ❌ | ❌ | ✅ deck.gl, already benchmarked | ✅ |
+| Offline (PMTiles) | ~ [protomaps-leaflet](https://github.com/protomaps/protomaps-leaflet) | ✅ ol-pmtiles | ✅✅ [`pmtiles`](https://github.com/protomaps/PMTiles) + `addProtocol` | custom provider |
+
+OpenLayers falls out for this goal because it has no 3D. Cesium only wins for
+photorealistic cities, whose best data is not open. MapLibre + deck.gl covers
+the whole list with open, keyless data that can work offline.
+
+**Points specific to ADS-B:**
+- **Scale.** Buildings appear from about zoom 14, while a receiver's range of
+  ~250 NM sits at zoom 7–9. They help mainly around airports: taxi, take-off,
+  approach.
+- **Occlusion.** The benchmark ran deck.gl *overlaid*
+  ([`MapboxOverlay`](https://deck.gl/docs/api-reference/mapbox/mapbox-overlay)
+  `interleaved: false`). In that mode an aircraft behind a hill or a building
+  is still drawn in front of it. Terrain and buildings need `interleaved: true`
+  to share MapLibre's depth buffer, and that mode is **not benchmarked**.
+- **Height reference.** ADS-B altitude is barometric, while terrain and building
+  heights are measured from the ground. Near an airport the difference shows,
+  so a correct picture needs the field elevation and QNH. The METAR layer
+  provides QNH.
+
+### Cache policy
+
+The existing cache (`src/lib/tile-cache/`, IndexedDB) exists for offline use
+(decided 2026-11-08). It downloads ahead around the receiver, reports coverage
+per zoom and stretches lower-zoom tiles when a closer one is missing. How often
+a layer changes, and how harmful an outdated copy is, decide its policy:
+
+| Layer | Changes | Offline cache? | Form |
+|---|---|---|---|
+| Vector basemap | months | ✅ | PMTiles extract around the receiver (`pmtiles extract --bbox --maxzoom`) |
+| Terrain / relief | never | ✅✅ | PMTiles (raster), download once, keep forever |
+| Sea depth | years | ✅ | cache viewed tiles, or build a PMTiles file |
+| 3D buildings | months | ✅, large | PMTiles at zoom 14–15, **around airports only** |
+| OpenSeaMap seamarks | weeks | ✅ | existing tile cache, unchanged |
+| Airspaces (OpenAIP) | every 28-day AIRAC cycle | ✅, **labelled by cycle** | one GeoJSON per cycle, cycle date shown, warning once expired: stale airspace data is a safety issue |
+| OACI 1:500,000 chart | yearly edition | only if the licence allows | — |
+| Radar / satellite | 5–15 min | ❌ offline | memory only, keyed by time step, to pre-load animation frames |
+| METAR / TAF | 30–60 min | ❌ | last reading in memory, age always shown |
+
+**PMTiles rather than more of the same cache.** At hundreds of MB, one file on
+disk is simpler than an IndexedDB store filled tile by tile. It is complete from
+the first launch and easy to see and delete. Coverage becomes "region and zoom
+of the installed file". A PMTiles extract is also cut from a file published for
+that purpose, so it avoids the usage policies that forbid downloading ahead.
+
+**Reuse after an engine change.** Only `CachedTileLayer.ts` depends on Leaflet.
+In MapLibre the cache plugs in through `addProtocol` (e.g. `cached://…`)
+returning tile bytes, while `store.ts`, `loadTile.ts` and `prefetch.ts` stay.
+MapLibre stretches lower-zoom tiles itself, so `overzoom.ts` is not needed there.
+Serving PMTiles from Rust through a Tauri custom protocol would be the "local
+tile server" the 2026-11-08 decision was waiting for, and it needs no new CSP
+host. Every remote host above, in contrast, must be added to **both** CSP files.
+
+### Suggested path
+
+1. **In Leaflet, no engine change:** OpenAIP airspaces (deck.gl polygons),
+   METAR stations, a radar WMS, OpenSeaMap and EMODnet overlays, and a
+   pre-made relief raster. This tests which layers are actually used.
+2. **If 3D proves worth it, port to MapLibre + deck.gl:** 3D terrain from
+   Terrarium tiles, airspace volumes, buildings near airports, and offline
+   basemap and relief as PMTiles.
+3. **Before porting, two more benchmark runs:**
+   - MapLibre + deck.gl in **interleaved** mode with terrain and buildings
+     switched on;
+   - the same with real tiles loaded, since every run so far blocked the network.
+4. **Cesium** only if a true globe becomes a requirement.
+
 ## Engine as a runtime choice
 
 Technically straightforward:
@@ -317,3 +472,8 @@ surface.
    As with OL, MapLibre is better as a *replacement* for Leaflet than as a
    second engine, because of the parity cost above. A pitched view is a camera
    setting there, not a second engine.
+5. **The wanted layers point the same way.** Terrain, ICAO charts, weather,
+   sea and 3D buildings are covered by MapLibre + deck.gl with open, keyless
+   data that can work offline (see *Target layers*). Only 3D terrain, buildings
+   and airspace volumes need the engine change. The overlays can start in
+   Leaflet now.
