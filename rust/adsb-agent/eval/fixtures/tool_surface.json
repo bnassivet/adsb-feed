@@ -1,0 +1,877 @@
+{
+  "source_trace": "tr-57ab5a0742a915b489b9ed6b8ad9d7ea",
+  "tools": [
+    {
+      "name": "getStorageStats",
+      "description": "Historical: a database overview. Returns counts and metadata for the persistent store: row_count (position records), flight_count (segmented flights ever recorded), event_count (events of interest), file size, and date range. Use flight_count to answer 'how many flights in the database / in total'. It does not reflect the aircraft active right now; use searchLiveFlights for that.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "getAircraftSummary",
+      "description": "Historical: queries the database. Summary of the unique aircraft (by hex_ident) seen in a time range. Returns an array of hex_ident, callsign, position count, altitude/speed ranges and first/last seen timestamps. Use the array length to answer 'how many distinct aircraft did we see in [time range]'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "startMs": {
+            "type": "integer",
+            "description": "Start time in milliseconds since Unix epoch"
+          },
+          "endMs": {
+            "type": "integer",
+            "description": "End time in milliseconds since Unix epoch"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "getFlightSummary",
+      "description": "Historical: queries the database. Summary of the flights in a time range, segmented automatically wherever coverage has a gap of more than one hour. Returns an array of flights; use its length to answer 'how many flights were there in [time range]'. Provide startMs/endMs to bound the query; without them it can be expensive.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "startMs": {
+            "type": "integer",
+            "description": "Start time in milliseconds since Unix epoch"
+          },
+          "endMs": {
+            "type": "integer",
+            "description": "End time in milliseconds since Unix epoch"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "getTrajectory",
+      "description": "Historical: the position history (trajectory) of one aircraft. Returns a list of lat/lon/altitude/speed/timestamp records.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "hexIdent": {
+            "type": "string",
+            "description": "Aircraft hex identifier (ICAO)"
+          },
+          "startMs": {
+            "type": "integer",
+            "description": "Start time in milliseconds since Unix epoch"
+          },
+          "endMs": {
+            "type": "integer",
+            "description": "End time in milliseconds since Unix epoch"
+          }
+        },
+        "required": [
+          "hexIdent"
+        ]
+      }
+    },
+    {
+      "name": "getTimeDistribution",
+      "description": "Historical: a histogram of activity over a time range, split into numBuckets equal buckets. Counts positions, distinct aircraft, raw messages or flights per bucket. Use it for 'when was it busiest' or 'activity over the last N hours'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "startMs": {
+            "type": "integer",
+            "description": "Start time in milliseconds since Unix epoch"
+          },
+          "endMs": {
+            "type": "integer",
+            "description": "End time in milliseconds since Unix epoch"
+          },
+          "numBuckets": {
+            "type": "integer",
+            "description": "How many equal-width buckets to split the range into, e.g. 24 for hourly over a day"
+          },
+          "metric": {
+            "type": "string",
+            "enum": [
+              "Positions",
+              "Aircraft",
+              "RawMessages",
+              "Flights"
+            ],
+            "description": "What to count per bucket (default Positions)"
+          }
+        },
+        "required": [
+          "startMs",
+          "endMs",
+          "numBuckets"
+        ]
+      }
+    },
+    {
+      "name": "getHourlyHeatmap",
+      "description": "Historical: aircraft and message counts on a day x hour-of-day grid (UTC) for a time range. Use it to find peak activity patterns.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "startMs": {
+            "type": "integer",
+            "description": "Start time in milliseconds since Unix epoch"
+          },
+          "endMs": {
+            "type": "integer",
+            "description": "End time in milliseconds since Unix epoch"
+          }
+        },
+        "required": [
+          "startMs",
+          "endMs"
+        ]
+      }
+    },
+    {
+      "name": "getEventsOfInterest",
+      "description": "Search the events of interest stored in the database. Filter by time range and/or category. Returns event title, description, location, category, linked aircraft and timestamps.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "startMs": {
+            "type": "integer",
+            "description": "Start time in milliseconds since Unix epoch"
+          },
+          "endMs": {
+            "type": "integer",
+            "description": "End time in milliseconds since Unix epoch"
+          },
+          "category": {
+            "type": "string",
+            "description": "Filter by event category"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "getCurrentDateTime",
+      "description": "Get the current date, time, timezone and epoch milliseconds. Use it to resolve relative time references (e.g. 'last hour', 'today') into absolute timestamps for other tools.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "generateSimulatedTrajectory",
+      "description": "Generate new simulated aircraft with realistic flight paths and show them flying on the map. This is THE tool for any request to start, run, create, add, simulate or fake flights or aircraft \u2014 e.g. 'start simulated flights', 'run three simulated flights', 'simulate a helicopter circling downtown', 'show me a fighter doing aerobatics'. Do not use toggleDemoFlights for these. The aircraft appear on the map automatically; just confirm what you generated. These are simulated, not real traffic \u2014 never mix them into answers about observed aircraft.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "airliner",
+              "ga",
+              "helicopter",
+              "fighter"
+            ],
+            "description": "Aircraft performance class to simulate. Optional \u2014 defaults to 'ga'. Infer it from the request when the user names an aircraft type; otherwise omit it rather than asking them which type they want."
+          },
+          "count": {
+            "type": "integer",
+            "description": "How many aircraft to generate (default 1, max 20)"
+          },
+          "routeHint": {
+            "type": "string",
+            "description": "The user's own words describing the desired route, passed verbatim. Copy the WHOLE route description, including every leg of a multi-leg request ('come from here, circle there, then head over there') and every latitude/longitude the user wrote, exactly as they wrote them. Do not summarise it, do not drop the coordinates, and do not invent coordinates, headings or distances of your own. The simulation agent interprets the whole thing."
+          },
+          "originLat": {
+            "type": "number",
+            "description": "Receiver latitude; the routes are built around this point"
+          },
+          "originLng": {
+            "type": "number",
+            "description": "Receiver longitude; the routes are built around this point"
+          },
+          "cruiseAltitudeFt": {
+            "type": "integer",
+            "description": "Optional target altitude in feet"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "getFeedStatus",
+      "description": "Get the current feed connection status (socket and Pulsar connection states, running/stopped).",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "getFeedMetrics",
+      "description": "Get feed performance metrics: messages received/sent, errors, uptime, throughput.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "createEventOfInterest",
+      "description": "Create a new event of interest marker. Requires a title and location. Only call when the user explicitly asks to create an event.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Event title"
+          },
+          "description": {
+            "description": "Event description",
+            "type": "string"
+          },
+          "latitude": {
+            "type": "number",
+            "description": "Latitude in degrees"
+          },
+          "longitude": {
+            "type": "number",
+            "description": "Longitude in degrees"
+          },
+          "category": {
+            "description": "Event category",
+            "type": "string"
+          },
+          "linkedHexIdents": {
+            "description": "Comma-separated ICAO hex identifiers of linked aircraft",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "latitude",
+          "longitude"
+        ]
+      }
+    },
+    {
+      "name": "selectAircraft",
+      "description": "Select and highlight an aircraft on the map by its ICAO hex identifier. The aircraft must be currently visible in the tracked list.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "hexIdent": {
+            "type": "string",
+            "description": "ICAO hex identifier (e.g. 'A1B2C3')"
+          }
+        },
+        "required": [
+          "hexIdent"
+        ]
+      }
+    },
+    {
+      "name": "searchLiveFlights",
+      "description": "Live \u2014 currently tracked aircraft (in-memory). Search, count, and list active flights. Filter by callsign, altitude/speed/heading ranges, squawk, or airborne/ground status; sort by altitude/speed/callsign/messages/recency. Returns { total, showing, flights } \u2014 use the total field to answer 'how many planes are flying right now' or 'how many active flights'. Call with no parameters to list all active flights. Returns total: 0 if the data feed is stopped.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "callsign": {
+            "description": "Substring match on callsign or hex ident (case-insensitive)",
+            "type": "string"
+          },
+          "altitudeMin": {
+            "description": "Minimum altitude in feet",
+            "type": "number"
+          },
+          "altitudeMax": {
+            "description": "Maximum altitude in feet",
+            "type": "number"
+          },
+          "speedMin": {
+            "description": "Minimum ground speed in knots",
+            "type": "number"
+          },
+          "speedMax": {
+            "description": "Maximum ground speed in knots",
+            "type": "number"
+          },
+          "onGround": {
+            "description": "Filter by ground status: true=on ground, false=airborne",
+            "type": "boolean"
+          },
+          "squawk": {
+            "description": "Exact squawk code match (e.g. '7700')",
+            "type": "string"
+          },
+          "headingMin": {
+            "description": "Minimum track heading in degrees (0-360)",
+            "type": "number"
+          },
+          "headingMax": {
+            "description": "Maximum track heading in degrees (0-360)",
+            "type": "number"
+          },
+          "sortBy": {
+            "description": "Sort field",
+            "type": "string",
+            "enum": [
+              "altitude",
+              "speed",
+              "callsign",
+              "messages",
+              "recent"
+            ]
+          },
+          "sortOrder": {
+            "description": "Sort direction (default: desc)",
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ]
+          },
+          "limit": {
+            "description": "Maximum results to return (default: 20)",
+            "type": "number"
+          }
+        }
+      }
+    },
+    {
+      "name": "setFilters",
+      "description": "Update aircraft display filters. Filters by callsign (substring match), altitude range, and speed range. Only provided fields are changed; omitted fields keep their current value.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "callsign": {
+            "description": "Filter by callsign or hex ident (substring match)",
+            "type": "string"
+          },
+          "altitudeMin": {
+            "description": "Minimum altitude in feet",
+            "type": "number"
+          },
+          "altitudeMax": {
+            "description": "Maximum altitude in feet",
+            "type": "number"
+          },
+          "speedMin": {
+            "description": "Minimum ground speed in knots",
+            "type": "number"
+          },
+          "speedMax": {
+            "description": "Maximum ground speed in knots",
+            "type": "number"
+          }
+        }
+      }
+    },
+    {
+      "name": "panMapTo",
+      "description": "Pan and zoom the map to a specific location. Use to navigate to coordinates, an aircraft position, or a point of interest.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "latitude": {
+            "type": "number",
+            "description": "Target latitude in degrees"
+          },
+          "longitude": {
+            "type": "number",
+            "description": "Target longitude in degrees"
+          },
+          "zoom": {
+            "description": "Zoom level (1-18). Defaults to 12.",
+            "type": "number"
+          }
+        },
+        "required": [
+          "latitude",
+          "longitude"
+        ]
+      }
+    },
+    {
+      "name": "startFeed",
+      "description": "Start the ADS-B feed connection. Only call when the user explicitly asks to start the feed.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "stopFeed",
+      "description": "Stop the ADS-B feed connection. Only call when the user explicitly asks to stop the feed.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "getConnectionStatus",
+      "description": "Get current connection status and display state without querying the backend. Returns connection status, active mode, map theme, and sidebar state.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "toggleSidebar",
+      "description": "Toggle the left sidebar panel open or closed. Omit 'open' to toggle.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "open": {
+            "description": "Set to true to open, false to close. Omit to toggle.",
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "setMapTheme",
+      "description": "Set the map theme to light (day) or dark (night) mode.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "theme": {
+            "type": "string",
+            "enum": [
+              "light",
+              "dark"
+            ],
+            "description": "Map theme: 'light' for day, 'dark' for night"
+          }
+        },
+        "required": [
+          "theme"
+        ]
+      }
+    },
+    {
+      "name": "setActiveMode",
+      "description": "Switch between live tracking mode and analysis mode.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "live",
+              "analysis"
+            ],
+            "description": "Active mode"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      }
+    },
+    {
+      "name": "toggleDemoFlights",
+      "description": "Show or hide the built-in demo flight layer \u2014 a fixed set of pre-defined canned routes that loop forever. It creates no aircraft. Use ONLY when the user names this demo layer explicitly; for any request to start, run, create or simulate their own flights use generateSimulatedTrajectory. Omit 'enabled' to toggle.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Set to true to start, false to stop. Omit to toggle.",
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "applySimulatedTrajectory",
+      "description": "Internal: display generated simulated aircraft on the map. Called automatically after generateSimulatedTrajectory succeeds; never call this directly.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "aircraft": {
+            "type": "array",
+            "items": {},
+            "description": "Generated aircraft with timed waypoints"
+          },
+          "violations": {
+            "type": "array",
+            "items": {}
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "aircraft"
+        ]
+      }
+    },
+    {
+      "name": "setLayerVisibility",
+      "description": "Show or hide map layers. Only provided layers are changed; omitted layers keep their current state. Available layers: positions, labels, rangeLines, history, density, simulation, imported, receiver, events. Weather and wind are not among them: use setWeatherLayer. To change how far back the history layer reaches (e.g. 'last 4 hours'), use setHistoryWindow.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "positions": {
+            "description": "Show the trail of past positions behind live aircraft (aircraft icons stay visible)",
+            "type": "boolean"
+          },
+          "labels": {
+            "description": "Show hex ident / callsign labels next to live aircraft",
+            "type": "boolean"
+          },
+          "rangeLines": {
+            "description": "Show distance/bearing lines from the receiver to the selected aircraft",
+            "type": "boolean"
+          },
+          "history": {
+            "description": "Show tracks of aircraft no longer live",
+            "type": "boolean"
+          },
+          "density": {
+            "description": "Show density heatmap",
+            "type": "boolean"
+          },
+          "simulation": {
+            "description": "Show the built-in demo flight layer (same canned routes as toggleDemoFlights); does not generate aircraft",
+            "type": "boolean"
+          },
+          "imported": {
+            "description": "Show imported tracks",
+            "type": "boolean"
+          },
+          "receiver": {
+            "description": "Show receiver location marker",
+            "type": "boolean"
+          },
+          "events": {
+            "description": "Show events of interest",
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "setHistoryWindow",
+      "description": "Set the time depth of the history tracks layer: show only aircraft last seen within a window of hours before now (e.g. 'history from the last 4 hours' \u2192 depthHours=4). Also turns the history layer on. The window cannot reach further back than the history retention (retentionHours in context); a deeper request is clamped and the result says so. Use setLayerVisibility only to hide the layer.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "depthHours": {
+            "type": "number",
+            "description": "How many hours of history to show, counted back from the window's newer end"
+          },
+          "endHoursAgo": {
+            "description": "Newer end of the window in hours before now; omit or 0 for 'until now'",
+            "type": "number"
+          }
+        },
+        "required": [
+          "depthHours"
+        ]
+      }
+    },
+    {
+      "name": "setColorMode",
+      "description": "Set how aircraft tracks are colored. 'plot' colors each position by altitude; 'track' colors the entire track uniformly.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "liveColorMode": {
+            "description": "Color mode for live tracks",
+            "type": "string",
+            "enum": [
+              "plot",
+              "track"
+            ]
+          },
+          "historyColorMode": {
+            "description": "Color mode for history tracks",
+            "type": "string",
+            "enum": [
+              "plot",
+              "track"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "setDensityConfig",
+      "description": "Configure the density heatmap: metric type, altitude range filter, and tooltip detail level.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "metric": {
+            "description": "What to visualize in the density layer",
+            "type": "string",
+            "enum": [
+              "positions",
+              "aircraft",
+              "altitude",
+              "altitude_min",
+              "altitude_max"
+            ]
+          },
+          "altitudeMin": {
+            "description": "Min altitude filter in feet (0-50000)",
+            "type": "number"
+          },
+          "altitudeMax": {
+            "description": "Max altitude filter in feet (0-50000)",
+            "type": "number"
+          },
+          "tooltipMode": {
+            "description": "Tooltip detail level on hover; 'off' shows no tooltip",
+            "type": "string",
+            "enum": [
+              "compact",
+              "extended",
+              "off"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "setEventFilter",
+      "description": "Configure how events of interest are filtered: show all, upcoming N days, or a specific time range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "description": "Filter mode",
+            "type": "string",
+            "enum": [
+              "all",
+              "upcoming",
+              "range"
+            ]
+          },
+          "upcomingDays": {
+            "description": "Number of days for upcoming filter",
+            "type": "number"
+          },
+          "timeRangeStartMs": {
+            "description": "Start of time range in ms since epoch",
+            "type": "number"
+          },
+          "timeRangeEndMs": {
+            "description": "End of time range in ms since epoch",
+            "type": "number"
+          }
+        }
+      }
+    },
+    {
+      "name": "setWeatherLayer",
+      "description": "Show or hide the weather layer (winds aloft from a weather model) and choose what it draws: the level, wind barbs, and animated wind particles coloured by speed. Only provided fields change. This is the only tool that controls weather or wind on the map; to read wind values use getWindAloft.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Show (true) or hide (false) the weather layer",
+            "type": "boolean"
+          },
+          "level": {
+            "description": "'SFC' for the surface, a pressure level such as '250 hPa', or a flight level such as 'FL340' (mapped to the nearest level available)",
+            "type": "string"
+          },
+          "barbs": {
+            "description": "Draw wind barbs at the grid points",
+            "type": "boolean"
+          },
+          "particles": {
+            "description": "Animate particles that move with the wind",
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "getWindAloft",
+      "description": "Read the wind from the weather model: direction it blows FROM (degrees true) and speed (knots). For an aircraft (hexIdent or callsign) it reads at the aircraft's own altitude and adds headwindKt/crosswindKt along its track (negative headwind = tailwind, negative crosswind = from the left). Otherwise it reads at a latitude/longitude, or over the receiver when no position is given, on the level shown on the map unless level or altitudeFt is given. Read-only: changes nothing on the map.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "hexIdent": {
+            "description": "ICAO hex ident or callsign of a currently tracked aircraft",
+            "type": "string"
+          },
+          "latitude": {
+            "description": "Latitude in degrees (with longitude)",
+            "type": "number"
+          },
+          "longitude": {
+            "description": "Longitude in degrees (with latitude)",
+            "type": "number"
+          },
+          "altitudeFt": {
+            "description": "Pressure altitude in feet; takes precedence over level",
+            "type": "number"
+          },
+          "level": {
+            "description": "'SFC', a pressure level such as '250 hPa', or a flight level such as 'FL340'",
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "listScenarios",
+      "description": "List the user's saved simulation scenarios. A scenario is a stored, named collection of previously generated trajectories with their start offsets. Read-only: this neither generates aircraft nor starts playback.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "getScenario",
+      "description": "Open a saved scenario by id and make it the active one, returning the tracks it contains with their callsigns and start offsets. Use listScenarios first to find the id.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scenarioId": {
+            "type": "string",
+            "description": "Id of the saved scenario to open"
+          }
+        },
+        "required": [
+          "scenarioId"
+        ]
+      }
+    },
+    {
+      "name": "createScenario",
+      "description": "Create a new empty saved scenario with the given name and make it active. Only call when the user explicitly asks to create or start a new scenario. This creates no aircraft \u2014 use generateSimulatedTrajectory for that.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name for the new scenario"
+          },
+          "description": {
+            "description": "Optional description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "renameScenario",
+      "description": "Change the title of a saved scenario \u2014 its name only, not its description or its tracks. Use setScenarioDescription to write what the scenario is about.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scenarioId": {
+            "type": "string",
+            "description": "Id of the scenario to rename"
+          },
+          "name": {
+            "type": "string",
+            "description": "New name"
+          }
+        },
+        "required": [
+          "scenarioId",
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "setScenarioDescription",
+      "description": "Write or replace the description of a saved scenario \u2014 the prose summary of what happens in it, not its name. Use it when the user asks you to describe, summarise or re-describe a scenario. Read it back with getScenario.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "The description text. Pass an empty string to clear it."
+          },
+          "scenarioId": {
+            "description": "Id of the scenario. Defaults to the active one.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description"
+        ]
+      }
+    },
+    {
+      "name": "deleteScenario",
+      "description": "Permanently delete a saved scenario and every track stored in it. This cannot be undone. Only call when the user explicitly asks to delete that specific scenario by name or id.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scenarioId": {
+            "type": "string",
+            "description": "Id of the scenario to delete"
+          }
+        },
+        "required": [
+          "scenarioId"
+        ]
+      }
+    },
+    {
+      "name": "addTrajectoryToScenario",
+      "description": "Save ONE newly generated trajectory into the active scenario, so it persists and replays with the scenario. Identify it by callsign or ICAO hex. Generate the aircraft first with generateSimulatedTrajectory. Aircraft already saved in the scenario are also on screen \u2014 do not re-add those, and do not call this once per aircraft on screen; use getScenario to see what is already saved.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "identifier": {
+            "type": "string",
+            "description": "Callsign or ICAO hex of a trajectory currently on screen"
+          },
+          "startOffsetS": {
+            "description": "Seconds into the scenario at which this aircraft appears. Defaults to 0",
+            "type": "number"
+          }
+        },
+        "required": [
+          "identifier"
+        ]
+      }
+    },
+    {
+      "name": "removeTrackFromScenario",
+      "description": "Remove one saved track from the active scenario. Identify it by callsign; use getScenario to see what the scenario contains.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "identifier": {
+            "type": "string",
+            "description": "Callsign of the saved track to remove"
+          }
+        },
+        "required": [
+          "identifier"
+        ]
+      }
+    },
+    {
+      "name": "setTrackStartOffset",
+      "description": "Set how many seconds into the scenario a saved track appears \u2014 for example making an aircraft show up 90 seconds in. Identify the track by callsign.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "identifier": {
+            "type": "string",
+            "description": "Callsign of the saved track"
+          },
+          "startOffsetS": {
+            "type": "number",
+            "description": "Seconds from the start of the scenario at which it appears"
+          }
+        },
+        "required": [
+          "identifier",
+          "startOffsetS"
+        ]
+      }
+    }
+  ]
+}

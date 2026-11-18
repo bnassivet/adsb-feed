@@ -96,6 +96,47 @@ SIMULATION_CALLS = Counter(
     ["outcome"],
 )
 
+#: `outcome` is ranked | fallback. A rising fallback rate means the decision
+#: model is down or slow and every turn is paying for the full tool list again.
+TOOL_RANKER_DECISIONS = Counter(
+    "adsb_agent_tool_ranker_decisions_total",
+    "Tool-ranking attempts, by whether a selection was applied.",
+    ["outcome"],
+)
+
+TOOL_RANKER_DURATION = Histogram(
+    "adsb_agent_tool_ranker_duration_seconds",
+    "Wall-clock duration of one tool-ranking request.",
+    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5),
+)
+
+TOOL_RANKER_TOOLS_BOUND = Histogram(
+    "adsb_agent_tool_ranker_tools_bound",
+    "How many tools a ranked run bound.",
+    buckets=(2, 4, 6, 8, 10, 12, 16, 20, 30, 40, 60),
+)
+
+
+#: `outcome`: handled (action sent to the browser), closed (confirmation after
+#: it ran), question_form (phrased as a question; no model call),
+#: gate_rejected, vetoed, declined (the small model handed off),
+#: invalid (its call failed validation), error (an endpoint failed or timed
+#: out). Everything but handled and closed went on to the main agent. A rising
+#: error share means a fast-path model is not loaded and every request is
+#: paying a timeout.
+FAST_PATH_DECISIONS = Counter(
+    "adsb_agent_fast_path_decisions_total",
+    "Fast-path attempts on new user requests, by outcome.",
+    ["outcome"],
+)
+
+FAST_PATH_DURATION = Histogram(
+    "adsb_agent_fast_path_duration_seconds",
+    "Wall-clock duration of one fast-path stage (embed, decision, executor).",
+    ["stage"],
+    buckets=(0.02, 0.05, 0.1, 0.25, 0.5, 1, 2, 5),
+)
+
 
 def init(version: str | None = None) -> None:
     """Publish the identity series. Safe to call more than once.

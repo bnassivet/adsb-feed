@@ -75,6 +75,29 @@ vars (no `ADSB_AGENT_` prefix) so `boto3` targets MinIO instead of real AWS S3:
 
 Start the tracking server with `mlflow server --port 5010`.
 
+**Desktop fast path (on by default):**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ADSB_AGENT_FAST_PATH_ENABLED` | `true` | **Activates the fast path.** `false`: every request goes to the main agent |
+| `ADSB_AGENT_FAST_PATH_QUESTION_CHECK_ENABLED` | `true` | A message phrased as a question or a negation goes to the main agent with no model call |
+| `ADSB_AGENT_FAST_PATH_VETO_ENABLED` | `true` | **Activates the veto**: the decision model must agree the request is a display command |
+| `ADSB_AGENT_FAST_PATH_VETO_BELOW` | `0.5` | The veto drops a request when P(display command) is under this |
+| `ADSB_AGENT_FAST_PATH_EMBED_THRESHOLD` | `0.0605` | Gate: minimum embedding margin (refit after changing the embedding model or the descriptions) |
+| `ADSB_AGENT_FAST_PATH_MODEL` | `mistralai/ministral-3-3b` | The small executor model |
+| `ADSB_AGENT_FAST_PATH_BASE_URL` | `http://localhost:1234/v1` | Executor endpoint (OpenAI-compatible) |
+| `ADSB_AGENT_FAST_PATH_API_KEY` | `lm-studio` | Executor API key |
+| `ADSB_AGENT_FAST_PATH_REASONING_EFFORT` | `none` | Sent to the executor; empty to omit |
+| `ADSB_AGENT_FAST_PATH_EMBED_URL` | `http://localhost:5010/gateway/openai/v1/embeddings` | Gate embeddings endpoint |
+| `ADSB_AGENT_FAST_PATH_EMBED_MODEL` | `lmstudio-embeddinggemma-300m` | Gate embedding model |
+| `ADSB_AGENT_FAST_PATH_GATE_TIMEOUT` | `2.0` | Seconds for the gate and the veto before falling through |
+| `ADSB_AGENT_FAST_PATH_EXECUTOR_TIMEOUT` | `5.0` | Seconds for the executor before falling through |
+| `ADSB_AGENT_FAST_PATH_CONFIRMATION` | `Done.` | Reply after a fast-path action (no model call) |
+
+The veto uses the decision endpoint of the tool ranker
+(`ADSB_AGENT_TOOL_RANKER_URL`, `ADSB_AGENT_TOOL_RANKER_MODEL`). See
+[Desktop fast path](#desktop-fast-path).
+
 ### Model requirement
 
 The agent runs a **server-side LangGraph ReAct loop**: it chains read-only data
@@ -88,6 +111,87 @@ The data tools are executed against the desktop app's DuckDB store via a
 loopback HTTP **tool server** the Tauri backend starts on `127.0.0.1:8787`
 (`ADSB_AGENT_TOOL_SERVER_PORT` on the Rust side). UI/action tools and sensitive
 mutations remain client-executed via the AG-UI/CopilotKit round-trip.
+
+## Desktop fast path
+
+A direct display command ("switch to night mode", "hide the labels") does not
+need the main agent. Before the main agent runs, a new user request goes through
+four checks; if all pass, a small model's tool call is sent to the desktop and
+the main agent is never involved:
+
+```
+request -> question form -> embedding gate -> veto (decision model) -> small executor -> tool call to the desktop
+               | question       | no             | no                      | declines / invalid call
+               +----------------+----------------+-------------------------+--> main agent, as before
+```
+
+0. **Question form.** A message that starts with a question word or an
+   auxiliary ("is the sidebar open?"), ends with "?", or opens with a negation
+   ("don't stop the feed") goes to the agent. No model call. The embedding gate
+   matches by topic and let such questions through on fresh requests.
+1. **Embedding gate.** The request must be closer to one of the 15 direct
+   display tools than to any other tool, by `FAST_PATH_EMBED_THRESHOLD`.
+2. **Veto.** The decision model is asked what kind of message it is. Under
+   `FAST_PATH_VETO_BELOW` for "display command", the request goes to the agent.
+3. **Executor.** The small model holds only the direct tools and a hand-off
+   tool. Its call is used only if it names a direct tool with valid arguments.
+
+The desktop executes the call and re-runs the agent with the result; that run
+is answered with `FAST_PATH_CONFIRMATION` and no model call. If the tool
+reported an error, the main agent takes over instead.
+
+The desktop app is unchanged: everything happens behind the same AG-UI endpoint.
+For now the small model runs in this service; it is meant to move to the desktop.
+
+**It is fail-open.** Disabled, a model not loaded, a timeout, a malformed reply:
+the request goes to the main agent exactly as without the fast path.
+
+**Turning it on and off**
+
+| To | Set |
+|---|---|
+| Turn the fast path off | `ADSB_AGENT_FAST_PATH_ENABLED=false` |
+| Keep the fast path, drop the question-form check | `ADSB_AGENT_FAST_PATH_QUESTION_CHECK_ENABLED=false` |
+| Keep the fast path, drop the veto | `ADSB_AGENT_FAST_PATH_VETO_ENABLED=false` |
+| Make the veto stricter or looser | `ADSB_AGENT_FAST_PATH_VETO_BELOW` (0 to 1) |
+
+Then `make restart-agents`.
+
+**What it needs.** Three models reachable besides the main one: the executor
+(`ministral-3-3b` in LM Studio), the embedding model (`embeddinggemma-300m`) and
+the decision model (`d1-omni-600m`). If one is missing, each new request waits
+up to the stage timeout before reaching the main agent; watch
+`adsb_agent_fast_path_decisions_total{outcome="error"}` and turn the fast path
+off if that is your setup.
+
+**What was measured** (273 requests, 60 of them direct commands; the service's
+own code path, `eval/fastpath_agent/eval_fast_path_service.py`):
+
+| | Main agent alone | Fast path, veto on | Fast path, veto off |
+|---|---|---|---|
+| Direct commands carried out exactly | 57 | 57 | 57 |
+| Handled by the fast path | 0 | 42 | 48 |
+| Time to the action, median | 3.83 s | 0.27 s | 0.19 s |
+| Wrong action on a request that was not a command | 0 | 0 | 1 |
+
+It buys time, not correctness. These figures are optimistic for requests unlike
+the evaluation set: the descriptions, the threshold and the veto were tuned on
+it. Full record: [`eval/fastpath_agent/FAST_PATH_EXPERIMENT.md`](eval/fastpath_agent/FAST_PATH_EXPERIMENT.md).
+
+**Tool descriptions.** The gate and the executor read rewritten descriptions
+(`src/adsb_agent/fast_path_descriptions.json`); the main agent keeps the
+desktop's own. After changing that file or the embedding model, refit the gate:
+
+```bash
+uv run python eval/fastpath_agent/eval_fast_path_service.py --fit   # prints the threshold to set
+uv run python eval/fastpath_agent/eval_fast_path_service.py         # then check the result
+```
+
+**Observability.** Each attempt is a `fast_path` span in the run's MLflow trace
+(margin, probability, calls, reason, per-stage time). Prometheus:
+`adsb_agent_fast_path_decisions_total{outcome}` (`handled`, `closed`,
+`question_form`, `gate_rejected`, `vetoed`, `declined`, `invalid`, `error`) and
+`adsb_agent_fast_path_duration_seconds{stage}`.
 
 ## API
 

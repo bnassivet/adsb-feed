@@ -96,9 +96,49 @@ def _format_context(context: Iterable[Any] | None) -> list[str]:
     return out
 
 
+def attach_context(messages: list[Any], context: Iterable[Any] | None) -> list[Any]:
+    """Put the ambient UI state on the latest user message.
+
+    The model server reuses the previous prompt only up to the first character
+    that differs, and UI state changes between turns. In the system prompt it
+    sat ahead of ~7k tokens of instructions and tool schemas and forced all of
+    them to be reprocessed (17 s to first token against 0.4 s, see
+    ``eval/cache_experiment.py``). On the latest user message it sits after
+    everything that is stable.
+
+    Only the **latest** user message carries it: earlier turns must read the
+    same on every later run, or the history stops being a reusable prefix.
+    That is the last *user* message, not the last message -- a client tool
+    result re-enters as a run that ends with the tool message.
+
+    Returns a new list; the input messages are not modified. With no usable
+    state or no user message, the messages come back unchanged.
+    """
+    from langchain_core.messages import HumanMessage
+
+    entries = _format_context(context)
+    if not entries:
+        return list(messages)
+    out = list(messages)
+    for i in range(len(out) - 1, -1, -1):
+        msg = out[i]
+        if isinstance(msg, HumanMessage) and isinstance(msg.content, str):
+            bullets = "\n".join(f"- {e}" for e in entries)
+            out[i] = HumanMessage(
+                content=(
+                    "## Current UI state (ambient, refreshed each turn)\n"
+                    f"{bullets}\n\n## Request\n{msg.content}"
+                )
+            )
+            break
+    return out
+
+
 def render_system_prompt(
     tools: Iterable[Any] | None,
     context: Iterable[Any] | None = None,
+    *,
+    bound_tools: Iterable[Any] | None = None,
 ) -> str:
     """Render the system prompt for the current chat turn.
 
@@ -111,11 +151,17 @@ def render_system_prompt(
         context: AG-UI Context entries from RunAgentInput.context — ambient
                UI state the LLM should know without making a tool call.
                If None or empty, the "Ambient context" section is omitted.
+        bound_tools: the tool ranker's selection, when it made one. The
+               "What you can do" list then describes exactly the tools the
+               model can call this turn, instead of the whole surface.
     """
     # Backend tools are the agent's own and always present; the client's tools
     # are appended. With no client tools at all (CLI/tests) the dev list below
     # is used instead, which already includes the backend tools.
-    capabilities = _capabilities_from_agui_tools(effective_tools(tools)) if tools else []
+    if bound_tools is not None:
+        capabilities = _capabilities_from_agui_tools(bound_tools)
+    else:
+        capabilities = _capabilities_from_agui_tools(effective_tools(tools)) if tools else []
     if not capabilities:
         logger.warning(
             "render_system_prompt: no frontend tools supplied, "

@@ -4233,6 +4233,44 @@ forwards the call to the frontend over AG-UI. This guarantees UI-affecting actio
 never executed silently inside the reasoning loop. Loop depth is capped by
 `agent_recursion_limit` (default 25).
 
+### Desktop Fast Path
+
+A direct display command is carried out by a small model before the main agent
+is involved. It lives in the agent service for now (`adsb-agent/src/adsb_agent/fast_path.py`),
+behind the same AG-UI endpoint, so the desktop is unchanged; the small model is
+meant to move to the desktop later.
+
+```mermaid
+flowchart TD
+    R[New user request] --> E{Fast path enabled}
+    E -- no --> A[Main agent]
+    E -- yes --> G{Embedding gate: margin over threshold}
+    G -- no --> A
+    G -- yes --> V{Veto enabled}
+    V -- no --> X[Small executor]
+    V -- yes --> D{Decision model: display command}
+    D -- no --> A
+    D -- yes --> X
+    X -- hands off, text, invalid call, error --> A
+    X -- valid direct tool call --> T[Tool call to the desktop, id fp-...]
+    T --> U[Desktop runs the tool and re-runs the agent]
+    U --> C{Result of an fp- call, no error}
+    C -- yes --> K[Fixed confirmation, no model call]
+    C -- no --> A
+```
+
+- **Parameters**: `ADSB_AGENT_FAST_PATH_ENABLED` (the fast path) and
+  `ADSB_AGENT_FAST_PATH_VETO_ENABLED` (the veto), both on by default; the full
+  list is in `adsb-agent/README.md` and `.env.example`.
+- **Fail-open**: any failure or timeout in a stage sends the request to the main
+  agent unchanged.
+- **Call ids** starting with `fp-` are how the closing run is recognised, without
+  any server-side session state.
+- **Descriptions**: the gate and the executor use a packaged rewrite of the 15
+  direct tools' descriptions; the main agent keeps the ones from
+  `useCopilotTools.ts`.
+- Measured: `adsb-agent/eval/fastpath_agent/FAST_PATH_EXPERIMENT.md`.
+
 ### Tauri Tool Server (read-only data plane)
 
 The Rust backend exposes the read-only data plane over a **loopback-only** HTTP server:
@@ -4257,7 +4295,7 @@ The Rust backend exposes the read-only data plane over a **loopback-only** HTTP 
 | Provider | `src/components/CopilotKitProvider.tsx` | Wraps the app in `<CopilotKit runtimeUrl="http://localhost:8000/ag-ui" agent="adsb_agent">`. `AGENT_ID` must match the agent runtime info. |
 | Inspector switch | `src/lib/copilotkit-inspector.ts` | `NEXT_PUBLIC_COPILOTKIT_DISABLE_INSPECTOR=true` → `enableInspector={false}`. Default unset (inspector available). With the stack: `[desktop] copilotkit_inspector = false` in `adsb-stack.toml`, which `stack.sh` (`desktop_frontend_env`) turns into that variable; at the default it leaves the variable unset, so `.env.local` still applies. CopilotKit mounts the inspector only in a dev build on localhost; there it is the app's only third-party traffic: news feeds from `cdn.copilotkit.ai`, Google Fonts, and promo videos. Read at compile time, so restart `tauri dev` after changing it. |
 | Dark theme | `AIChatContent.tsx`, `globals.css` | The chat wrapper carries `dark` (CopilotKit 1.85's built-in dark theme, chat only) and `adsb-chat`. `.adsb-chat.dark [data-copilotkit]` retints its tokens to the app's slate; it must target that element, since CopilotKit sets the tokens there and an ancestor's values would be shadowed. The input box hard-codes `#303030`, so `.copilotKitInput` gets its own rule. |
-| Ambient context | `src/hooks/useCopilotContext.ts` | Registers 7 readables (active mode, connection status, storage status, selected aircraft, active filters, UI/theme/layers, live track count). Bundled into `RunAgentInput.context` each turn and rendered into the system prompt — the LLM always "sees" current UI state. |
+| Ambient context | `src/hooks/useCopilotContext.ts` | Registers 7 readables (active mode, connection status, storage status, selected aircraft, active filters, UI/theme/layers, live track count). Bundled into `RunAgentInput.context` each turn and attached by the agent to the **latest user message** (`attach_context`, setting `ADSB_AGENT_CONTEXT_PLACEMENT=user`) — the LLM always "sees" current UI state. It is deliberately *not* in the system prompt: the model server reuses a prompt only up to the first difference, so state near the top made every turn reprocess ~7k tokens (17 s to first token, against 0.4 s). |
 | Tool registration | `src/hooks/useCopilotTools.ts` | The 31 **client** tools via `useFrontendTool`. Backend tools are deliberately absent; see Tool-Plane Split. `useSafeFrontendTool` wraps each handler: catches exceptions → error JSON (prevents tool-call short-circuit), coerces results to string (AG-UI contract), emits a debug breadcrumb. |
 | Result rendering | `src/components/chat/` | Client tools have a `render()` callback that displays a card keyed off CopilotKit status (`in_progress` / `executing` / `complete`). Server tools run inside the graph, and the agent streams each call as `TOOL_CALL_START/ARGS/END` followed by `TOOL_CALL_RESULT`. CopilotKit never executes a call that already has a result, so the app only draws them, through render-only `useRenderTool` registrations (`useAgentToolRenderers` in `useCopilotTools.ts`): `getStorageStats`, `getAircraftSummary`, `getFlightSummary`, `getTrajectory` and `getEventsOfInterest` show their card, and a wildcard `"*"` renderer shows every other call without a render of its own as a `ToolCallChip` (name and parameters, no result). These calls are display-only: `convert_agui_messages_to_lc` drops them, with their results, from the history each run sends back, so the LLM never sees earlier server calls and re-queries. That is what it saw before they were streamed. |
 | Chat panel shell | `src/components/AIChatPanel.tsx` | Three docking modes — collapsed (32px strip), docked (resizable 280–560px), floating (draggable window). State persisted via `useLocalStorage` keys `adsb-aichat-open` / `-docked-expanded` / `-width` / `-floating` / `-float-x/y/w/h`. |

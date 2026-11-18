@@ -349,7 +349,12 @@ def convert_agui_messages_to_lc(messages: Iterable[Any]) -> list[Any]:
     return result
 
 
-def build_agent_graph(tools: Iterable[Any] | None, *, model: Any | None = None):
+def build_agent_graph(
+    tools: Iterable[Any] | None,
+    *,
+    model: Any | None = None,
+    bound_tools: Iterable[Any] | None = None,
+):
     """Compile a per-request LangGraph ReAct agent.
 
     A fresh graph is built per turn because the *client* tool surface arrives
@@ -359,6 +364,11 @@ def build_agent_graph(tools: Iterable[Any] | None, *, model: Any | None = None):
     ``model`` lets tests inject a fake chat model (returning canned ``AIMessage``s)
     so the node-span instrumentation can be exercised without a live LLM. In
     production it is None and a ``ChatOpenAI`` is constructed from settings.
+
+    ``bound_tools`` is the tool ranker's selection (``tool_ranker.py``): when
+    given, only these are put in front of the model. Routing is unaffected: it
+    keys on ``SERVER_TOOL_NAMES``, so a backend tool the model somehow names
+    anyway still executes here and is never forwarded to the browser.
     """
     from langgraph.graph import END, START, MessagesState, StateGraph
 
@@ -375,7 +385,7 @@ def build_agent_graph(tools: Iterable[Any] | None, *, model: Any | None = None):
         pending_client_tool_calls: list[dict]
 
     tools = effective_tools(tools)
-    schemas = _to_openai_tools(tools)
+    schemas = _to_openai_tools(tools if bound_tools is None else bound_tools)
     server_names, _client_names = partition_tool_names(tools)
 
     if model is None:

@@ -1,0 +1,84 @@
+{
+  "_comment": "Candidate rewrites of the 15 direct UI tool descriptions (eval only). Applied over fixtures/tool_surface.json when ADSB_EVAL_TOOL_OVERRIDES points here. Written looking only at failures in the development half of the requests (see eval_descriptions.py). v2: startFeed/stopFeed reworded after v1 dropped 'start the feed' below the gate threshold.",
+  "setMapTheme": {
+    "description": "Display command: switch the map between the light (day, daylight, bright) theme and the dark (night, night mode) theme.",
+    "params": {
+      "theme": "'light' for day / daylight / bright, 'dark' for night / night mode"
+    }
+  },
+  "toggleSidebar": {
+    "description": "Display command: open or close the left sidebar (side panel). 'show / open the sidebar' → open=true; 'hide / close the sidebar', 'make the map full width' → open=false.",
+    "params": {
+      "open": "true to open or show the sidebar, false to close or hide it. Always set it when the user says which; omit only for a bare 'toggle'."
+    }
+  },
+  "setActiveMode": {
+    "description": "Display command: switch the application between live mode (live tracking) and analysis mode (looking at recorded history). Use only when the user asks to switch, go to or put the app in a mode.",
+    "params": {
+      "mode": "'live' or 'analysis'"
+    }
+  },
+  "setLayerVisibility": {
+    "description": "Display command: show or hide map layers, turn a layer on or off. Layers: positions (trails), labels, rangeLines (range lines), history (history tracks, track history), density (heatmap), simulation, imported, receiver (receiver marker), events. Set ONLY the layers the user names and leave every other one out. 'show history', 'show track history', 'hide the labels' with no duration belong here.",
+    "params": {
+      "history": "Show (true) or hide (false) the history tracks layer: tracks of aircraft no longer live"
+    }
+  },
+  "setHistoryWindow": {
+    "description": "Display command: set how far back the history tracks layer reaches, when the user gives a duration or a time window: 'show history for the last 6 hours' → depthHours=6; 'history from 8 hours ago to 2 hours ago' → depthHours=6, endHoursAgo=2. Also turns the history layer on. Never call it without a duration from the user: to just show or hide history use setLayerVisibility. It only changes what the map draws; it does not answer questions about past traffic.",
+    "params": {
+      "depthHours": "Length of the window in hours (older end minus newer end). 'last 4 hours' → 4; 'from 8 hours ago to 2 hours ago' → 6",
+      "endHoursAgo": "Newer end of the window, in hours before now. Omit for 'until now'. 'from 8 hours ago to 2 hours ago' → 2"
+    }
+  },
+  "setColorMode": {
+    "description": "Display command: change how aircraft tracks are colored on the map. 'plot' colors each position by altitude; 'track' gives each track one uniform color. Set only the one the user names: liveColorMode for live tracks, historyColorMode for history tracks.",
+    "params": {}
+  },
+  "setDensityConfig": {
+    "description": "Display command: configure the density heatmap layer: its metric, its altitude range and its hover tooltip. Set ONLY the fields the user mentions and leave every other one out. 'density for aircraft below 10000 ft' → altitudeMax=10000 and nothing else.",
+    "params": {
+      "metric": "What the heatmap counts: 'positions', 'aircraft', 'altitude' (average altitude), 'altitude_min' (minimum altitude), 'altitude_max' (maximum altitude). Set only when the user asks to change the metric.",
+      "altitudeMin": "Lower altitude bound in feet; only for 'above N ft'",
+      "altitudeMax": "Upper altitude bound in feet; only for 'below N ft'",
+      "tooltipMode": "Tooltip on hover: 'compact' (short), 'extended' (detailed, full), 'off' (none). Set only when the user mentions the tooltip."
+    }
+  },
+  "setEventFilter": {
+    "description": "Display command: choose which events of interest the map shows: all of them, the upcoming N days, or a time range. It only filters the display; it does not list, find or describe events.",
+    "params": {}
+  },
+  "setWeatherLayer": {
+    "description": "Display command: show or hide the weather layer (wind display, winds aloft) on the map and choose what it draws: the level, wind barbs, animated wind particles. Set ONLY the fields the user mentions and leave every other one out: 'turn the barbs off' → barbs=false and nothing else; 'set the wind level to FL300' → level='FL300' and nothing else. It only draws; it does not tell the wind.",
+    "params": {
+      "enabled": "Show (true) or hide (false) the whole weather layer. Set only when the user asks to show or hide the weather or wind layer itself.",
+      "level": "'SFC' for the surface, a pressure level such as '250 hPa', or a flight level such as 'FL340'. Set only when the user names a level."
+    }
+  },
+  "setFilters": {
+    "description": "Display command: filter which aircraft the map displays, by callsign, altitude range or speed range: 'only show aircraft above 30000 ft' → altitudeMin=30000; 'reset the speed filter'. Set ONLY the fields the user mentions. It only changes the display; it does not find, count or describe aircraft.",
+    "params": {}
+  },
+  "panMapTo": {
+    "description": "Display command: move, pan, center or zoom the map to coordinates the user gives as latitude and longitude. Use only when both numbers are in the request.",
+    "params": {}
+  },
+  "selectAircraft": {
+    "description": "Display command: select and highlight one aircraft on the map when the user gives its ICAO hex identifier (six hex characters such as 4CA7B2) and asks to select or highlight it. It does not answer questions about the aircraft.",
+    "params": {}
+  },
+  "toggleDemoFlights": {
+    "description": "Display command: show or hide the built-in demo flights layer, a fixed set of canned routes. Use ONLY when the user names the demo flights or demo routes. 'show / turn on the demo flights' → enabled=true; 'hide / turn off the demo flights' → enabled=false. It creates no aircraft and does not simulate anything.",
+    "params": {
+      "enabled": "true to show the demo flights, false to hide them. Always set it when the user says which; omit only for a bare 'toggle'."
+    }
+  },
+  "startFeed": {
+    "description": "Start the feed: turn on, begin or resume receiving live ADS-B data. Only when the user explicitly gives the command to start the feed.",
+    "params": {}
+  },
+  "stopFeed": {
+    "description": "Stop the feed: turn off or pause receiving live ADS-B data. Only when the user explicitly gives the command to stop the feed.",
+    "params": {}
+  }
+}

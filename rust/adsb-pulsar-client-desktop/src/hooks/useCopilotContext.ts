@@ -2,8 +2,9 @@
 /**
  * Registers CopilotKit readables that publish ambient UI state to the agent
  * on every chat turn. CopilotKit bundles these into RunAgentInput.context,
- * the agent renders them into the system prompt (see system_prompt.py /
- * system_prompt.md.j2). The LLM then knows the current mode, selection,
+ * the agent attaches them to the latest user message (see `attach_context`
+ * in system_prompt.py; not the system prompt, which must stay identical
+ * between turns for the model server's prompt cache). The LLM then knows the current mode, selection,
  * filters, and feed status without making a tool call.
  *
  * One useAgentContext call per concern: easier for the LLM to parse than one
