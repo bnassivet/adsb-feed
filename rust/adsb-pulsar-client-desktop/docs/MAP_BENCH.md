@@ -1,5 +1,9 @@
 # Map render benchmark — findings
 
+> **Follow-up (2026-11-18):** [MAP_ENGINES.md](MAP_ENGINES.md) re-tests OpenLayers
+> (its slowness was one `Feature` per point; with deck.gl it matches Leaflet) and
+> measures Cesium. Note the shipping baseline has used deck.gl dots since 2026-11-09.
+
 Question: should the desktop map leave Leaflet for speed, and if so for what?
 Five variants were measured on identical synthetic data (seeded, 10k → 1M
 positions, Montréal bbox), with the same colours and sizes:
