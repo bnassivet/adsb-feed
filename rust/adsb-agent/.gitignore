@@ -12,3 +12,13 @@ models/
 *.gguf
 *.bin
 *.safetensors
+
+# Local MLflow stores, should a script run without MLFLOW_TRACKING_URI set
+mlflow.db
+mlruns/
+
+# Evaluation harness: cached decision-model scores
+eval/.cache/
+# Raw mining output: regenerable, and verbatim chat text that has not been reviewed
+eval/data/candidates.jsonl
+eval/results/

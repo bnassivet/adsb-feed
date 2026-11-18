@@ -1,0 +1,18 @@
+{
+  "_comment": "Gate variant C (eval_gate_variants.py): one document per direct tool for messages that ASK ABOUT what the tool controls. Counted with the other tools, so a question about a setting lands here instead of on the command. Written 2026-11-18 in general terms, without example questions, because their author also wrote holdout_labels.jsonl.",
+  "setMapTheme": "Asking about the map theme: which theme is in use, what the light and dark styles look like, or which one to prefer. Asks for information or advice; changes nothing.",
+  "toggleSidebar": "Asking about the sidebar: what it contains, whether it is open, where it went, or how it behaves. Asks for information; changes nothing.",
+  "setActiveMode": "Asking about the application modes: which mode is active, what live and analysis modes do, or how they differ. Asks for information; changes nothing.",
+  "setLayerVisibility": "Asking about map layers: which layers are visible, what a layer such as trails, labels, range lines, history, density, events or the receiver marker means or shows. Asks for information; changes nothing.",
+  "setHistoryWindow": "Asking about the history window: how much history is shown or stored, which time span it covers, or what a longer window costs. Asks for information; changes nothing.",
+  "setColorMode": "Asking about track colours: what a colour means, how plot and track colouring differ, or why a track has a colour. Asks for information; changes nothing.",
+  "setDensityConfig": "Asking about the density heatmap: what it measures, how a cell's value is computed, its tooltip, or which area is busiest. Asks for information or statistics; changes nothing.",
+  "setEventFilter": "Asking about events of interest: what counts as an event, how many there are, or whether the event filter hides any. Asks for information; changes nothing.",
+  "setWeatherLayer": "Asking about the weather: the wind or pressure at a place or level, where the weather data comes from, how reliable or fresh it is, or how the weather layer is drawn. Asks for information; changes nothing.",
+  "setFilters": "Asking about filters: which filters are active, why some aircraft are not shown, or how filtering works. Asks for information; changes nothing.",
+  "panMapTo": "Asking about places and distances: where the receiver or the map centre is, how far an aircraft is, or what is at a location. Asks for information; changes nothing.",
+  "selectAircraft": "Asking about an aircraft: which one is selected, its altitude, speed, route, identity or history. Asks for information; changes nothing.",
+  "toggleDemoFlights": "Asking about demo flights: whether aircraft are demo or real, what demo traffic is for, or whether it is stored. Asks for information; changes nothing.",
+  "startFeed": "Asking about the live feed: whether it is connected or running, its message rate, or why it stopped or dropped. Asks for information; changes nothing.",
+  "stopFeed": "Asking about stopping the feed: what happens to the data when the feed stops, or a wish that it keeps running. Asks for information or states a preference; changes nothing."
+}

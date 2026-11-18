@@ -28,6 +28,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The evaluation harness (eval/): datasets, scorers, `mlflow.genai.evaluate`.
+# Needs the FULL mlflow; the service itself runs on the slim `mlflow-tracing`
+# in the base dependencies. Since MLflow 3.18 the full package depends on
+# `mlflow-tracing` at the same version, so the two share one environment.
+eval = [
+    "mlflow>=3.18",
+]
 dev = [
     "pytest>=8",
     "httpx>=0.28",
@@ -51,6 +58,10 @@ packages = ["src/adsb_agent"]
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+
+[tool.ruff.lint.per-file-ignores]
+# Scripts run as files put eval/ on sys.path before importing the shared modules.
+"eval/fastpath_agent/*.py" = ["E402"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

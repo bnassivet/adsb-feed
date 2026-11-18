@@ -1,5 +1,7 @@
 """Agent configuration — all settings via environment variables with ADSB_AGENT_ prefix."""
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings
 
 
@@ -55,6 +57,83 @@ class Settings(BaseSettings):
     # left to the client default — an unstated caller/callee timeout mismatch
     # has previously surfaced as an unreadable "could not reach ... ()" error.
     describe_timeout: float = 60.0
+
+    # Where the ambient UI state (RunAgentInput.context) goes in the prompt.
+    # "user" (default): on the latest user message, so the system prompt and
+    # tool schemas are identical on every turn and the model server can reuse
+    # them. Measured time to first token after one state value changed: 0.4 s,
+    # against 17.2 s for "system". Tool choice and use of the state were equal.
+    # "system": near the top of the system prompt (the original layout).
+    context_placement: Literal["system", "user"] = "user"
+
+    # Tool ranking (experimental, off by default). Before the LLM call, a small
+    # decision model scores every tool against the request and only the best
+    # are bound, because tool schemas were ~3/4 of every prompt. Any failure
+    # falls back to the full list. See tool_ranker.py and eval/.
+    tool_ranker_enabled: bool = False
+    tool_ranker_url: str = "http://localhost:5010/gateway/typesafe/v1/systemone"
+    tool_ranker_model: str = "d1-omni-600m"
+    # How many tools to keep by score. Pinned tools and tools already called in
+    # the conversation are kept on top of this.
+    tool_ranker_top_k: int = 10
+    # One batched request for ~40 tools measured 320-520 ms. Generous, but well
+    # short of the seconds the full tool list costs the LLM.
+    tool_ranker_timeout: float = 3.0
+    # Always bound. getCurrentDateTime is needed by any relative-time question
+    # ("last hour") yet scores near the bottom: nothing in such a question says
+    # "clock". Env form is JSON: ADSB_AGENT_TOOL_RANKER_PINNED='["a","b"]'.
+    tool_ranker_pinned: list[str] = ["getCurrentDateTime"]
+
+    # Desktop fast path. A direct display command ("switch to night mode") is
+    # carried out by a small model before the main agent is involved: about
+    # 0.3 s instead of several seconds, with the same correctness (measured in
+    # eval/fastpath_agent/FAST_PATH_EXPERIMENT.md). Three checks, in order; any "no" or
+    # any failure sends the request to the main agent exactly as before:
+    #   0. question form   the latest message does not read as a question
+    #   1. embedding gate  the request is closer to a direct display tool than
+    #                      to any other tool, by at least the margin below
+    #   2. veto            the decision model calls it a display command
+    #   3. executor        the small model makes a schema-valid call
+    # False turns the whole fast path off: every request goes to the main agent.
+    fast_path_enabled: bool = True
+    # A message that starts with a question word or an auxiliary ("is the
+    # sidebar open?"), ends with "?", or opens with a negation ("don't stop the
+    # feed") goes to the main agent without any model call. The embedding gate
+    # matches by topic and passed such requests on fresh data. Measured
+    # 2026-11-18 on 449 requests: 20 -> 5 agent requests pass the gate, 1 of 141
+    # commands lost (polite commands such as "can you ..." go to the agent).
+    fast_path_question_check_enabled: bool = True
+    # The veto costs one decision-model request (~0.1 s) on requests that pass
+    # the gate. Off: about 6 more commands in 60 are handled fast, and requests
+    # that only resemble a command ("pan to the selected aircraft") reach the
+    # small model -- 4 wrong actions in 273 requests, against 0 with the veto.
+    fast_path_veto_enabled: bool = True
+    # The veto drops a request whose probability of being a display command is
+    # under this. 0.75 and 0.9 were measured too: they only lose commands.
+    fast_path_veto_below: float = 0.5
+    # Minimum embedding margin (best direct tool minus best other tool). Fitted
+    # for 95% precision on the 273 evaluation requests. It belongs to this
+    # embedding model AND the packaged descriptions (fast_path_descriptions.json):
+    # change either and refit with eval/fastpath_agent/eval_fast_path_service.py --fit.
+    fast_path_embed_threshold: float = 0.0605
+    # The small executor model, on an OpenAI-compatible server.
+    fast_path_model: str = "mistralai/ministral-3-3b"
+    fast_path_base_url: str = "http://localhost:1234/v1"
+    fast_path_api_key: str = "lm-studio"
+    # "none" turns reasoning off (a thinking model otherwise returns an empty
+    # reply). Set empty for a server that rejects the field.
+    fast_path_reasoning_effort: str = "none"
+    # Embeddings for the gate (OpenAI-compatible /embeddings).
+    fast_path_embed_url: str = "http://localhost:5010/gateway/openai/v1/embeddings"
+    fast_path_embed_model: str = "lmstudio-embeddinggemma-300m"
+    # The veto uses the decision endpoint and model of the tool ranker
+    # (tool_ranker_url, tool_ranker_model above).
+    # Past these the request falls through to the main agent. Kept short: when
+    # a model is not loaded, every request waits this long first.
+    fast_path_gate_timeout: float = 2.0
+    fast_path_executor_timeout: float = 5.0
+    # The reply after a fast-path action, sent without any model call.
+    fast_path_confirmation: str = "Done."
 
     # MLflow tracing
     mlflow_enabled: bool = True
