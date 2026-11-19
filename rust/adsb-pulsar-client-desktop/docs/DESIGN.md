@@ -5477,6 +5477,10 @@ reduced to three quarters: a fill lightens a dark basemap much more than it
 tints a light one. `airspaceStyle` re-styles the existing polygons in place
 (`setStyle`), so dragging the slider never rebuilds them.
 
+**Info on hover** (`adsb-airspace-hover-info`, on by default) controls the
+hover box. When it is off, `AirspaceHover` is unmounted: no mousemove listener
+is left running, and its cleanup clears any box still shown.
+
 Not drawn: FIR, UIR, ACC, FIS, VFR sectors, LTA and UTA cover the whole map,
 and airways and routes are corridors (`HIDDEN_TYPES`).
 

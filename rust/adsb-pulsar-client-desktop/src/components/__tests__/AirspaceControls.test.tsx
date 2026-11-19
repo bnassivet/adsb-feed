@@ -14,6 +14,8 @@ function props(over: Partial<AirspaceControlsProps> = {}): AirspaceControlsProps
     onReload: vi.fn(),
     opacity: 0.6,
     onOpacityChange: vi.fn(),
+    showHoverInfo: true,
+    onToggleHoverInfo: vi.fn(),
     ...over,
   };
 }
@@ -76,6 +78,20 @@ describe("AirspaceControls", () => {
   it("hides the slider while the layer is off", () => {
     render(<AirspaceControls {...props({ show: false })} />);
     expect(screen.queryByRole("slider")).toBeNull();
+  });
+
+  it("toggles the hover readout", async () => {
+    const p = props({ showHoverInfo: false });
+    render(<AirspaceControls {...p} />);
+    const box = screen.getByRole("checkbox", { name: /hover/i });
+    expect(box).not.toBeChecked();
+    await userEvent.click(box);
+    expect(p.onToggleHoverInfo).toHaveBeenCalledOnce();
+  });
+
+  it("hides the hover toggle while the layer is off", () => {
+    render(<AirspaceControls {...props({ show: false })} />);
+    expect(screen.queryByRole("checkbox", { name: /hover/i })).toBeNull();
   });
 
   it("credits openAIP and its licence", () => {

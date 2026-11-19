@@ -104,6 +104,8 @@ describe("FiltersPanel airspace section", () => {
     onReload: vi.fn(),
     opacity: 0.6,
     onOpacityChange: vi.fn(),
+    showHoverInfo: true,
+    onToggleHoverInfo: vi.fn(),
   };
 
   it("shows the airspace controls when airspace props are given", () => {

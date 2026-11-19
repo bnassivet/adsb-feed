@@ -690,6 +690,8 @@ interface Props {
   airspaces?: Airspace[];
   /** Airspace slider, 0–1 (see `airspaceStyle`). */
   airspaceOpacity?: number;
+  /** List the airspaces under the cursor. Defaults to true. */
+  airspaceHoverInfo?: boolean;
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];
   dbHistoryTracks?: AircraftTrack[];
@@ -1007,7 +1009,7 @@ function labelIcon(p: LabelPlacement, text: string, color: string, selected: boo
   });
 }
 
-export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
+export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
   // Memoised: the basemap layer is rebuilt (and every tile reloaded) when this changes.
   const tile = useMemo(() => tileConfig(mapTheme, CARTO_API_KEY), [mapTheme]);
   const [airspaceStack, setAirspaceStack] = useState<Airspace[]>(NO_AIRSPACES);
@@ -1077,7 +1079,8 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
         {/* Airspaces — under everything else, never interactive */}
         {airspaces.length > 0 && <MapAttribution text={AIRSPACE_ATTRIBUTION} />}
         <AirspaceLayer airspaces={airspaces} opacity={airspaceOpacity} theme={mapTheme} />
-        <AirspaceHover airspaces={airspaces} onStack={updateAirspaceStack} />
+        {/* Unmounted when off: no mousemove listener at all, and its cleanup clears the box */}
+        {airspaceHoverInfo && <AirspaceHover airspaces={airspaces} onStack={updateAirspaceStack} />}
 
         {/* Density hexagons — zoom-adaptive H3 resolution */}
         <DensityLayer showDensity={showDensity} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} receiverLocation={receiverLocation} theme={mapTheme} />

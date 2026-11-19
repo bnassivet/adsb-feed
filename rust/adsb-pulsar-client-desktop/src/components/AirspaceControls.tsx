@@ -15,6 +15,9 @@ export interface AirspaceControlsProps {
   /** Slider, 0–1: scales outlines and fills (fills are halved again at night). */
   opacity: number;
   onOpacityChange: (opacity: number) => void;
+  /** List the airspaces under the cursor in a box on the map. */
+  showHoverInfo: boolean;
+  onToggleHoverInfo: () => void;
 }
 
 /**
@@ -22,7 +25,7 @@ export interface AirspaceControlsProps {
  * an expired cycle is an alert rather than a footnote: outdated airspace is a
  * safety issue, not a cosmetic one.
  */
-export function AirspaceControls({ show, onToggle, count, status, loading, error, onReload, opacity, onOpacityChange }: AirspaceControlsProps) {
+export function AirspaceControls({ show, onToggle, count, status, loading, error, onReload, opacity, onOpacityChange, showHoverInfo, onToggleHoverInfo }: AirspaceControlsProps) {
   const percent = Math.round(opacity * 100);
   const problems = error ? [error, ...status.errors] : status.errors;
   return (
@@ -46,6 +49,10 @@ export function AirspaceControls({ show, onToggle, count, status, loading, error
               className="flex-1 accent-indigo-500"
             />
             <span className="w-8 text-right tabular-nums">{percent}%</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" checked={showHoverInfo} onChange={onToggleHoverInfo} className="accent-indigo-500" />
+            <span>Info on hover</span>
           </label>
           {loading ? (
             <span>Loading…</span>
