@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "tauri": "tauri",
-    "bench": "node --no-warnings bench/run.mjs"
+    "bench": "node --no-warnings bench/run.mjs",
+    "bench:fixtures": "node --no-warnings bench/fixtures.mjs"
   },
   "dependencies": {
     "@copilotkit/react-core": "^1.85.0",
@@ -33,6 +34,7 @@
     "uuid": "^14.0.0"
   },
   "devDependencies": {
+    "@deck.gl/mapbox": "9.4.1",
     "@playwright/test": "1.65.0",
     "@tailwindcss/postcss": "^4",
     "@tauri-apps/cli": "^2",
@@ -46,12 +48,14 @@
     "@types/react-dom": "^19",
     "@types/uuid": "^10.0.0",
     "babel-plugin-react-compiler": "^1.0.0",
+    "cesium": "1.147.0",
     "eslint": "^9",
     "eslint-config-next": "^16",
     "fake-indexeddb": "^6.2.7",
     "jsdom": "^28.1.0",
     "maplibre-gl": "6.17.0",
     "ol": "10.11.0",
+    "pmtiles": "4.5.0",
     "postcss": "^8",
     "tailwindcss": "^4",
     "typescript": "^5",

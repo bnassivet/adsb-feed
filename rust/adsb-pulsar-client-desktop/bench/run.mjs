@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Map render benchmark driver: current Leaflet vs Leaflet+deck.gl vs MapLibre GL
- * vs OpenLayers WebGL. See docs/plans/2026-11-08-map-render-benchmark.md.
+ * vs OpenLayers WebGL (three ways) vs Cesium. See also docs/MAP_ENGINES.md. See docs/plans/2026-11-08-map-render-benchmark.md.
  *
  *   npm run bench                                   # full matrix (long)
  *   npm run bench -- --sizes 10000 --reps 1         # smoke run
@@ -9,8 +9,15 @@
  *
  * Options: --engines webkit,chromium  --sizes 10000,50000,200000,1000000
  *          --styles dots,line  --scenarios initial,panzoom,live
- *          --variants leaflet,canvas,deckgl,maplibre,openlayers  --reps 5
+ *          --variants leaflet,canvas,deckgl,maplibre,openlayers,
+ *            openlayers-noindex,openlayers-binned,openlayers-deckgl,cesium,
+ *            maplibre-deckgl,maplibre-deckgl-3d,maplibre-deckgl-3d-il,
+ *            maplibre-deckgl-terrain,maplibre-deckgl-city,
+ *            maplibre-deckgl-buildings  --reps 5
  *          --timeout 60000  --headless  --no-build
+ *
+ * The terrain, city and buildings variants read offline tiles from
+ * bench/fixtures/ (`npm run bench:fixtures`, once).
  *
  * Runs HEADED by default: headless Chromium renders WebGL in software
  * (SwiftShader), which would make every GPU variant look slow.
@@ -27,7 +34,17 @@ import { aggregate, toMarkdown, VARIANTS } from "../src/bench/stats.ts";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(ROOT, ".next-bench");
 const RESULTS = join(ROOT, "bench", "results");
-const MAPLIBRE_DIST = join(ROOT, "node_modules", "maplibre-gl", "dist");
+const FIXTURES = join(ROOT, "bench", "fixtures");
+// Runtime files the libraries fetch themselves and webpack does not emit. Served
+// from node_modules rather than public/ (which would ship).
+const VENDOR = {
+  "/vendor/maplibre/": join(ROOT, "node_modules", "maplibre-gl", "dist"),
+  "/vendor/cesium/": join(ROOT, "node_modules", "cesium", "Build", "Cesium"),
+  // Offline terrain and building tiles (`npm run bench:fixtures`).
+  "/fixtures/": FIXTURES,
+};
+/** Variants that read /fixtures/; the run refuses to start without them. */
+const NEEDS_FIXTURES = ["maplibre-deckgl-terrain", "maplibre-deckgl-city", "maplibre-deckgl-buildings"];
 
 // ---------------------------------------------------------------- options
 function parseArgs(argv) {
@@ -70,15 +87,14 @@ function build() {
   if (r.status !== 0) throw new Error("bench build failed");
 }
 
-const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json", ".txt": "text/plain", ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2" };
+const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json", ".txt": "text/plain", ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2", ".wasm": "application/wasm", ".jpg": "image/jpeg", ".ktx2": "image/ktx2", ".mvt": "application/vnd.mapbox-vector-tile" };
 
 function serve() {
   const server = createServer(async (req, res) => {
     const p = decodeURIComponent(new URL(req.url, "http://x").pathname);
-    // MapLibre's worker is a separate file webpack does not emit; serve it from
-    // node_modules rather than putting it in public/ (which would ship).
-    const root = p.startsWith("/vendor/maplibre/") ? MAPLIBRE_DIST : DIST;
-    let file = join(root, root === DIST ? p : p.slice("/vendor/maplibre/".length));
+    const prefix = Object.keys(VENDOR).find((k) => p.startsWith(k));
+    const root = prefix ? VENDOR[prefix] : DIST;
+    let file = join(root, prefix ? p.slice(prefix.length) : p);
     if (!file.startsWith(root)) return res.writeHead(403).end();
     try {
       if ((await stat(file)).isDirectory()) file = join(file, "index.html");
@@ -205,6 +221,10 @@ async function runOne(browser, base, engine, variant, cfg) {
 
 // ---------------------------------------------------------------- main
 const opts = parseArgs(process.argv.slice(2));
+if (opts.variants.some((v) => NEEDS_FIXTURES.includes(v)) && !(await stat(FIXTURES).catch(() => null))) {
+  console.error("bench/fixtures/ is missing: run `npm run bench:fixtures` first (terrain and building tiles).");
+  process.exit(1);
+}
 if (opts.build) build();
 // Keep the display awake for the whole run (macOS sleeps it after N minutes,
 // which throttles rAF in every browser window).

@@ -13,6 +13,16 @@ const LOADERS: Record<Variant, () => Promise<{ default: ComponentType<{ params: 
   deckgl: () => import("./variants/DeckGlLeaflet"),
   maplibre: () => import("./variants/MapLibre"),
   openlayers: () => import("./variants/OpenLayers"),
+  "openlayers-noindex": () => import("./variants/OpenLayersNoIndex"),
+  "openlayers-binned": () => import("./variants/OpenLayersBinned"),
+  "openlayers-deckgl": () => import("./variants/OpenLayersDeckGl"),
+  cesium: () => import("./variants/Cesium"),
+  "maplibre-deckgl": () => import("./variants/MapLibreDeckGl"),
+  "maplibre-deckgl-3d": () => import("./variants/MapLibreDeckGl3d"),
+  "maplibre-deckgl-3d-il": () => import("./variants/MapLibreDeckGl3dIl"),
+  "maplibre-deckgl-terrain": () => import("./variants/MapLibreDeckGlTerrain"),
+  "maplibre-deckgl-city": () => import("./variants/MapLibreDeckGlCity"),
+  "maplibre-deckgl-buildings": () => import("./variants/MapLibreDeckGlBuildings"),
 };
 
 export function BenchPage({ variant }: { variant: Variant }) {
