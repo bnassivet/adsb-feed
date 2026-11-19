@@ -93,23 +93,24 @@ describe("FiltersPanel weather section", () => {
   });
 });
 
+const airspaces = {
+  show: false,
+  onToggle: vi.fn(),
+  count: 0,
+  status: { cycles: [], expired: false, errors: [] },
+  loading: false,
+  error: null,
+  onReload: vi.fn(),
+  opacity: 0.6,
+  onOpacityChange: vi.fn(),
+  showHoverInfo: true,
+  onToggleHoverInfo: vi.fn(),
+  types: [],
+  hiddenTypes: [],
+  onHiddenTypesChange: vi.fn(),
+};
+
 describe("FiltersPanel airspace section", () => {
-  const airspaces = {
-    show: false,
-    onToggle: vi.fn(),
-    count: 0,
-    status: { cycles: [], expired: false, errors: [] },
-    loading: false,
-    error: null,
-    onReload: vi.fn(),
-    opacity: 0.6,
-    onOpacityChange: vi.fn(),
-    showHoverInfo: true,
-    onToggleHoverInfo: vi.fn(),
-    types: [],
-    hiddenTypes: [],
-    onHiddenTypesChange: vi.fn(),
-  };
 
   it("shows the airspace controls when airspace props are given", () => {
     render(<FiltersPanel {...baseProps} airspaces={airspaces} />);
@@ -123,13 +124,14 @@ describe("FiltersPanel airspace section", () => {
   });
 });
 
+const metar = {
+  show: false, onToggle: vi.fn(), count: 0, fetchedAtMs: null, nowMs: 0, stale: false, loading: false,
+  error: null, onReload: vi.fn(), opacity: 0.8, onOpacityChange: vi.fn(), showHoverInfo: true,
+  onToggleHoverInfo: vi.fn(), categories: [], hiddenCategories: [], onHiddenCategoriesChange: vi.fn(),
+  transitionAltitudeFt: 5000, onTransitionAltitudeChange: vi.fn(),
+};
+
 describe("FiltersPanel METAR section", () => {
-  const metar = {
-    show: false, onToggle: vi.fn(), count: 0, fetchedAtMs: null, nowMs: 0, stale: false, loading: false,
-    error: null, onReload: vi.fn(), opacity: 0.8, onOpacityChange: vi.fn(), showHoverInfo: true,
-    onToggleHoverInfo: vi.fn(), categories: [], hiddenCategories: [], onHiddenCategoriesChange: vi.fn(),
-    transitionAltitudeFt: 5000, onTransitionAltitudeChange: vi.fn(),
-  };
 
   it("shows the METAR controls when METAR props are given", () => {
     render(<FiltersPanel {...baseProps} metar={metar} />);
@@ -143,12 +145,13 @@ describe("FiltersPanel METAR section", () => {
   });
 });
 
+const radar = {
+  show: false, onToggle: vi.fn(), validTimeMs: null, nowMs: 0, stale: false, loading: false, error: null,
+  onReload: vi.fn(), opacity: 0.7, onOpacityChange: vi.fn(), scale: [],
+  animate: false, onToggleAnimate: vi.fn(), frame: null, frameCount: 0,
+};
+
 describe("FiltersPanel radar section", () => {
-  const radar = {
-    show: false, onToggle: vi.fn(), validTimeMs: null, nowMs: 0, stale: false, loading: false, error: null,
-    onReload: vi.fn(), opacity: 0.7, onOpacityChange: vi.fn(), scale: [],
-    animate: false, onToggleAnimate: vi.fn(), frame: null, frameCount: 0,
-  };
   it("shows the radar controls when radar props are given", () => {
     render(<FiltersPanel {...baseProps} radar={radar} />);
     expect(screen.getByRole("checkbox", { name: /rain radar/i })).toBeInTheDocument();
@@ -159,14 +162,15 @@ describe("FiltersPanel radar section", () => {
   });
 });
 
+const sea = {
+  seamarks: false, onToggleSeamarks: vi.fn(), seamarkOpacity: 0.9, onSeamarkOpacityChange: vi.fn(),
+  depthColours: false, onToggleDepthColours: vi.fn(), depthContours: false, onToggleDepthContours: vi.fn(),
+  depthOpacity: 0.35, onDepthOpacityChange: vi.fn(),
+  seamarkHoverInfo: true, onToggleSeamarkHoverInfo: vi.fn(),
+  seamarkDetails: { loading: false, count: 0, error: null, zoomedOut: true },
+};
+
 describe("FiltersPanel sea section", () => {
-  const sea = {
-    seamarks: false, onToggleSeamarks: vi.fn(), seamarkOpacity: 0.9, onSeamarkOpacityChange: vi.fn(),
-    depthColours: false, onToggleDepthColours: vi.fn(), depthContours: false, onToggleDepthContours: vi.fn(),
-    depthOpacity: 0.35, onDepthOpacityChange: vi.fn(),
-    seamarkHoverInfo: true, onToggleSeamarkHoverInfo: vi.fn(),
-    seamarkDetails: { loading: false, count: 0, error: null, zoomedOut: true },
-  };
   it("shows the sea controls when sea props are given", () => {
     render(<FiltersPanel {...baseProps} sea={sea} />);
     expect(screen.getByRole("checkbox", { name: /seamarks/i })).toBeInTheDocument();
@@ -177,8 +181,9 @@ describe("FiltersPanel sea section", () => {
   });
 });
 
+const relief = { show: false, onToggle: vi.fn(), opacity: 0.6, onOpacityChange: vi.fn() };
+
 describe("FiltersPanel relief section", () => {
-  const relief = { show: false, onToggle: vi.fn(), opacity: 0.6, onOpacityChange: vi.fn() };
   it("shows the relief switch when relief props are given", () => {
     render(<FiltersPanel {...baseProps} relief={relief} />);
     expect(screen.getByRole("checkbox", { name: /relief/i })).toBeInTheDocument();
@@ -186,6 +191,26 @@ describe("FiltersPanel relief section", () => {
   it("has no relief section without them", () => {
     render(<FiltersPanel {...baseProps} />);
     expect(screen.queryByRole("checkbox", { name: /relief/i })).toBeNull();
+  });
+});
+
+describe("FiltersPanel map layers", () => {
+  it("groups weather and every map layer under Map Layers, in order", () => {
+    render(<FiltersPanel {...baseProps} weather={weather} airspaces={airspaces} metar={metar} radar={radar} sea={sea} relief={relief} />);
+    const parent = screen.getByText("Map Layers").closest("details")!;
+    const nested = [...parent.querySelectorAll("details > summary")].map((s) => s.textContent?.replace("▶", "").trim());
+    expect(nested).toEqual(["Map Layers", "Weather", "Rain radar", "METAR", "Airspaces", "Sea", "Relief"]);
+  });
+
+  it("is absent with no layer at all", () => {
+    render(<FiltersPanel {...baseProps} />);
+    expect(screen.queryByText("Map Layers")).toBeNull();
+  });
+
+  it("holds a single layer when only one is given", () => {
+    render(<FiltersPanel {...baseProps} relief={relief} />);
+    const parent = screen.getByText("Map Layers").closest("details")!;
+    expect(parent).toContainElement(screen.getByRole("checkbox", { name: /relief/i }));
   });
 });
 

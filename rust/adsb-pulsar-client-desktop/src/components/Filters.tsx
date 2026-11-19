@@ -78,16 +78,29 @@ function msToDatetimeLocal(ms: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function Section({ title, defaultOpen, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
+/**
+ * A collapsible section. `nested` sits inside another section (Map Layers):
+ * indented, with a lighter title, so the hierarchy reads at a glance.
+ */
+function Section({ title, defaultOpen, nested, children }: { title: string; defaultOpen?: boolean; nested?: boolean; children: ReactNode }) {
   return (
-    <details open={defaultOpen || undefined} className="group border-t border-slate-700 pt-2">
-      <summary className="flex items-center gap-1.5 cursor-pointer select-none text-xs font-semibold text-slate-400 list-none [&::-webkit-details-marker]:hidden">
-        <span className="text-[10px] transition-transform duration-150 group-open:rotate-90">▶</span>
+    <details
+      open={defaultOpen || undefined}
+      className={nested ? "group/nested ml-2 border-l border-slate-700 pl-2" : "group border-t border-slate-700 pt-2"}
+    >
+      <summary
+        className={`flex items-center gap-1.5 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden ${
+          nested ? "text-[11px] font-medium text-slate-400" : "text-xs font-semibold text-slate-400"
+        }`}
+      >
+        <span
+          className={`text-[10px] transition-transform duration-150 ${nested ? "group-open/nested:rotate-90" : "group-open:rotate-90"}`}
+        >
+          ▶
+        </span>
         {title}
       </summary>
-      <div className="mt-2 flex flex-col gap-3">
-        {children}
-      </div>
+      <div className={nested ? "mt-1.5 mb-1 flex flex-col gap-3" : "mt-2 flex flex-col gap-3"}>{children}</div>
     </details>
   );
 }
@@ -361,45 +374,39 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
         </div>
       </Section>
 
-      {/* ── Weather ── */}
-      {weather && (
-        <Section title="Weather">
-          <WeatherControls {...weather} />
-        </Section>
-      )}
-
-      {/* ── Airspaces ── */}
-      {airspaces && (
-        <Section title="Airspaces">
-          <AirspaceControls {...airspaces} />
-        </Section>
-      )}
-
-      {/* ── Rain radar ── */}
-      {radar && (
-        <Section title="Rain radar">
-          <RadarControls {...radar} />
-        </Section>
-      )}
-
-      {/* ── Relief ── */}
-      {relief && (
-        <Section title="Relief">
-          <ReliefControls {...relief} />
-        </Section>
-      )}
-
-      {/* ── Sea ── */}
-      {sea && (
-        <Section title="Sea">
-          <SeaControls {...sea} />
-        </Section>
-      )}
-
-      {/* ── METAR ── */}
-      {metar && (
-        <Section title="METAR">
-          <MetarControls {...metar} />
+      {/* ── Map Layers: weather first, then what is drawn under the traffic ── */}
+      {(weather || radar || metar || airspaces || sea || relief) && (
+        <Section title="Map Layers">
+          {weather && (
+            <Section title="Weather" nested>
+              <WeatherControls {...weather} />
+            </Section>
+          )}
+          {radar && (
+            <Section title="Rain radar" nested>
+              <RadarControls {...radar} />
+            </Section>
+          )}
+          {metar && (
+            <Section title="METAR" nested>
+              <MetarControls {...metar} />
+            </Section>
+          )}
+          {airspaces && (
+            <Section title="Airspaces" nested>
+              <AirspaceControls {...airspaces} />
+            </Section>
+          )}
+          {sea && (
+            <Section title="Sea" nested>
+              <SeaControls {...sea} />
+            </Section>
+          )}
+          {relief && (
+            <Section title="Relief" nested>
+              <ReliefControls {...relief} />
+            </Section>
+          )}
         </Section>
       )}
 
