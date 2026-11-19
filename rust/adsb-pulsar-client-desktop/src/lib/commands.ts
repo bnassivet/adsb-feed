@@ -46,6 +46,7 @@ import type {
   WeatherSnapshotRecord,
 } from "./types";
 import type { WeatherAvailability, WeatherServiceView, WeatherSnapshot } from "./weather";
+import type { CountryAirspaces } from "./airspace";
 
 export async function startFeed(): Promise<void> {
   return invoke("start_feed");
@@ -421,4 +422,13 @@ export async function reorderScenarioTracks(
 ): Promise<void> {
   // Tauri converts snake_case command args from camelCase automatically.
   return invoke("reorder_scenario_tracks", { scenarioId, trackIds });
+}
+
+/**
+ * OpenAIP airspaces for the configured countries (`ADSB_OPENAIP_COUNTRIES`),
+ * cached by Rust per AIRAC cycle. Never rejects for a missing key or an
+ * outage: each country carries its own `origin` and `error`.
+ */
+export async function getAirspaces(): Promise<CountryAirspaces[]> {
+  return invoke("get_airspaces");
 }

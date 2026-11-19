@@ -92,3 +92,26 @@ describe("FiltersPanel weather section", () => {
     expect(screen.queryByRole("checkbox", { name: /winds aloft/i })).not.toBeInTheDocument();
   });
 });
+
+describe("FiltersPanel airspace section", () => {
+  const airspaces = {
+    show: false,
+    onToggle: vi.fn(),
+    count: 0,
+    status: { cycles: [], expired: false, errors: [] },
+    loading: false,
+    error: null,
+    onReload: vi.fn(),
+  };
+
+  it("shows the airspace controls when airspace props are given", () => {
+    render(<FiltersPanel {...baseProps} airspaces={airspaces} />);
+    expect(screen.getByText("Airspaces")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /airspaces \(openaip\)/i })).toBeInTheDocument();
+  });
+
+  it("has no airspace section without them", () => {
+    render(<FiltersPanel {...baseProps} />);
+    expect(screen.queryByRole("checkbox", { name: /airspaces \(openaip\)/i })).not.toBeInTheDocument();
+  });
+});

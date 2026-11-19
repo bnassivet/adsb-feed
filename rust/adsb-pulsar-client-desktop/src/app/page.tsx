@@ -8,6 +8,7 @@ import { ResizeHandle } from "@/components/ResizeHandle";
 import { LeftPanel } from "@/components/LeftPanel";
 import { AircraftDetailsPanel } from "@/components/AircraftDetailsPanel";
 import { useWeatherSnapshot } from "@/hooks/useWeatherSnapshot";
+import { useAirspaces } from "@/hooks/useAirspaces";
 import { useHistoricalWeather } from "@/hooks/useHistoricalWeather";
 import { availableLevels, isOffHour, isStale, type WeatherLevel } from "@/lib/weather";
 import {
@@ -96,6 +97,7 @@ export default function Dashboard() {
   const [showDensity, setShowDensity] = useLocalStorage<boolean>("adsb-show-density", false);
   // Weather layer: winds aloft from the MQTT weather topic.
   const [showWeather, setShowWeather] = useLocalStorage<boolean>("adsb-show-weather", false);
+  const [showAirspaces, setShowAirspaces] = useLocalStorage<boolean>("adsb-show-airspaces", false);
   const [weatherLevel, setWeatherLevel] = useLocalStorage<WeatherLevel>("adsb-weather-level", 250);
   // Particles are a continuous animation, so they are opt-in.
   const [showWeatherBarbs, setShowWeatherBarbs] = useLocalStorage<boolean>("adsb-weather-barbs", true);
@@ -281,6 +283,8 @@ export default function Dashboard() {
   }, []);
 
   const simulatedTracks = useSimulatedTracks(showSimulation, receiverLocation);
+  // Airspaces are cut out of whole countries around the receiver; without one, all are kept.
+  const airspaceLayer = useAirspaces(showAirspaces, receiverLocation ?? null);
   // Agent-generated trajectories: additive to the hardcoded demo flights above.
   //
   // Two sources, deliberately separate:
@@ -1497,6 +1501,15 @@ export default function Dashboard() {
             serviceError: weather.serviceError,
             onServiceToggle: weather.setServiceEnabled,
           }}
+          airspaces={{
+            show: showAirspaces,
+            onToggle: () => setShowAirspaces((prev: boolean) => !prev),
+            count: airspaceLayer.airspaces.length,
+            status: airspaceLayer.status,
+            loading: airspaceLayer.loading,
+            error: airspaceLayer.error,
+            onReload: airspaceLayer.reload,
+          }}
         />
 
         {/* Map + Table */}
@@ -1504,7 +1517,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
+              <AircraftMap airspaces={airspaceLayer.airspaces} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel

@@ -52,6 +52,8 @@ import { greatCirclePoints, midpoint, rangeLineLabel } from "@/lib/range-line";
 import type { ReceiverPoint } from "@/lib/aircraft-details";
 import { AltitudeLegend } from "./AltitudeLegend";
 import { WindSpeedLegend } from "./WindSpeedLegend";
+import { AirspaceInfo } from "./AirspaceInfo";
+import { AIRSPACE_ATTRIBUTION, airspacesAt, airspaceStyle, type Airspace } from "@/lib/airspace";
 
 /**
  * Per-leg colours for a generated route.
@@ -358,6 +360,80 @@ function MapAttribution({ text }: { text: string }) {
 
 const BARB_SIZE = 32;
 
+/**
+ * Leaflet pane for airspaces: above the tiles (200), below the overlay pane
+ * (400) where density hexes and tracks draw, and never interactive.
+ */
+const AIRSPACE_PANE = "airspaces";
+
+/** Stable default: a fresh `[]` per render would re-run the airspace effects every render. */
+const NO_AIRSPACES: Airspace[] = [];
+
+/**
+ * OpenAIP airspaces as faint polygons, on one canvas of their own.
+ *
+ * Non-interactive on purpose: they are large and overlap, so as Leaflet paths
+ * they would take hover from the density hexes and clicks from the map, and
+ * Leaflet would only ever report the top one. `AirspaceHover` answers "what
+ * is above this point" instead, for every airspace in the stack.
+ */
+function AirspaceLayer({ airspaces }: { airspaces: Airspace[] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (airspaces.length === 0) return;
+    const pane = map.getPane(AIRSPACE_PANE) ?? map.createPane(AIRSPACE_PANE);
+    pane.style.zIndex = "350";
+    pane.style.pointerEvents = "none";
+    const renderer = L.canvas({ pane: AIRSPACE_PANE });
+    const area = (a: Airspace) => (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]);
+    const group = L.layerGroup();
+    // Largest first, so a CTR stays visible over the TMA around it.
+    for (const a of [...airspaces].sort((x, y) => area(y) - area(x))) {
+      const style = airspaceStyle(a);
+      L.polygon(
+        a.ring.map(([lng, lat]) => [lat, lng] as L.LatLngTuple),
+        { ...style, fillColor: style.color, pane: AIRSPACE_PANE, renderer, interactive: false },
+      ).addTo(group);
+    }
+    group.addTo(map);
+    return () => {
+      group.remove();
+    };
+  }, [map, airspaces]);
+  return null;
+}
+
+/** Reports the airspaces under the cursor, at most once per frame. */
+function AirspaceHover({ airspaces, onStack }: { airspaces: Airspace[]; onStack: (stack: Airspace[]) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    if (airspaces.length === 0) return;
+    let frame = 0;
+    let at: L.LatLng | null = null;
+    const onMove = (e: L.LeafletMouseEvent) => {
+      at = e.latlng;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (at) onStack(airspacesAt(airspaces, at.lat, at.lng));
+      });
+    };
+    const onOut = () => {
+      at = null;
+      onStack([]);
+    };
+    map.on("mousemove", onMove);
+    map.on("mouseout", onOut);
+    return () => {
+      map.off("mousemove", onMove);
+      map.off("mouseout", onOut);
+      cancelAnimationFrame(frame);
+      onStack([]);
+    };
+  }, [map, airspaces, onStack]);
+  return null;
+}
+
 /** Wind barbs at every grid point of a weather snapshot, for one level. */
 function WeatherBarbsLayer({
   snapshot,
@@ -594,6 +670,8 @@ function WindParticlesLayer({
 }
 
 interface Props {
+  /** OpenAIP airspaces to draw; empty or absent while the layer is off. */
+  airspaces?: Airspace[];
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];
   dbHistoryTracks?: AircraftTrack[];
@@ -911,9 +989,15 @@ function labelIcon(p: LabelPlacement, text: string, color: string, selected: boo
   });
 }
 
-export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
+export function MapInner({ airspaces = NO_AIRSPACES, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
   // Memoised: the basemap layer is rebuilt (and every tile reloaded) when this changes.
   const tile = useMemo(() => tileConfig(mapTheme, CARTO_API_KEY), [mapTheme]);
+  const [airspaceStack, setAirspaceStack] = useState<Airspace[]>(NO_AIRSPACES);
+  // Mouse moves over empty sky report [] on every frame: keep the same state then.
+  const updateAirspaceStack = useCallback(
+    (next: Airspace[]) => setAirspaceStack((prev) => (prev.length === 0 && next.length === 0 ? prev : next)),
+    [],
+  );
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
     : DEFAULT_CENTER;
@@ -971,6 +1055,11 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         <MapClickHandler onDeselect={handleDeselect} />
         <FlyToHandler onReady={handleFlyToReady} />
         <CachedBasemap tile={tile} origin={tileCacheOrigin} />
+
+        {/* Airspaces — under everything else, never interactive */}
+        {airspaces.length > 0 && <MapAttribution text={AIRSPACE_ATTRIBUTION} />}
+        <AirspaceLayer airspaces={airspaces} />
+        <AirspaceHover airspaces={airspaces} onStack={updateAirspaceStack} />
 
         {/* Density hexagons — zoom-adaptive H3 resolution */}
         <DensityLayer showDensity={showDensity} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} receiverLocation={receiverLocation} theme={mapTheme} />
@@ -1211,6 +1300,7 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         />
       )}
       <AltitudeLegend theme={mapTheme} />
+      <AirspaceInfo stack={airspaceStack} />
       {weather && weatherParticles && <WindSpeedLegend theme={mapTheme} />}
     </div>
   );
