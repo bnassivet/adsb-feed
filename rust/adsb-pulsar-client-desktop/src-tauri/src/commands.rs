@@ -1222,3 +1222,46 @@ pub async fn get_airspaces(
     }
     Ok(out)
 }
+
+/// Last METAR download, in memory only (see metar.rs). Also serialises loads.
+static METAR_CACHE: tokio::sync::Mutex<Option<crate::metar::MetarCache>> =
+    tokio::sync::Mutex::const_new(None);
+
+/// Latest METAR per station within `radius_nm` of a point (the receiver),
+/// from AviationWeather.gov. Never fails as a whole: a failed refresh serves
+/// the last snapshot with its age and the error.
+#[tauri::command]
+pub async fn get_metars(
+    lat: f64,
+    lng: f64,
+    radius_nm: f64,
+    force: bool,
+) -> Result<crate::metar::MetarSnapshot, String> {
+    use crate::metar;
+    if !(lat.is_finite()
+        && lng.is_finite()
+        && (-90.0..=90.0).contains(&lat)
+        && (-180.0..=180.0).contains(&lng))
+    {
+        return Err(format!("Invalid position {lat}, {lng}"));
+    }
+    let radius_nm = if radius_nm.is_finite() {
+        radius_nm.clamp(10.0, 600.0)
+    } else {
+        300.0
+    };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("HTTP client: {e}"))?;
+    let mut cache = METAR_CACHE.lock().await;
+    let bbox = metar::bbox_around(lat, lng, radius_nm);
+    Ok(metar::load_metars(
+        &mut cache,
+        chrono::Utc::now(),
+        bbox,
+        force,
+        |b| async move { metar::fetch(&client, b).await },
+    )
+    .await)
+}

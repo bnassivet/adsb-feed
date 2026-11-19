@@ -7,6 +7,7 @@
 mod airspace;
 mod bridge;
 mod commands;
+mod metar;
 mod state;
 mod storage_mode;
 mod weather;
@@ -209,6 +210,7 @@ pub fn run() {
             commands::set_storage_mode,
             commands::get_weather_snapshot,
             commands::get_airspaces,
+            commands::get_metars,
             commands::get_weather_availability,
             commands::get_weather_service,
             commands::set_weather_service_enabled,
