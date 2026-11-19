@@ -208,6 +208,13 @@ openaip_api_key = ""
 # AIRAC cycle under the stack's data dir (airspaces/<CC>-<cycle>.json).
 openaip_countries = "FR"
 
+# Météo-France rain radar (Filters → Rain radar). Free key from
+# portail-api.meteofrance.fr: subscribe your application to "Données Publiques
+# Radar", then generate an API key with validity -1 (no expiry); the portal's
+# default can be seconds, and an expired key fails as "Invalid Credentials".
+# Secret like the other keys: never printed by desktop-env. Read at startup.
+meteofrance_api_key = ""
+
 # CopilotKit's developer inspector (the floating CopilotKit button). It exists
 # only in dev builds on localhost, and it is the app's only third-party traffic
 # there: news feeds from cdn.copilotkit.ai, Google Fonts, and promo videos. No

@@ -1265,3 +1265,108 @@ pub async fn get_metars(
     )
     .await)
 }
+
+/// Last radar mosaic, in memory only (see radar.rs). Also serialises loads.
+static RADAR_CACHE: tokio::sync::Mutex<Option<crate::radar::RadarCache>> =
+    tokio::sync::Mutex::const_new(None);
+/// Last rendered image, keyed by image time and box: polls between two new
+/// images re-send it instead of rendering again.
+type RenderedRadar = (
+    chrono::DateTime<chrono::Utc>,
+    crate::metar::Bbox,
+    std::sync::Arc<String>,
+);
+static RADAR_RENDER: std::sync::Mutex<Option<RenderedRadar>> = std::sync::Mutex::new(None);
+
+/// Météo-France rain radar around a point (the receiver): the latest 5-minute
+/// rainfall mosaic, coloured by rate and reprojected to Web Mercator. Never
+/// fails as a whole: a failed refresh serves the last image with the error.
+#[tauri::command]
+pub async fn get_radar(
+    lat: f64,
+    lng: f64,
+    radius_nm: f64,
+    force: bool,
+) -> Result<crate::radar::RadarSnapshot, String> {
+    use crate::{metar, radar, radar_grid};
+    use base64::Engine;
+    if !(lat.is_finite()
+        && lng.is_finite()
+        && (-90.0..=90.0).contains(&lat)
+        && (-180.0..=180.0).contains(&lng))
+    {
+        return Err(format!("Invalid position {lat}, {lng}"));
+    }
+    let radius_nm = if radius_nm.is_finite() {
+        radius_nm.clamp(10.0, 600.0)
+    } else {
+        300.0
+    };
+    let key = std::env::var(radar::KEY_ENV).ok();
+    let now = chrono::Utc::now();
+    let problem = radar::key_problem(key.as_deref(), now);
+    let key = key.unwrap_or_default().trim().to_string();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("HTTP client: {e}"))?;
+
+    let load = {
+        let mut cache = RADAR_CACHE.lock().await;
+        let (client, key) = (&client, key.as_str());
+        let describe = || async move {
+            if let Some(p) = problem {
+                return Err(p);
+            }
+            radar::parse_validity(&radar::get(client, key, &radar::description_url()).await?)
+        };
+        let download = || async move { radar::get(client, key, &radar::product_url()).await };
+        // Decoding ~2.6 MB of gzip-chunked HDF5 is CPU work: off the async runtime.
+        let decode =
+            |bytes: Vec<u8>| tokio::task::block_in_place(|| radar_grid::decode_odim(bytes));
+        radar::load_radar(&mut cache, now, force, describe, download, decode).await
+    };
+
+    let b = metar::bbox_around(lat, lng, radius_nm);
+    let bounds = [b.min_lat, b.min_lon, b.max_lat, b.max_lon];
+    let png_base64 = match (&load.field, load.validity) {
+        (Some(field), Some(validity)) => {
+            let cached = RADAR_RENDER
+                .lock()
+                .unwrap()
+                .as_ref()
+                .filter(|(v, bb, _)| *v == validity && *bb == b)
+                .map(|(_, _, p)| p.clone());
+            match cached {
+                Some(p) => Some(p),
+                None => {
+                    let field = field.clone();
+                    let png = tokio::task::spawn_blocking(move || {
+                        let rgba = radar_grid::render(
+                            &field,
+                            (b.min_lat, b.min_lon, b.max_lat, b.max_lon),
+                            radar::IMAGE_PX,
+                            radar::IMAGE_PX,
+                        );
+                        radar_grid::encode_png(&rgba, radar::IMAGE_PX, radar::IMAGE_PX)
+                    })
+                    .await
+                    .map_err(|e| format!("radar render: {e}"))??;
+                    let p =
+                        std::sync::Arc::new(base64::engine::general_purpose::STANDARD.encode(png));
+                    *RADAR_RENDER.lock().unwrap() = Some((validity, b, p.clone()));
+                    Some(p)
+                }
+            }
+        }
+        _ => None,
+    };
+    Ok(radar::RadarSnapshot {
+        png_base64: png_base64.map(|p| (*p).clone()),
+        bounds: load.field.as_ref().map(|_| bounds),
+        valid_time_ms: load.validity.map(|v| v.timestamp_millis()),
+        accumulation_minutes: load.field.as_ref().map(|f| f.accumulation_minutes()),
+        origin: load.origin,
+        error: load.error,
+    })
+}

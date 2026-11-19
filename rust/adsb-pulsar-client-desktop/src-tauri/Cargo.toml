@@ -33,6 +33,11 @@ adsb-weather-server = { path = "../../adsb-weather-server", default-features = f
 # OpenAIP airspace downloads (airspace.rs). Same version and TLS stack as the
 # rest of the workspace, so this adds no second reqwest.
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+# Météo-France radar mosaics (radar_grid.rs): ODIM_H5 read in pure Rust (no
+# libhdf5), rendered to PNG. png and base64 are the versions Tauri already pulls in.
+hdf5-reader = { version = "0.13", default-features = false }
+png = "0.17"
+base64 = "0.22"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

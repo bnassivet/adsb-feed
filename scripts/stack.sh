@@ -359,6 +359,10 @@ start_desktop() { # start_desktop [VAR=value ...]
   openaip_countries="$(cfg desktop openaip_countries "")"
   [ -z "$openaip_countries" ] || set -- "$@" "ADSB_OPENAIP_COUNTRIES=$openaip_countries"
 
+  # Météo-France radar: also read by Rust only (get_radar).
+  mf_key="$(cfg desktop meteofrance_api_key "")"
+  [ -z "$mf_key" ] || set -- "$@" "ADSB_METEOFRANCE_API_KEY=$mf_key"
+
   if [ -n "$cfg_json" ]; then
     CFG_JSON="$cfg_json" start desktop env "$@" "TAURI_DEV_CONFIG=$cfg_json" \
       sh -c "cd '$REPO/rust/adsb-pulsar-client-desktop' && exec npx tauri dev -c \"\$TAURI_DEV_CONFIG\""
