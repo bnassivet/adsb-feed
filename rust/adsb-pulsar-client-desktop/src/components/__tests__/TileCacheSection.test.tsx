@@ -52,18 +52,48 @@ function hangUntilAborted(_url: string, init?: RequestInit): Promise<Response> {
   });
 }
 
+/** How late the test store opens. */
+const STORE_OPEN_MS = 20;
+
 const notFound = () => Promise.resolve({ path: null, searched: ["/w"] });
 
 function renderSection(props: Partial<Parameters<typeof TileCacheSection>[0]> = {}) {
   return render(
     <TileCacheSection
       receiver={RX}
-      openStore={() => Promise.resolve(store)}
+      // Opens a little late, as IndexedDB does: a test that clicks before the
+      // section is ready then fails every time, not once in a hundred runs.
+      openStore={() => new Promise((r) => setTimeout(() => r(store), STORE_OPEN_MS))}
       cartoApiKey={undefined}
       locate={notFound}
       {...props}
     />,
   );
+}
+
+/**
+ * Waits until the store is open and read, shown by the "N tiles cached" line.
+ * Before that, "Download area" is disabled and Apply saves the settings but
+ * cannot prune; user-event silently skips a click on a disabled button.
+ */
+async function ready() {
+  await screen.findByText(/\b\d+ tiles? cached/);
+}
+
+/**
+ * Sets the prefetch zoom and applies it, waiting until Apply has finished.
+ * "Download area" is disabled while Apply works (pruning and eviction), and
+ * user-event silently skips a click on a disabled button: clicking it straight
+ * after Apply only worked when Apply happened to be fast, so these tests
+ * failed under full-suite load.
+ */
+async function applyZoom(user: ReturnType<typeof userEvent.setup>, zoom: string) {
+  await ready();
+  const input = await screen.findByLabelText("Prefetch max zoom");
+  await user.clear(input);
+  await user.type(input, zoom);
+  await user.click(screen.getByRole("button", { name: "Apply" }));
+  await screen.findByText(/^Applied/);
 }
 
 describe("TileCacheSection", () => {
@@ -123,6 +153,7 @@ describe("TileCacheSection", () => {
     await seed(8, near.x, near.y, 1000);
     await seed(8, mid.x, mid.y, 1000);
     renderSection();
+    await ready();
     const radius = await screen.findByLabelText("Radius (NM)");
     await user.clear(radius);
     await user.type(radius, "100");
@@ -151,10 +182,7 @@ describe("TileCacheSection", () => {
       vi.fn(async () => new Response(new Uint8Array(100), { status: 200, headers: { "content-type": "image/jpeg" } })),
     );
     renderSection();
-    const zoom = await screen.findByLabelText("Prefetch max zoom");
-    await user.clear(zoom);
-    await user.type(zoom, "3");
-    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await applyZoom(user, "3");
     await user.click(screen.getByRole("button", { name: "Download area" }));
     expect(await screen.findByText(/Download complete/)).toBeInTheDocument();
     const { tiles } = await store.stats();
@@ -170,7 +198,8 @@ describe("TileCacheSection", () => {
       vi.fn(hangUntilAborted),
     );
     renderSection();
-    await user.click(await screen.findByRole("button", { name: "Download area" }));
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Download area" }));
     await user.click(await screen.findByRole("button", { name: "Cancel download" }));
     expect(await screen.findByText(/Download cancelled/)).toBeInTheDocument();
   });
@@ -186,11 +215,14 @@ describe("TileCacheSection", () => {
         return new Response(new Uint8Array(100), { status: 200, headers: { "content-type": "image/jpeg" } });
       }),
     );
+    // A slow Apply, as under load: the download must still start (applyZoom waits).
+    const evict = store.evictTo.bind(store);
+    vi.spyOn(store, "evictTo").mockImplementation(async (b) => {
+      await new Promise((r) => setTimeout(r, 50));
+      return evict(b);
+    });
     const first = renderSection();
-    const zoom = await screen.findByLabelText("Prefetch max zoom");
-    await user.clear(zoom);
-    await user.type(zoom, "1");
-    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await applyZoom(user, "1");
     await user.click(screen.getByRole("button", { name: "Download area" }));
     expect(await screen.findByText(/leaving Settings does not stop it/)).toBeInTheDocument();
     first.unmount(); // navigate away
@@ -207,7 +239,8 @@ describe("TileCacheSection", () => {
       vi.fn(hangUntilAborted),
     );
     const first = renderSection();
-    await user.click(await screen.findByRole("button", { name: "Download area" }));
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Download area" }));
     first.unmount();
     renderSection();
     await user.click(await screen.findByRole("button", { name: "Cancel download" }));
@@ -266,10 +299,7 @@ describe("TileCacheSection", () => {
       ),
     );
     renderSection();
-    const zoom = await screen.findByLabelText("Prefetch max zoom");
-    await user.clear(zoom);
-    await user.type(zoom, "1");
-    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await applyZoom(user, "1");
     await user.click(screen.getByRole("button", { name: "Download area" }));
     expect(await screen.findByText(/Download finished with 1 failed tile/)).toBeInTheDocument();
   });
