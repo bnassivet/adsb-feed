@@ -4,6 +4,7 @@ import { FiltersPanel } from "@/components/Filters";
 import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventFilterMode } from "@/lib/types";
 import type { WeatherControlsProps } from "@/components/WeatherControls";
 import type { AirspaceControlsProps } from "./AirspaceControls";
+import type { MetarControlsProps } from "./MetarControls";
 
 const MIN_PANEL_WIDTH = 180;
 const MAX_PANEL_WIDTH = 400;
@@ -65,6 +66,8 @@ interface LeftPanelProps {
   weather?: WeatherControlsProps;
   /** Airspace layer controls. Optional: without them the panel has no airspace section. */
   airspaces?: AirspaceControlsProps;
+  /** METAR layer controls. Optional: without them the panel has no METAR section. */
+  metar?: MetarControlsProps;
   /** Rendered below the filters. A slot rather than typed props so the
    *  simulation state doesn't have to be drilled through this component. */
   simulationPanel?: ReactNode;

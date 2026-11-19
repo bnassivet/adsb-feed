@@ -10,9 +10,12 @@ import { AircraftDetailsPanel } from "@/components/AircraftDetailsPanel";
 import { useWeatherSnapshot } from "@/hooks/useWeatherSnapshot";
 import { useAirspaces } from "@/hooks/useAirspaces";
 import { DEFAULT_AIRSPACE_OPACITY, airspaceTypes, filterByType } from "@/lib/airspace";
+import { DEFAULT_METAR_OPACITY, filterByCategory, metarCategories, type CategoryKey } from "@/lib/metar";
+import { useMetars } from "@/hooks/useMetars";
 
 /** Stable default for the hidden airspace types (a literal would be a new array per render). */
 const NO_HIDDEN_TYPES: number[] = [];
+const NO_HIDDEN_CATEGORIES: CategoryKey[] = [];
 import { useHistoricalWeather } from "@/hooks/useHistoricalWeather";
 import { availableLevels, isOffHour, isStale, type WeatherLevel } from "@/lib/weather";
 import {
@@ -105,6 +108,10 @@ export default function Dashboard() {
   const [airspaceOpacity, setAirspaceOpacity] = useLocalStorage<number>("adsb-airspace-opacity", DEFAULT_AIRSPACE_OPACITY);
   const [airspaceHoverInfo, setAirspaceHoverInfo] = useLocalStorage<boolean>("adsb-airspace-hover-info", true);
   const [airspaceHiddenTypes, setAirspaceHiddenTypes] = useLocalStorage<number[]>("adsb-airspace-hidden-types", NO_HIDDEN_TYPES);
+  const [showMetar, setShowMetar] = useLocalStorage<boolean>("adsb-show-metar", false);
+  const [metarOpacity, setMetarOpacity] = useLocalStorage<number>("adsb-metar-opacity", DEFAULT_METAR_OPACITY);
+  const [metarHoverInfo, setMetarHoverInfo] = useLocalStorage<boolean>("adsb-metar-hover-info", true);
+  const [metarHiddenCategories, setMetarHiddenCategories] = useLocalStorage<CategoryKey[]>("adsb-metar-hidden-categories", NO_HIDDEN_CATEGORIES);
   const [weatherLevel, setWeatherLevel] = useLocalStorage<WeatherLevel>("adsb-weather-level", 250);
   // Particles are a continuous animation, so they are opt-in.
   const [showWeatherBarbs, setShowWeatherBarbs] = useLocalStorage<boolean>("adsb-weather-barbs", true);
@@ -294,6 +301,12 @@ export default function Dashboard() {
   const airspaceLayer = useAirspaces(showAirspaces, receiverLocation ?? null);
   // Options come from every nearby airspace, so a hidden type stays listed and can be shown again.
   const airspaceTypeList = useMemo(() => airspaceTypes(airspaceLayer.airspaces), [airspaceLayer.airspaces]);
+  const metarLayer = useMetars(showMetar, receiverLocation ?? null);
+  const metarCategoryList = useMemo(() => metarCategories(metarLayer.metars), [metarLayer.metars]);
+  const visibleMetars = useMemo(
+    () => filterByCategory(metarLayer.metars, metarHiddenCategories),
+    [metarLayer.metars, metarHiddenCategories],
+  );
   const visibleAirspaces = useMemo(
     () => filterByType(airspaceLayer.airspaces, airspaceHiddenTypes),
     [airspaceLayer.airspaces, airspaceHiddenTypes],
@@ -1530,6 +1543,24 @@ export default function Dashboard() {
             hiddenTypes: airspaceHiddenTypes,
             onHiddenTypesChange: setAirspaceHiddenTypes,
           }}
+          metar={{
+            show: showMetar,
+            onToggle: () => setShowMetar((prev: boolean) => !prev),
+            count: visibleMetars.length,
+            fetchedAtMs: metarLayer.fetchedAtMs,
+            nowMs: weatherClockMs,
+            stale: metarLayer.stale,
+            loading: metarLayer.loading,
+            error: metarLayer.error,
+            onReload: metarLayer.reload,
+            opacity: metarOpacity,
+            onOpacityChange: setMetarOpacity,
+            showHoverInfo: metarHoverInfo,
+            onToggleHoverInfo: () => setMetarHoverInfo((prev: boolean) => !prev),
+            categories: metarCategoryList,
+            hiddenCategories: metarHiddenCategories,
+            onHiddenCategoriesChange: setMetarHiddenCategories,
+          }}
         />
 
         {/* Map + Table */}
@@ -1537,7 +1568,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
+              <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={visibleMetars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={weatherClockMs} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel

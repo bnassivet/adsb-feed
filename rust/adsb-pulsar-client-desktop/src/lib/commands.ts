@@ -47,6 +47,7 @@ import type {
 } from "./types";
 import type { WeatherAvailability, WeatherServiceView, WeatherSnapshot } from "./weather";
 import type { CountryAirspaces } from "./airspace";
+import type { MetarSnapshot } from "./metar";
 
 export async function startFeed(): Promise<void> {
   return invoke("start_feed");
@@ -431,4 +432,14 @@ export async function reorderScenarioTracks(
  */
 export async function getAirspaces(): Promise<CountryAirspaces[]> {
   return invoke("get_airspaces");
+}
+
+/**
+ * Latest METAR per station within `radiusNm` of a point (the receiver), from
+ * AviationWeather.gov via Rust's in-memory cache. `force` bypasses the
+ * 5-minute cache but not its 60 s floor. A failed refresh resolves with the
+ * previous reports and an `error`, rather than rejecting.
+ */
+export async function getMetars(lat: number, lng: number, radiusNm: number, force: boolean): Promise<MetarSnapshot> {
+  return invoke("get_metars", { lat, lng, radiusNm, force });
 }

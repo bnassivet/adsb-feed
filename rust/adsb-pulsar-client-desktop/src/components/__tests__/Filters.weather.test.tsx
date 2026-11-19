@@ -122,3 +122,22 @@ describe("FiltersPanel airspace section", () => {
     expect(screen.queryByRole("checkbox", { name: /airspaces \(openaip\)/i })).not.toBeInTheDocument();
   });
 });
+
+describe("FiltersPanel METAR section", () => {
+  const metar = {
+    show: false, onToggle: vi.fn(), count: 0, fetchedAtMs: null, nowMs: 0, stale: false, loading: false,
+    error: null, onReload: vi.fn(), opacity: 0.8, onOpacityChange: vi.fn(), showHoverInfo: true,
+    onToggleHoverInfo: vi.fn(), categories: [], hiddenCategories: [], onHiddenCategoriesChange: vi.fn(),
+  };
+
+  it("shows the METAR controls when METAR props are given", () => {
+    render(<FiltersPanel {...baseProps} metar={metar} />);
+    expect(screen.getByText("METAR")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /metar stations/i })).toBeInTheDocument();
+  });
+
+  it("has no METAR section without them", () => {
+    render(<FiltersPanel {...baseProps} />);
+    expect(screen.queryByRole("checkbox", { name: /metar stations/i })).not.toBeInTheDocument();
+  });
+});

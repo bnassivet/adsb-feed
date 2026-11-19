@@ -5514,6 +5514,57 @@ openaip.net profile page, under API clients.
 - **No chat tool yet.** The tool descriptions are tuned for the fast path, so
   adding a layer there is a change of its own.
 
+## METAR stations
+
+The latest METAR of every station within 300 NM of the receiver, from the
+AviationWeather.gov Data API (NOAA). No key is needed. Filters → METAR turns it
+on (`adsb-show-metar`, off by default). This is the second phase-0 layer, built
+like *Airspaces (OpenAIP)*. Plan: `docs/plans/2026-11-19-metar-layer.md`.
+
+| Piece | Role |
+|---|---|
+| `src-tauri/src/metar.rs` | `bbox_around` (rounded to 0.1°), `fetch` (custom User-Agent, as AWC asks), `load_metars` (in-memory cache) |
+| `get_metars(lat, lng, radiusNm, force)` | `{items, fetchedAtMs, origin, error}`. It never fails because of an outage |
+| `src/lib/metar.ts` | Pure: `normalizeMetar`, wind, visibility and cloud formatting, `metarMarkerStyle`, `metarCategories`, `filterByCategory`, `nearestMetar`, report age |
+| `hooks/useMetars.ts` | Loads when the layer is switched on, refreshes every 5 min while on; `reload` forces a refresh |
+| `MetarControls`, `MetarInfo` | Panel section (count, snapshot age, refresh, stale alert, opacity, info on hover, flight-category filter) and the hover box |
+| `ChecklistCombo` | The checkbox dropdown shared with the airspace type filter |
+
+**Cache: in memory only.** An observation is out of date within the hour, so
+nothing is kept offline. The cache in MAP_ENGINES.md says: "last reading kept,
+age always shown".
+
+| Situation | Result |
+|---|---|
+| A snapshot under 5 minutes old for the same box | served from memory |
+| Older, or a different box | downloaded |
+| `force` (Refresh / Retry) | downloaded, but never twice within 60 s (AWC asks for gentle use) |
+| The download fails | the last snapshot for that box, with its original `fetchedAtMs` and the error (`stale-cache`) |
+
+**On the map:**
+- One dot per station, coloured by flight category: VFR green, MVFR blue, IFR
+  red, LIFR magenta, unknown grey.
+- The dots sit on a non-interactive canvas pane at z 360, above the airspaces.
+- A report older than 90 minutes is drawn as a ring: its colour stays, but
+  most of the fill goes.
+- Opacity and night dimming work as for airspaces.
+- **Hover:** `nearestMetar` picks the station within 10 px of the cursor. Its
+  box shows the decoded fields, QNH and the raw report.
+- **Hover boxes** are stacked bottom-left: the station first, then the
+  airspaces above the point.
+
+**Data shapes**, checked live on 2026-11-19:
+- `wdir` is a number or `"VRB"`; `visib` is a number or a string such as
+  `"10+"`.
+- `fltCat` is null when a station reports no visibility; 20 of 106 stations
+  around Montréal did.
+- `altim` is QNH in hPa; 17 of 106 stations had none.
+- HTTP 204 means no stations in the box.
+
+**Next:** QNH from the nearest station turns ADS-B pressure altitude into
+altitude above MSL. It is needed before airspace limits in feet MSL, terrain
+or buildings can be compared with aircraft.
+
 ## Observability (Prometheus)
 
 Every long-lived service in the stack exposes a Prometheus endpoint. Before

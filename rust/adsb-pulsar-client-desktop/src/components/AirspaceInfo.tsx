@@ -12,7 +12,7 @@ export function AirspaceInfo({ stack }: { stack: Airspace[] }) {
   if (stack.length === 0) return null;
   const shown = stack.slice(0, MAX_SHOWN);
   return (
-    <div className="absolute bottom-6 left-2.5 z-[1000] max-w-xs pointer-events-none rounded bg-slate-900/85 px-2 py-1.5 text-[11px] leading-tight text-slate-200 shadow">
+    <div className="max-w-xs pointer-events-none rounded bg-slate-900/85 px-2 py-1.5 text-[11px] leading-tight text-slate-200 shadow">
       <ul className="flex flex-col gap-1">
         {shown.map((a) => (
           <li key={a.id}>

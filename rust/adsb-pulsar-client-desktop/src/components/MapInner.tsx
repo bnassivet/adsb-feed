@@ -53,6 +53,8 @@ import type { ReceiverPoint } from "@/lib/aircraft-details";
 import { AltitudeLegend } from "./AltitudeLegend";
 import { WindSpeedLegend } from "./WindSpeedLegend";
 import { AirspaceInfo } from "./AirspaceInfo";
+import { MetarInfo } from "./MetarInfo";
+import { DEFAULT_METAR_OPACITY, METAR_ATTRIBUTION, metarMarkerStyle, nearestMetar, type Metar } from "@/lib/metar";
 import { AIRSPACE_ATTRIBUTION, DEFAULT_AIRSPACE_OPACITY, airspacesAt, airspaceStyle, type Airspace } from "@/lib/airspace";
 
 /**
@@ -419,6 +421,79 @@ function AirspaceLayer({ airspaces, opacity, theme }: { airspaces: Airspace[]; o
   return null;
 }
 
+/** Leaflet pane for METAR stations: above airspaces, below density and tracks. */
+const METAR_PANE = "metars";
+const NO_METARS: Metar[] = [];
+/** How close the cursor must be to a station dot to describe it. */
+const METAR_PICK_PX = 10;
+
+/**
+ * METAR stations as dots coloured by flight category, on their own canvas.
+ * Non-interactive like the airspaces: `MetarHover` picks the nearest station
+ * instead, so dots never take clicks from the map or hover from tracks.
+ */
+function MetarLayer({ metars, opacity, theme, nowMs }: { metars: Metar[]; opacity: number; theme: MapTheme; nowMs: number }) {
+  const map = useMap();
+  const markers = useRef<{ metar: Metar; layer: L.CircleMarker }[]>([]);
+  useEffect(() => {
+    if (metars.length === 0) return;
+    const pane = map.getPane(METAR_PANE) ?? map.createPane(METAR_PANE);
+    pane.style.zIndex = "360";
+    pane.style.pointerEvents = "none";
+    const renderer = L.canvas({ pane: METAR_PANE });
+    const group = L.layerGroup();
+    markers.current = metars.map((metar) => ({
+      metar,
+      layer: L.circleMarker([metar.lat, metar.lng], { pane: METAR_PANE, renderer, interactive: false }).addTo(group),
+    }));
+    group.addTo(map);
+    return () => {
+      group.remove();
+      markers.current = [];
+    };
+  }, [map, metars]);
+  // Declared after the build effect, so a rebuild is styled in the same commit.
+  useEffect(() => {
+    for (const { metar, layer } of markers.current) {
+      const { radius, ...style } = metarMarkerStyle(metar, { opacity, theme, nowMs });
+      layer.setStyle(style);
+      layer.setRadius(radius);
+    }
+  }, [metars, opacity, theme, nowMs]);
+  return null;
+}
+
+/** Reports the station under the cursor (within a few pixels), at most once per frame. */
+function MetarHover({ metars, onPick }: { metars: Metar[]; onPick: (m: Metar | null) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    if (metars.length === 0) return;
+    let frame = 0;
+    let at: L.Point | null = null;
+    const onMove = (e: L.LeafletMouseEvent) => {
+      at = e.containerPoint;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (at) onPick(nearestMetar(metars, at, (m) => map.latLngToContainerPoint([m.lat, m.lng]), METAR_PICK_PX));
+      });
+    };
+    const onOut = () => {
+      at = null;
+      onPick(null);
+    };
+    map.on("mousemove", onMove);
+    map.on("mouseout", onOut);
+    return () => {
+      map.off("mousemove", onMove);
+      map.off("mouseout", onOut);
+      cancelAnimationFrame(frame);
+      onPick(null);
+    };
+  }, [map, metars, onPick]);
+  return null;
+}
+
 /** Reports the airspaces under the cursor, at most once per frame. */
 function AirspaceHover({ airspaces, onStack }: { airspaces: Airspace[]; onStack: (stack: Airspace[]) => void }) {
   const map = useMap();
@@ -692,6 +767,13 @@ interface Props {
   airspaceOpacity?: number;
   /** List the airspaces under the cursor. Defaults to true. */
   airspaceHoverInfo?: boolean;
+  /** METAR stations to draw; empty or absent while the layer is off. */
+  metars?: Metar[];
+  metarOpacity?: number;
+  /** Describe the station under the cursor. Defaults to true. */
+  metarHoverInfo?: boolean;
+  /** Minute clock: report ages (old reports are drawn hollow). */
+  metarNowMs?: number;
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];
   dbHistoryTracks?: AircraftTrack[];
@@ -1009,7 +1091,7 @@ function labelIcon(p: LabelPlacement, text: string, color: string, selected: boo
   });
 }
 
-export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
+export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
   // Memoised: the basemap layer is rebuilt (and every tile reloaded) when this changes.
   const tile = useMemo(() => tileConfig(mapTheme, CARTO_API_KEY), [mapTheme]);
   const [airspaceStack, setAirspaceStack] = useState<Airspace[]>(NO_AIRSPACES);
@@ -1018,6 +1100,9 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
     (next: Airspace[]) => setAirspaceStack((prev) => (prev.length === 0 && next.length === 0 ? prev : next)),
     [],
   );
+  // nearestMetar returns the list's own objects, so the same station (or null)
+  // on each mouse move is the same value and React skips the render.
+  const [metarPick, setMetarPick] = useState<Metar | null>(null);
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
     : DEFAULT_CENTER;
@@ -1081,6 +1166,11 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
         <AirspaceLayer airspaces={airspaces} opacity={airspaceOpacity} theme={mapTheme} />
         {/* Unmounted when off: no mousemove listener at all, and its cleanup clears the box */}
         {airspaceHoverInfo && <AirspaceHover airspaces={airspaces} onStack={updateAirspaceStack} />}
+
+        {/* METAR stations — above airspaces, never interactive */}
+        {metars.length > 0 && <MapAttribution text={METAR_ATTRIBUTION} />}
+        <MetarLayer metars={metars} opacity={metarOpacity} theme={mapTheme} nowMs={metarNowMs} />
+        {metarHoverInfo && <MetarHover metars={metars} onPick={setMetarPick} />}
 
         {/* Density hexagons — zoom-adaptive H3 resolution */}
         <DensityLayer showDensity={showDensity} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} receiverLocation={receiverLocation} theme={mapTheme} />
@@ -1321,7 +1411,11 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
         />
       )}
       <AltitudeLegend theme={mapTheme} />
-      <AirspaceInfo stack={airspaceStack} />
+      {/* Hover readouts, stacked bottom-left: the station first, then the airspaces above the point */}
+      <div className="absolute bottom-6 left-2.5 z-[1000] flex flex-col gap-1 pointer-events-none">
+        <MetarInfo metar={metarPick} nowMs={metarNowMs} />
+        <AirspaceInfo stack={airspaceStack} />
+      </div>
       {weather && weatherParticles && <WindSpeedLegend theme={mapTheme} />}
     </div>
   );
