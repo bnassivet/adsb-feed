@@ -127,6 +127,7 @@ pub fn run() {
             // Initialize DuckDB storage in the app data directory.
             // Failure is non-fatal — the app continues in real-time-only mode.
             let (storage, storage_config, storage_mode) = init_storage(app);
+            clean_radar_history(app);
 
             // Load persisted config from Tauri store (falls back to defaults).
             let config = load_config(app);
@@ -444,6 +445,30 @@ fn build_remote_config(
 ///
 /// Returns `(handle, config)`. The config is kept for reopening after release.
 /// Returns `(None, None)` if initialization fails (app continues without history).
+/// Deletes radar frames left from an old session (radar_history.rs), in the
+/// background so startup does not wait on the disk. `[desktop]
+/// radar_cleanup_on_start = false` keeps them until the radar is next turned on.
+fn clean_radar_history(app: &tauri::App) {
+    let setting = std::env::var(radar_history::CLEANUP_ENV).ok();
+    if !radar_history::cleanup_on_start(setting.as_deref()) {
+        info!("Radar frames: start-up clean-up off");
+        return;
+    }
+    let Ok(app_data_dir) = app.path().app_data_dir() else {
+        return;
+    };
+    let dir = stack_data_dir(&app_data_dir, stack_from_env().as_deref()).join("radar");
+    std::thread::spawn(move || {
+        let removed = radar_history::clean_at_start(&dir, chrono::Utc::now());
+        if removed > 0 {
+            info!(
+                "Radar frames: deleted {removed} old file(s) in {}",
+                dir.display()
+            );
+        }
+    });
+}
+
 fn init_storage(
     app: &tauri::App,
 ) -> (

@@ -40,6 +40,8 @@ only, and needs a second subscription. So the hour is collected by the app.
   command trimmed it, so with the animation off it grew ~400 KB per image.
 - `save` never deletes the file it just wrote; `prune` runs on every radar
   request, so an old session is deleted when the radar is turned on.
+- At app start, old frames and leftover temporary files are deleted, unless
+  `[desktop] radar_cleanup_on_start = false`.
 - `RadarTimeline` over the map: offset from the latest, a slider, play/pause,
   wheel stepping. Seeking pauses.
 

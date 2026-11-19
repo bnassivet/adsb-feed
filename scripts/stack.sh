@@ -305,6 +305,15 @@ desktop_frontend_env() {
   return 0
 }
 
+# Non-secret settings read by the desktop's Rust side, one VAR=value per line;
+# printed by `desktop-env` too. radar_cleanup_on_start is exported only when
+# off, so the default (clean up old radar frames at start) needs no variable.
+desktop_backend_env() {
+  [ "$(cfg desktop radar_cleanup_on_start true)" = "false" ] && \
+    echo "ADSB_RADAR_CLEANUP_ON_START=false"
+  return 0
+}
+
 start_desktop() { # start_desktop [VAR=value ...]
   dev="$(desktop_dev_port)"
   if port_busy "$dev"; then
@@ -345,7 +354,7 @@ start_desktop() { # start_desktop [VAR=value ...]
     "CARGO_TARGET_DIR=$target"
 
   # shellcheck disable=SC2046  # word splitting is the point: one VAR=x per line
-  set -- "$@" $(desktop_frontend_env)
+  set -- "$@" $(desktop_frontend_env) $(desktop_backend_env)
 
   # Only when set: an empty value would override a key exported in the shell
   # or kept in the desktop's .env.local.
@@ -427,6 +436,7 @@ desktop-env)
   require_config
   desktop_live_env
   desktop_frontend_env
+  desktop_backend_env
   ;;
 
 paths)

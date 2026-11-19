@@ -85,14 +85,42 @@ pub fn frames(dir: &Path, now: DateTime<Utc>) -> Vec<(DateTime<Utc>, PathBuf)> {
 /// Deletes every frame `select` would not animate at `now`: frames that left
 /// the hour, and a whole session once its newest frame is over an hour old.
 /// Called on every radar request, so turning the radar on cleans up.
-pub fn prune(dir: &Path, now: DateTime<Utc>) {
+/// Returns how many frames it deleted.
+pub fn prune(dir: &Path, now: DateTime<Utc>) -> usize {
     let all = on_disk(dir);
     let keep = select(all.iter().map(|(v, _)| *v).collect(), now);
-    for (v, p) in all {
-        if !keep.contains(&v) {
-            let _ = std::fs::remove_file(p);
-        }
-    }
+    all.into_iter()
+        .filter(|(v, p)| !keep.contains(v) && std::fs::remove_file(p).is_ok())
+        .count()
+}
+
+/// `[desktop] radar_cleanup_on_start`, exported only when false.
+pub const CLEANUP_ENV: &str = "ADSB_RADAR_CLEANUP_ON_START";
+
+/// Clean up at start unless the setting says false, 0, no or off.
+pub fn cleanup_on_start(value: Option<&str>) -> bool {
+    !matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("false" | "0" | "no" | "off")
+    )
+}
+
+/// At app start: the frames `prune` would delete, plus temporary files left
+/// by a save that never finished. A restart within the hour keeps its frames.
+/// Returns how many files it deleted.
+pub fn clean_at_start(dir: &Path, now: DateTime<Utc>) -> usize {
+    let temporaries = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.starts_with(PREFIX) && n.ends_with(".h5.tmp"))
+        })
+        .filter(|e| std::fs::remove_file(e.path()).is_ok())
+        .count();
+    temporaries + prune(dir, now)
 }
 
 /// Keeps a downloaded mosaic, then deletes the frames more than an hour older
@@ -356,6 +384,51 @@ mod tests {
         prune(dir.path(), t(10 + 61));
         assert!(on_disk(dir.path()).is_empty());
         prune(&dir.path().join("missing"), t(0));
+    }
+
+    #[test]
+    fn cleanup_at_start_is_on_unless_turned_off() {
+        for on in [
+            None,
+            Some(""),
+            Some("true"),
+            Some("1"),
+            Some("yes"),
+            Some("whatever"),
+        ] {
+            assert!(cleanup_on_start(on), "{on:?}");
+        }
+        for off in ["false", "FALSE", " 0 ", "no", "off"] {
+            assert!(!cleanup_on_start(Some(off)), "{off}");
+        }
+    }
+
+    #[test]
+    fn clean_at_start_deletes_an_old_session_and_leftover_temporaries() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in [0, 5] {
+            save(dir.path(), t(i), b"x").unwrap();
+        }
+        std::fs::write(dir.path().join("lame_d_eau-20261119T0310Z.h5.tmp"), "half").unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "kept").unwrap();
+        assert_eq!(clean_at_start(dir.path(), t(5 + 61)), 3);
+        let left: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(left, vec!["notes.txt"]);
+    }
+
+    #[test]
+    fn clean_at_start_keeps_a_session_from_the_last_hour() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in [0, 5] {
+            save(dir.path(), t(i), b"x").unwrap();
+        }
+        assert_eq!(clean_at_start(dir.path(), t(20)), 0);
+        assert_eq!(on_disk(dir.path()).len(), 2);
+        assert_eq!(clean_at_start(&dir.path().join("missing"), t(0)), 0);
     }
 
     #[test]

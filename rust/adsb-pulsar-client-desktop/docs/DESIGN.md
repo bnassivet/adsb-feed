@@ -5689,8 +5689,13 @@ current image, so the hour is collected by the app:
   for the times the layer was on, and survive a restart.
 - **An old session is deleted, not just hidden.** `radar_history::prune` runs
   on every `get_radar` and `get_radar_frames`: once the newest frame is over an
-  hour old, every frame goes. Turning the radar on cleans up; with the radar
-  never turned on again, the files stay (at most ~31 MB).
+  hour old, every frame goes. Turning the radar on cleans up.
+- **And at app start**, in a background thread (`clean_radar_history` in
+  `lib.rs`, `radar_history::clean_at_start`): the same rule, plus `.h5.tmp`
+  files left by a save that never finished. A restart within the hour keeps
+  its frames. `[desktop] radar_cleanup_on_start = false` turns it off;
+  `stack.sh` then exports `ADSB_RADAR_CLEANUP_ON_START=false` (unset means
+  on), and the frames stay until the radar is next turned on.
 - **Memory is bounded by the cache itself.** `RenderCache::insert` drops the
   rendered images more than an hour older than the newest, whichever command
   inserts. (The first version trimmed only in `get_radar_frames`, so with the
