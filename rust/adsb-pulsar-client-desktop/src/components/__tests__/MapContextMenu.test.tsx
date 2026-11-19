@@ -31,4 +31,20 @@ describe("MapContextMenu", () => {
     expect(defaultProps.onCreateEvent).toHaveBeenCalledWith(45.5, -73.6);
     expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("offers What's here? when wired, with the point, and closes", async () => {
+    const user = userEvent.setup();
+    const onWhatIsHere = vi.fn();
+    const onClose = vi.fn();
+    render(<MapContextMenu {...defaultProps} onClose={onClose} onWhatIsHere={onWhatIsHere} />);
+    await user.click(screen.getByRole("button", { name: "What's here?" }));
+    expect(onWhatIsHere).toHaveBeenCalledWith(45.5, -73.6);
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("has no What's here? without a handler", () => {
+    render(<MapContextMenu {...defaultProps} />);
+    expect(screen.queryByRole("button", { name: "What's here?" })).toBeNull();
+  });
 });
+

@@ -21,6 +21,7 @@ import type { AircraftWind } from "@/lib/aircraft-wind";
 import { RangeLineIcon, rangeLineTitle, RANGE_LINE_COLOR } from "@/components/RangeLineButton";
 import { formatAlongTrack, formatCrosswind, formatWind } from "@/lib/wind-format";
 import { DEFAULT_TRANSITION_ALTITUDE_FT, mslAltitude, qnhAltitudeFt, type QnhSource } from "@/lib/qnh";
+import { heightAboveGroundFt } from "@/lib/terrain";
 import { verticalStatus, type Airspace, type VerticalStatusKind } from "@/lib/airspace";
 
 const STATUS_STYLE: Record<VerticalStatusKind, string> = {
@@ -59,6 +60,8 @@ interface Props {
   onToggleRangeLine?: () => void;
   /** QNH of the nearest current METAR, for live selections only; the MSL row is omitted without it. */
   qnh?: QnhSource | null;
+  /** Ground height under the aircraft, metres (0 at sea); no height-above-ground row without it. */
+  groundElevationM?: number | null;
   /** Below it the MSL row applies; at or above it, flight levels do. */
   transitionAltitudeFt?: number;
   /** Airspaces above the aircraft's position (horizontally); the section is omitted without any. */
@@ -78,6 +81,7 @@ export function AircraftDetailsPanel({
   rangeLineOn = false,
   onToggleRangeLine,
   qnh = null,
+  groundElevationM = null,
   transitionAltitudeFt = DEFAULT_TRANSITION_ALTITUDE_FT,
   airspaces,
 }: Props) {
@@ -96,6 +100,7 @@ export function AircraftDetailsPanel({
       rangeLineOn={rangeLineOn}
       onToggleRangeLine={onToggleRangeLine}
       qnh={qnh}
+      groundElevationM={groundElevationM}
       transitionAltitudeFt={transitionAltitudeFt}
       airspaces={airspaces}
     />
@@ -133,6 +138,7 @@ function ExpandedPanel({
   rangeLineOn = false,
   onToggleRangeLine,
   qnh = null,
+  groundElevationM = null,
   transitionAltitudeFt = DEFAULT_TRANSITION_ALTITUDE_FT,
   airspaces,
 }: {
@@ -147,6 +153,7 @@ function ExpandedPanel({
   rangeLineOn?: boolean;
   onToggleRangeLine?: () => void;
   qnh?: QnhSource | null;
+  groundElevationM?: number | null;
   transitionAltitudeFt?: number;
   airspaces?: Airspace[];
 }) {
@@ -192,6 +199,12 @@ function ExpandedPanel({
     pressureFt: track.altitude,
     mslFt: track.altitude != null && qnh ? Math.round(qnhAltitudeFt(track.altitude, qnh.qnhHpa)) : null,
   };
+  // Height above ground: the QNH altitude at any height (true height follows the
+  // real pressure, flight level or not); pressure altitude, marked std, without QNH.
+  const agl =
+    groundElevationM != null && track.altitude != null && !track.is_on_ground
+      ? { ft: heightAboveGroundFt(heights.mslFt ?? track.altitude, groundElevationM), std: heights.mslFt == null }
+      : null;
   const azimuthDeg = receiverAzimuthDeg(track, receiverLocation);
   const elevationDeg = receiverElevationDeg(track, receiverLocation);
 
@@ -272,6 +285,19 @@ function ExpandedPanel({
                 ≈ {altitudeMsl.toLocaleString("en-US")} ft
                 <span className="ml-1 text-[10px] text-slate-500">
                   QNH {Math.round(qnh.qnhHpa)} {qnh.stationId}
+                </span>
+              </span>
+            </Row>
+          )}
+          {agl && groundElevationM != null && (
+            <Row label="Height AGL">
+              <span
+                data-testid="height-agl"
+                title="Altitude minus the ground under the aircraft (Terrarium elevation; the sea surface at sea)"
+              >
+                ≈ {agl.ft.toLocaleString("en-US")} ft
+                <span className="ml-1 text-[10px] text-slate-500">
+                  ground {Math.round(Math.max(groundElevationM, 0)).toLocaleString("en-US")} m{agl.std ? " · std" : ""}
                 </span>
               </span>
             </Row>

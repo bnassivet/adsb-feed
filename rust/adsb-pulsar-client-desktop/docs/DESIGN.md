@@ -5823,6 +5823,32 @@ Filters → Relief, off by default (`adsb-show-relief`, `adsb-relief-opacity`,
 **Not yet:** a self-served hillshade from a DEM (phase 4); 3D terrain
 (phase 3, MapLibre).
 
+## What's here? and height above ground
+
+Plan: `docs/plans/2026-11-19-what-is-here.md`. The relief and depth layers
+are pictures and cannot give a value at a point; the data behind them can.
+
+- **Ground height: Terrarium tiles** (keyless, AWS open data). The height is
+  in each pixel's colour, `R*256 + G + B/256 − 32768` m. `terrain.rs` fetches
+  the z12 tile under a point once, keeps it on disk for good
+  (`<stack data dir>/terrain/`), keeps 16 decoded tiles in memory and
+  interpolates between pixel centres. Sea is 0 m in these tiles. Checked:
+  Mont Blanc reads 4,780 m.
+- **Sea depth: EMODnet's point query** (`depth_sample`), with the min and max
+  of the survey cell. Over land it answers a positive height, which is dropped.
+- **`what_is_here`** asks both together; either half can fail on its own.
+  Right-click → **What's here?** opens a box where the menu was: *Ground
+  1,234 m (4,049 ft)*, *Sea depth 22.7 m (22.0–23.2 m)*, both on a coast, or
+  *Sea level*.
+- **Height AGL** (aircraft details): altitude minus `max(ground, 0)`, so the
+  sea surface at sea. It uses the QNH altitude at any height when a station is
+  near (true height follows the real pressure, flight level or not), otherwise
+  pressure altitude marked *std*. There is no row on the ground.
+  `useGroundElevation` asks once per ~200 m cell, at the cell centre, so a
+  cruising aircraft costs a lookup in memory, and a new tile download about
+  every 45 s.
+- No CSP change: Rust makes the requests.
+
 ## Observability (Prometheus)
 
 Every long-lived service in the stack exposes a Prometheus endpoint. Before

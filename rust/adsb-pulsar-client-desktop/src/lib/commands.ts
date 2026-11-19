@@ -50,6 +50,7 @@ import type { CountryAirspaces } from "./airspace";
 import type { MetarSnapshot } from "./metar";
 import type { RadarFrames, RadarSnapshot } from "./radar";
 import type { SeamarkSnapshot } from "./seamark";
+import type { WhatIsHereResult } from "./terrain";
 
 export async function startFeed(): Promise<void> {
   return invoke("start_feed");
@@ -470,4 +471,14 @@ export async function getRadarFrames(lat: number, lng: number, radiusNm: number,
  */
 export async function getSeamarks(south: number, west: number, north: number, east: number): Promise<SeamarkSnapshot> {
   return invoke("get_seamarks", { south, west, north, east });
+}
+
+/** Ground height under a point, metres (0 at sea), from Terrarium tiles cached on disk. */
+export async function getGroundElevation(lat: number, lng: number): Promise<number> {
+  return invoke("get_ground_elevation", { lat, lng });
+}
+
+/** Ground height and sea depth at a point, each with its own error. */
+export async function whatIsHere(lat: number, lng: number): Promise<WhatIsHereResult> {
+  return invoke("what_is_here", { lat, lng });
 }

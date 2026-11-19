@@ -8,6 +8,8 @@ export interface MapContextMenuProps {
   lat: number;
   lng: number;
   onCreateEvent: (lat: number, lng: number) => void;
+  /** Ground height and sea depth at the point; no item without it. */
+  onWhatIsHere?: (lat: number, lng: number) => void;
   onClose: () => void;
 }
 
@@ -17,6 +19,7 @@ export function MapContextMenu({
   lat,
   lng,
   onCreateEvent,
+  onWhatIsHere,
   onClose,
 }: MapContextMenuProps) {
   return (
@@ -33,6 +36,17 @@ export function MapContextMenu({
       >
         Create Event Here
       </button>
+      {onWhatIsHere && (
+        <button
+          className="w-full px-3 py-1.5 text-xs text-left text-slate-200 hover:bg-slate-700 transition"
+          onClick={() => {
+            onWhatIsHere(lat, lng);
+            onClose();
+          }}
+        >
+          What&apos;s here?
+        </button>
+      )}
       <div className="px-3 py-0.5 text-[10px] text-slate-600 border-t border-slate-800">
         {lat.toFixed(5)}, {lng.toFixed(5)}
       </div>

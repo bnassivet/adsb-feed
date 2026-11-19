@@ -42,6 +42,10 @@ import { EventsOfInterestPanel } from "@/components/EventsOfInterestPanel";
 import { EventsOfInterestContent } from "@/components/EventsOfInterestContent";
 import { EventFormDialog } from "@/components/EventFormDialog";
 import { MapContextMenu } from "@/components/MapContextMenu";
+import { WhatIsHere } from "@/components/WhatIsHere";
+import { useGroundElevation } from "@/hooks/useGroundElevation";
+import { whatIsHere } from "@/lib/commands";
+import type { WhatIsHereResult } from "@/lib/terrain";
 import { useAircraftTracks } from "@/hooks/useAircraftTracks";
 import { useSimulatedTracks } from "@/hooks/useSimulatedTracks";
 import { useAgentSimulatedTracks } from "@/hooks/useAgentSimulatedTracks";
@@ -963,6 +967,12 @@ export default function Dashboard() {
   // Airspaces above the selected aircraft: the drawn ones, so a hidden type stays hidden here too.
   const selLat = selectedTrack?.latitude ?? null;
   const selLng = selectedTrack?.longitude ?? null;
+  // Ground under the selected aircraft, for its height above ground: asked per ~200 m cell.
+  const selectedPoint = useMemo(
+    () => (selLat != null && selLng != null ? { lat: selLat, lng: selLng } : null),
+    [selLat, selLng],
+  );
+  const selectedGround = useGroundElevation(selectedPoint);
   const selectedAirspaces = useMemo(
     () => (selLat != null && selLng != null && visibleAirspaces.length > 0 ? airspacesAt(visibleAirspaces, selLat, selLng) : []),
     [visibleAirspaces, selLat, selLng],
@@ -1254,6 +1264,31 @@ export default function Dashboard() {
 
   const handleCloseContextMenu = useCallback(() => {
     setContextMenu(null);
+  }, []);
+
+  // "What's here?": the box opens where the menu was, loading; a newer request replaces an older one.
+  const [here, setHere] = useState<
+    { x: number; y: number; lat: number; lng: number; result: WhatIsHereResult | null; error: string | null } | null
+  >(null);
+  const hereRequest = useRef(0);
+  const handleWhatIsHere = useCallback(
+    (lat: number, lng: number) => {
+      if (!contextMenu) return;
+      const id = ++hereRequest.current;
+      setHere({ x: contextMenu.x, y: contextMenu.y, lat, lng, result: null, error: null });
+      whatIsHere(lat, lng)
+        .then((result) => {
+          if (hereRequest.current === id) setHere((h) => (h ? { ...h, result } : h));
+        })
+        .catch((e: unknown) => {
+          if (hereRequest.current === id) setHere((h) => (h ? { ...h, error: e instanceof Error ? e.message : String(e) } : h));
+        });
+    },
+    [contextMenu],
+  );
+  const handleCloseHere = useCallback(() => {
+    hereRequest.current++;
+    setHere(null);
   }, []);
 
   const handleStartMapPick = useCallback((mode: "point" | "area") => {
@@ -1713,6 +1748,7 @@ export default function Dashboard() {
                 wind={selectedWind}
                 receiverLocation={receiverLocation}
                 qnh={selectedQnh}
+                groundElevationM={selectedGround.groundM}
                 transitionAltitudeFt={transitionAltitudeFt}
                 airspaces={selectedAirspaces}
                 rangeLineOn={showRangeLines}
@@ -1974,7 +2010,19 @@ export default function Dashboard() {
           lat={contextMenu.lat}
           lng={contextMenu.lng}
           onCreateEvent={handleCreateEventFromMap}
+          onWhatIsHere={handleWhatIsHere}
           onClose={handleCloseContextMenu}
+        />
+      )}
+      {here && (
+        <WhatIsHere
+          x={here.x}
+          y={here.y}
+          lat={here.lat}
+          lng={here.lng}
+          result={here.result}
+          error={here.error}
+          onClose={handleCloseHere}
         />
       )}
     </div>
