@@ -89,3 +89,47 @@ export function formatWithTz(
   }
   return new Date(ms).toLocaleString();
 }
+
+/** Wall-clock fields of `ms` in `zone` (machine local when undefined). */
+function zonedFields(ms: number, zone?: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hourCycle: "h23",
+  }).formatToParts(new Date(ms));
+  const part = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+  return { y: part("year"), mo: part("month"), d: part("day"), h: part("hour"), mi: part("minute"), s: part("second") };
+}
+
+/**
+ * `ms` as a `datetime-local` value ("YYYY-MM-DDTHH:MM") on the clock of `zone`;
+ * machine local when `zone` is undefined, as the field itself would be.
+ */
+export function toZonedInput(ms: number, zone?: string): string {
+  const f = zonedFields(ms, zone);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${f.y}-${pad(f.mo)}-${pad(f.d)}T${pad(f.h)}:${pad(f.mi)}`;
+}
+
+/**
+ * A `datetime-local` value read on the clock of `zone` (machine local when
+ * undefined), as epoch ms; null for an empty or partial value. Twice round the
+ * zone's offset, so a value next to a clock change lands on the right side.
+ */
+export function fromZonedInput(value: string, zone?: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);
+  if (!m) return null;
+  const [y, mo, d, h, mi] = m.slice(1).map(Number);
+  const wall = Date.UTC(y, mo - 1, d, h, mi);
+  const offset = (t: number) => {
+    const f = zonedFields(t, zone);
+    return Date.UTC(f.y, f.mo - 1, f.d, f.h, f.mi, f.s) - Math.floor(t / 1000) * 1000;
+  };
+  const guess = wall - offset(wall);
+  return wall - offset(guess);
+}

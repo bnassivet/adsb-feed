@@ -829,7 +829,8 @@ accumulation even when users navigate to Settings or other pages.
 - `log_level`: Debug, info, warn, error
 
 **Display Section**:
-- `Time Display`: three-button toggle — `Local` / `UTC` / `Source`; stored in `localStorage` under key `adsb-display-tz` via `useDisplayTz` hook (independent of Config)
+- `Time Display`: three-button toggle — `Local` / `UTC` / `Source`; stored in `localStorage` under key `adsb-display-tz` via `useDisplayTz` hook (independent of Config) — also selectable in DB History beside **Time Range** (`dbhist-tz`), the same setting. The custom Start/End fields are read and written on that clock (`toZonedInput` / `fromZonedInput`); they used to be machine-local whatever the setting. `Source` is offered there only when `dump1090_tz` names a zone, since otherwise it equals `Local`.
+- **Every `useLocalStorage` hook on a key shares its value.** Each call used to hold its own copy, so a setting changed in one place (Settings) did not reach a panel already on screen: the time zone choice appeared to do nothing. A write now fires `adsb-local-storage` on `window` (one microtask later: the write happens inside a state updater, where another component's state cannot be set), and the browser's `storage` event covers other windows.
 
 ---
 
@@ -3119,6 +3120,15 @@ Isolating parser + storage in a shared workspace crate lets the data engine be t
 - Stored data is timezone-agnostic and always comparable
 - `dump1090_tz` changes take effect on the next flush without any DB migration
 - Existing rows are not retroactively corrected when `dump1090_tz` changes
+
+**Both DB History charts are in the display zone, and say which.** The time zone is a display choice, so the server stays in UTC: `get_hourly_heatmap` counts per UTC day and hour, as it always has. The time chart formats its bucket times with `useDisplayTz`. The heatmap used to show the UTC cells as they came, so in Local mode it disagreed with the time chart by the UTC offset, and neither said which clock it used. Now `buildHeatmapGrid` moves each UTC cell to the local day and hour its UTC hour starts in:
+- **Exact in a whole-hour zone**, summer time included: each local hour is one UTC hour, so even distinct aircraft and flight counts carry over. On the autumn clock change the two UTC hours that land on the repeated local hour add up (aircraft seen in both count twice, for that one hour); the skipped spring hour stays empty, so the grid keeps 24 columns.
+- **UTC in a half- or quarter-hour zone** (`heatmapDisplayZone`: India, Nepal, Newfoundland...). A local hour there straddles two UTC hours, and distinct counts cannot be split or added, so the heatmap shows UTC and its label's tooltip says why, rather than approximate.
+- Days are date keys (the epoch of a local date's midnight UTC), labelled with `formatDayLabel` in UTC, never converted again.
+- Both titles carry the zone (`· Europe/Paris`); `useDisplayTz().zoneName` is always a concrete IANA name. Changing Time Display re-renders both charts at once, with no new query.
+- The tooltip's lookup (`buildHeatmapCellLookup`) is keyed in the same zone as the grid and adds up the same cells. It used to be keyed by UTC day and hour, so the colours moved to the local hour while the hover showed the UTC cell's numbers: the heatmap looked as if it ignored the setting.
+- `formatAdaptiveTimeLabel` reads a missing zone as the machine's local zone, like `formatWithTz`. It used to default to UTC, and the panel passes no zone in Local mode, so the time chart drew UTC whichever mode was selected: switching appeared to do nothing. The chart now formats with the concrete `zoneName`.
+- A first version passed the zone to the server, which grouped by local hour. It was dropped: the zone is a display concern, and for every whole-hour zone the browser's result is identical.
 
 **A receiver on the wrong time zone is reported, not corrected.** The SBS-1 string carries no zone, so `"Local"` silently assumes the dump1090 host and this machine share one. In November 2026 the receiver's Pi was on Montréal time while the Mac was on CET, and every row was stored 6 h early. `insert_batch_sync` now compares each batch's newest timestamp with the clock (`zone_offset_minutes`): a whole number of quarter hours (within 2 min), between 30 min and 14 h, logs one warning per offset (`zone_warning`), e.g. "dump1090 timestamps are 6h00 behind this computer's clock". Normal latency, a stalled batch and a replayed recording do not match. Nothing is corrected automatically, because a replay of a recent file could match by chance; fix the receiver's time zone instead.
 

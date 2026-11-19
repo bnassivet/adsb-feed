@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { timeAgo, timeAgoLong, formatEventTime, formatBytes, formatWithTz } from "../format";
+import { timeAgo, timeAgoLong, formatEventTime, formatBytes, formatWithTz, toZonedInput, fromZonedInput } from "../format";
 
 describe("timeAgo", () => {
   afterEach(() => {
@@ -128,5 +128,29 @@ describe("formatWithTz", () => {
     const result = formatWithTz(FIXED_MS, "local");
     expect(typeof result).toBe("string");
     expect(result.length).toBeGreaterThan(0);
+  });
+});
+
+describe("toZonedInput / fromZonedInput (datetime-local fields in a chosen zone)", () => {
+  const T = Date.UTC(2024, 0, 15, 23, 30); // 00:30 on Jan 16 in Paris
+  it("writes the wall-clock time of the zone", () => {
+    expect(toZonedInput(T, "UTC")).toBe("2024-01-15T23:30");
+    expect(toZonedInput(T, "Europe/Paris")).toBe("2024-01-16T00:30");
+    expect(toZonedInput(Date.UTC(2024, 6, 15, 22, 30), "Europe/Paris")).toBe("2024-07-16T00:30");
+    expect(toZonedInput(T, "America/New_York")).toBe("2024-01-15T18:30");
+  });
+
+  it("reads a wall-clock time back in the zone", () => {
+    expect(fromZonedInput("2024-01-16T00:30", "Europe/Paris")).toBe(T);
+    expect(fromZonedInput("2024-07-16T00:30", "Europe/Paris")).toBe(Date.UTC(2024, 6, 15, 22, 30));
+    expect(fromZonedInput("2024-01-15T23:30", "UTC")).toBe(T);
+    expect(fromZonedInput("2024-01-15T18:30", "America/New_York")).toBe(T);
+  });
+
+  it("round-trips, and leaves an empty or partial field alone", () => {
+    for (const zone of ["UTC", "Europe/Paris", "Asia/Kolkata", "America/Los_Angeles"]) {
+      expect(fromZonedInput(toZonedInput(T, zone), zone)).toBe(T);
+    }
+    expect(fromZonedInput("", "UTC")).toBeNull();
   });
 });

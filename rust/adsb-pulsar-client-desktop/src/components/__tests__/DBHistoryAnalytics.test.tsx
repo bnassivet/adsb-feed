@@ -473,3 +473,61 @@ describe("DBHistoryAnalytics — Raw message types", () => {
     expect(screen.queryByTestId("msgtype-distribution")).not.toBeInTheDocument();
   });
 });
+
+describe("DBHistoryAnalytics — time zone labels", () => {
+  it("names the zone on both the time chart and the heatmap", () => {
+    render(
+      <DBHistoryAnalytics
+        summaries={[makeSummary()]}
+        timeBuckets={[{ bucket_ms: JAN15 + 10 * 3_600_000, count: 3 }]}
+        rangeMs={DAY_MS}
+        heatmapCells={[makeCell(JAN15, 10, 5, 100)]}
+        startMs={JAN15}
+        endMs={JAN15 + DAY_MS}
+        zoneName="Europe/Paris"
+      />,
+    );
+    screen.getByTestId("dbhist-analytics").setAttribute("open", "");
+    expect(screen.getByTestId("time-distribution-zone")).toHaveTextContent("Europe/Paris");
+    expect(within(screen.getByTestId("heatmap-section")).getByTestId("heatmap-zone")).toHaveTextContent("Europe/Paris");
+  });
+});
+
+describe("DBHistoryAnalytics — heatmap zone", () => {
+  const props = {
+    summaries: [makeSummary()],
+    timeBuckets: [{ bucket_ms: JAN15 + 10 * 3_600_000, count: 3 }],
+    rangeMs: DAY_MS,
+    // 23:00 UTC on Jan 15, from the server, which always counts in UTC.
+    heatmapCells: [makeCell(JAN15, 23, 5, 100)],
+    startMs: Date.UTC(2024, 0, 15, 23, 30),
+    endMs: Date.UTC(2024, 0, 16, 22, 30),
+  };
+
+  it("shows the server's UTC cells in the display zone", () => {
+    render(<DBHistoryAnalytics {...props} zoneName="Europe/Paris" />);
+    screen.getByTestId("dbhist-analytics").setAttribute("open", "");
+    const heatmap = screen.getByTestId("heatmap-section");
+    expect(within(heatmap).getByTestId("heatmap-zone")).toHaveTextContent("Europe/Paris");
+    expect(within(heatmap).getByText("Tue 1/16")).toBeInTheDocument();
+    expect(within(heatmap).queryByText("Mon 1/15")).toBeNull();
+  });
+
+  it("shows the moved cell's numbers in its tooltip, not the UTC cell's", () => {
+    render(<DBHistoryAnalytics {...props} zoneName="Europe/Paris" />);
+    screen.getByTestId("dbhist-analytics").setAttribute("open", "");
+    const heatmap = screen.getByTestId("heatmap-section");
+    const midnight = heatmap.querySelector('[title^="Tue 1/16 0:00"]');
+    expect(midnight?.getAttribute("title")).toContain("5 aircraft");
+    expect(heatmap.querySelector('[title^="Tue 1/16 23:00"]')?.getAttribute("title")).toContain("0 aircraft");
+  });
+
+  it("says UTC, and why, in a zone whose hours straddle UTC hours", () => {
+    render(<DBHistoryAnalytics {...props} zoneName="Asia/Kolkata" />);
+    screen.getByTestId("dbhist-analytics").setAttribute("open", "");
+    expect(screen.getByTestId("time-distribution-zone")).toHaveTextContent("Asia/Kolkata");
+    const label = within(screen.getByTestId("heatmap-section")).getByTestId("heatmap-zone");
+    expect(label).toHaveTextContent("UTC");
+    expect(label).toHaveAttribute("title", expect.stringMatching(/Asia\/Kolkata/));
+  });
+});

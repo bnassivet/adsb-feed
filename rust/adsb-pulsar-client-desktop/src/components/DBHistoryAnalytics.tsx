@@ -18,6 +18,7 @@ import type { RadarMode } from "@/lib/detection-radar";
 import {
   buildAltitudeBins,
   buildHeatmapGrid,
+  heatmapDisplayZone,
   buildHeatmapCellLookup,
   buildMessageTypeTotals,
   buildPieSlices,
@@ -40,7 +41,13 @@ type AltitudeMode = "aircraft" | "flights";
 interface Props {
   summaries: AircraftSummary[];
   timeBuckets: TimeDistributionBucket[];
+  /** Zone for formatting times (undefined = machine local). */
   tzName?: string;
+  /**
+   * The display zone, shown beside both titles. The heatmap's UTC cells are
+   * moved into it in the browser (UTC instead in a half-hour zone).
+   */
+  zoneName?: string;
   detectionSectors?: DetectionRangeSector[];
   /** Duration of the queried time range in ms (for adaptive label formatting). */
   rangeMs?: number;
@@ -133,7 +140,7 @@ const GRANULARITIES: { value: TimeGranularity; label: string }[] = [
   { value: "month", label: "Month" },
 ];
 
-export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSectors, rangeMs, onZoom, granularity, onGranularityChange, heatmapCells, startMs, endMs, rawMessageCount, timeMetric, onTimeMetricChange, flightSummaries, messageTypeBuckets }: Props) {
+export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, zoneName, detectionSectors, rangeMs, onZoom, granularity, onGranularityChange, heatmapCells, startMs, endMs, rawMessageCount, timeMetric, onTimeMetricChange, flightSummaries, messageTypeBuckets }: Props) {
   const summary = useMemo(() => computeDbHistorySummary(summaries, rawMessageCount ?? 0, flightSummaries ?? []), [summaries, rawMessageCount, flightSummaries]);
   const [altMode, setAltMode] = useState<AltitudeMode>("aircraft");
   const altFadeId = useSvgId("alt-fade");
@@ -141,10 +148,12 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSe
     () => buildAltitudeBins(altMode === "flights" && flightSummaries ? flightSummaries : summaries),
     [summaries, flightSummaries, altMode],
   );
-  const timeData = useMemo(() => formatTimeChartData(timeBuckets, tzName, rangeMs), [timeBuckets, tzName, rangeMs]);
+  // The concrete display zone when known, so labels never depend on a default.
+  const chartZone = zoneName ?? tzName;
+  const timeData = useMemo(() => formatTimeChartData(timeBuckets, chartZone, rangeMs), [timeBuckets, chartZone, rangeMs]);
   const hasAltData = altBins.some((b) => b.count > 0);
   const typeRows = messageTypeBuckets ?? NO_TYPE_ROWS;
-  const stackedData = useMemo(() => buildStackedTypeData(typeRows, tzName, rangeMs), [typeRows, tzName, rangeMs]);
+  const stackedData = useMemo(() => buildStackedTypeData(typeRows, chartZone, rangeMs), [typeRows, chartZone, rangeMs]);
   const typeTotals = useMemo(() => buildMessageTypeTotals(typeRows), [typeRows]);
   // One MSG-type filter, shared by the stacked histogram and Message Types.
   const [hiddenTypes, setHiddenTypes] = useLocalStorage<MessageTypeKey[]>("adsb-dbhist-hidden-types", []);
@@ -163,8 +172,8 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSe
   }
 
   const tickFormatter = useCallback(
-    (value: number) => formatAdaptiveTimeLabel(value, rangeMs ?? 0, tzName),
-    [rangeMs, tzName],
+    (value: number) => formatAdaptiveTimeLabel(value, rangeMs ?? 0, chartZone),
+    [rangeMs, chartZone],
   );
 
   return (
@@ -210,6 +219,7 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSe
             onMetricChange={onTimeMetricChange}
             stackedData={timeMetric === "raw_messages" ? stackedData : []}
             typeFilter={typeFilter}
+            zoneName={zoneName}
           />
         )}
 
@@ -218,7 +228,7 @@ export function DBHistoryAnalytics({ summaries, timeBuckets, tzName, detectionSe
 
         {/* Activity heatmap */}
         {heatmapCells && heatmapCells.length > 0 && startMs != null && endMs != null && (
-          <ActivityHeatmap cells={heatmapCells} startMs={startMs} endMs={endMs} tzName={tzName} />
+          <ActivityHeatmap cells={heatmapCells} startMs={startMs} endMs={endMs} zoneName={zoneName} />
         )}
 
         {/* Altitude histogram */}
@@ -306,9 +316,21 @@ interface TimeChartProps {
   /** Types present in the range, in fixed order (drives stack order and legend). */
   /** The shared MSG-type filter (present types, visible types, toggles). */
   typeFilter?: TypeFilter;
+  /** The zone the axis is in, shown beside the title. */
+  zoneName?: string;
 }
 
-function TimeDistributionChart({ timeData, tickFormatter, onZoom, granularity, onGranularityChange, metric, onMetricChange, stackedData = [], typeFilter }: TimeChartProps) {
+/** The zone beside a chart title: which clock the hours are read on. */
+function ZoneLabel({ zoneName, testId, title }: { zoneName?: string; testId: string; title?: string }) {
+  if (!zoneName) return null;
+  return (
+    <span data-testid={testId} title={title} className="ml-1 normal-case text-slate-600">
+      · {zoneName}
+    </span>
+  );
+}
+
+function TimeDistributionChart({ timeData, tickFormatter, onZoom, granularity, onGranularityChange, metric, onMetricChange, stackedData = [], typeFilter, zoneName }: TimeChartProps) {
   const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null);
   const [refAreaRight, setRefAreaRight] = useState<number | null>(null);
   const [stackPref, setStackPref] = useLocalStorage<boolean>("adsb-dbhist-raw-by-type", true);
@@ -351,7 +373,10 @@ function TimeDistributionChart({ timeData, tickFormatter, onZoom, granularity, o
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
-        <div className="text-[10px] text-slate-500 uppercase">Time Distribution</div>
+        <div className="text-[10px] text-slate-500 uppercase">
+          Time Distribution
+          <ZoneLabel zoneName={zoneName} testId="time-distribution-zone" />
+        </div>
         {onMetricChange && metric && (
           <div className="flex gap-0.5" data-testid="dbhist-metric-toggle">
             {TIME_METRICS.map((m) => (
@@ -904,22 +929,26 @@ function ActivityHeatmap({
   cells,
   startMs,
   endMs,
-  tzName,
+  zoneName,
 }: {
   cells: HourlyHeatmapCell[];
   startMs: number;
   endMs: number;
-  tzName?: string;
+  /** The display zone. */
+  zoneName?: string;
 }) {
+  // The server counts in UTC hours; whole-hour zones get them moved, others stay UTC.
+  const shownZone = useMemo(() => heatmapDisplayZone(zoneName, startMs, endMs), [zoneName, startMs, endMs]);
   const [metric, setMetric] = useState<HeatmapMetric>("aircraft");
   const [hoveredCell, setHoveredCell] = useState<{ row: number; col: number } | null>(null);
 
   const grid = useMemo(
-    () => buildHeatmapGrid(cells, startMs, endMs, metric, tzName),
-    [cells, startMs, endMs, metric, tzName],
+    () => buildHeatmapGrid(cells, startMs, endMs, metric, shownZone),
+    [cells, startMs, endMs, metric, shownZone],
   );
 
-  const cellLookup = useMemo(() => buildHeatmapCellLookup(cells), [cells]);
+  // Same zone as the grid, so the tooltip shows the cell under the pointer.
+  const cellLookup = useMemo(() => buildHeatmapCellLookup(cells, shownZone), [cells, shownZone]);
 
   // Compute max value for normalisation
   const maxVal = useMemo(() => {
@@ -937,7 +966,18 @@ function ActivityHeatmap({
   return (
     <div data-testid="heatmap-section">
       <div className="flex items-center justify-between mb-1">
-        <div className="text-[10px] text-slate-500 uppercase">Activity Heatmap</div>
+        <div className="text-[10px] text-slate-500 uppercase">
+          Activity Heatmap
+          <ZoneLabel
+            zoneName={shownZone}
+            testId="heatmap-zone"
+            title={
+              zoneName && shownZone !== zoneName
+                ? `Shown in UTC: hours in ${zoneName} do not start on UTC hours, and aircraft counts per UTC hour cannot be split.`
+                : undefined
+            }
+          />
+        </div>
         <div className="flex gap-0.5" data-testid="heatmap-metric-toggle">
           {HEATMAP_METRICS.map((m) => (
             <button

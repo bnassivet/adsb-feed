@@ -49,4 +49,23 @@ describe("useLocalStorage", () => {
     expect(hook1.current[0]).toBe("val-1");
     expect(hook2.current[0]).toBe("val-2");
   });
+
+  it("keeps every hook on the same key in step (a setting changed in one panel shows in all)", async () => {
+    const { result: a } = renderHook(() => useLocalStorage("shared-key", "local"));
+    const { result: b } = renderHook(() => useLocalStorage("shared-key", "local"));
+    // The others hear of it one microtask later, after the writer's own update.
+    await act(async () => a.current[1]("utc"));
+    expect(b.current[0]).toBe("utc");
+    const { result: other } = renderHook(() => useLocalStorage("other-key", "x"));
+    expect(other.current[0]).toBe("x");
+  });
+
+  it("follows a change made in another window", () => {
+    const { result } = renderHook(() => useLocalStorage("win-key", "local"));
+    act(() => {
+      localStorage.setItem("win-key", JSON.stringify("utc"));
+      window.dispatchEvent(new StorageEvent("storage", { key: "win-key", newValue: JSON.stringify("utc") }));
+    });
+    expect(result.current[0]).toBe("utc");
+  });
 });

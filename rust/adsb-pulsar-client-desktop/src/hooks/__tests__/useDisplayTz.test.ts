@@ -41,4 +41,13 @@ describe("useDisplayTz", () => {
     act(() => result.current.setTzMode("utc"));
     expect(result.current.resolvedTzName).toBe("UTC");
   });
+
+  it("zoneName is always a concrete IANA zone, for labels and the heatmap", async () => {
+    const { result } = renderHook(() => useDisplayTz());
+    expect(result.current.zoneName).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    act(() => result.current.setTzMode("utc"));
+    expect(result.current.zoneName).toBe("UTC");
+    act(() => result.current.setTzMode("source"));
+    await vi.waitFor(() => expect(result.current.zoneName).toBe("Europe/Paris"));
+  });
 });

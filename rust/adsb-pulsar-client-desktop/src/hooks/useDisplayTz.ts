@@ -14,6 +14,8 @@ export type DisplayTzMode = "local" | "utc" | "source";
  *   setTzMode     — setter (persisted to localStorage)
  *   formatTime    — formats epoch ms using the current preference
  *   resolvedTzName — the IANA string for Intl (undefined = machine local)
+ *   zoneName      — always a concrete IANA name ("UTC" included): chart labels,
+ *                   and moving the heatmap's UTC hours into local ones
  */
 export function useDisplayTz() {
   const [tzMode, setTzMode] = useLocalStorage<DisplayTzMode>(
@@ -40,5 +42,7 @@ export function useDisplayTz() {
     [tzMode, sourceTzName],
   );
 
-  return { tzMode, setTzMode, formatTime, resolvedTzName };
+  const zoneName = resolvedTzName ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  return { tzMode, setTzMode, formatTime, resolvedTzName, zoneName, sourceTzName };
 }

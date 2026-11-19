@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockInvokeResponse, clearMockResponses } from "@/test/mocks/tauri";
 import { DBHistoryContent } from "../DBHistoryContent";
@@ -782,3 +782,66 @@ describe("DBHistoryContent flight segmentation", () => {
     });
   });
 });
+
+describe("DBHistoryContent — display time zone", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    mockInvokeResponse("get_config", { dump1090_tz: "Pacific/Kiritimati" });
+  });
+
+  it("selects the zone beside the time range, shared with Settings", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} />);
+    await waitFor(() => expect(screen.getByTestId("dbhist-tz")).toBeInTheDocument());
+    expect(screen.getByTestId("dbhist-tz-local")).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByTestId("dbhist-tz-utc"));
+    expect(screen.getByTestId("dbhist-tz-utc")).toHaveAttribute("aria-pressed", "true");
+    expect(localStorage.getItem("adsb-display-tz")).toBe(JSON.stringify("utc"));
+  });
+
+  it("reads the custom range in the selected zone", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockBrowseResponses();
+    let sent: { start_ms?: number; end_ms?: number } = {};
+    mockInvokeResponse("get_hourly_heatmap", (args: { query: { start_ms: number; end_ms: number } }) => {
+      sent = args.query;
+      return [];
+    });
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} />);
+    await waitFor(() => expect(screen.getByTestId("dbhist-tz")).toBeInTheDocument());
+    await user.click(screen.getByTestId("dbhist-tz-utc"));
+    await user.click(screen.getByTestId("dbhist-preset-custom"));
+    const [start, end] = screen.getAllByDisplayValue(/T/) as HTMLInputElement[];
+    fireEvent.change(start, { target: { value: "2024-01-15T10:00" } });
+    fireEvent.change(end, { target: { value: "2024-01-15T12:00" } });
+    expect(start.value).toBe("2024-01-15T10:00");
+    await user.click(screen.getByTestId("dbhist-browse-btn"));
+    await waitFor(() => expect(sent.start_ms).toBe(Date.UTC(2024, 0, 15, 10)));
+    expect(sent.end_ms).toBe(Date.UTC(2024, 0, 15, 12));
+  });
+
+  it("re-draws the heatmap in the zone picked after a browse, with no new query", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockBrowseResponses();
+    let heatmapQueries = 0;
+    const now = Date.now();
+    const lastHour = Math.floor(now / 3_600_000) - 1;
+    mockInvokeResponse("get_hourly_heatmap", () => {
+      heatmapQueries += 1;
+      const day = Math.floor(lastHour / 24) * 86_400_000;
+      return [{ day_ms: day, hour: lastHour % 24, aircraft_count: 5, message_count: 50, raw_message_count: 0, flight_count: 1 }];
+    });
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} />);
+    await waitFor(() => expect(screen.getByTestId("dbhist-tz")).toBeInTheDocument());
+    await user.click(screen.getByTestId("dbhist-tz-source"));
+    await user.click(screen.getByTestId("dbhist-preset-24h"));
+    await waitFor(() => expect(screen.getByTestId("heatmap-zone")).toHaveTextContent("Pacific/Kiritimati"));
+    await user.click(screen.getByTestId("dbhist-tz-utc"));
+    await waitFor(() => expect(screen.getByTestId("heatmap-zone")).toHaveTextContent("UTC"));
+    expect(heatmapQueries).toBe(1);
+  });
+});
+
