@@ -5419,6 +5419,81 @@ dark theme in the field.
 
 ---
 
+## Airspaces (OpenAIP)
+
+Controlled and special-use airspace around the receiver, from
+[openAIP](https://www.openaip.net) (CC BY-NC-SA 4.0, non-commercial). Filters →
+Airspaces turns it on (`adsb-show-airspaces`, off by default). This is the
+first layer of phase 0 in `MAP_ENGINES.md` (new layers in Leaflet before any
+engine change). Plan: `docs/plans/2026-11-19-openaip-airspaces.md`.
+
+### Split: Rust fetches and caches, TypeScript reads and draws
+
+| Piece | Role |
+|---|---|
+| `src-tauri/src/airspace.rs` | `airac_cycle`, `parse_countries`, `fetch_page`, `load_country`: download and cache, no interpretation |
+| `get_airspaces` (`commands.rs`) | One `CountryAirspaces` per configured country. It never fails because of a key or an outage, since each country carries its own `origin` and `error` |
+| `src/lib/airspace.ts` | Pure: `normalizeAirspace`, `formatLimit`, `prepareAirspaces` (type filter and receiver radius), `airspacesAt`, `airspaceStyle`, `airspaceStatus` |
+| `hooks/useAirspaces.ts` | Loads the first time the layer is switched on (once, even under StrictMode), then keeps the data for the session |
+| `AirspaceControls` / `AirspaceInfo` | Filters section (count, AIRAC cycle, expired alert, errors, Retry, credit) and the hover box |
+| `MapInner.tsx` | `AirspaceLayer` (polygons) and `AirspaceHover` (cursor → `airspacesAt`, once per frame) |
+
+The key is read by Rust, so it never reaches the JS bundle and needs no CSP
+host. The raw OpenAIP `items` are cached untouched, so a change in how they
+are read never needs a new download.
+
+### Cache per AIRAC cycle
+
+A file holds one country for one cycle:
+`<stack data dir>/airspaces/<CC>-<YYNN>.json`. AIRAC cycles are 28 days long,
+counted from cycle 2001 on 2020-01-02.
+
+| Situation | Result (`origin`) |
+|---|---|
+| The current cycle's file exists | read, no network (`cache`) |
+| It does not | every page downloaded, written through a temporary file, older cycles deleted (`download`) |
+| The download fails | the newest older file, `expired: true`, with the error (`stale-cache`) |
+| …and nothing is cached | empty, with the error (`none`) |
+
+A failure on any page caches nothing, because a half-downloaded country would
+look complete until the next cycle. An expired cycle is shown as an **alert**
+in the panel, not a footnote: outdated airspace is a safety issue.
+
+### Why non-interactive polygons and a hover box
+
+Airspaces are large and stacked: a CTR inside a TMA, inside a CTA. As
+interactive Leaflet paths they would take hover from the density hexes and
+clicks from the map, and Leaflet only reports the top path. So the polygons go
+on their own canvas pane (z 350: above the tiles, below the overlay pane), with
+`pointer-events: none`. On mousemove, `airspacesAt` runs a point-in-polygon
+test (bbox first) and lists **every** airspace at the cursor, lowest first. The
+largest polygons are drawn first, so a CTR stays visible over its TMA.
+
+Not drawn: FIR, UIR, ACC, FIS, VFR sectors, LTA and UTA cover the whole map,
+and airways and routes are corridors (`HIDDEN_TYPES`).
+
+### Configuration
+
+`[desktop] openaip_api_key` (secret, never printed by `desktop-env`) and
+`openaip_countries` (default `CA`) become `ADSB_OPENAIP_API_KEY` and
+`ADSB_OPENAIP_COUNTRIES` for the Tauri process. A free key comes from the
+openaip.net profile page, under API clients.
+
+- **No keyless path.** OpenAIP's public export bucket became "requester pays"
+  (HTTP 400 `UserProjectMissing`), and the API answers 403 without a key
+  (checked 2026-11-19).
+- **Country filter only.** `GET /api/airspaces` filters by country; it has no
+  bbox parameter. `prepareAirspaces` keeps whatever lies within 300 NM of the
+  receiver.
+
+### Limits
+
+- **Heights not corrected.** Limits are shown as published (`GND`, `ft` MSL,
+  `ft AGL`, `FL`). Comparing them with aircraft would need QNH, from the METAR
+  layer, which comes next in phase 0.
+- **No chat tool yet.** The tool descriptions are tuned for the fast path, so
+  adding a layer there is a change of its own.
+
 ## Observability (Prometheus)
 
 Every long-lived service in the stack exposes a Prometheus endpoint. Before

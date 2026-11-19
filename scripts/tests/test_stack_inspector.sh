@@ -58,12 +58,13 @@ echo "false turns the inspector off"
 set_inspector false
 check "false" "$VAR=true" "$(env_line)"
 
-echo "the CARTO key is never printed"
+echo "the CARTO and OpenAIP keys are never printed"
 python3 - "$CONFIG" <<'PY'
 import re, sys
 p = sys.argv[1]; t = open(p).read()
-t, n = re.subn(r'(?m)^carto_api_key\s*=.*$', 'carto_api_key = "secret-test-key"', t, count=1)
-assert n == 1
+for k in ("carto_api_key", "openaip_api_key"):
+    t, n = re.subn(rf'(?m)^{k}\s*=.*$', f'{k} = "secret-test-key"', t, count=1)
+    assert n == 1, k
 open(p, "w").write(t)
 PY
 check "no secret in desktop-env" "no" \

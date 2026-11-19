@@ -197,6 +197,17 @@ tool_port = 8788
 # restart it (make down-desktop / up-desktop) after changing this.
 carto_api_key = ""
 
+# OpenAIP airspaces (Filters → Airspaces). OpenAIP only serves data with a key
+# now: free from your profile at https://www.openaip.net (API clients). Empty =
+# the layer reports "No OpenAIP API key" and draws whatever cycle is cached.
+# Data is CC BY-NC-SA 4.0: non-commercial use only. Secret like carto_api_key:
+# never printed by desktop-env. Read when the desktop starts.
+openaip_api_key = ""
+# ISO country codes to download, comma-separated. The API filters by country
+# only; the map keeps airspaces within ~300 NM of the receiver. Cached per
+# AIRAC cycle under the stack's data dir (airspaces/<CC>-<cycle>.json).
+openaip_countries = "CA"
+
 # CopilotKit's developer inspector (the floating CopilotKit button). It exists
 # only in dev builds on localhost, and it is the app's only third-party traffic
 # there: news feeds from cdn.copilotkit.ai, Google Fonts, and promo videos. No

@@ -352,6 +352,13 @@ start_desktop() { # start_desktop [VAR=value ...]
   carto_key="$(cfg desktop carto_api_key "")"
   [ -z "$carto_key" ] || set -- "$@" "NEXT_PUBLIC_CARTO_API_KEY=$carto_key"
 
+  # OpenAIP airspaces: read by Rust (get_airspaces), not the webview, so no
+  # NEXT_PUBLIC_ prefix and the key never reaches the JS bundle.
+  openaip_key="$(cfg desktop openaip_api_key "")"
+  [ -z "$openaip_key" ] || set -- "$@" "ADSB_OPENAIP_API_KEY=$openaip_key"
+  openaip_countries="$(cfg desktop openaip_countries "")"
+  [ -z "$openaip_countries" ] || set -- "$@" "ADSB_OPENAIP_COUNTRIES=$openaip_countries"
+
   if [ -n "$cfg_json" ]; then
     CFG_JSON="$cfg_json" start desktop env "$@" "TAURI_DEV_CONFIG=$cfg_json" \
       sh -c "cd '$REPO/rust/adsb-pulsar-client-desktop' && exec npx tauri dev -c \"\$TAURI_DEV_CONFIG\""
