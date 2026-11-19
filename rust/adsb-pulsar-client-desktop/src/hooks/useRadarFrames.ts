@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getRadarFrames } from "@/lib/commands";
 import { frameDelayMs, mergeFrames, nextFrame, type RadarFrameSet } from "@/lib/radar";
 import { RADAR_RADIUS_NM } from "./useRadar";
@@ -52,18 +52,37 @@ export function useRadarFrames(
   return { frames: enabled ? (held?.set ?? null) : null, error: enabled ? error : null };
 }
 
+export interface FrameAnimation {
+  /** The frame to show. */
+  index: number;
+  playing: boolean;
+  /** Shows frame `i` and pauses there. */
+  seek: (i: number) => void;
+  togglePlay: () => void;
+}
+
 /**
  * Which frame to show: loops through `count` frames while playing, holding on
- * the newest; the newest alone otherwise.
+ * the newest. Seeking pauses on the chosen frame; play resumes from it. While
+ * not animating, the newest frame.
  */
-export function useFrameAnimation(count: number, playing: boolean): number {
+export function useFrameAnimation(count: number, enabled: boolean): FrameAnimation {
   const [index, setIndex] = useState(0);
-  const running = playing && count >= 2;
+  const [paused, setPaused] = useState(false);
+  const running = enabled && !paused && count >= 2;
   useEffect(() => {
     if (!running) return;
     const id = setTimeout(() => setIndex((i) => nextFrame(i, count)), frameDelayMs(index, count));
     return () => clearTimeout(id);
   }, [running, count, index]);
-  if (!running) return Math.max(count - 1, 0);
-  return Math.min(index, count - 1);
+  const seek = useCallback(
+    (i: number) => {
+      setIndex(Math.min(Math.max(Math.round(i), 0), Math.max(count - 1, 0)));
+      setPaused(true);
+    },
+    [count],
+  );
+  const togglePlay = useCallback(() => setPaused((p) => !p), []);
+  const shown = enabled && count >= 2 ? Math.min(index, count - 1) : Math.max(count - 1, 0);
+  return { index: shown, playing: running, seek, togglePlay };
 }

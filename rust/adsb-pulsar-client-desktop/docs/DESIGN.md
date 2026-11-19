@@ -5685,9 +5685,16 @@ current image, so the hour is collected by the app:
 
 - **Kept on disk.** After a new mosaic decodes, `radar_history::save` writes
   it to `<stack data dir>/radar/` and deletes frames more than 60 min older than
-  the newest (~31 MB at most). Frames exist only for the times the layer was
-  on, and survive a restart. When the newest is over an hour old, there is
-  no animation.
+  the newest, never the file it just wrote (~31 MB at most). Frames exist only
+  for the times the layer was on, and survive a restart.
+- **An old session is deleted, not just hidden.** `radar_history::prune` runs
+  on every `get_radar` and `get_radar_frames`: once the newest frame is over an
+  hour old, every frame goes. Turning the radar on cleans up; with the radar
+  never turned on again, the files stay (at most ~31 MB).
+- **Memory is bounded by the cache itself.** `RenderCache::insert` drops the
+  rendered images more than an hour older than the newest, whichever command
+  inserts. (The first version trimmed only in `get_radar_frames`, so with the
+  animation off every new image stayed: ~115 MB a day.)
 - **`get_radar_frames`** renders the kept frames for the box, oldest first,
   on up to 4 threads. Rendered PNGs are cached per box and shared with
   `get_radar`. The webview sends the frame times it already holds
@@ -5700,6 +5707,13 @@ current image, so the hour is collected by the app:
   the loop never flashes blank.
 - **Controls:** "Animate last hour" (`adsb-radar-animate`), the frame time and
   position, and how many of the 12 frames have been collected so far.
+- **Timeline on the map** (`RadarTimeline`, bottom centre, while animating with
+  at least two frames): the shown frame's offset from the latest and its UTC
+  time ("−20 min · 02:50 UTC"), a slider over the frames, play/pause.
+  Dragging or scrolling pauses on the chosen frame (`useFrameAnimation.seek`);
+  play resumes from it. The wheel steps one frame per 40 px, down or right
+  later, up or left earlier, stopping at the ends. The bar sits beside the
+  Leaflet container, not inside it, so its wheel and drag never reach the map.
 - **Cost in a dev build:** the first request for 12 frames decodes and
   renders them all (~0.8 s each, 4 at a time). A release build takes ~75 ms
   each.
@@ -5707,7 +5721,7 @@ current image, so the hour is collected by the app:
 **Not yet:**
 - a rain-rate readout on hover;
 - reflectivity (BUFR);
-- pause, step or speed controls for the animation.
+- a speed control for the animation.
 
 ## Observability (Prometheus)
 

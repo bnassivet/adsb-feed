@@ -121,3 +121,13 @@ export const frameDelayMs = (index: number, count: number) =>
   index >= count - 1 ? ANIMATION_HOLD_MS : ANIMATION_FRAME_MS;
 
 export const nextFrame = (index: number, count: number) => (index + 1 >= count ? 0 : index + 1);
+
+/** Minutes from the newest frame to frame `index` (0 or negative). */
+export function frameOffsetMinutes(frames: RadarImage[], index: number): number {
+  if (frames.length === 0) return 0;
+  const newest = frames[frames.length - 1].validTimeMs;
+  const shown = frames[Math.min(Math.max(index, 0), frames.length - 1)].validTimeMs;
+  return Math.round((shown - newest) / 60_000);
+}
+
+export const formatOffset = (minutes: number) => (minutes === 0 ? "latest" : `−${Math.abs(minutes)} min`);

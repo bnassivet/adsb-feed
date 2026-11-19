@@ -34,6 +34,15 @@ only, and needs a second subscription. So the hour is collected by the app.
   the frame time and its position ("Frame 02:40 UTC · 3/12"), and while fewer
   than 12 frames exist, how many have been collected and why.
 
+## Follow-up: retention fixes and the map timeline
+
+- The render cache now trims itself on insert. Before, only the frames
+  command trimmed it, so with the animation off it grew ~400 KB per image.
+- `save` never deletes the file it just wrote; `prune` runs on every radar
+  request, so an old session is deleted when the radar is turned on.
+- `RadarTimeline` over the map: offset from the latest, a slider, play/pause,
+  wheel stepping. Seeking pauses.
+
 ## Tests
 
 - Rust: file names, selection of the hour, pruning on save, the render
@@ -44,6 +53,6 @@ only, and needs a second subscription. So the hour is collected by the app.
 
 ## Not in this step
 
-- Pause, step or speed controls.
+- A speed control.
 - Backfill from the 15-minute "paquet" product.
 - Collecting frames while the layer is off.

@@ -14,6 +14,7 @@ import { DEFAULT_METAR_OPACITY, filterByCategory, metarCategories, type Category
 import { useMetars } from "@/hooks/useMetars";
 import { useRadar } from "@/hooks/useRadar";
 import { useFrameAnimation, useRadarFrames } from "@/hooks/useRadarFrames";
+import { RadarTimeline } from "@/components/RadarTimeline";
 import { animationView, DEFAULT_RADAR_OPACITY, latestView } from "@/lib/radar";
 import { DEFAULT_TRANSITION_ALTITUDE_FT, nearestQnh } from "@/lib/qnh";
 
@@ -315,7 +316,9 @@ export default function Dashboard() {
   const radarAnimating = showRadar && radarAnimate;
   const radarFrames = useRadarFrames(radarAnimating, receiverLocation ?? null, radarLayer.snapshot?.validTimeMs ?? null);
   const radarFrameCount = radarFrames.frames?.frames.length ?? 0;
-  const radarFrameIndex = useFrameAnimation(radarFrameCount, radarAnimating);
+  const radarAnimation = useFrameAnimation(radarFrameCount, radarAnimating);
+  const radarFrameIndex = radarAnimation.index;
+  const radarTimelineShown = radarAnimating && radarFrames.frames != null && radarFrameCount >= 2;
   // Until two frames exist the animation has nothing to play: the latest image stands in.
   const radarView = useMemo(
     () =>
@@ -1626,7 +1629,19 @@ export default function Dashboard() {
         <main className="flex-1 flex flex-col overflow-hidden">
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
-            <div className="flex-1 min-w-0">
+            <div className="relative flex-1 min-w-0">
+              {radarTimelineShown && radarFrames.frames && (
+                // Beside the Leaflet container, not inside it: no wheel or drag reaches the map.
+                <div className="pointer-events-none absolute inset-x-0 bottom-6 z-[1000] flex justify-center">
+                  <RadarTimeline
+                    frames={radarFrames.frames.frames}
+                    index={radarAnimation.index}
+                    playing={radarAnimation.playing}
+                    onSeek={radarAnimation.seek}
+                    onTogglePlay={radarAnimation.togglePlay}
+                  />
+                </div>
+              )}
               <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={visibleMetars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={weatherClockMs} radar={radarView} radarOpacity={radarOpacity} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
             </div>
             {selectedTrack && (

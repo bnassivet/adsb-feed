@@ -93,35 +93,59 @@ describe("useFrameAnimation", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("shows the newest frame while not playing", () => {
+  it("shows the newest frame while not animating", () => {
     const { result } = renderHook(() => useFrameAnimation(5, false));
-    expect(result.current).toBe(4);
+    expect(result.current.index).toBe(4);
+    expect(result.current.playing).toBe(false);
   });
 
   it("steps, holds on the newest, then loops", () => {
     const { result } = renderHook(() => useFrameAnimation(3, true));
-    expect(result.current).toBe(0);
+    expect(result.current.index).toBe(0);
+    expect(result.current.playing).toBe(true);
     act(() => vi.advanceTimersByTime(ANIMATION_FRAME_MS));
-    expect(result.current).toBe(1);
+    expect(result.current.index).toBe(1);
     act(() => vi.advanceTimersByTime(ANIMATION_FRAME_MS));
-    expect(result.current).toBe(2);
+    expect(result.current.index).toBe(2);
     act(() => vi.advanceTimersByTime(ANIMATION_HOLD_MS - 1));
-    expect(result.current).toBe(2);
+    expect(result.current.index).toBe(2);
     act(() => vi.advanceTimersByTime(1));
-    expect(result.current).toBe(0);
+    expect(result.current.index).toBe(0);
   });
 
   it("does not run with fewer than two frames", () => {
     const { result } = renderHook(() => useFrameAnimation(1, true));
     act(() => vi.advanceTimersByTime(ANIMATION_HOLD_MS * 3));
-    expect(result.current).toBe(0);
+    expect(result.current.index).toBe(0);
+    expect(result.current.playing).toBe(false);
   });
 
   it("stays in range when frames drop out", () => {
     const { result, rerender } = renderHook(({ n }) => useFrameAnimation(n, true), { initialProps: { n: 5 } });
     for (let i = 0; i < 4; i++) act(() => vi.advanceTimersByTime(ANIMATION_FRAME_MS));
-    expect(result.current).toBe(4);
+    expect(result.current.index).toBe(4);
     rerender({ n: 3 });
-    expect(result.current).toBeLessThan(3);
+    expect(result.current.index).toBeLessThan(3);
+  });
+
+  it("seeking pauses on the chosen frame; play resumes from there", () => {
+    const { result } = renderHook(() => useFrameAnimation(5, true));
+    act(() => result.current.seek(2));
+    expect(result.current.index).toBe(2);
+    expect(result.current.playing).toBe(false);
+    act(() => vi.advanceTimersByTime(ANIMATION_HOLD_MS * 3));
+    expect(result.current.index).toBe(2);
+    act(() => result.current.togglePlay());
+    expect(result.current.playing).toBe(true);
+    act(() => vi.advanceTimersByTime(ANIMATION_FRAME_MS));
+    expect(result.current.index).toBe(3);
+  });
+
+  it("clamps a seek to the frames there are", () => {
+    const { result } = renderHook(() => useFrameAnimation(5, true));
+    act(() => result.current.seek(9));
+    expect(result.current.index).toBe(4);
+    act(() => result.current.seek(-3));
+    expect(result.current.index).toBe(0);
   });
 });

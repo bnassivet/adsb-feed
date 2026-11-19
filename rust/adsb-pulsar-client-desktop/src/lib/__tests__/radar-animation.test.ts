@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   mergeFrames, latestView, animationView, frameDelayMs, nextFrame, formatUtcTime,
-  ANIMATION_FRAME_MS, ANIMATION_HOLD_MS, HISTORY_FRAMES, type RadarFrames, type RadarSnapshot,
+  ANIMATION_FRAME_MS, ANIMATION_HOLD_MS, HISTORY_FRAMES, frameOffsetMinutes, formatOffset, type RadarFrames, type RadarSnapshot,
 } from "../radar";
 
 const T = Date.UTC(2026, 10, 19, 3, 0);
@@ -76,5 +76,21 @@ describe("animation timing", () => {
 
   it("formats a frame time in UTC", () => {
     expect(formatUtcTime(min(15))).toBe("03:15 UTC");
+  });
+});
+
+describe("time offset", () => {
+  const imgs = [0, 5, 35, 55].map((m) => ({ validTimeMs: min(m), url: "" }));
+
+  it("measures each frame from the newest one", () => {
+    expect(frameOffsetMinutes(imgs, 0)).toBe(-55);
+    expect(frameOffsetMinutes(imgs, 2)).toBe(-20);
+    expect(frameOffsetMinutes(imgs, 3)).toBe(0);
+    expect(frameOffsetMinutes([], 0)).toBe(0);
+  });
+
+  it("formats the offset", () => {
+    expect(formatOffset(0)).toBe("latest");
+    expect(formatOffset(-20)).toBe("−20 min");
   });
 });
