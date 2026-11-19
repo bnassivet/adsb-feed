@@ -177,3 +177,15 @@ describe("FiltersPanel sea section", () => {
   });
 });
 
+describe("FiltersPanel relief section", () => {
+  const relief = { show: false, onToggle: vi.fn(), opacity: 0.6, onOpacityChange: vi.fn() };
+  it("shows the relief switch when relief props are given", () => {
+    render(<FiltersPanel {...baseProps} relief={relief} />);
+    expect(screen.getByRole("checkbox", { name: /relief/i })).toBeInTheDocument();
+  });
+  it("has no relief section without them", () => {
+    render(<FiltersPanel {...baseProps} />);
+    expect(screen.queryByRole("checkbox", { name: /relief/i })).toBeNull();
+  });
+});
+

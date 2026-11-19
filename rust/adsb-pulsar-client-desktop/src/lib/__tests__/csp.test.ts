@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { tileConfig } from "../basemap";
 import { SEA_HOSTS } from "../sea";
+import { RELIEF_HOST } from "../relief";
 
 /**
  * The CSP lives in two places kept in sync by hand -- `tauri.conf.json` and
@@ -60,9 +61,9 @@ describe("CSP covers the cached basemap", () => {
   });
 });
 
-describe("CSP covers the sea overlays", () => {
+describe("CSP covers the sea overlays and the relief", () => {
   // Plain Leaflet tile layers, not the tile cache: images only.
-  it.each(SEA_HOSTS)("tauri.conf.json allows images from %s", (src) => {
+  it.each([...SEA_HOSTS, RELIEF_HOST])("tauri.conf.json allows images from %s", (src) => {
     expect(directive(confCsp, "img-src")).toContain(src);
   });
 });

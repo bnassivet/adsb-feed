@@ -7,6 +7,7 @@ import type { AirspaceControlsProps } from "./AirspaceControls";
 import type { MetarControlsProps } from "./MetarControls";
 import type { RadarControlsProps } from "./RadarControls";
 import type { SeaControlsProps } from "./SeaControls";
+import type { ReliefControlsProps } from "./ReliefControls";
 
 const MIN_PANEL_WIDTH = 180;
 const MAX_PANEL_WIDTH = 400;
@@ -74,6 +75,8 @@ interface LeftPanelProps {
   radar?: RadarControlsProps;
   /** Sea overlay controls. Optional: without them the panel has no sea section. */
   sea?: SeaControlsProps;
+  /** Relief controls. Optional: without them the panel has no relief section. */
+  relief?: ReliefControlsProps;
   /** Rendered below the filters. A slot rather than typed props so the
    *  simulation state doesn't have to be drilled through this component. */
   simulationPanel?: ReactNode;

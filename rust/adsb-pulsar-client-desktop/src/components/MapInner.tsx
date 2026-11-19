@@ -59,6 +59,7 @@ import {
   DEPTH_ATTRIBUTION, EMODNET_WMS_URL, SEAMARK_ATTRIBUTION, SEAMARK_MAX_NATIVE_ZOOM, SEAMARK_MIN_ZOOM, SEAMARK_URL,
   depthLayers, type SeaSettings,
 } from "@/lib/sea";
+import { RELIEF_ATTRIBUTION, RELIEF_BLEND, RELIEF_MAX_NATIVE_ZOOM, RELIEF_URL } from "@/lib/relief";
 import { describeSeamark, nearestSeamark, seamarkCellsKey, type Seamark } from "@/lib/seamark";
 import { DEFAULT_METAR_OPACITY, METAR_ATTRIBUTION, metarMarkerStyle, nearestMetar, type Metar } from "@/lib/metar";
 import { AIRSPACE_ATTRIBUTION, DEFAULT_AIRSPACE_OPACITY, airspacesAt, airspaceStyle, type Airspace } from "@/lib/airspace";
@@ -483,6 +484,35 @@ function RadarLayer({ view, opacity, theme }: { view: RadarView | null; opacity:
   return null;
 }
 
+/**
+ * Relief: the hillshade multiplied over the base tiles. Its pane sits just
+ * above the tile pane (200) and under every data pane, so the blend reaches
+ * the base map only. No night factor: multiply is already gentle on dark.
+ */
+const RELIEF_PANE = "relief";
+
+function ReliefLayer({ show, opacity }: { show: boolean; opacity: number }) {
+  const map = useMap();
+  const layer = useRef<L.TileLayer | null>(null);
+  useEffect(() => {
+    if (!show) return;
+    const pane = map.getPane(RELIEF_PANE) ?? map.createPane(RELIEF_PANE);
+    pane.style.zIndex = "250";
+    pane.style.pointerEvents = "none";
+    pane.style.mixBlendMode = RELIEF_BLEND;
+    const l = L.tileLayer(RELIEF_URL, { maxNativeZoom: RELIEF_MAX_NATIVE_ZOOM, pane: RELIEF_PANE }).addTo(map);
+    layer.current = l;
+    return () => {
+      l.remove();
+      layer.current = null;
+    };
+  }, [map, show]);
+  useEffect(() => {
+    layer.current?.setOpacity(opacity);
+  }, [show, opacity]);
+  return null;
+}
+
 /** Sea depth under everything we draw (radar 340); seamarks above the radar, under airspaces (350). */
 const DEPTH_PANE = "sea-depth";
 const SEAMARK_PANE = "seamarks";
@@ -557,6 +587,7 @@ function SeamarkLayer({ show, opacity, theme }: { show: boolean; opacity: number
 /** How close the cursor must be to a seamark to describe it. */
 const SEAMARK_PICK_PX = 12;
 const NO_SEAMARKS: Seamark[] = [];
+const NO_RELIEF = { show: false, opacity: 0 };
 
 /** Reports the 2° cells under the view (null when zoomed out), on every move. */
 function SeamarkCells({ onCells }: { onCells: (key: string | null) => void }) {
@@ -993,6 +1024,8 @@ interface Props {
   radarOpacity?: number;
   /** Sea overlays: OpenSeaMap seamarks and EMODnet depth. */
   sea?: SeaSettings;
+  /** Hillshade over the base map. */
+  relief?: { show: boolean; opacity: number };
   /** Seamark descriptions for the tooltip; empty when the hover is off. */
   seamarkItems?: Seamark[];
   /** Told the 2° cells under the view while seamark descriptions are wanted. */
@@ -1314,7 +1347,7 @@ function labelIcon(p: LabelPlacement, text: string, color: string, selected: boo
   });
 }
 
-export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, sea = NO_SEA, seamarkItems = NO_SEAMARKS, onSeamarkCells, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
+export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, sea = NO_SEA, seamarkItems = NO_SEAMARKS, onSeamarkCells, relief = NO_RELIEF, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
   // Memoised: the basemap layer is rebuilt (and every tile reloaded) when this changes.
   const tile = useMemo(() => tileConfig(mapTheme, CARTO_API_KEY), [mapTheme]);
   const [airspaceStack, setAirspaceStack] = useState<Airspace[]>(NO_AIRSPACES);
@@ -1383,6 +1416,10 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
         <MapClickHandler onDeselect={handleDeselect} />
         <FlyToHandler onReady={handleFlyToReady} />
         <CachedBasemap tile={tile} origin={tileCacheOrigin} />
+
+        {/* Relief, blended into the base tiles only */}
+        {relief.show && <MapAttribution text={RELIEF_ATTRIBUTION} />}
+        <ReliefLayer show={relief.show} opacity={relief.opacity} />
 
         {/* Sea depth, then the radar, then seamarks — never interactive */}
         {(sea.depthColours || sea.depthContours) && <MapAttribution text={DEPTH_ATTRIBUTION} />}

@@ -5799,6 +5799,30 @@ The tiles are images only. The text is in the OpenStreetMap tags behind them
 **Not yet:** the depth under the cursor (WMS GetFeatureInfo); offline copies
 (phase 4).
 
+## Relief (hillshade)
+
+Filters → Relief, off by default (`adsb-show-relief`, `adsb-relief-opacity`,
+60 %). The last phase-0 layer in `docs/MAP_ENGINES.md`. Plan:
+`docs/plans/2026-11-19-relief.md`.
+
+- **Source:** Esri World Hillshade, keyless JPEG tiles from
+  `server.arcgisonline.com`, the dark base map's host (already in the CSP,
+  same terms of use). Real detail down to z16 (`maxNativeZoom`).
+- **Blend:** the tiles are opaque grey-on-white, so the `relief` pane (z 250,
+  right above the tile pane at 200) has `mix-blend-mode: multiply`. White
+  leaves the map unchanged and only slopes darken it. The map pane has a
+  transform and therefore forms an isolated group: the blend reaches the base
+  tiles and nothing else, since every data pane is above the relief.
+- **One mode for both themes**, chosen from Python composites on the real base
+  tiles. Multiply is clear on OSM and readable on Esri Dark Gray, where the map
+  stays dark and labels survive. Soft-light brightened the whole dark map;
+  the dark hillshade with overlay, screen or soft-light either darkened
+  everything or washed it grey. No night factor.
+- Not in the tile cache: images only, HTTP cache.
+
+**Not yet:** a self-served hillshade from a DEM (phase 4); 3D terrain
+(phase 3, MapLibre).
+
 ## Observability (Prometheus)
 
 Every long-lived service in the stack exposes a Prometheus endpoint. Before
