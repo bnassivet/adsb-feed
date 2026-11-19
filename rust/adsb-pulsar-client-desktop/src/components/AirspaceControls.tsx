@@ -1,5 +1,6 @@
 "use client";
-import type { AirspaceStatus } from "@/lib/airspace";
+import { useState } from "react";
+import type { AirspaceStatus, AirspaceTypeCount } from "@/lib/airspace";
 
 export interface AirspaceControlsProps {
   /** Whether the airspace layer is drawn. */
@@ -18,6 +19,59 @@ export interface AirspaceControlsProps {
   /** List the airspaces under the cursor in a box on the map. */
   showHoverInfo: boolean;
   onToggleHoverInfo: () => void;
+  /** Types present near the receiver, with counts (before the type filter). */
+  types: AirspaceTypeCount[];
+  /**
+   * Types the user hid. May name types absent from `types`: a choice made
+   * elsewhere is kept until it is undone, not dropped when the data changes.
+   */
+  hiddenTypes: number[];
+  onHiddenTypesChange: (hidden: number[]) => void;
+}
+
+const sorted = (xs: Iterable<number>) => [...new Set(xs)].sort((a, b) => a - b);
+
+/** A combo of checkboxes: the closed button summarises, the open list edits. */
+function TypeFilter({ types, hiddenTypes, onHiddenTypesChange }: Pick<AirspaceControlsProps, "types" | "hiddenTypes" | "onHiddenTypesChange">) {
+  const [open, setOpen] = useState(false);
+  const hidden = new Set(hiddenTypes);
+  const present = types.map((t) => t.type);
+  const shown = types.filter((t) => !hidden.has(t.type)).length;
+  const summary = shown === types.length ? "All types" : `${shown} of ${types.length} types`;
+  const toggle = (type: number) =>
+    onHiddenTypesChange(hidden.has(type) ? hiddenTypes.filter((t) => t !== type) : sorted([...hiddenTypes, type]));
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        aria-label={`Area types: ${summary}`}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center justify-between rounded border border-slate-600 bg-slate-800 px-1.5 py-0.5 text-left text-slate-300 hover:border-slate-500"
+      >
+        <span>{summary}</span>
+        <span className="text-[9px]">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-0.5 rounded border border-slate-700 bg-slate-900 p-1.5">
+          <div className="mb-0.5 flex gap-2">
+            <button type="button" onClick={() => onHiddenTypesChange(hiddenTypes.filter((t) => !present.includes(t)))} className="text-sky-400 hover:underline">
+              All
+            </button>
+            <button type="button" onClick={() => onHiddenTypesChange(sorted([...hiddenTypes, ...present]))} className="text-sky-400 hover:underline">
+              None
+            </button>
+          </div>
+          {types.map((t) => (
+            <label key={t.type} className="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" checked={!hidden.has(t.type)} onChange={() => toggle(t.type)} className="accent-indigo-500" />
+              <span>{`${t.label} (${t.count})`}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -25,7 +79,7 @@ export interface AirspaceControlsProps {
  * an expired cycle is an alert rather than a footnote: outdated airspace is a
  * safety issue, not a cosmetic one.
  */
-export function AirspaceControls({ show, onToggle, count, status, loading, error, onReload, opacity, onOpacityChange, showHoverInfo, onToggleHoverInfo }: AirspaceControlsProps) {
+export function AirspaceControls({ show, onToggle, count, status, loading, error, onReload, opacity, onOpacityChange, showHoverInfo, onToggleHoverInfo, types, hiddenTypes, onHiddenTypesChange }: AirspaceControlsProps) {
   const percent = Math.round(opacity * 100);
   const problems = error ? [error, ...status.errors] : status.errors;
   return (
@@ -54,6 +108,7 @@ export function AirspaceControls({ show, onToggle, count, status, loading, error
             <input type="checkbox" checked={showHoverInfo} onChange={onToggleHoverInfo} className="accent-indigo-500" />
             <span>Info on hover</span>
           </label>
+          {types.length > 0 && <TypeFilter types={types} hiddenTypes={hiddenTypes} onHiddenTypesChange={onHiddenTypesChange} />}
           {loading ? (
             <span>Loading…</span>
           ) : (

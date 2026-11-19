@@ -16,6 +16,13 @@ function props(over: Partial<AirspaceControlsProps> = {}): AirspaceControlsProps
     onOpacityChange: vi.fn(),
     showHoverInfo: true,
     onToggleHoverInfo: vi.fn(),
+    types: [
+      { type: 4, label: "CTR", count: 3 },
+      { type: 1, label: "Restricted", count: 5 },
+      { type: 7, label: "TMA", count: 2 },
+    ],
+    hiddenTypes: [],
+    onHiddenTypesChange: vi.fn(),
     ...over,
   };
 }
@@ -92,6 +99,61 @@ describe("AirspaceControls", () => {
   it("hides the hover toggle while the layer is off", () => {
     render(<AirspaceControls {...props({ show: false })} />);
     expect(screen.queryByRole("checkbox", { name: /hover/i })).toBeNull();
+  });
+
+  describe("area type filter", () => {
+    const open = async () => userEvent.click(screen.getByRole("button", { name: /area types/i }));
+
+    it("summarises the selection on the closed combo", () => {
+      const { rerender } = render(<AirspaceControls {...props()} />);
+      expect(screen.getByRole("button", { name: /area types/i })).toHaveTextContent("All types");
+      rerender(<AirspaceControls {...props({ hiddenTypes: [1] })} />);
+      expect(screen.getByRole("button", { name: /area types/i })).toHaveTextContent("2 of 3 types");
+      expect(screen.queryByRole("checkbox", { name: /TMA/ })).toBeNull();
+    });
+
+    it("lists each type with its count, checked when shown", async () => {
+      render(<AirspaceControls {...props({ hiddenTypes: [1] })} />);
+      await open();
+      expect(screen.getByRole("checkbox", { name: "CTR (3)" })).toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Restricted (5)" })).not.toBeChecked();
+    });
+
+    it("hides and shows one type", async () => {
+      const p = props({ hiddenTypes: [1] });
+      render(<AirspaceControls {...p} />);
+      await open();
+      await userEvent.click(screen.getByRole("checkbox", { name: "TMA (2)" }));
+      expect(p.onHiddenTypesChange).toHaveBeenLastCalledWith([1, 7]);
+      await userEvent.click(screen.getByRole("checkbox", { name: "Restricted (5)" }));
+      expect(p.onHiddenTypesChange).toHaveBeenLastCalledWith([]);
+    });
+
+    it("has All and None", async () => {
+      const p = props({ hiddenTypes: [1] });
+      render(<AirspaceControls {...p} />);
+      await open();
+      await userEvent.click(screen.getByRole("button", { name: "All" }));
+      expect(p.onHiddenTypesChange).toHaveBeenLastCalledWith([]);
+      await userEvent.click(screen.getByRole("button", { name: "None" }));
+      expect(p.onHiddenTypesChange).toHaveBeenLastCalledWith([1, 4, 7]);
+    });
+
+    it("keeps hidden types that are absent from this data", async () => {
+      // A type hidden while flying elsewhere stays hidden when it reappears.
+      const p = props({ hiddenTypes: [2] });
+      render(<AirspaceControls {...p} />);
+      await open();
+      await userEvent.click(screen.getByRole("checkbox", { name: "CTR (3)" }));
+      expect(p.onHiddenTypesChange).toHaveBeenLastCalledWith([2, 4]);
+      await userEvent.click(screen.getByRole("button", { name: "All" }));
+      expect(p.onHiddenTypesChange).toHaveBeenLastCalledWith([2]);
+    });
+
+    it("is not offered before any airspace is loaded", () => {
+      render(<AirspaceControls {...props({ types: [] })} />);
+      expect(screen.queryByRole("button", { name: /area types/i })).toBeNull();
+    });
   });
 
   it("credits openAIP and its licence", () => {

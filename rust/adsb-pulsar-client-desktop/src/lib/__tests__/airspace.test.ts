@@ -5,6 +5,8 @@ import {
   normalizeAirspace,
   prepareAirspaces,
   airspacesAt,
+  airspaceTypes,
+  filterByType,
   airspaceStyle,
   airspaceStatus,
   AIRSPACE_ATTRIBUTION,
@@ -230,5 +232,27 @@ describe("airspaceStatus", () => {
   it("carries the licence attribution", () => {
     expect(AIRSPACE_ATTRIBUTION).toMatch(/openAIP/);
     expect(AIRSPACE_ATTRIBUTION).toMatch(/CC BY-NC-SA/);
+  });
+});
+
+describe("airspaceTypes / filterByType", () => {
+  const list = [
+    normalizeAirspace(item({ _id: "1", type: 7 }), "CA")!,
+    normalizeAirspace(item({ _id: "2", type: 7 }), "CA")!,
+    normalizeAirspace(item({ _id: "3", type: 4 }), "CA")!,
+    normalizeAirspace(item({ _id: "4", type: 1, icaoClass: 8 }), "CA")!,
+  ];
+
+  it("lists the types present with their counts, by label", () => {
+    expect(airspaceTypes(list)).toEqual([
+      { type: 4, label: "CTR", count: 1 },
+      { type: 1, label: "Restricted", count: 1 },
+      { type: 7, label: "TMA", count: 2 },
+    ]);
+  });
+
+  it("drops the hidden types", () => {
+    expect(filterByType(list, [7]).map((a) => a.id)).toEqual(["CA:3", "CA:4"]);
+    expect(filterByType(list, [])).toBe(list);
   });
 });

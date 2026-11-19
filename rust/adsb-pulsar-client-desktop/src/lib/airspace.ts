@@ -181,6 +181,30 @@ export function prepareAirspaces(
   return out;
 }
 
+export interface AirspaceTypeCount {
+  type: number;
+  label: string;
+  count: number;
+}
+
+/** The types present in `list`, with counts, sorted by label: the type filter's options. */
+export function airspaceTypes(list: Airspace[]): AirspaceTypeCount[] {
+  const byType = new Map<number, AirspaceTypeCount>();
+  for (const a of list) {
+    const t = byType.get(a.type);
+    if (t) t.count++;
+    else byType.set(a.type, { type: a.type, label: a.typeLabel, count: 1 });
+  }
+  return [...byType.values()].sort((x, y) => x.label.localeCompare(y.label));
+}
+
+/** `list` without the hidden types; the same array when nothing is hidden. */
+export function filterByType(list: Airspace[], hidden: readonly number[]): Airspace[] {
+  if (hidden.length === 0) return list;
+  const h = new Set(hidden);
+  return list.filter((a) => !h.has(a.type));
+}
+
 /** Ray casting on [lng, lat] pairs. Fine at airspace scale, away from the poles and the antimeridian. */
 function inRing(lng: number, lat: number, ring: [number, number][]): boolean {
   let inside = false;

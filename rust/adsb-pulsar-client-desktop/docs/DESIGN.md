@@ -5477,6 +5477,14 @@ reduced to three quarters: a fill lightens a dark basemap much more than it
 tints a light one. `airspaceStyle` re-styles the existing polygons in place
 (`setStyle`), so dragging the slider never rebuilds them.
 
+**Area types** (`adsb-airspace-hidden-types`) is a combo of checkboxes. It
+lists every type present near the receiver with its count, and has All and
+None. The setting stores the *hidden* types, so types that appear later are
+shown by default. A type hidden elsewhere stays hidden until it is unchecked,
+even while it is absent from the current data. Filtering happens after
+`prepareAirspaces`, so the options come from the unfiltered list, and the hover
+box only reports what is drawn.
+
 **Info on hover** (`adsb-airspace-hover-info`, on by default) controls the
 hover box. When it is off, `AirspaceHover` is unmounted: no mousemove listener
 is left running, and its cleanup clears any box still shown.
