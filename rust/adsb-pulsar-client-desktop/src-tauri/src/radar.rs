@@ -2,8 +2,9 @@
 //!
 //! The 500 m rainfall mosaic is 2.6 MB and changes every 5 minutes. The small
 //! description JSON says which 5-minute image is current (`validity_time`), so
-//! the mosaic is only downloaded when that changes. Memory only, like METAR:
-//! radar is stale within minutes, so nothing is kept offline.
+//! the mosaic is only downloaded when that changes. The current image lives
+//! in memory; the last hour is also kept on disk for the animation
+//! (`radar_history`).
 
 use crate::radar_grid::RainField;
 use chrono::{DateTime, Duration, Utc};
@@ -187,7 +188,7 @@ where
     DF: Future<Output = Result<DateTime<Utc>, String>>,
     P: FnOnce() -> PF,
     PF: Future<Output = Result<Vec<u8>, String>>,
-    Decode: FnOnce(Vec<u8>) -> Result<RainField, String>,
+    Decode: FnOnce(DateTime<Utc>, Vec<u8>) -> Result<RainField, String>,
 {
     if let Some(c) = cache.as_ref() {
         let floor = if force {
@@ -202,7 +203,7 @@ where
     let outcome = match describe().await {
         Err(e) => Err(e),
         Ok(validity) if cache.as_ref().is_some_and(|c| c.validity == validity) => Ok(None),
-        Ok(validity) => match download().await.and_then(decode) {
+        Ok(validity) => match download().await.and_then(|b| decode(validity, b)) {
             Ok(field) => Ok(Some((validity, field))),
             Err(e) => Err(e),
         },
@@ -325,7 +326,7 @@ mod tests {
 
     // --- Cache -----------------------------------------------------------------------
 
-    fn decode(b: Vec<u8>) -> Result<RainField, String> {
+    fn decode(_: DateTime<Utc>, b: Vec<u8>) -> Result<RainField, String> {
         decode_odim(b)
     }
 
@@ -349,6 +350,29 @@ mod tests {
         assert_eq!(r.validity, Some(t(0)));
         assert_eq!(r.field.unwrap().xsize, 6);
         assert!(r.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn decode_is_told_which_image_it_has() {
+        let mut cache = None;
+        let mut seen = None;
+        load_radar(
+            &mut cache,
+            t(10),
+            false,
+            || async { Ok(t(5)) },
+            || async { Ok(TINY.to_vec()) },
+            |v, b| {
+                seen = Some(v);
+                decode(v, b)
+            },
+        )
+        .await;
+        assert_eq!(
+            seen,
+            Some(t(5)),
+            "the history files each mosaic under its time"
+        );
     }
 
     #[tokio::test]

@@ -1269,27 +1269,15 @@ pub async fn get_metars(
 /// Last radar mosaic, in memory only (see radar.rs). Also serialises loads.
 static RADAR_CACHE: tokio::sync::Mutex<Option<crate::radar::RadarCache>> =
     tokio::sync::Mutex::const_new(None);
-/// Last rendered image, keyed by image time and box: polls between two new
-/// images re-send it instead of rendering again.
-type RenderedRadar = (
-    chrono::DateTime<chrono::Utc>,
-    crate::metar::Bbox,
-    std::sync::Arc<String>,
-);
-static RADAR_RENDER: std::sync::Mutex<Option<RenderedRadar>> = std::sync::Mutex::new(None);
+/// Rendered images (base64 PNG) by image time, for the current box: the latest
+/// image and the animation frames share it, so nothing is rendered twice.
+static RADAR_IMAGES: std::sync::Mutex<crate::radar_history::RenderCache<std::sync::Arc<String>>> =
+    std::sync::Mutex::new(crate::radar_history::RenderCache::new());
+/// One frames request renders at a time: a second would redo the same work.
+static RADAR_FRAMES_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// Météo-France rain radar around a point (the receiver): the latest 5-minute
-/// rainfall mosaic, coloured by rate and reprojected to Web Mercator. Never
-/// fails as a whole: a failed refresh serves the last image with the error.
-#[tauri::command]
-pub async fn get_radar(
-    lat: f64,
-    lng: f64,
-    radius_nm: f64,
-    force: bool,
-) -> Result<crate::radar::RadarSnapshot, String> {
-    use crate::{metar, radar, radar_grid};
-    use base64::Engine;
+/// The box the radar is cut to, after checking the arguments.
+fn radar_area(lat: f64, lng: f64, radius_nm: f64) -> Result<crate::metar::Bbox, String> {
     if !(lat.is_finite()
         && lng.is_finite()
         && (-90.0..=90.0).contains(&lat)
@@ -1302,6 +1290,77 @@ pub async fn get_radar(
     } else {
         300.0
     };
+    Ok(crate::metar::bbox_around(lat, lng, radius_nm))
+}
+
+/// Where the last hour of mosaics is kept (radar_history.rs).
+fn radar_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    let app_data_dir = app.path().app_data_dir().ok()?;
+    Some(crate::stack_data_dir(&app_data_dir, crate::stack_from_env().as_deref()).join("radar"))
+}
+
+/// Colour, reproject and encode one mosaic for the box: blocking CPU work.
+fn radar_image(
+    field: &crate::radar_grid::RainField,
+    b: crate::metar::Bbox,
+) -> Result<String, String> {
+    use crate::{radar, radar_grid};
+    use base64::Engine;
+    let rgba = radar_grid::render(
+        field,
+        (b.min_lat, b.min_lon, b.max_lat, b.max_lon),
+        radar::IMAGE_PX,
+        radar::IMAGE_PX,
+    );
+    let png = radar_grid::encode_png(&rgba, radar::IMAGE_PX, radar::IMAGE_PX)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(png))
+}
+
+/// Decodes and renders saved mosaics on a few threads (each decoded field is
+/// 24 MB, so not all at once). A frame that fails is left out, with a warning.
+fn radar_images_from_files(
+    files: Vec<(chrono::DateTime<chrono::Utc>, std::path::PathBuf)>,
+    b: crate::metar::Bbox,
+) -> Vec<(chrono::DateTime<chrono::Utc>, String)> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let workers = std::thread::available_parallelism()
+        .map_or(2, |n| n.get())
+        .min(4);
+    let next = AtomicUsize::new(0);
+    let out = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| {
+                while let Some((v, path)) = files.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    let image = std::fs::read(path)
+                        .map_err(|e| e.to_string())
+                        .and_then(crate::radar_grid::decode_odim)
+                        .and_then(|field| radar_image(&field, b));
+                    match image {
+                        Ok(p) => out.lock().unwrap().push((*v, p)),
+                        Err(e) => tracing::warn!("radar frame {}: {e}", path.display()),
+                    }
+                }
+            });
+        }
+    });
+    out.into_inner().unwrap()
+}
+
+/// Météo-France rain radar around a point (the receiver): the latest 5-minute
+/// rainfall mosaic, coloured by rate and reprojected to Web Mercator. Never
+/// fails as a whole: a failed refresh serves the last image with the error.
+/// Each new mosaic is also kept on disk for the animation.
+#[tauri::command]
+pub async fn get_radar(
+    app: tauri::AppHandle,
+    lat: f64,
+    lng: f64,
+    radius_nm: f64,
+    force: bool,
+) -> Result<crate::radar::RadarSnapshot, String> {
+    use crate::{radar, radar_grid, radar_history};
+    let b = radar_area(lat, lng, radius_nm)?;
     let key = std::env::var(radar::KEY_ENV).ok();
     let now = chrono::Utc::now();
     let problem = radar::key_problem(key.as_deref(), now);
@@ -1310,6 +1369,7 @@ pub async fn get_radar(
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("HTTP client: {e}"))?;
+    let history_dir = radar_dir(&app);
 
     let load = {
         let mut cache = RADAR_CACHE.lock().await;
@@ -1322,39 +1382,34 @@ pub async fn get_radar(
         };
         let download = || async move { radar::get(client, key, &radar::product_url()).await };
         // Decoding ~2.6 MB of gzip-chunked HDF5 is CPU work: off the async runtime.
-        let decode =
-            |bytes: Vec<u8>| tokio::task::block_in_place(|| radar_grid::decode_odim(bytes));
+        // Only a mosaic that decodes is kept for the animation.
+        let decode = |validity, bytes: Vec<u8>| {
+            tokio::task::block_in_place(|| {
+                let field = radar_grid::decode_odim(bytes.clone())?;
+                if let Some(dir) = &history_dir
+                    && let Err(e) = radar_history::save(dir, validity, &bytes, now)
+                {
+                    tracing::warn!("{e}");
+                }
+                Ok(field)
+            })
+        };
         radar::load_radar(&mut cache, now, force, describe, download, decode).await
     };
 
-    let b = metar::bbox_around(lat, lng, radius_nm);
     let bounds = [b.min_lat, b.min_lon, b.max_lat, b.max_lon];
     let png_base64 = match (&load.field, load.validity) {
         (Some(field), Some(validity)) => {
-            let cached = RADAR_RENDER
-                .lock()
-                .unwrap()
-                .as_ref()
-                .filter(|(v, bb, _)| *v == validity && *bb == b)
-                .map(|(_, _, p)| p.clone());
+            let cached = RADAR_IMAGES.lock().unwrap().get(b, validity);
             match cached {
                 Some(p) => Some(p),
                 None => {
                     let field = field.clone();
-                    let png = tokio::task::spawn_blocking(move || {
-                        let rgba = radar_grid::render(
-                            &field,
-                            (b.min_lat, b.min_lon, b.max_lat, b.max_lon),
-                            radar::IMAGE_PX,
-                            radar::IMAGE_PX,
-                        );
-                        radar_grid::encode_png(&rgba, radar::IMAGE_PX, radar::IMAGE_PX)
-                    })
-                    .await
-                    .map_err(|e| format!("radar render: {e}"))??;
-                    let p =
-                        std::sync::Arc::new(base64::engine::general_purpose::STANDARD.encode(png));
-                    *RADAR_RENDER.lock().unwrap() = Some((validity, b, p.clone()));
+                    let p = tokio::task::spawn_blocking(move || radar_image(&field, b))
+                        .await
+                        .map_err(|e| format!("radar render: {e}"))??;
+                    let p = std::sync::Arc::new(p);
+                    RADAR_IMAGES.lock().unwrap().insert(b, validity, p.clone());
                     Some(p)
                 }
             }
@@ -1369,5 +1424,63 @@ pub async fn get_radar(
         origin: load.origin,
         error: load.error,
         scale: radar::legend(),
+    })
+}
+
+/// The last hour of radar images kept by `get_radar`, oldest first, for the
+/// animation. Downloads nothing. `known_ms` lists the frames the webview
+/// already holds: those come back without their image.
+#[tauri::command]
+pub async fn get_radar_frames(
+    app: tauri::AppHandle,
+    lat: f64,
+    lng: f64,
+    radius_nm: f64,
+    known_ms: Vec<i64>,
+) -> Result<crate::radar_history::RadarFrames, String> {
+    use crate::radar_history::{self, RadarFrame, RadarFrames};
+    let b = radar_area(lat, lng, radius_nm)?;
+    let dir = radar_dir(&app).ok_or("No app data directory for the radar history")?;
+    let _guard = RADAR_FRAMES_LOCK.lock().await;
+    let now = chrono::Utc::now();
+    let files = tokio::task::spawn_blocking(move || radar_history::frames(&dir, now))
+        .await
+        .map_err(|e| format!("radar history: {e}"))?;
+    let wanted: Vec<_> = files.iter().map(|(v, _)| *v).collect();
+    let missing = {
+        let mut images = RADAR_IMAGES.lock().unwrap();
+        if let Some(oldest) = wanted.first() {
+            images.forget_before(*oldest);
+        }
+        images.missing(b, &wanted)
+    };
+    if !missing.is_empty() {
+        let todo: Vec<_> = files
+            .into_iter()
+            .filter(|(v, _)| missing.contains(v))
+            .collect();
+        let rendered = tokio::task::spawn_blocking(move || radar_images_from_files(todo, b))
+            .await
+            .map_err(|e| format!("radar render: {e}"))?;
+        let mut images = RADAR_IMAGES.lock().unwrap();
+        for (v, p) in rendered {
+            images.insert(b, v, std::sync::Arc::new(p));
+        }
+    }
+    let mut images = RADAR_IMAGES.lock().unwrap();
+    let frames = wanted
+        .into_iter()
+        .filter_map(|v| {
+            let image = images.get(b, v)?;
+            let ms = v.timestamp_millis();
+            Some(RadarFrame {
+                valid_time_ms: ms,
+                png_base64: (!known_ms.contains(&ms)).then(|| (*image).clone()),
+            })
+        })
+        .collect();
+    Ok(RadarFrames {
+        bounds: [b.min_lat, b.min_lon, b.max_lat, b.max_lon],
+        frames,
     })
 }

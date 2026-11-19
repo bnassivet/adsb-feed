@@ -10,6 +10,7 @@ mod commands;
 mod metar;
 mod radar;
 mod radar_grid;
+mod radar_history;
 mod state;
 mod storage_mode;
 mod weather;
@@ -214,6 +215,7 @@ pub fn run() {
             commands::get_airspaces,
             commands::get_metars,
             commands::get_radar,
+            commands::get_radar_frames,
             commands::get_weather_availability,
             commands::get_weather_service,
             commands::set_weather_service_enabled,
