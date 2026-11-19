@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 800" width="1180" height="800" role="img" aria-labelledby="title desc">
+<title id="title">ADS-B Feed: map layers and their external endpoints</title>
+<desc id="desc">The desktop app's map layers and the external services they use. The webview loads plain image tiles (base maps, seamarks, depth, relief). Rust calls every API that needs a key, a disk cache, decoding or fair-use pacing (airspaces, METAR, rain radar, seamark text, sea depth, ground height). The weather service fetches Open-Meteo and publishes a retained MQTT snapshot the desktop subscribes to.</desc>
+<style>
+  svg {
+    --bg:#ffffff; --fg:#1f2328; --muted:#59636e; --box:#ffffff; --edge:#57606a;
+    --apps:#0969da; --svc:#8250df; --sto:#1a7f37; --inf:#6e7781; --ext:#9a6700; --proc:#0969da; --key:#cf222e;
+    font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    svg {
+      --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --box:#161b22; --edge:#8b949e;
+      --apps:#4493f8; --svc:#ab7df8; --sto:#3fb950; --inf:#9198a1; --ext:#d29922; --proc:#4493f8; --key:#ff7b72;
+    }
+  }
+  .bg { fill: var(--bg); }
+  .band { fill-opacity: .07; stroke-opacity: .35; stroke-width: 1; }
+  .band.apps, .box.apps { fill: var(--apps); stroke: var(--apps); }
+  .band.svc,  .box.svc  { fill: var(--svc);  stroke: var(--svc); }
+  .band.sto,  .box.sto  { fill: var(--sto);  stroke: var(--sto); }
+  .box.ext { stroke: var(--ext); }
+  .box { fill: var(--box) !important; stroke-width: 1.6; }
+  .proc { fill: none; stroke: var(--proc); stroke-width: 2.2; }
+  .ext-col { fill: var(--ext); fill-opacity: .05; stroke: var(--ext); stroke-dasharray: 3 4; stroke-width: 1.2; }
+  .sep { stroke: var(--edge); stroke-opacity: .25; stroke-width: 1; }
+  text { fill: var(--fg); }
+  .t-h1 { font-size: 19px; font-weight: 700; }
+  .t-sub { font-size: 12px; fill: var(--muted); }
+  .t-layer { font-size: 12.5px; font-weight: 700; letter-spacing: .08em; }
+  .t-layer.apps { fill: var(--apps); } .t-layer.svc { fill: var(--svc); }
+  .t-title { font-size: 14px; font-weight: 650; text-anchor: middle; }
+  .t-gtitle { font-size: 12.5px; font-weight: 700; }
+  .t-gsub { font-size: 11px; fill: var(--muted); }
+  .t-code { font-size: 11px; text-anchor: middle; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: var(--fg); }
+  .t-host { font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: var(--fg); }
+  .t-note { font-size: 11px; text-anchor: middle; fill: var(--muted); }
+  .t-what { font-size: 11px; fill: var(--muted); }
+  .t-proc { font-size: 11px; font-weight: 700; letter-spacing: .06em; fill: var(--proc); }
+  .t-ext { font-size: 11px; font-weight: 700; letter-spacing: .06em; fill: var(--ext); }
+  .t-edge { font-size: 10.5px; fill: var(--muted); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
+  .t-key { font-size: 9px; font-weight: 700; fill: var(--key); letter-spacing: .05em; }
+  .keybox { fill: none; stroke: var(--key); stroke-width: 1.2; }
+  .edge { fill: none; stroke: var(--edge); stroke-width: 1.6; stroke-linejoin: round; }
+  .edge.dash { stroke-dasharray: 5 4; }
+  .head { fill: var(--edge); }
+</style>
+<defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="bg" x="0" y="0" width="1180" height="800"/>
+<text class="t-h1" x="20" y="34">ADS-B Feed: map layers and their external endpoints</text>
+<text class="t-sub" x="20" y="52">Desktop app, Filters → Map Layers. Image tiles load in the webview; APIs go through Rust. Every layer is off by default.</text>
+<rect class="proc" x="18" y="70" width="444" height="520" rx="12"/>
+<text class="t-proc" x="30" y="88">DESKTOP APP: one Tauri process (adsb-pulsar-client-desktop)</text>
+<rect class="box apps" x="30" y="100" width="420" height="210" rx="8"/>
+<text class="t-title" x="240.0" y="126">Webview</text>
+<text class="t-code" x="240.0" y="144">Next.js · React · Leaflet</text>
+<text class="t-note" x="240.0" y="170">Filters → Map Layers: Weather · Rain radar · METAR</text>
+<text class="t-note" x="240.0" y="190">Airspaces · Sea · Relief</text>
+<text class="t-note" x="240.0" y="210">Base map through the tile cache (IndexedDB)</text>
+<text class="t-note" x="240.0" y="230">Image overlays: seamarks, depth, relief (HTTP cache)</text>
+<text class="t-note" x="240.0" y="250">Every image host is listed in the CSP img-src</text>
+<text class="t-note" x="240.0" y="270">Hover pick per frame · What's here? · Height AGL</text>
+<rect class="box svc" x="30" y="360" width="420" height="210" rx="8"/>
+<text class="t-title" x="240.0" y="386">Rust backend (Tauri commands)</text>
+<text class="t-code" x="240.0" y="404">airspace · metar · radar · seamarks · terrain</text>
+<text class="t-note" x="240.0" y="430">API keys from adsb-stack.toml [desktop], exported as env</text>
+<text class="t-note" x="240.0" y="450">Keys never reach the webview; no CSP entry needed</text>
+<text class="t-note" x="240.0" y="470">Decoding: ODIM_H5 radar, Terrarium PNG heights</text>
+<text class="t-note" x="240.0" y="490">Fair use: one Overpass query at a time, 2° cells</text>
+<text class="t-note" x="240.0" y="510">Disk caches under &lt;app-data&gt;/&lt;stack&gt;/</text>
+<text class="t-note" x="240.0" y="530">airspaces/ (AIRAC cycle) · radar/ (last hour)</text>
+<text class="t-note" x="240.0" y="550">seamarks/ (7 days) · terrain/ (kept for good)</text>
+<path class="edge" d="M200.0,310 L200.0,360" marker-end="url(#head)"/>
+<path class="edge" d="M280.0,360 L280.0,310" marker-end="url(#head)"/>
+<text class="t-edge" x="240.0" y="340" text-anchor="middle">invoke · results (PNG base64, JSON)</text>
+<rect class="band svc" x="18" y="646" width="444" height="128" rx="10"/>
+<rect class="box svc" x="30" y="660" width="420" height="100" rx="8"/>
+<text class="t-title" x="240.0" y="686">Weather service (optional)</text>
+<text class="t-code" x="240.0" y="704">adsb-weather-server</text>
+<text class="t-note" x="240.0" y="724">Winds aloft and MSL pressure on a receiver-centred grid,</text>
+<text class="t-note" x="240.0" y="742">published as one retained MQTT message</text>
+<path class="edge dash" d="M390,660 L390,570" marker-end="url(#head)"/>
+<text class="t-edge" x="398" y="634" text-anchor="start">MQTT, retained</text>
+<rect class="ext-col" x="508" y="70" width="664" height="710" rx="12"/>
+<text class="t-ext" x="520" y="88">EXTERNAL ENDPOINTS (HTTPS)</text>
+<rect class="box ext" x="520" y="100" width="640" height="112" rx="8"/>
+<text class="t-gtitle" x="534" y="122">Base map tiles</text>
+<text class="t-gsub" x="652" y="122">webview · tile cache</text>
+<line class="sep" x1="530" y1="132" x2="1150" y2="132"/>
+<text class="t-host" x="534" y="152">tile.openstreetmap.org</text>
+<text class="t-what" x="850" y="152">OSM, light theme (never bulk)</text>
+<text class="t-host" x="534" y="174">server.arcgisonline.com</text>
+<text class="t-what" x="850" y="174">Esri Dark Gray, dark theme</text>
+<text class="t-host" x="534" y="196">basemaps.cartocdn.com</text>
+<text class="t-what" x="850" y="196">CARTO dark, when a key is set</text>
+<rect class="keybox" x="1120" y="187" width="26" height="12" rx="3"/>
+<text class="t-key" x="1133" y="196" text-anchor="middle">KEY</text>
+<rect class="box ext" x="520" y="230" width="640" height="112" rx="8"/>
+<text class="t-gtitle" x="534" y="252">Overlay tiles</text>
+<text class="t-gsub" x="644" y="252">webview · HTTP cache</text>
+<line class="sep" x1="530" y1="262" x2="1150" y2="262"/>
+<text class="t-host" x="534" y="282">tiles.openseamap.org</text>
+<text class="t-what" x="850" y="282">Seamarks (from zoom 9)</text>
+<text class="t-host" x="534" y="304">ows.emodnet-bathymetry.eu/wms</text>
+<text class="t-what" x="850" y="304">Depth colours and contours</text>
+<text class="t-host" x="534" y="326">server.arcgisonline.com</text>
+<text class="t-what" x="850" y="326">World Hillshade (relief, multiply)</text>
+<rect class="box ext" x="520" y="360" width="640" height="178" rx="8"/>
+<text class="t-gtitle" x="534" y="382">APIs</text>
+<text class="t-gsub" x="572" y="382">Rust · disk or memory cache</text>
+<line class="sep" x1="530" y1="392" x2="1150" y2="392"/>
+<text class="t-host" x="534" y="412">api.core.openaip.net</text>
+<text class="t-what" x="850" y="412">Airspaces, per AIRAC cycle</text>
+<rect class="keybox" x="1120" y="403" width="26" height="12" rx="3"/>
+<text class="t-key" x="1133" y="412" text-anchor="middle">KEY</text>
+<text class="t-host" x="534" y="434">aviationweather.gov/api/data/metar</text>
+<text class="t-what" x="850" y="434">METAR and QNH, 5 min</text>
+<text class="t-host" x="534" y="456">public-api.meteofrance.fr/…/DPRadar</text>
+<text class="t-what" x="850" y="456">Rain radar, 5-min mosaic</text>
+<rect class="keybox" x="1120" y="447" width="26" height="12" rx="3"/>
+<text class="t-key" x="1133" y="456" text-anchor="middle">KEY</text>
+<text class="t-host" x="534" y="478">overpass-api.de (+ private.coffee)</text>
+<text class="t-what" x="850" y="478">Seamark text, 2° cells</text>
+<text class="t-host" x="534" y="500">rest.emodnet-bathymetry.eu</text>
+<text class="t-what" x="850" y="500">Sea depth at a point</text>
+<text class="t-host" x="534" y="522">s3.amazonaws.com/elevation-tiles-prod</text>
+<text class="t-what" x="850" y="522">Terrarium ground height</text>
+<rect class="box ext" x="520" y="680" width="640" height="68" rx="8"/>
+<text class="t-gtitle" x="534" y="702">Weather</text>
+<text class="t-gsub" x="596" y="702">weather service</text>
+<line class="sep" x1="530" y1="712" x2="1150" y2="712"/>
+<text class="t-host" x="534" y="732">api.open-meteo.com/v1/forecast</text>
+<text class="t-what" x="850" y="732">Winds aloft, MSL pressure</text>
+<rect class="box ext" x="520" y="560" width="640" height="92" rx="8"/>
+<text class="t-gtitle" x="534" y="582">Legend</text>
+<line class="sep" x1="530" y1="592" x2="1150" y2="592"/>
+<rect class="keybox" x="534" y="603" width="26" height="12" rx="3"/>
+<text class="t-key" x="547" y="612" text-anchor="middle">KEY</text>
+<text class="t-what" x="568" y="612">needs a key: OpenAIP and Météo-France from adsb-stack.toml [desktop], used by Rust only;</text>
+<text class="t-what" x="568" y="628">CARTO's is part of the tile URL, so it is the one key the webview holds.</text>
+<path class="edge" d="M534,642 L560,642" marker-end="url(#head)"/>
+<path class="edge dash" d="M770,642 L796,642" marker-end="url(#head)"/>
+<text class="t-what" x="568" y="646">HTTPS request</text>
+<text class="t-what" x="804" y="646">MQTT message.  Ports are left out on purpose.</text>
+<path class="edge" d="M450,160 L490,160 L490,156.0 L520,156.0" marker-end="url(#head)"/>
+<path class="edge" d="M450,250 L470,250 L470,286.0 L520,286.0" marker-end="url(#head)"/>
+<text class="t-edge" x="484" y="152" text-anchor="middle">tiles</text>
+<text class="t-edge" x="484" y="242" text-anchor="middle">tiles</text>
+<path class="edge" d="M450,480 L520,480" marker-end="url(#head)"/>
+<text class="t-edge" x="485.0" y="472" text-anchor="middle">HTTPS</text>
+<path class="edge" d="M450,714.0 L520,714.0" marker-end="url(#head)"/>
+<text class="t-edge" x="485.0" y="706.0" text-anchor="middle">HTTPS</text>
+</svg>
