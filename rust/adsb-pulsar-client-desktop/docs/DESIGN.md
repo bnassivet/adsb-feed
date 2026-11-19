@@ -3321,6 +3321,8 @@ Pure SVG geometry functions in `src/lib/detection-radar.ts`:
 
 The detection range computation runs entirely in DuckDB (haversine + bearing trig in SQL), returning only up to 36 pre-bucketed sectors regardless of dataset size. The Rust `geo` module provides reference implementations for test validation.
 
+**Decode glitches are left out.** A sector's value is a maximum, so one bad fix sets it: the live database held positions at 71°N 115°W and in the mid-Atlantic, in the middle of tracks over western France, and the radar showed 3,695 NM. A position is kept only if one of its aircraft's two fixes before or after (`LAG`/`LEAD` over `hex_ident`) could reach it at `PLAUSIBLE_MAX_SPEED_KT` (1000 kt) plus `POSITION_JITTER_NM` (0.5 NM); the second neighbour lets the fixes around a glitch see past it. A position with no neighbour is kept. On that database this dropped 9 of 1.56 M positions and brought six sectors from 138-3,695 NM back to 43-120 NM. A run of glitches consistent with each other would survive; none was seen.
+
 ### Design Decisions
 
 **Why a separate `dbHistory` category instead of reusing `imported`?**
