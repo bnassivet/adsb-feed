@@ -3120,6 +3120,8 @@ Isolating parser + storage in a shared workspace crate lets the data engine be t
 - `dump1090_tz` changes take effect on the next flush without any DB migration
 - Existing rows are not retroactively corrected when `dump1090_tz` changes
 
+**A receiver on the wrong time zone is reported, not corrected.** The SBS-1 string carries no zone, so `"Local"` silently assumes the dump1090 host and this machine share one. In November 2026 the receiver's Pi was on Montréal time while the Mac was on CET, and every row was stored 6 h early. `insert_batch_sync` now compares each batch's newest timestamp with the clock (`zone_offset_minutes`): a whole number of quarter hours (within 2 min), between 30 min and 14 h, logs one warning per offset (`zone_warning`), e.g. "dump1090 timestamps are 6h00 behind this computer's clock". Normal latency, a stalled batch and a replayed recording do not match. Nothing is corrected automatically, because a replay of a recent file could match by chance; fix the receiver's time zone instead.
+
 **Files**:
 - `adsb-data-engine/src/geo.rs` — Pure geodesic math (haversine, bearing, sector mapping) for test validation
 - `adsb-data-engine/src/sbs_parser.rs` — `parse_sbs_message`, `parse_sbs_raw_fields`, `extract_sbs_timestamp`

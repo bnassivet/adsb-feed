@@ -22,7 +22,7 @@ use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
 use duckdb::{Connection, params};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
@@ -578,6 +578,10 @@ impl StorageHandle {
             appender.flush()?;
         }
         // Appender dropped here — conn borrow released
+
+        if let Some(newest) = batch_with_ts.iter().map(|(_, ms)| *ms).max() {
+            check_dump1090_clock(newest);
+        }
 
         // Phase 2: Incrementally update flights table
         // Collect new flights (INSERTs) and aggregated updates per flight_id
@@ -3630,6 +3634,49 @@ fn should_warn_at(n: u64) -> bool {
     n == 1 || n.is_multiple_of(1000)
 }
 
+/// How far dump1090's clock is from ours, in minutes, when that looks like a
+/// wrong time zone on its host: a whole number of quarter hours (within 2 min),
+/// at least 30 min and at most 14 h. SBS-1 timestamps carry no zone, so a Pi
+/// left on another zone shifts every stored row by that much (seen live: a Pi on
+/// Montréal time, rows 6 h early). None when in step, or when the gap is
+/// anything else (a stalled batch, a replayed recording).
+fn zone_offset_minutes(newest_ms: i64, now_ms: i64) -> Option<i64> {
+    let diff_min = (newest_ms - now_ms) as f64 / 60_000.0;
+    let quarters = (diff_min / 15.0).round();
+    let offset = quarters as i64 * 15;
+    let near_quarter = (diff_min - quarters * 15.0).abs() <= 2.0;
+    (near_quarter && (30..=14 * 60).contains(&offset.abs())).then_some(offset)
+}
+
+/// No offset warned about yet (or the clock came back in step).
+const NO_ZONE_OFFSET: i64 = i64::MIN;
+static LAST_ZONE_OFFSET: AtomicI64 = AtomicI64::new(NO_ZONE_OFFSET);
+
+/// The offset to warn about now: once when it appears or changes, not on every
+/// 500 ms batch.
+fn zone_warning(last: &AtomicI64, offset: Option<i64>) -> Option<i64> {
+    let now = offset.unwrap_or(NO_ZONE_OFFSET);
+    (last.swap(now, Ordering::Relaxed) != now)
+        .then_some(offset)
+        .flatten()
+}
+
+/// Warns when a batch's newest timestamp is a time-zone offset away from now.
+fn check_dump1090_clock(newest_ms: i64) {
+    let offset = zone_offset_minutes(newest_ms, chrono::Utc::now().timestamp_millis());
+    if let Some(min) = zone_warning(&LAST_ZONE_OFFSET, offset) {
+        tracing::warn!(
+            "dump1090 timestamps are {}h{:02} {} this computer's clock: its host is \
+             probably set to another time zone, so rows are stored that much off. Set \
+             the receiver's time zone (timedatectl set-timezone ...) and restart \
+             dump1090. Ignore this for a replayed recording.",
+            min.abs() / 60,
+            min.abs() % 60,
+            if min < 0 { "behind" } else { "ahead of" },
+        );
+    }
+}
+
 fn parse_timestamp_to_ms(timestamp: &str, tz: &str) -> i64 {
     use std::str::FromStr;
 
@@ -4604,6 +4651,68 @@ mod tests {
         // Unknown TZ must fall back gracefully — no panic
         let ms = parse_timestamp_to_ms("2024/01/15 10:30:00.000", "Not/A/TZ");
         assert!(ms > 0);
+    }
+
+    const MIN_MS: i64 = 60_000;
+
+    #[test]
+    fn test_zone_offset_found_when_whole_hours_out() {
+        let now = parse_timestamp_to_ms("2026/11/19 16:57:19.000", "UTC");
+        // Seen live: a Pi on Montréal time read as CET, rows 6 h early.
+        assert_eq!(
+            zone_offset_minutes(now - 360 * MIN_MS - 3_000, now),
+            Some(-360)
+        );
+        assert_eq!(
+            zone_offset_minutes(now + 60 * MIN_MS + 40_000, now),
+            Some(60)
+        );
+        // India, Nepal-style half and quarter hours count too.
+        assert_eq!(zone_offset_minutes(now - 330 * MIN_MS, now), Some(-330));
+        assert_eq!(zone_offset_minutes(now + 45 * MIN_MS, now), Some(45));
+    }
+
+    #[test]
+    fn test_zone_offset_none_when_in_step_or_not_a_zone() {
+        let now = parse_timestamp_to_ms("2026/11/19 16:57:19.000", "UTC");
+        assert_eq!(
+            zone_offset_minutes(now - 2_000, now),
+            None,
+            "normal latency"
+        );
+        assert_eq!(
+            zone_offset_minutes(now - 10 * MIN_MS, now),
+            None,
+            "a stalled batch"
+        );
+        assert_eq!(
+            zone_offset_minutes(now - 367 * MIN_MS, now),
+            None,
+            "not a quarter-hour multiple"
+        );
+        assert_eq!(
+            zone_offset_minutes(now - 3 * 24 * 60 * MIN_MS, now),
+            None,
+            "a replayed recording"
+        );
+    }
+
+    #[test]
+    fn test_zone_warning_once_per_offset() {
+        let last = AtomicI64::new(NO_ZONE_OFFSET);
+        assert_eq!(zone_warning(&last, Some(-360)), Some(-360), "first time");
+        assert_eq!(zone_warning(&last, Some(-360)), None, "not every batch");
+        assert_eq!(zone_warning(&last, None), None, "back in step");
+        assert_eq!(
+            zone_warning(&last, Some(-360)),
+            Some(-360),
+            "again after a fix"
+        );
+        assert_eq!(
+            zone_warning(&last, Some(60)),
+            Some(60),
+            "a different offset"
+        );
     }
 
     #[test]
