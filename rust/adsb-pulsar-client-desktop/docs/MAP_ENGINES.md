@@ -269,7 +269,8 @@ coordinate costs 4 bytes per point (3–4 MB at 1M).
   panes, popups and the context menu become MapLibre markers and events. The
   data layers on deck.gl move almost unchanged. Labels and screen-space layout
   need rework once the map is pitched, because screen projection is no longer
-  affine.
+  affine. With terrain, deck.gl 9.4.1 also needs a small shim on MapLibre 6
+  (see *Measured: interleaved, 3D terrain and buildings*).
 - **CSP:** `worker-src blob:` is not needed when the worker is served as a
   file, as in the bench. Both cases need WebGL, which deck.gl already requires.
 
@@ -370,15 +371,97 @@ the whole list with open, keyless data that can work offline.
 - **Scale.** Buildings appear from about zoom 14, while a receiver's range of
   ~250 NM sits at zoom 7–9. They help mainly around airports: taxi, take-off,
   approach.
-- **Occlusion.** The benchmark ran deck.gl *overlaid*
+- **Occlusion.** In deck.gl's *overlaid* mode
   ([`MapboxOverlay`](https://deck.gl/docs/api-reference/mapbox/mapbox-overlay)
-  `interleaved: false`). In that mode an aircraft behind a hill or a building
-  is still drawn in front of it. Terrain and buildings need `interleaved: true`
-  to share MapLibre's depth buffer, and that mode is **not benchmarked**.
-- **Height reference.** ADS-B altitude is barometric, while terrain and building
-  heights are measured from the ground. Near an airport the difference shows,
-  so a correct picture needs the field elevation and QNH. The METAR layer
-  provides QNH.
+  `interleaved: false`) an aircraft behind a hill or a building is still drawn
+  in front of it. Terrain and buildings need `interleaved: true` to share
+  MapLibre's depth buffer. Measured below.
+- **Height reference.** ADS-B altitude is pressure altitude (referenced to
+  1013.25 hPa). Terrain elevation is above sea level, and building heights are
+  above the ground. Near an airport the difference shows, so a correct picture
+  needs QNH, which the METAR layer provides.
+
+### Measured: interleaved, 3D terrain and buildings (2026-11-19)
+
+Same harness as above, run `bench/results/2026-11-18T23-12-45.*`, 3
+repetitions, WebKit and Chromium. 900 results, none failed, and none flagged
+for a throttled display. Every variant is pitched 60° with aircraft at their
+altitude:
+
+| Variant | What it adds |
+|---|---|
+| **maplibre-deckgl-3d** | reference: deck.gl *overlaid*, nothing else (as earlier) |
+| **maplibre-deckgl-3d-il** | deck.gl *interleaved* (shares MapLibre's depth buffer) |
+| **maplibre-deckgl-terrain** | + 3D terrain and hillshade, receiver-range view (zoom 7) |
+| **maplibre-deckgl-city** | + 3D terrain, downtown Montréal at zoom 15 |
+| **maplibre-deckgl-buildings** | + OSM 3D buildings, same city view: the densest case near the bench centre |
+
+Real tiles, served locally from `bench/fixtures/` (`npm run bench:fixtures`):
+- 345 AWS Terrarium elevation tiles (22.5 MB), z0–9 over 10° × 7°;
+- 157 OSM vector tiles (15.9 MB) from the Protomaps build of 2026-11-18,
+  z0–15 over downtown. About a third of the buildings there carry a `height`;
+  the others get 6 m.
+
+The page waits for MapLibre's first `idle` (tiles and terrain loaded) before
+measuring, so **load** times the aircraft data alone. **Pan/zoom** includes the
+tiles each gesture brings in, from local disk.
+
+**Load, 1M points, `setData` until rendered (ms):**
+
+| | WebKit dots | WebKit lines | Chromium dots | Chromium lines |
+|---|---:|---:|---:|---:|
+| 3d (overlaid) | 50 | 28 | 49 | 33 |
+| 3d-il | 50 | 32 | 51 | 35 |
+| terrain | 55 | 31 | 52 | 34 |
+| city | 53 | 33 | 53 | 35 |
+| buildings | 57 | 33 | 52 | 34 |
+
+**Pan/zoom, 1M points:** in WebKit, every variant keeps p95 at 18 ms (the
+60 Hz frame). The worst frame for dots is 26 ms overlaid, 26 interleaved,
+29 with terrain, 23 city and 25 with buildings; for lines, 31–34 ms across all
+five. In Chromium (about 100 Hz here), p95 stays at 9–10 ms, and the worst
+frame at 1M lines is 35–50 ms in every variant, the overlaid reference included.
+Settle time after a gesture is one frame everywhere.
+
+**Live (25k, an update every 500 ms):** frame p95 is unchanged (18 ms WebKit,
+9–10 ms Chromium). The time from an update to its painted frame doubles with
+interleaving, from 15 to 32 ms in WebKit and from 8–9 to 15 ms in Chromium,
+and terrain or buildings add nothing on top. That is **one frame of latency, not
+work**: interleaved, deck.gl draws during MapLibre's next render pass instead of
+on its own canvas straight away.
+
+**Heap after GC, Chromium (MB):**
+
+| | dots 10k | dots 1M | lines 10k | lines 1M |
+|---|---:|---:|---:|---:|
+| 3d-il | 27 | 88 | 31 | 140 |
+| terrain | 49 | 106 | 53 | 156 |
+| city | 27 | 90 | 33 | 142 |
+| buildings | 46 | 99 | 43 | 150 |
+
+Terrain at receiver range costs about 16–22 MB, the DEM tiles in view. Over the
+city it is cheaper, because only a few overzoomed DEM tiles are in view.
+Buildings add 8–19 MB.
+
+**What it means:**
+- **Interleaving, terrain and 3D buildings cost almost nothing on this
+  machine.** Load grows by at most 7 ms at 1M points, frame rate does not move,
+  and memory grows by about 10–20 MB. The one visible cost is a single frame of
+  latency on live updates.
+- **Compatibility:** with terrain on, deck.gl 9.4.1 (latest stable) crashes on
+  MapLibre 6. It reads `map.transform`, which MapLibre 6 moved to
+  `map._camera.transform`. The bench re-exposes it (`src/bench/maplibre-compat.ts`,
+  five lines). A port would need the same shim, or MapLibre 5, until deck.gl
+  catches up.
+- **Limits of this run:**
+  - Apple M4 Max: a weaker GPU will feel terrain and buildings sooner.
+  - Tiles come from local disk; network latency during a gesture is not
+    measured.
+  - At the zoom-15 city view the camera is below cruising aircraft, so few are
+    on screen. deck.gl still processes every point each frame, so the cost
+    counts, but the scene is not a realistic approach.
+  - Occlusion itself, a hill or building hiding an aircraft, was not checked
+    visually.
 
 ### Cache policy
 
@@ -421,10 +504,13 @@ host. Every remote host above, in contrast, must be added to **both** CSP files.
 2. **If 3D proves worth it, port to MapLibre + deck.gl:** 3D terrain from
    Terrarium tiles, airspace volumes, buildings near airports, and offline
    basemap and relief as PMTiles.
-3. **Before porting, two more benchmark runs:**
-   - MapLibre + deck.gl in **interleaved** mode with terrain and buildings
-     switched on;
-   - the same with real tiles loaded, since every run so far blocked the network.
+3. **Before porting:** the interleaved run with terrain and buildings is
+   done (above: no measurable cost here). Still open:
+   - tiles over the network during gestures;
+   - a weaker GPU than the M4 Max;
+   - a visual check that terrain and buildings hide aircraft;
+   - a fix for, or a pin around, the deck.gl/MapLibre 6 `map.transform`
+     incompatibility.
 4. **Cesium** only if a true globe becomes a requirement.
 
 ## Engine as a runtime choice
@@ -476,4 +562,6 @@ surface.
    sea and 3D buildings are covered by MapLibre + deck.gl with open, keyless
    data that can work offline (see *Target layers*). Only 3D terrain, buildings
    and airspace volumes need the engine change. The overlays can start in
-   Leaflet now.
+   Leaflet now. Interleaved deck.gl with 3D terrain and OSM buildings was
+   measured at no meaningful cost on this machine, with one frame of extra
+   latency on live updates.
