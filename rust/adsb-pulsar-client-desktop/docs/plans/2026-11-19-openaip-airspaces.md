@@ -1,6 +1,6 @@
 # OpenAIP airspaces on the map (phase 0, first layer)
 
-Status: implemented on branch `feature/openaip-airspaces` (not yet checked against a live key). Design record: DESIGN.md → Airspaces (OpenAIP).
+Status: implemented on branch `feature/openaip-airspaces` (checked in the running app with a live key, 2026-11-19). Design record: DESIGN.md → Airspaces (OpenAIP).
 This is the first layer of phase 0 in the map-engine recommendation: new
 layers go into the current Leaflet map before any engine change.
 

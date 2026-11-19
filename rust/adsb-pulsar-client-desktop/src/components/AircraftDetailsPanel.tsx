@@ -20,6 +20,7 @@ import { useDisplayTz } from "@/hooks/useDisplayTz";
 import type { AircraftWind } from "@/lib/aircraft-wind";
 import { RangeLineIcon, rangeLineTitle, RANGE_LINE_COLOR } from "@/components/RangeLineButton";
 import { formatAlongTrack, formatCrosswind, formatWind } from "@/lib/wind-format";
+import { mslAltitude, type QnhSource } from "@/lib/qnh";
 
 const MIN_PANEL_WIDTH = 200;
 const MAX_PANEL_WIDTH = 480;
@@ -48,6 +49,8 @@ interface Props {
   rangeLineOn?: boolean;
   /** Toggles the mode; the Distance-row toggle is omitted without it. */
   onToggleRangeLine?: () => void;
+  /** QNH of the nearest current METAR, for live selections only; the MSL row is omitted without it. */
+  qnh?: QnhSource | null;
 }
 
 export function AircraftDetailsPanel({
@@ -62,6 +65,7 @@ export function AircraftDetailsPanel({
   receiverLocation = null,
   rangeLineOn = false,
   onToggleRangeLine,
+  qnh = null,
 }: Props) {
   if (track === null) return null;
 
@@ -77,6 +81,7 @@ export function AircraftDetailsPanel({
       receiverLocation={receiverLocation}
       rangeLineOn={rangeLineOn}
       onToggleRangeLine={onToggleRangeLine}
+      qnh={qnh}
     />
   ) : (
     <CollapsedStrip onToggle={onToggle} />
@@ -111,6 +116,7 @@ function ExpandedPanel({
   receiverLocation = null,
   rangeLineOn = false,
   onToggleRangeLine,
+  qnh = null,
 }: {
   track: AircraftTrack;
   width: number;
@@ -122,6 +128,7 @@ function ExpandedPanel({
   receiverLocation?: ReceiverPoint | null;
   rangeLineOn?: boolean;
   onToggleRangeLine?: () => void;
+  qnh?: QnhSource | null;
 }) {
   const { resolvedTzName } = useDisplayTz();
   // Self-contained drag: listeners created on mousedown capture the start width/x and are removed
@@ -158,6 +165,7 @@ function ExpandedPanel({
   const altBounds = altitudeRange(recentAlt);
   const squawkLabel = track.squawk ? SQUAWK_LABELS[track.squawk] : undefined;
   const distanceNm = receiverDistanceNm(track, receiverLocation);
+  const altitudeMsl = mslAltitude(track.altitude, qnh);
   const azimuthDeg = receiverAzimuthDeg(track, receiverLocation);
   const elevationDeg = receiverElevationDeg(track, receiverLocation);
 
@@ -214,7 +222,15 @@ function ExpandedPanel({
         <div className="px-3 py-2 border-b border-slate-800 space-y-1">
           <Row label="Altitude">
             {track.altitude !== null ? (
-              <span>{track.altitude.toLocaleString("en-US")} ft</span>
+              <span>
+                {track.altitude.toLocaleString("en-US")} ft
+                {/* Named only when a corrected value sits beside it, to tell the two apart */}
+                {altitudeMsl !== null && (
+                  <span className="ml-1 text-[10px] text-slate-500" title="Pressure altitude: referenced to 1013.25 hPa">
+                    STD
+                  </span>
+                )}
+              </span>
             ) : (
               <span className="text-slate-500">—</span>
             )}
@@ -224,6 +240,16 @@ function ExpandedPanel({
               </span>
             )}
           </Row>
+          {altitudeMsl !== null && qnh && (
+            <Row label="Alt MSL">
+              <span data-testid="altitude-msl" title="Altimeter set to the nearest station's QNH (temperature not corrected)">
+                ≈ {altitudeMsl.toLocaleString("en-US")} ft
+                <span className="ml-1 text-[10px] text-slate-500">
+                  QNH {Math.round(qnh.qnhHpa)} {qnh.stationId}
+                </span>
+              </span>
+            </Row>
+          )}
           <Row label="Speed">
             {track.ground_speed !== null ? (
               <span>{track.ground_speed} kts</span>

@@ -12,6 +12,7 @@ import { useAirspaces } from "@/hooks/useAirspaces";
 import { DEFAULT_AIRSPACE_OPACITY, airspaceTypes, filterByType } from "@/lib/airspace";
 import { DEFAULT_METAR_OPACITY, filterByCategory, metarCategories, type CategoryKey } from "@/lib/metar";
 import { useMetars } from "@/hooks/useMetars";
+import { nearestQnh } from "@/lib/qnh";
 
 /** Stable default for the hidden airspace types (a literal would be a new array per render). */
 const NO_HIDDEN_TYPES: number[] = [];
@@ -900,6 +901,14 @@ export default function Dashboard() {
    * the live snapshot. This is the "live selections only" guard being lifted:
    * it existed because historical weather did not, not because the question
    * was wrong. */
+  // QNH for the MSL row: live selections only. A recorded or imported track
+  // flew under another day's pressure, and today's METAR would mislead.
+  // All fetched stations count, whatever the category filter hides.
+  const isLiveSelection = isLive && !isDbHistorySelection && !isImportedSelection;
+  const selectedQnh =
+    selectedTrack && isLiveSelection && selectedTrack.latitude != null && selectedTrack.longitude != null
+      ? nearestQnh(metarLayer.metars, selectedTrack.latitude, selectedTrack.longitude, weatherClockMs)
+      : null;
   const selectedWind = selectedTrack
     ? selectAircraftWind({
         track: selectedTrack,
@@ -1583,6 +1592,7 @@ export default function Dashboard() {
                    gets the wind of the hour recorded nearest its own last_seen. */
                 wind={selectedWind}
                 receiverLocation={receiverLocation}
+                qnh={selectedQnh}
                 rangeLineOn={showRangeLines}
                 onToggleRangeLine={handleToggleRangeLines}
               />

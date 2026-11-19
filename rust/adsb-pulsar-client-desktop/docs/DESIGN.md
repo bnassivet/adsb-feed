@@ -5496,7 +5496,8 @@ and airways and routes are corridors (`HIDDEN_TYPES`).
 
 `[desktop] openaip_api_key` (secret, never printed by `desktop-env`) and
 `openaip_countries` (default `CA`) become `ADSB_OPENAIP_API_KEY` and
-`ADSB_OPENAIP_COUNTRIES` for the Tauri process. A free key comes from the
+`ADSB_OPENAIP_COUNTRIES` for the Tauri process. Checked in the running app with
+a real key on 2026-11-19. A free key comes from the
 openaip.net profile page, under API clients.
 
 - **No keyless path.** OpenAIP's public export bucket became "requester pays"
@@ -5561,9 +5562,29 @@ age always shown".
 - `altim` is QNH in hPa; 17 of 106 stations had none.
 - HTTP 204 means no stations in the box.
 
-**Next:** QNH from the nearest station turns ADS-B pressure altitude into
-altitude above MSL. It is needed before airspace limits in feet MSL, terrain
-or buildings can be compared with aircraft.
+### Altitude MSL from QNH (`src/lib/qnh.ts`)
+
+ADS-B barometric altitude is **pressure altitude**, referenced to
+1013.25 hPa. Terrain, buildings and airspace limits in feet are **above MSL**.
+The aircraft details panel therefore adds an *Alt MSL* row, for example
+"≈ 3,370 ft QNH 1027 CYUL". It is the value an altimeter set to the nearest
+station's QNH would read. When that row is present, the reported altitude is
+labelled `STD`.
+
+- **Formula:** `qnhAltitudeFt` is exact in the standard atmosphere,
+  `h = K·(1 − (1013.25/QNH)^N·(1 − h_p/K))`. That is about 27 ft per hPa at
+  sea level, slightly less higher up (378 ft at 0 ft and 370 ft at 3,000 ft
+  for QNH 1027.2). Temperature is ignored, so this is altimeter altitude, not
+  true altitude.
+- **Station:** `nearestQnh` takes the nearest station within 100 NM that has a
+  QNH and a report under 90 minutes old. It looks at every fetched station,
+  whatever the category filter hides.
+- **Only below the transition altitude** (18,000 ft in North America). Above
+  it, aircraft and limits use flight levels, which are themselves pressure
+  altitudes.
+- **Live selections only.** A DB History or imported track flew under another
+  day's pressure.
+- **Needs the METAR layer on:** nothing is fetched just for this row.
 
 ## Observability (Prometheus)
 

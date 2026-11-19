@@ -1,6 +1,6 @@
 # METAR stations on the map (phase 0, second layer)
 
-Status: implemented on branch `feature/metar-layer` (stacked on
+Status: implemented and checked in the running app (2026-11-19), branch `feature/metar-layer` (stacked on
 `feature/openaip-airspaces`). Follows the airspace layer's pattern.
 
 ## Goal
