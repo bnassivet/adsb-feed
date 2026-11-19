@@ -16,6 +16,7 @@ import { useRadar } from "@/hooks/useRadar";
 import { useFrameAnimation, useRadarFrames } from "@/hooks/useRadarFrames";
 import { RadarTimeline } from "@/components/RadarTimeline";
 import { animationView, DEFAULT_RADAR_OPACITY, latestView } from "@/lib/radar";
+import { DEFAULT_DEPTH_OPACITY, DEFAULT_SEAMARK_OPACITY, type SeaSettings } from "@/lib/sea";
 import { DEFAULT_TRANSITION_ALTITUDE_FT, nearestQnh } from "@/lib/qnh";
 
 /** Stable default for the hidden airspace types (a literal would be a new array per render). */
@@ -119,6 +120,22 @@ export default function Dashboard() {
   const [showRadar, setShowRadar] = useLocalStorage<boolean>("adsb-show-radar", false);
   const [radarOpacity, setRadarOpacity] = useLocalStorage<number>("adsb-radar-opacity", DEFAULT_RADAR_OPACITY);
   const [radarAnimate, setRadarAnimate] = useLocalStorage<boolean>("adsb-radar-animate", false);
+  const [showSeamarks, setShowSeamarks] = useLocalStorage<boolean>("adsb-show-seamarks", false);
+  const [seamarkOpacity, setSeamarkOpacity] = useLocalStorage<number>("adsb-seamark-opacity", DEFAULT_SEAMARK_OPACITY);
+  const [showDepthColours, setShowDepthColours] = useLocalStorage<boolean>("adsb-show-depth-colours", false);
+  const [showDepthContours, setShowDepthContours] = useLocalStorage<boolean>("adsb-show-depth-contours", false);
+  const [depthOpacity, setDepthOpacity] = useLocalStorage<number>("adsb-depth-opacity", DEFAULT_DEPTH_OPACITY);
+  // One object for the map, stable while nothing changes.
+  const sea = useMemo<SeaSettings>(
+    () => ({
+      seamarks: showSeamarks,
+      seamarkOpacity,
+      depthColours: showDepthColours,
+      depthContours: showDepthContours,
+      depthOpacity,
+    }),
+    [showSeamarks, seamarkOpacity, showDepthColours, showDepthContours, depthOpacity],
+  );
   const [transitionAltitudeFt, setTransitionAltitudeFt] = useLocalStorage<number>("adsb-transition-altitude-ft", DEFAULT_TRANSITION_ALTITUDE_FT);
   const [metarHiddenCategories, setMetarHiddenCategories] = useLocalStorage<CategoryKey[]>("adsb-metar-hidden-categories", NO_HIDDEN_CATEGORIES);
   const [weatherLevel, setWeatherLevel] = useLocalStorage<WeatherLevel>("adsb-weather-level", 250);
@@ -1583,6 +1600,18 @@ export default function Dashboard() {
             hiddenTypes: airspaceHiddenTypes,
             onHiddenTypesChange: setAirspaceHiddenTypes,
           }}
+          sea={{
+            seamarks: showSeamarks,
+            onToggleSeamarks: () => setShowSeamarks((prev: boolean) => !prev),
+            seamarkOpacity,
+            onSeamarkOpacityChange: setSeamarkOpacity,
+            depthColours: showDepthColours,
+            onToggleDepthColours: () => setShowDepthColours((prev: boolean) => !prev),
+            depthContours: showDepthContours,
+            onToggleDepthContours: () => setShowDepthContours((prev: boolean) => !prev),
+            depthOpacity,
+            onDepthOpacityChange: setDepthOpacity,
+          }}
           radar={{
             show: showRadar,
             onToggle: () => setShowRadar((prev: boolean) => !prev),
@@ -1644,7 +1673,7 @@ export default function Dashboard() {
                   />
                 </div>
               )}
-              <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={visibleMetars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={weatherClockMs} radar={radarView} radarOpacity={radarOpacity} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
+              <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={visibleMetars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={weatherClockMs} radar={radarView} radarOpacity={radarOpacity} sea={sea} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel

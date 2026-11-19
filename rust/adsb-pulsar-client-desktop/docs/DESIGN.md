@@ -5728,6 +5728,45 @@ current image, so the hour is collected by the app:
 - reflectivity (BUFR);
 - a speed control for the animation.
 
+## Sea overlays (OpenSeaMap, EMODnet)
+
+Filters → Sea. Three switches, all off by default: **Seamarks**, **Depth
+colours** and **Depth contours**. Phase 0 of `docs/MAP_ENGINES.md`. Plan:
+`docs/plans/2026-11-19-sea-overlays.md`.
+
+| Layer | Source | Pane | Notes |
+|---|---|---|---|
+| Seamarks | OpenSeaMap XYZ tiles `tiles.openseamap.org/seamark/{z}/{x}/{y}.png` | z 345, above the radar | Transparent; tiles are empty below zoom 9, so `minZoom: 9` and no requests below |
+| Depth colours | EMODnet Bathymetry WMS, `emodnet:mean_multicolour` | z 320, under everything drawn | Land is transparent (checked: alpha 0), sea opaque |
+| Depth contours | same WMS, `emodnet:contours` | same image | White lines and labels, made for the dark map |
+
+- **Frontend only.** Both are keyless image services, so there is no Rust
+  command. `lib/sea.ts` holds the URLs, the hosts, the defaults and
+  `depthLayers`, which builds the WMS `layers` value from the two depth
+  switches. Colours and contours come in **one** request, as 512 px tiles,
+  because the server takes about 0.8 s per tile.
+- **Styles not used:** `emodnet:mean_atlas_land` and the `atlas_land` style
+  also draw land, fully opaque. They are base maps, not overlays.
+- **Opacity:** seamarks 90 % by default; depth 35 %, because the colour scale
+  runs from red to dark blue. Colours and contours share one slider, since they
+  are one image. Opacity is × 0.85 at night.
+- **Legend:** a gradient in metres (0–3500 m), from colours sampled from
+  EMODnet's own legend (GetLegendGraphic). That image has a light grey box, so
+  it is not shown as is. The scale is not linear: most of the colour goes to
+  shallow water.
+- **Caching:** these layers do not go through the tile cache. They load as
+  plain images (CSP `img-src` only, in both CSP files, checked by
+  `csp.test.ts`) and rely on the HTTP cache; EMODnet sends `max-age` of 100
+  days. Seamarks are OpenStreetMap data, and OSM tiles must not be downloaded
+  in bulk anyway.
+- **Credits:** OpenSeaMap (ODbL) and EMODnet Bathymetry (CC BY 4.0), on the map
+  while a layer is on and in the panel.
+- **localStorage keys:** `adsb-show-seamarks`, `adsb-seamark-opacity`,
+  `adsb-show-depth-colours`, `adsb-show-depth-contours`, `adsb-depth-opacity`.
+
+**Not yet:** the depth under the cursor (WMS GetFeatureInfo); offline copies
+(phase 4).
+
 ## Observability (Prometheus)
 
 Every long-lived service in the stack exposes a Prometheus endpoint. Before

@@ -5,6 +5,7 @@ import { WeatherControls, type WeatherControlsProps } from "@/components/Weather
 import { AirspaceControls, type AirspaceControlsProps } from "./AirspaceControls";
 import { MetarControls, type MetarControlsProps } from "./MetarControls";
 import { RadarControls, type RadarControlsProps } from "./RadarControls";
+import { SeaControls, type SeaControlsProps } from "./SeaControls";
 import type { ReactNode } from "react";
 
 interface Props {
@@ -64,6 +65,8 @@ interface Props {
   metar?: MetarControlsProps;
   /** Rain radar controls. Optional: without them there is no radar section. */
   radar?: RadarControlsProps;
+  /** Sea overlay controls. Optional: without them there is no sea section. */
+  sea?: SeaControlsProps;
 }
 
 function msToDatetimeLocal(ms: number): string {
@@ -86,7 +89,7 @@ function Section({ title, defaultOpen, children }: { title: string; defaultOpen?
   );
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, showPositions, onTogglePositions, showLabels, onToggleLabels, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange, showEvents, onToggleEvents, eventsCount, eventFilterMode, onEventFilterModeChange, eventUpcomingDays, onEventUpcomingDaysChange, eventTimeRangeStart, eventTimeRangeEnd, onEventTimeRangeChange, weather, airspaces, metar, radar }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, showPositions, onTogglePositions, showLabels, onToggleLabels, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange, showEvents, onToggleEvents, eventsCount, eventFilterMode, onEventFilterModeChange, eventUpcomingDays, onEventUpcomingDaysChange, eventTimeRangeStart, eventTimeRangeEnd, onEventTimeRangeChange, weather, airspaces, metar, radar, sea }: Props) {
   return (
     <div className="flex flex-col gap-2 p-4">
 
@@ -373,6 +376,13 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
       {radar && (
         <Section title="Rain radar">
           <RadarControls {...radar} />
+        </Section>
+      )}
+
+      {/* ── Sea ── */}
+      {sea && (
+        <Section title="Sea">
+          <SeaControls {...sea} />
         </Section>
       )}
 

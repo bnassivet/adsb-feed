@@ -158,3 +158,20 @@ describe("FiltersPanel radar section", () => {
     expect(screen.queryByRole("checkbox", { name: /rain radar/i })).not.toBeInTheDocument();
   });
 });
+
+describe("FiltersPanel sea section", () => {
+  const sea = {
+    seamarks: false, onToggleSeamarks: vi.fn(), seamarkOpacity: 0.9, onSeamarkOpacityChange: vi.fn(),
+    depthColours: false, onToggleDepthColours: vi.fn(), depthContours: false, onToggleDepthContours: vi.fn(),
+    depthOpacity: 0.35, onDepthOpacityChange: vi.fn(),
+  };
+  it("shows the sea controls when sea props are given", () => {
+    render(<FiltersPanel {...baseProps} sea={sea} />);
+    expect(screen.getByRole("checkbox", { name: /seamarks/i })).toBeInTheDocument();
+  });
+  it("has no sea section without them", () => {
+    render(<FiltersPanel {...baseProps} />);
+    expect(screen.queryByRole("checkbox", { name: /seamarks/i })).toBeNull();
+  });
+});
+

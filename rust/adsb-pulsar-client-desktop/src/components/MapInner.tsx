@@ -55,6 +55,10 @@ import { WindSpeedLegend } from "./WindSpeedLegend";
 import { AirspaceInfo } from "./AirspaceInfo";
 import { MetarInfo } from "./MetarInfo";
 import { DEFAULT_RADAR_OPACITY, RADAR_ATTRIBUTION, type RadarImage, type RadarView } from "@/lib/radar";
+import {
+  DEPTH_ATTRIBUTION, EMODNET_WMS_URL, SEAMARK_ATTRIBUTION, SEAMARK_MAX_NATIVE_ZOOM, SEAMARK_MIN_ZOOM, SEAMARK_URL,
+  depthLayers, type SeaSettings,
+} from "@/lib/sea";
 import { DEFAULT_METAR_OPACITY, METAR_ATTRIBUTION, metarMarkerStyle, nearestMetar, type Metar } from "@/lib/metar";
 import { AIRSPACE_ATTRIBUTION, DEFAULT_AIRSPACE_OPACITY, airspacesAt, airspaceStyle, type Airspace } from "@/lib/airspace";
 
@@ -427,6 +431,7 @@ const RADAR_PANE = "radar";
 /** Radar colours are saturated: a little less at night, as for the other layers. */
 const RADAR_NIGHT_FACTOR = 0.85;
 const NO_RADAR_IMAGES: RadarImage[] = [];
+const NO_SEA: SeaSettings = { seamarks: false, seamarkOpacity: 0, depthColours: false, depthContours: false, depthOpacity: 0 };
 
 /**
  * The rain radar: one PNG that Rust already coloured and reprojected to Web
@@ -474,6 +479,77 @@ function RadarLayer({ view, opacity, theme }: { view: RadarView | null; opacity:
     const shown = opacity * (theme === "dark" ? RADAR_NIGHT_FACTOR : 1);
     for (const [t, o] of overlays.current) o.setOpacity(t === shownMs ? shown : 0);
   }, [images, boundsKey, shownMs, opacity, theme]);
+  return null;
+}
+
+/** Sea depth under everything we draw (radar 340); seamarks above the radar, under airspaces (350). */
+const DEPTH_PANE = "sea-depth";
+const SEAMARK_PANE = "seamarks";
+/** The overlays are bright; a little less at night, as for the other layers. */
+const SEA_NIGHT_FACTOR = 0.85;
+
+function seaPane(map: L.Map, name: string, z: number) {
+  const pane = map.getPane(name) ?? map.createPane(name);
+  pane.style.zIndex = String(z);
+  pane.style.pointerEvents = "none";
+}
+
+/**
+ * EMODnet depth as one WMS image per 512 px tile: colours, contours or both
+ * in a single request (`depthLayers`). The server takes ~0.8 s per tile, so
+ * fewer, bigger tiles. Rebuilt only when the layer list changes.
+ */
+function DepthLayer({ layers, opacity, theme }: { layers: string | null; opacity: number; theme: MapTheme }) {
+  const map = useMap();
+  const layer = useRef<L.TileLayer.WMS | null>(null);
+  useEffect(() => {
+    if (!layers) return;
+    seaPane(map, DEPTH_PANE, 320);
+    const l = L.tileLayer
+      .wms(EMODNET_WMS_URL, {
+        layers,
+        styles: "",
+        format: "image/png",
+        transparent: true,
+        version: "1.3.0",
+        tileSize: 512,
+        pane: DEPTH_PANE,
+      })
+      .addTo(map);
+    layer.current = l;
+    return () => {
+      l.remove();
+      layer.current = null;
+    };
+  }, [map, layers]);
+  // Declared after the build effect, so a rebuilt layer gets the opacity in the same commit.
+  useEffect(() => {
+    layer.current?.setOpacity(opacity * (theme === "dark" ? SEA_NIGHT_FACTOR : 1));
+  }, [layers, opacity, theme]);
+  return null;
+}
+
+/** OpenSeaMap seamarks: transparent tiles of buoys, lights and harbours. */
+function SeamarkLayer({ show, opacity, theme }: { show: boolean; opacity: number; theme: MapTheme }) {
+  const map = useMap();
+  const layer = useRef<L.TileLayer | null>(null);
+  useEffect(() => {
+    if (!show) return;
+    seaPane(map, SEAMARK_PANE, 345);
+    const l = L.tileLayer(SEAMARK_URL, {
+      minZoom: SEAMARK_MIN_ZOOM,
+      maxNativeZoom: SEAMARK_MAX_NATIVE_ZOOM,
+      pane: SEAMARK_PANE,
+    }).addTo(map);
+    layer.current = l;
+    return () => {
+      l.remove();
+      layer.current = null;
+    };
+  }, [map, show]);
+  useEffect(() => {
+    layer.current?.setOpacity(opacity * (theme === "dark" ? SEA_NIGHT_FACTOR : 1));
+  }, [show, opacity, theme]);
   return null;
 }
 
@@ -833,6 +909,8 @@ interface Props {
   /** The rain radar images and the one to show; null while the layer is off. */
   radar?: RadarView | null;
   radarOpacity?: number;
+  /** Sea overlays: OpenSeaMap seamarks and EMODnet depth. */
+  sea?: SeaSettings;
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];
   dbHistoryTracks?: AircraftTrack[];
@@ -1150,7 +1228,7 @@ function labelIcon(p: LabelPlacement, text: string, color: string, selected: boo
   });
 }
 
-export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
+export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, sea = NO_SEA, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
   // Memoised: the basemap layer is rebuilt (and every tile reloaded) when this changes.
   const tile = useMemo(() => tileConfig(mapTheme, CARTO_API_KEY), [mapTheme]);
   const [airspaceStack, setAirspaceStack] = useState<Airspace[]>(NO_AIRSPACES);
@@ -1220,7 +1298,17 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
         <FlyToHandler onReady={handleFlyToReady} />
         <CachedBasemap tile={tile} origin={tileCacheOrigin} />
 
-        {/* Rain radar — the lowest overlay, never interactive */}
+        {/* Sea depth, then the radar, then seamarks — never interactive */}
+        {(sea.depthColours || sea.depthContours) && <MapAttribution text={DEPTH_ATTRIBUTION} />}
+        <DepthLayer
+          layers={depthLayers({ colours: sea.depthColours, contours: sea.depthContours })}
+          opacity={sea.depthOpacity}
+          theme={mapTheme}
+        />
+        {sea.seamarks && <MapAttribution text={SEAMARK_ATTRIBUTION} />}
+        <SeamarkLayer show={sea.seamarks} opacity={sea.seamarkOpacity} theme={mapTheme} />
+
+        {/* Rain radar — under airspaces, never interactive */}
         {radar && <MapAttribution text={RADAR_ATTRIBUTION} />}
         <RadarLayer view={radar} opacity={radarOpacity} theme={mapTheme} />
 
