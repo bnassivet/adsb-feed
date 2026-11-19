@@ -12,6 +12,52 @@ Cesium for the first time, and MapLibre + deck.gl (flat and pitched) in a
 second run. A later section maps the wanted layers (terrain, ICAO charts,
 weather, sea, 3D buildings) to open sources, engines and a cache policy.
 
+## Recommendation: the way forward (2026-11-19)
+
+Synthesis of everything below. The evidence is in the sections it cites.
+
+**Decision.**
+- **Today:** keep Leaflet + deck.gl. It is the fastest on every measure and
+  every app layer exists there.
+- **3D target:** MapLibre + deck.gl, with deck.gl *interleaved*. It is the only
+  candidate that covers terrain, 3D buildings, airspace volumes and offline
+  PMTiles with open, keyless data. Measured level with Leaflet when flat or
+  pitched, and adding terrain and buildings costs almost nothing.
+- **How:** move to it as a **replacement** for Leaflet, not as a second engine
+  next to it. Running two engines means writing every map feature twice
+  (*Engine as a runtime choice*). Pitch is a camera setting, so the flat view
+  remains available.
+- **Ruled out:**
+  - **OpenLayers.** It has no 3D. It is only worth revisiting if OGC weather
+    editing outweighs 3D.
+  - **Cesium.** Choose it only if a true globe becomes a requirement. Its cost
+    is a 13 MB bundle, build workarounds and a full rewrite of every layer.
+
+**Phases.** Each phase decides whether the next one happens.
+
+| # | What | Engine | Go/no-go for the next phase |
+|---|---|---|---|
+| 0 | New layers in the app as it is: OpenAIP airspaces, one GeoJSON per AIRAC cycle, labelled with the cycle and drawn as deck.gl polygons; METAR stations, which also provide QNH; a radar WMS; OpenSeaMap and EMODnet; a pre-made relief raster | Leaflet | Are terrain, relief and airspaces actually used? If not, stop here and stay on Leaflet. |
+| 1 | Close the open measurements: tiles over the network during gestures, a weaker GPU, a visual check that a hill or building hides an aircraft, and the deck.gl / MapLibre 6 `map.transform` issue (upstream fix, or pin MapLibre 5) | bench | Every item passes, or has a mitigation that is written down. |
+| 2 | Port: MapLibre style; the tile cache behind `addProtocol`, keeping `store.ts`, `loadTile.ts` and `prefetch.ts`; the deck.gl data layers, which move almost unchanged; markers, popups and the context menu; label layout reworked for a pitched view. `exposeTransform` moves from `src/bench/` to `src/lib/`, together with its tests | MapLibre | Feature parity with today's flat map, checked layer by layer against `MapInner.tsx`. |
+| 3 | 3D content: Terrarium terrain, buildings around airports only, airspace volumes, and aircraft heights corrected with QNH | MapLibre | — |
+| 4 | Offline: PMTiles extracts served from Rust through a Tauri custom protocol. This is the "local tile server" the 2026-11-08 cache decision was waiting for | MapLibre | — |
+
+**Risks to carry.**
+- **deck.gl and MapLibre 6.** With terrain, deck.gl 9.4.1 reads an internal
+  that MapLibre 6 moved. The shim is five lines but depends on a private field.
+  Recheck it on every upgrade of either library.
+- **Live latency.** Interleaving adds one frame of latency to live updates.
+  That is negligible next to the 500 ms bridge flush, but it should stay
+  measured.
+- **Labels.** Collision-free labels are the least portable piece, because once
+  the map is pitched, screen projection is no longer affine.
+- **Licences.** OpenAIP is CC BY-NC-SA, so non-commercial use only. The OACI
+  1:500,000 chart is restricted: check the terms before caching it.
+- **CSP.** Every new remote host goes into both CSP files.
+- **Hardware.** All numbers so far come from one M4 Max with tiles on local
+  disk.
+
 ## What was measured (2026-11-18)
 
 Same harness, data, colours and gesture as MAP_BENCH.md (`npm run bench`), with
