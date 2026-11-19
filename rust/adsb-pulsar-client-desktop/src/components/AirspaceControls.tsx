@@ -12,6 +12,9 @@ export interface AirspaceControlsProps {
   /** The command itself failed. */
   error: string | null;
   onReload: () => void;
+  /** Slider, 0–1: scales outlines and fills (fills are halved again at night). */
+  opacity: number;
+  onOpacityChange: (opacity: number) => void;
 }
 
 /**
@@ -19,7 +22,8 @@ export interface AirspaceControlsProps {
  * an expired cycle is an alert rather than a footnote: outdated airspace is a
  * safety issue, not a cosmetic one.
  */
-export function AirspaceControls({ show, onToggle, count, status, loading, error, onReload }: AirspaceControlsProps) {
+export function AirspaceControls({ show, onToggle, count, status, loading, error, onReload, opacity, onOpacityChange }: AirspaceControlsProps) {
+  const percent = Math.round(opacity * 100);
   const problems = error ? [error, ...status.errors] : status.errors;
   return (
     <div className="flex flex-col gap-1">
@@ -29,6 +33,20 @@ export function AirspaceControls({ show, onToggle, count, status, loading, error
       </label>
       {show && (
         <div className="ml-5 flex flex-col gap-1 text-[11px] text-slate-500">
+          <label className="flex items-center gap-2">
+            <span>Opacity</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={percent}
+              onChange={(e) => onOpacityChange(Number(e.target.value) / 100)}
+              aria-label="Airspace opacity"
+              className="flex-1 accent-indigo-500"
+            />
+            <span className="w-8 text-right tabular-nums">{percent}%</span>
+          </label>
           {loading ? (
             <span>Loading…</span>
           ) : (

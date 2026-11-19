@@ -202,9 +202,29 @@ export function airspacesAt(list: Airspace[], lat: number, lng: number): Airspac
 export interface AirspaceStyle {
   color: string;
   weight: number;
+  /** Outline opacity. */
+  opacity: number;
   fillOpacity: number;
   dashArray?: string;
 }
+
+/** Opacity setting a new install starts with (Filters → Airspaces slider). */
+export const DEFAULT_AIRSPACE_OPACITY = 0.4;
+
+export interface AirspaceStyleOptions {
+  /** The slider, 0–1: scales outlines and fills together. */
+  opacity?: number;
+  theme?: "light" | "dark";
+}
+
+/** Outlines never vanish entirely: at 0 the slider means "no fill", not "no airspace". */
+const MIN_OUTLINE = 0.15;
+/**
+ * Night factors. The same fill reads far stronger over a dark basemap, where
+ * it lightens the map, than over a light one, where it barely tints it.
+ */
+const DARK_FILL = 0.5;
+const DARK_OUTLINE = 0.75;
 
 const RED = "#ef4444";
 const ORANGE = "#f97316";
@@ -219,15 +239,26 @@ const CLASS_COLORS: Record<number, string> = {
   6: "#94a3b8", // G
 };
 
-/** Restrictions by hazard, everything else by class; uncontrolled classes dashed. */
-export function airspaceStyle(a: Airspace): AirspaceStyle {
-  const base = { weight: 1.2, fillOpacity: 0.05 };
-  if (a.type === 1 || a.type === 3) return { ...base, color: RED, weight: 1.5, fillOpacity: 0.08 };
-  if (a.type === 2 || a.type === 17 || a.type === 18) return { ...base, color: ORANGE };
-  if (a.type === 8 || a.type === 9 || a.type === 25) return { ...base, color: YELLOW, dashArray: "6 4" };
+/**
+ * Restrictions by hazard, everything else by class; uncontrolled classes
+ * dashed. Fill strengths are given at full opacity and scaled by the setting.
+ */
+export function airspaceStyle(a: Airspace, options: AirspaceStyleOptions = {}): AirspaceStyle {
+  const o = Math.min(1, Math.max(0, options.opacity ?? DEFAULT_AIRSPACE_OPACITY));
+  const dark = options.theme === "dark";
+  const fill = (full: number) => full * o * (dark ? DARK_FILL : 1);
+  const opacity = Math.max(MIN_OUTLINE, o) * (dark ? DARK_OUTLINE : 1);
+
+  if (a.type === 1 || a.type === 3) return { color: RED, weight: 1.5, opacity, fillOpacity: fill(0.16) };
+  if (a.type === 2 || a.type === 17 || a.type === 18) return { color: ORANGE, weight: 1.2, opacity, fillOpacity: fill(0.1) };
+  if (a.type === 8 || a.type === 9 || a.type === 25) {
+    return { color: YELLOW, weight: 1.2, opacity, fillOpacity: fill(0.1), dashArray: "6 4" };
+  }
   const color = CLASS_COLORS[a.icaoClass] ?? "#64748b";
   const uncontrolled = a.icaoClass >= 4 && a.icaoClass <= 6;
-  return uncontrolled ? { ...base, color, fillOpacity: 0.03, dashArray: "4 4" } : { ...base, color };
+  return uncontrolled
+    ? { color, weight: 1.2, opacity, fillOpacity: fill(0.06), dashArray: "4 4" }
+    : { color, weight: 1.2, opacity, fillOpacity: fill(0.1) };
 }
 
 export interface AirspaceStatus {

@@ -5469,6 +5469,14 @@ on their own canvas pane (z 350: above the tiles, below the overlay pane), with
 test (bbox first) and lists **every** airspace at the cursor, lowest first. The
 largest polygons are drawn first, so a CTR stays visible over its TMA.
 
+**Opacity.** A slider in the panel (`adsb-airspace-opacity`, 0–100 %, 40 % by
+default) scales outlines and fills together. At 0 % the fill disappears but a
+faint outline stays, because the slider controls how strong airspaces look,
+not whether they are shown. In the dark theme, fills are halved and outlines
+reduced to three quarters: a fill lightens a dark basemap much more than it
+tints a light one. `airspaceStyle` re-styles the existing polygons in place
+(`setStyle`), so dragging the slider never rebuilds them.
+
 Not drawn: FIR, UIR, ACC, FIS, VFR sectors, LTA and UTA cover the whole map,
 and airways and routes are corridors (`HIDDEN_TYPES`).
 

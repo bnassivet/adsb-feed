@@ -8,6 +8,7 @@ import {
   airspaceStyle,
   airspaceStatus,
   AIRSPACE_ATTRIBUTION,
+  DEFAULT_AIRSPACE_OPACITY,
   type CountryAirspaces,
   type OpenAipLimit,
 } from "../airspace";
@@ -175,6 +176,38 @@ describe("airspaceStyle", () => {
 
   it("keeps fills faint so stacked airspaces stay readable", () => {
     for (const [t, c] of [[3, 8], [7, 2], [4, 3], [0, 6]]) expect(style(t, c).fillOpacity).toBeLessThanOrEqual(0.08);
+  });
+
+  const tma = normalizeAirspace(item(), "CA")!;
+
+  it("scales outline and fill with the opacity setting", () => {
+    const full = airspaceStyle(tma, { opacity: 1 });
+    const half = airspaceStyle(tma, { opacity: 0.5 });
+    expect(half.fillOpacity).toBeCloseTo(full.fillOpacity / 2);
+    expect(half.opacity).toBeLessThan(full.opacity);
+    expect(full.opacity).toBe(1);
+  });
+
+  it("at zero opacity drops the fill but keeps a hairline outline", () => {
+    const zero = airspaceStyle(tma, { opacity: 0 });
+    expect(zero.fillOpacity).toBe(0);
+    expect(zero.opacity).toBeGreaterThan(0);
+  });
+
+  it("clamps out-of-range settings", () => {
+    expect(airspaceStyle(tma, { opacity: 3 })).toEqual(airspaceStyle(tma, { opacity: 1 }));
+    expect(airspaceStyle(tma, { opacity: -1 })).toEqual(airspaceStyle(tma, { opacity: 0 }));
+  });
+
+  it("is fainter at night: the same fill reads much stronger over a dark basemap", () => {
+    const day = airspaceStyle(tma, { opacity: 0.6, theme: "light" });
+    const night = airspaceStyle(tma, { opacity: 0.6, theme: "dark" });
+    expect(night.fillOpacity).toBeLessThan(day.fillOpacity);
+    expect(night.opacity).toBeLessThan(day.opacity);
+  });
+
+  it("defaults to the shipped setting", () => {
+    expect(airspaceStyle(tma)).toEqual(airspaceStyle(tma, { opacity: DEFAULT_AIRSPACE_OPACITY, theme: "light" }));
   });
 });
 

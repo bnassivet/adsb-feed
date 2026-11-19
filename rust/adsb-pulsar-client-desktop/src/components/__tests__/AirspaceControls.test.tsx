@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AirspaceControls, type AirspaceControlsProps } from "../AirspaceControls";
 
@@ -12,6 +12,8 @@ function props(over: Partial<AirspaceControlsProps> = {}): AirspaceControlsProps
     loading: false,
     error: null,
     onReload: vi.fn(),
+    opacity: 0.6,
+    onOpacityChange: vi.fn(),
     ...over,
   };
 }
@@ -55,6 +57,25 @@ describe("AirspaceControls", () => {
     expect(screen.getByText(/loading/i)).toBeInTheDocument();
     rerender(<AirspaceControls {...props({ error: "No app data directory" })} />);
     expect(screen.getByText("No app data directory")).toBeInTheDocument();
+  });
+
+  it("has an opacity slider showing the current percentage", () => {
+    render(<AirspaceControls {...props({ opacity: 0.35 })} />);
+    const slider = screen.getByRole("slider", { name: /opacity/i });
+    expect(slider).toHaveValue("35");
+    expect(screen.getByText("35%")).toBeInTheDocument();
+  });
+
+  it("reports slider moves as a 0–1 fraction", () => {
+    const p = props();
+    render(<AirspaceControls {...p} />);
+    fireEvent.change(screen.getByRole("slider", { name: /opacity/i }), { target: { value: "20" } });
+    expect(p.onOpacityChange).toHaveBeenCalledWith(0.2);
+  });
+
+  it("hides the slider while the layer is off", () => {
+    render(<AirspaceControls {...props({ show: false })} />);
+    expect(screen.queryByRole("slider")).toBeNull();
   });
 
   it("credits openAIP and its licence", () => {

@@ -102,6 +102,8 @@ describe("FiltersPanel airspace section", () => {
     loading: false,
     error: null,
     onReload: vi.fn(),
+    opacity: 0.6,
+    onOpacityChange: vi.fn(),
   };
 
   it("shows the airspace controls when airspace props are given", () => {
