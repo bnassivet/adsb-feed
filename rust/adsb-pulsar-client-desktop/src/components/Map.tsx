@@ -8,6 +8,7 @@ import type { Airspace } from "@/lib/airspace";
 import type { Metar } from "@/lib/metar";
 import type { RadarView } from "@/lib/radar";
 import type { SeaSettings } from "@/lib/sea";
+import type { Seamark } from "@/lib/seamark";
 
 // Dynamic import to prevent SSR (Leaflet requires window/document)
 const MapInner = dynamic(
@@ -36,6 +37,8 @@ interface Props {
   radar?: RadarView | null;
   radarOpacity?: number;
   sea?: SeaSettings;
+  seamarkItems?: Seamark[];
+  onSeamarkCells?: (key: string | null) => void;
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];
   mapTheme: "light" | "dark";
@@ -81,6 +84,6 @@ interface Props {
   weatherParticles?: boolean;
 }
 
-export function Map({ airspaces, airspaceOpacity, airspaceHoverInfo, metars, metarOpacity, metarHoverInfo, metarNowMs, radar, radarOpacity, sea, tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showPositions, showLabels, rangeLineOrigin, tileCacheOrigin, rangeLineTargets, showRangeLines, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, importedTracks, dbHistoryTracks, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest, onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather, weatherLevel, weatherBarbs, weatherParticles }: Props) {
-  return <MapInner airspaces={airspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={metars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={metarNowMs} radar={radar} radarOpacity={radarOpacity} sea={sea} tracks={tracks} historyTracks={historyTracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={rangeLineOrigin} tileCacheOrigin={tileCacheOrigin} rangeLineTargets={rangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={onToggleRangeLines} showDensity={showDensity} densityMetric={densityMetric} densityTracks={densityTracks} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} liveColorMode={liveColorMode} historyColorMode={historyColorMode} importedTracks={importedTracks} dbHistoryTracks={dbHistoryTracks} selectedHexIdents={selectedHexIdents} onSelectTrack={onSelectTrack} receiverLocation={receiverLocation} simulatedRoutes={simulatedRoutes} eventsOfInterest={eventsOfInterest} onContextMenu={onContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={onMapPickComplete} onMapPickCancel={onMapPickCancel} onFlyToReady={onFlyToReady} weather={weather} weatherLevel={weatherLevel} weatherBarbs={weatherBarbs} weatherParticles={weatherParticles} />;
+export function Map({ airspaces, airspaceOpacity, airspaceHoverInfo, metars, metarOpacity, metarHoverInfo, metarNowMs, radar, radarOpacity, sea, seamarkItems, onSeamarkCells, tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showPositions, showLabels, rangeLineOrigin, tileCacheOrigin, rangeLineTargets, showRangeLines, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, importedTracks, dbHistoryTracks, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest, onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather, weatherLevel, weatherBarbs, weatherParticles }: Props) {
+  return <MapInner airspaces={airspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={metars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={metarNowMs} radar={radar} radarOpacity={radarOpacity} sea={sea} seamarkItems={seamarkItems} onSeamarkCells={onSeamarkCells} tracks={tracks} historyTracks={historyTracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={rangeLineOrigin} tileCacheOrigin={tileCacheOrigin} rangeLineTargets={rangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={onToggleRangeLines} showDensity={showDensity} densityMetric={densityMetric} densityTracks={densityTracks} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} liveColorMode={liveColorMode} historyColorMode={historyColorMode} importedTracks={importedTracks} dbHistoryTracks={dbHistoryTracks} selectedHexIdents={selectedHexIdents} onSelectTrack={onSelectTrack} receiverLocation={receiverLocation} simulatedRoutes={simulatedRoutes} eventsOfInterest={eventsOfInterest} onContextMenu={onContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={onMapPickComplete} onMapPickCancel={onMapPickCancel} onFlyToReady={onFlyToReady} weather={weather} weatherLevel={weatherLevel} weatherBarbs={weatherBarbs} weatherParticles={weatherParticles} />;
 }

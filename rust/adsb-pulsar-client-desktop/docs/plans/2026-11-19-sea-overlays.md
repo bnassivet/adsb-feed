@@ -42,6 +42,14 @@ well (100 % opaque), so they are base maps, not overlays.
 - `csp.test.ts`: both sea hosts allowed as images.
 - `MapInner` layers are not unit-tested (project rule); checked in the app.
 
+## Follow-up: seamark tooltip
+
+The tiles carry no text; the OSM tags behind them do. Rust fetches them from
+Overpass per 2° cell under the view (zoom 9+, at most 6 cells), caches each
+cell on disk for a week, falls back to a mirror, and the webview shows the
+nearest seamark's name, kind, light and topmark in a tooltip built from text
+nodes only. Live check: one cell in 38 s. See DESIGN.md → Seamark tooltip.
+
 ## Not in this step
 
 - Depth under the cursor (WMS GetFeatureInfo).

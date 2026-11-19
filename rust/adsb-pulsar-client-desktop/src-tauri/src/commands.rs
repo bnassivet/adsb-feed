@@ -1488,3 +1488,54 @@ pub async fn get_radar_frames(
         frames,
     })
 }
+
+/// One seamark load at a time: Overpass asks for fair use, and two views
+/// sharing a cell must not download it twice.
+static SEAMARK_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Seamark descriptions (OpenStreetMap tags from Overpass) for the cells under
+/// a view, for the seamark tooltip. Cells are cached on disk for a week
+/// (seamarks.rs). Never fails as a whole once the view is valid: a cell that
+/// cannot be loaded is reported in `error`.
+#[tauri::command]
+pub async fn get_seamarks(
+    app: tauri::AppHandle,
+    south: f64,
+    west: f64,
+    north: f64,
+    east: f64,
+) -> Result<crate::seamarks::SeamarkSnapshot, String> {
+    use crate::seamarks::{self, Origin, SeamarkSnapshot};
+    let cells = seamarks::cells_for(south, west, north, east)?;
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("No app data directory: {e}"))?;
+    let dir =
+        crate::stack_data_dir(&app_data_dir, crate::stack_from_env().as_deref()).join("seamarks");
+    // Overpass can take a minute on a busy day.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(200))
+        .build()
+        .map_err(|e| format!("HTTP client: {e}"))?;
+    let _guard = SEAMARK_LOCK.lock().await;
+    let now = chrono::Utc::now();
+    let mut snapshot = SeamarkSnapshot {
+        items: vec![],
+        stale: false,
+        error: None,
+    };
+    for cell in cells {
+        let load = seamarks::load_cell(&dir, cell, now, |c| {
+            let client = client.clone();
+            async move { seamarks::fetch(&client, c).await }
+        })
+        .await;
+        snapshot.stale |= matches!(load.origin, Origin::StaleCache | Origin::None);
+        if let Some(e) = load.error {
+            snapshot.error = Some(format!("{}: {e}", cell.name()));
+        }
+        snapshot.items.extend(load.items);
+    }
+    Ok(snapshot)
+}

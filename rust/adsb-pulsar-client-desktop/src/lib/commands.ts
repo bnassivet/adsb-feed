@@ -49,6 +49,7 @@ import type { WeatherAvailability, WeatherServiceView, WeatherSnapshot } from ".
 import type { CountryAirspaces } from "./airspace";
 import type { MetarSnapshot } from "./metar";
 import type { RadarFrames, RadarSnapshot } from "./radar";
+import type { SeamarkSnapshot } from "./seamark";
 
 export async function startFeed(): Promise<void> {
   return invoke("start_feed");
@@ -460,4 +461,13 @@ export async function getRadar(lat: number, lng: number, radiusNm: number, force
  */
 export async function getRadarFrames(lat: number, lng: number, radiusNm: number, knownMs: number[]): Promise<RadarFrames> {
   return invoke("get_radar_frames", { lat, lng, radiusNm, knownMs });
+}
+
+/**
+ * Seamark descriptions (OpenStreetMap tags via Overpass) for the 2° cells
+ * under a view. Cached on disk for a week per cell; a first load can take a
+ * minute. Rejects a view wider than six cells.
+ */
+export async function getSeamarks(south: number, west: number, north: number, east: number): Promise<SeamarkSnapshot> {
+  return invoke("get_seamarks", { south, west, north, east });
 }

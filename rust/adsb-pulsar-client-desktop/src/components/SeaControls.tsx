@@ -13,6 +13,25 @@ export interface SeaControlsProps {
   /** One opacity for colours and contours: they come as one image. */
   depthOpacity: number;
   onDepthOpacityChange: (opacity: number) => void;
+  /** Seamark tooltip on hover; also whether descriptions are downloaded at all. */
+  seamarkHoverInfo: boolean;
+  onToggleSeamarkHoverInfo: () => void;
+  /** State of the descriptions for the view. */
+  seamarkDetails: SeamarkDetails;
+}
+
+export interface SeamarkDetails {
+  loading: boolean;
+  count: number;
+  error: string | null;
+  /** Below the seamark zoom, or the view is too wide: nothing is asked. */
+  zoomedOut: boolean;
+}
+
+function detailsText(d: SeamarkDetails): string {
+  if (d.zoomedOut) return `Zoom in (${SEAMARK_MIN_ZOOM}+) for descriptions.`;
+  if (d.loading) return "Loading descriptions… (a new area can take a minute)";
+  return `${d.count} seamarks described.`;
 }
 
 function Switch({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
@@ -53,8 +72,26 @@ export function SeaControls(p: SeaControlsProps) {
       {p.seamarks && (
         <div className="ml-5 flex flex-col gap-1 text-[11px] text-slate-500">
           <Opacity value={p.seamarkOpacity} onChange={p.onSeamarkOpacityChange} label="Seamark opacity" />
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={p.seamarkHoverInfo}
+              onChange={p.onToggleSeamarkHoverInfo}
+              className="accent-sky-500"
+            />
+            <span>Describe on hover</span>
+          </label>
+          {p.seamarkHoverInfo && (
+            <>
+              <span className="ml-5">{detailsText(p.seamarkDetails)}</span>
+              {p.seamarkDetails.error && (
+                <p className="ml-5 text-amber-400 break-words">{p.seamarkDetails.error}</p>
+              )}
+            </>
+          )}
           <span className="text-[10px] text-slate-600">
-            Buoys, lights and harbours, from zoom {SEAMARK_MIN_ZOOM}. Data:{" "}
+            Buoys, lights and harbours, from zoom {SEAMARK_MIN_ZOOM}. Descriptions from OpenStreetMap via
+            Overpass, kept a week. Data:{" "}
             <a href="https://www.openseamap.org" target="_blank" rel="noreferrer" className="hover:underline">
               OpenSeaMap
             </a>{" "}

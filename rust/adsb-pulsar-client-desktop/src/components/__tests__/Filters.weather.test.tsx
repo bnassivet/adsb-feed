@@ -164,6 +164,8 @@ describe("FiltersPanel sea section", () => {
     seamarks: false, onToggleSeamarks: vi.fn(), seamarkOpacity: 0.9, onSeamarkOpacityChange: vi.fn(),
     depthColours: false, onToggleDepthColours: vi.fn(), depthContours: false, onToggleDepthContours: vi.fn(),
     depthOpacity: 0.35, onDepthOpacityChange: vi.fn(),
+    seamarkHoverInfo: true, onToggleSeamarkHoverInfo: vi.fn(),
+    seamarkDetails: { loading: false, count: 0, error: null, zoomedOut: true },
   };
   it("shows the sea controls when sea props are given", () => {
     render(<FiltersPanel {...baseProps} sea={sea} />);

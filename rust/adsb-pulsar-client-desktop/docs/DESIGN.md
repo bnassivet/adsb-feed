@@ -5764,6 +5764,38 @@ colours** and **Depth contours**. Phase 0 of `docs/MAP_ENGINES.md`. Plan:
 - **localStorage keys:** `adsb-show-seamarks`, `adsb-seamark-opacity`,
   `adsb-show-depth-colours`, `adsb-show-depth-contours`, `adsb-depth-opacity`.
 
+### Seamark tooltip
+
+The tiles are images only. The text is in the OpenStreetMap tags behind them
+(`seamark:type`, `seamark:name`, `seamark:<type>:category|colour|shape`,
+`seamark:light:*`, `seamark:topmark:*`, `seamark:information`), read from the
+**Overpass API**.
+
+- **Rust (`seamarks.rs`, `get_seamarks`)**: one Overpass query per 2° × 2° cell
+  (`nwr["seamark:type"](bbox); out center tags;`), only `seamark:*` and
+  `name` kept, ways and relations at their centre. Cached per cell in
+  `<stack data dir>/seamarks/N46W006.json` for 7 days; a failed refresh serves
+  the old file. `overpass-api.de` first, then the `overpass.private.coffee`
+  mirror (the main server answered 502 when busy). One load at a time
+  (`SEAMARK_LOCK`). Measured: a cell takes 20-50 s, mostly fixed overhead,
+  hence big cells; the Brittany coast is ~8,000 seamarks, 2.6 MB raw.
+- **Only cells under the view, from zoom 9, at most 6**: `SeamarkCells` reports
+  `seamarkCellsKey` on `moveend`, and `useSeamarks` asks only when that key
+  changes. The request box is derived from the key (`cellsBounds`, inset from
+  the edges), so the hook depends on the key alone. A late answer for cells the
+  view has left is dropped.
+- **Tooltip**: `SeamarkHover` picks the nearest seamark within 12 px once per
+  frame and shows a standalone Leaflet tooltip. `describeSeamark` writes a
+  title (the name, else the kind) and up to four lines, e.g. *Lateral buoy ·
+  starboard · green, conical*, *Light Fl(3) G 12s 5M* (chart abbreviation;
+  sector lights give the first and a count), *Topmark cone, point up, green*.
+- **Tags are user-edited text**: the tooltip is built with `textContent` only,
+  never as HTML.
+- **Switch**: Seamarks → *Describe on hover* (`adsb-seamark-hover-info`, on).
+  Off means no Overpass requests at all. The panel says whether descriptions are
+  loading, how many are loaded, or to zoom in.
+- No CSP change: Overpass is called from Rust, not the webview.
+
 **Not yet:** the depth under the cursor (WMS GetFeatureInfo); offline copies
 (phase 4).
 

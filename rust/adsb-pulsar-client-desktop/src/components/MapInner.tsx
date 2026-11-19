@@ -59,6 +59,7 @@ import {
   DEPTH_ATTRIBUTION, EMODNET_WMS_URL, SEAMARK_ATTRIBUTION, SEAMARK_MAX_NATIVE_ZOOM, SEAMARK_MIN_ZOOM, SEAMARK_URL,
   depthLayers, type SeaSettings,
 } from "@/lib/sea";
+import { describeSeamark, nearestSeamark, seamarkCellsKey, type Seamark } from "@/lib/seamark";
 import { DEFAULT_METAR_OPACITY, METAR_ATTRIBUTION, metarMarkerStyle, nearestMetar, type Metar } from "@/lib/metar";
 import { AIRSPACE_ATTRIBUTION, DEFAULT_AIRSPACE_OPACITY, airspacesAt, airspaceStyle, type Airspace } from "@/lib/airspace";
 
@@ -553,6 +554,87 @@ function SeamarkLayer({ show, opacity, theme }: { show: boolean; opacity: number
   return null;
 }
 
+/** How close the cursor must be to a seamark to describe it. */
+const SEAMARK_PICK_PX = 12;
+const NO_SEAMARKS: Seamark[] = [];
+
+/** Reports the 2° cells under the view (null when zoomed out), on every move. */
+function SeamarkCells({ onCells }: { onCells: (key: string | null) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    const report = () => {
+      const b = map.getBounds();
+      onCells(seamarkCellsKey({ south: b.getSouth(), west: b.getWest(), north: b.getNorth(), east: b.getEast() }, map.getZoom()));
+    };
+    report();
+    map.on("moveend", report);
+    return () => {
+      map.off("moveend", report);
+      onCells(null);
+    };
+  }, [map, onCells]);
+  return null;
+}
+
+/** The tooltip's content, as text nodes only: OpenStreetMap tags are user-edited. */
+function seamarkTooltip(s: Seamark): HTMLElement {
+  const { title, lines } = describeSeamark(s.tags);
+  const box = document.createElement("div");
+  const head = document.createElement("div");
+  head.style.fontWeight = "600";
+  head.textContent = title;
+  box.append(head);
+  for (const line of lines) {
+    const row = document.createElement("div");
+    row.textContent = line;
+    box.append(row);
+  }
+  return box;
+}
+
+/** A tooltip on the seamark nearest the cursor, picked at most once per frame. */
+function SeamarkHover({ items }: { items: Seamark[] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (items.length === 0) return;
+    const tip = L.tooltip({ direction: "top", offset: [0, -10], opacity: 0.95 });
+    let shown: string | null = null;
+    const show = (s: Seamark | null) => {
+      if ((s?.id ?? null) === shown) return;
+      shown = s?.id ?? null;
+      if (!s) {
+        tip.close();
+        return;
+      }
+      tip.setLatLng([s.lat, s.lon]).setContent(seamarkTooltip(s));
+      if (!tip.isOpen()) tip.openOn(map);
+    };
+    let frame = 0;
+    let at: L.Point | null = null;
+    const onMove = (e: L.LeafletMouseEvent) => {
+      at = e.containerPoint;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (at) show(nearestSeamark(items, at, (s) => map.latLngToContainerPoint([s.lat, s.lon]), SEAMARK_PICK_PX));
+      });
+    };
+    const onOut = () => {
+      at = null;
+      show(null);
+    };
+    map.on("mousemove", onMove);
+    map.on("mouseout", onOut);
+    return () => {
+      map.off("mousemove", onMove);
+      map.off("mouseout", onOut);
+      cancelAnimationFrame(frame);
+      tip.close();
+    };
+  }, [map, items]);
+  return null;
+}
+
 /** Leaflet pane for METAR stations: above airspaces, below density and tracks. */
 const METAR_PANE = "metars";
 const NO_METARS: Metar[] = [];
@@ -911,6 +993,10 @@ interface Props {
   radarOpacity?: number;
   /** Sea overlays: OpenSeaMap seamarks and EMODnet depth. */
   sea?: SeaSettings;
+  /** Seamark descriptions for the tooltip; empty when the hover is off. */
+  seamarkItems?: Seamark[];
+  /** Told the 2° cells under the view while seamark descriptions are wanted. */
+  onSeamarkCells?: (key: string | null) => void;
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];
   dbHistoryTracks?: AircraftTrack[];
@@ -1228,7 +1314,7 @@ function labelIcon(p: LabelPlacement, text: string, color: string, selected: boo
   });
 }
 
-export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, sea = NO_SEA, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
+export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, sea = NO_SEA, seamarkItems = NO_SEAMARKS, onSeamarkCells, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
   // Memoised: the basemap layer is rebuilt (and every tile reloaded) when this changes.
   const tile = useMemo(() => tileConfig(mapTheme, CARTO_API_KEY), [mapTheme]);
   const [airspaceStack, setAirspaceStack] = useState<Airspace[]>(NO_AIRSPACES);
@@ -1307,6 +1393,8 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
         />
         {sea.seamarks && <MapAttribution text={SEAMARK_ATTRIBUTION} />}
         <SeamarkLayer show={sea.seamarks} opacity={sea.seamarkOpacity} theme={mapTheme} />
+        {onSeamarkCells && <SeamarkCells onCells={onSeamarkCells} />}
+        {sea.seamarks && <SeamarkHover items={seamarkItems} />}
 
         {/* Rain radar — under airspaces, never interactive */}
         {radar && <MapAttribution text={RADAR_ATTRIBUTION} />}
