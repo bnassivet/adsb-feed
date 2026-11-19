@@ -5,6 +5,15 @@ import { formatOffset, formatUtcTime, frameOffsetMinutes, type RadarImage } from
 /** Wheel travel per frame: a trackpad sends many small deltas, a mouse a few big ones. */
 export const WHEEL_STEP_PX = 40;
 
+/** A 4 px track with a small round thumb: the native slider is ~16 px tall in WebKit. */
+const THIN_RANGE = [
+  "h-1 flex-1 cursor-pointer appearance-none rounded-full bg-slate-600",
+  "[&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:appearance-none",
+  "[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-sky-400",
+  "[&::-moz-range-thumb]:h-2.5 [&::-moz-range-thumb]:w-2.5 [&::-moz-range-thumb]:rounded-full",
+  "[&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-sky-400",
+].join(" ");
+
 export interface RadarTimelineProps {
   /** Oldest first. */
   frames: RadarImage[];
@@ -40,35 +49,29 @@ export function RadarTimeline({ frames, index, playing, onSeek, onTogglePlay }: 
       role="group"
       aria-label="Radar timeline"
       onWheel={onWheel}
-      className="pointer-events-auto flex w-80 max-w-[calc(100%-2rem)] flex-col gap-0.5 rounded-md bg-slate-900/85 px-3 py-1.5 text-[11px] text-slate-300 shadow-lg backdrop-blur-sm"
+      className="pointer-events-auto flex w-80 max-w-[calc(100%-2rem)] items-center gap-2 rounded-full bg-slate-900/85 px-2.5 py-0.5 text-[10px] leading-4 text-slate-300 shadow-lg backdrop-blur-sm"
     >
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onTogglePlay}
-          aria-label={playing ? "Pause radar animation" : "Play radar animation"}
-          className="w-5 text-sky-400 hover:text-sky-300"
-        >
-          {playing ? "❚❚" : "▶"}
-        </button>
-        <input
-          type="range"
-          min={0}
-          max={last}
-          step={1}
-          value={Math.min(index, last)}
-          onChange={(e) => onSeek(Number(e.target.value))}
-          aria-label="Radar time"
-          className="flex-1 accent-sky-500"
-        />
-      </div>
-      <div className="flex items-center justify-between gap-2 pl-7 tabular-nums">
-        <span className="text-slate-500">{formatOffset(frameOffsetMinutes(frames, 0))}</span>
-        <span className="text-sky-300">
-          {formatOffset(frameOffsetMinutes(frames, index))} · {formatUtcTime(shown.validTimeMs)}
-        </span>
-        <span className="text-slate-500">latest</span>
-      </div>
+      <button
+        type="button"
+        onClick={onTogglePlay}
+        aria-label={playing ? "Pause radar animation" : "Play radar animation"}
+        className="w-3 text-[9px] text-sky-400 hover:text-sky-300"
+      >
+        {playing ? "❚❚" : "▶"}
+      </button>
+      <input
+        type="range"
+        min={0}
+        max={last}
+        step={1}
+        value={Math.min(index, last)}
+        onChange={(e) => onSeek(Number(e.target.value))}
+        aria-label="Radar time"
+        className={THIN_RANGE}
+      />
+      <span className="shrink-0 tabular-nums text-sky-300">
+        {formatOffset(frameOffsetMinutes(frames, index))} · {formatUtcTime(shown.validTimeMs)}
+      </span>
     </div>
   );
 }

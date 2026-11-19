@@ -11,11 +11,11 @@ function props(over: Partial<RadarTimelineProps> = {}): RadarTimelineProps {
 }
 
 describe("RadarTimeline", () => {
-  it("shows the shown frame's offset from the latest, and its time", () => {
+  it("shows the shown frame's offset from the latest, and its time, on one row", () => {
     render(<RadarTimeline {...props()} />);
     expect(screen.getByText("−10 min · 03:05 UTC")).toBeInTheDocument();
-    expect(screen.getByText("−15 min")).toBeInTheDocument();
-    expect(screen.getByText("latest")).toBeInTheDocument();
+    expect(screen.queryByText("−15 min")).toBeNull();
+    expect(screen.queryByText("latest")).toBeNull();
   });
 
   it("is a slider over the frames", () => {
