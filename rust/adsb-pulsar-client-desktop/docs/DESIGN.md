@@ -28,6 +28,16 @@
 25. [Arrow IPC Query Pipeline](#arrow-ipc-query-pipeline)
 26. [AI Agent & AG-UI Integration](#ai-agent--ag-ui-integration)
 27. [Message Sources & the MQTT Broker](#message-sources--the-mqtt-broker)
+28. [Weather Layer](#weather-layer)
+29. [Map Tile Cache](#map-tile-cache)
+30. [Map Layers (overview)](#map-layers-overview)
+31. [Airspaces (OpenAIP)](#airspaces-openaip)
+32. [METAR stations](#metar-stations)
+33. [Rain radar (Météo-France)](#rain-radar-météo-france)
+34. [Sea overlays (OpenSeaMap, EMODnet)](#sea-overlays-openseamap-emodnet)
+35. [Relief (hillshade)](#relief-hillshade)
+36. [What's here? and height above ground](#whats-here-and-height-above-ground)
+37. [Observability (Prometheus)](#observability-prometheus)
 
 ---
 
@@ -564,7 +574,15 @@ src/
 │   ├── MapInner.tsx         # Actual Leaflet map
 │   ├── MapTileToggle.tsx    # Dark/light map theme toggle
 │   ├── MetricsBar.tsx       # Footer metrics display
-│   └── ResizeHandle.tsx     # Resizable panel divider
+│   ├── ResizeHandle.tsx     # Resizable panel divider
+│   │   # Map layers (phase 0): Filters → Map Layers sections and map overlays
+│   ├── AirspaceControls.tsx / AirspaceInfo.tsx
+│   ├── MetarControls.tsx / MetarInfo.tsx
+│   ├── RadarControls.tsx / RadarTimeline.tsx # Radar section; time bar over the map
+│   ├── SeaControls.tsx      # Seamarks, depth colours and contours
+│   ├── ReliefControls.tsx   # Hillshade
+│   ├── ChecklistCombo.tsx   # Multi-select used by airspace types and METAR categories
+│   └── WhatIsHere.tsx       # Right-click → ground height and sea depth
 ├── contexts/                # React Context providers
 │   └── AircraftTrackingContext.tsx # Global aircraft tracking provider
 ├── hooks/                   # Custom React hooks
@@ -575,7 +593,12 @@ src/
 │   ├── useMapZoom.ts        # Debounced Leaflet zoom level for H3 resolution
 │   ├── useMetrics.ts        # Metrics polling
 │   ├── useSimulatedTracks.ts # Simulated demo flight tracks
-│   └── useTauriEvent.ts     # Event listener abstraction
+│   ├── useTauriEvent.ts     # Event listener abstraction
+│   │   # Map layers (phase 0): load when switched on, poll while on
+│   ├── useAirspaces.ts / useMetars.ts / useRadar.ts
+│   ├── useRadarFrames.ts    # Radar frames for the animation; useFrameAnimation
+│   ├── useSeamarks.ts       # Seamark text for the 2° cells under the view
+│   └── useGroundElevation.ts # Ground under the selected aircraft, per ~200 m cell
 ├── lib/                     # Utilities and types
 │   ├── aircraft-details.ts  # Pure utilities: vertical tendency, sparkline, altitude range, formatTrackTime(ms, tzName?)
 │   ├── aircraft-icon.ts     # Pure SVG/HTML generation for aircraft map icons
@@ -589,7 +612,13 @@ src/
 │   ├── h3-density.ts        # H3 hexagonal density computation
 │   ├── simulation-data.ts   # 20 Montreal-area simulated flight definitions
 │   ├── track-ordering.ts    # Render-order utility for selected track
-│   └── types.ts             # TypeScript type definitions
+│   ├── types.ts             # TypeScript type definitions
+│   │   # Map layers (phase 0): pure, tested
+│   ├── airspace.ts / metar.ts / qnh.ts # Airspace styling and limits, METAR, QNH altitude
+│   ├── radar.ts             # Radar snapshot, frames, animation timing
+│   ├── sea.ts / seamark.ts  # Sea overlay sources; seamark cells and descriptions
+│   ├── relief.ts            # Hillshade source and blend
+│   └── terrain.ts           # Height above ground, What's here? text
 ```
 
 ### Build Pipeline
@@ -1633,7 +1662,15 @@ src-tauri/
 │   ├── state.rs          # Application state (Mutex<Config>, FeedHandle, storage: SharedStorage)
 │   ├── bridge.rs         # Bridge between client library and Tauri + DuckDB writes + StatusEventRecorder
 │   ├── tool_server.rs    # Loopback axum server on 127.0.0.1:8787 (agent read-only data plane)
-│   └── tool_service.rs   # Tool name → DuckDB query dispatch over SharedStorage
+│   ├── tool_service.rs   # Tool name → DuckDB query dispatch over SharedStorage
+│   │   # Map layers (phase 0), see Map Layers (overview):
+│   ├── airspace.rs       # OpenAIP fetch, cached per AIRAC cycle on disk
+│   ├── metar.rs          # AviationWeather.gov METARs around the receiver, in memory
+│   ├── radar.rs          # Météo-France radar: key check, freshness, download, cache
+│   ├── radar_grid.rs     # ODIM_H5 decode, polar stereographic, colour, PNG
+│   ├── radar_history.rs  # The last hour of mosaics on disk, rendered-image cache
+│   ├── seamarks.rs       # Overpass seamark tags per 2° cell, a week on disk
+│   └── terrain.rs        # Terrarium ground height, EMODnet point depth
 ├── build.rs              # Build script
 ├── Cargo.toml            # Rust dependencies
 ├── tauri.conf.json       # Tauri configuration
@@ -5419,11 +5456,82 @@ dark theme in the field.
 
 ---
 
+## Map Layers (overview)
+
+Phase 0 of `docs/MAP_ENGINES.md` added data layers to the Leaflet map without
+changing engine. Each one has its own section below. This section shows them
+together.
+
+**Diagram:** [`docs/map-layers-external-endpoints.svg`](../../../docs/map-layers-external-endpoints.svg)
+(repository `adsb-feed/docs/`) shows every external endpoint and which side
+calls it.
+
+### In the Filters panel
+
+Weather and the six data layers are nested sections of one **Map Layers**
+section (`Filters.tsx`, `Section nested`):
+
+| Nested section | Switches | Persisted as |
+|---|---|---|
+| Weather | layer, level, wind barbs, particles (see Weather Layer) | `adsb-show-weather`, `adsb-weather-level`, `adsb-weather-barbs`, `adsb-weather-particles` |
+| Rain radar | layer, opacity, *Animate last hour* | `adsb-show-radar`, `adsb-radar-opacity`, `adsb-radar-animate` |
+| METAR | layer, opacity, hover info, categories, transition altitude | `adsb-show-metar`, `adsb-metar-*`, `adsb-transition-altitude-ft` |
+| Airspaces | layer, opacity, hover info, types | `adsb-show-airspaces`, `adsb-airspace-*` |
+| Sea | seamarks (+ *Describe on hover*), depth colours, depth contours, two opacities | `adsb-show-seamarks`, `adsb-seamark-*`, `adsb-show-depth-*`, `adsb-depth-opacity` |
+| Relief | layer, opacity | `adsb-show-relief`, `adsb-relief-opacity` |
+
+Every layer is off by default. The Map Layers parent is shown only when at
+least one layer is wired.
+
+### Drawing order (Leaflet panes)
+
+| z | Pane | Content | Interactive |
+|---|---|---|---|
+| 200 | `tilePane` | base map (tile cache) | — |
+| 250 | `relief` | hillshade, `mix-blend-mode: multiply` | no |
+| 320 | `sea-depth` | EMODnet depth colours and contours | no |
+| 340 | `radar` | rain radar, one overlay per frame | no |
+| 345 | `seamarks` | OpenSeaMap tiles; tooltip by nearest pick | no |
+| 350 | `airspaces` | airspace polygons (canvas); hover box by pick | no |
+| 360 | `metars` | METAR dots (canvas); hover box by pick | no |
+| 400+ | Leaflet defaults | tracks, labels, density, weather, events | yes |
+
+No data layer takes clicks. Hover information comes from the layer's own pick
+(nearest point, or point in polygon), once per animation frame. Traffic stays
+clickable underneath.
+
+### External endpoints
+
+| Feature | Endpoint | Called from | Key | Cache |
+|---|---|---|---|---|
+| Base map | `tile.openstreetmap.org`, `server.arcgisonline.com` (Esri Dark Gray), `basemaps.cartocdn.com` (with key) | webview | CARTO only | IndexedDB tile cache (OSM never bulk) |
+| Airspaces | `api.core.openaip.net/api/airspaces` | Rust | `ADSB_OPENAIP_API_KEY` | disk, per AIRAC cycle |
+| METAR, QNH | `aviationweather.gov/api/data/metar` | Rust | — | memory, 5 min |
+| Rain radar | `public-api.meteofrance.fr/public/DPRadar/v1/…/LAME_D_EAU` | Rust | `ADSB_METEOFRANCE_API_KEY` | memory (latest) + disk (last hour) |
+| Seamarks | `tiles.openseamap.org/seamark/…` | webview | — | HTTP cache |
+| Seamark text | `overpass-api.de`, then `overpass.private.coffee` | Rust | — | disk, 7 days per 2° cell |
+| Depth colours, contours | `ows.emodnet-bathymetry.eu/wms` | webview | — | HTTP cache (100 days) |
+| Depth at a point | `rest.emodnet-bathymetry.eu/depth_sample` | Rust | — | none |
+| Relief | `server.arcgisonline.com/…/Elevation/World_Hillshade` | webview | — | HTTP cache |
+| Ground height | `s3.amazonaws.com/elevation-tiles-prod/terrarium` | Rust | — | disk, for good |
+| Weather (winds, pressure) | `api.open-meteo.com/v1/forecast` | weather service, via MQTT | — | retained MQTT message |
+
+Two rules decide which side calls an endpoint:
+- **Rust**, when there is a key, a cache on disk, decoding, or fair use to
+  enforce (one request at a time). Keys never reach the webview, and Rust
+  requests need no CSP entry.
+- **The webview**, for plain image tiles. Their hosts go in `img-src` of both
+  CSP files, which `csp.test.ts` checks against `basemap.ts`, `sea.ts` and
+  `relief.ts`.
+
+Disk caches live under the stack's data directory (`<app-data>/<stack>/`):
+`airspaces/`, `radar/`, `seamarks/`, `terrain/`.
+
 ## Airspaces (OpenAIP)
 
 Controlled and special-use airspace around the receiver, from
-[openAIP](https://www.openaip.net) (CC BY-NC-SA 4.0, non-commercial). Filters →
-Airspaces turns it on (`adsb-show-airspaces`, off by default). This is the
+[openAIP](https://www.openaip.net) (CC BY-NC-SA 4.0, non-commercial). Filters → Map
+Layers → Airspaces turns it on (`adsb-show-airspaces`, off by default). This is the
 first layer of phase 0 in `MAP_ENGINES.md` (new layers in Leaflet before any
 engine change). Plan: `docs/plans/2026-11-19-openaip-airspaces.md`.
 
@@ -5518,7 +5626,7 @@ openaip.net profile page, under API clients.
 ## METAR stations
 
 The latest METAR of every station within 300 NM of the receiver, from the
-AviationWeather.gov Data API (NOAA). No key is needed. Filters → METAR turns it
+AviationWeather.gov Data API (NOAA). No key is needed. Filters → Map Layers → METAR turns it
 on (`adsb-show-metar`, off by default). This is the second phase-0 layer, built
 like *Airspaces (OpenAIP)*. Plan: `docs/plans/2026-11-19-metar-layer.md`.
 
@@ -5608,7 +5716,7 @@ comparison would place it below.
 ## Rain radar (Météo-France)
 
 The latest 5-minute rainfall mosaic for mainland France, coloured by rain rate
-and cut to 300 NM around the receiver. Filters → Rain radar turns it on
+and cut to 300 NM around the receiver. Filters → Map Layers → Rain radar turns it on
 (`adsb-show-radar`, off by default). This is the third phase-0 layer. Plan:
 `docs/plans/2026-11-19-radar-layer.md`.
 
@@ -5730,7 +5838,7 @@ current image, so the hour is collected by the app:
 
 ## Sea overlays (OpenSeaMap, EMODnet)
 
-Filters → Sea. Three switches, all off by default: **Seamarks**, **Depth
+Filters → Map Layers → Sea. Three switches, all off by default: **Seamarks**, **Depth
 colours** and **Depth contours**. Phase 0 of `docs/MAP_ENGINES.md`. Plan:
 `docs/plans/2026-11-19-sea-overlays.md`.
 
@@ -5801,7 +5909,7 @@ The tiles are images only. The text is in the OpenStreetMap tags behind them
 
 ## Relief (hillshade)
 
-Filters → Relief, off by default (`adsb-show-relief`, `adsb-relief-opacity`,
+Filters → Map Layers → Relief, off by default (`adsb-show-relief`, `adsb-relief-opacity`,
 60 %). The last phase-0 layer in `docs/MAP_ENGINES.md`. Plan:
 `docs/plans/2026-11-19-relief.md`.
 
