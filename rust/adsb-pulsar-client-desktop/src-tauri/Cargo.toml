@@ -17,7 +17,7 @@ tokio = { workspace = true }
 axum = "0.8"
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-chrono = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
 # `mqtt` is a direct requirement: bridge.rs constructs MqttSource unconditionally.
 # It used to arrive only by feature unification through adsb-data-server, so
 # dropping that crate's dependency would have broken this build from a distance.
@@ -30,6 +30,9 @@ adsb-data-server = { path = "../../adsb-data-server", default-features = false, 
 # weather" switch: no publisher, no refresh loop, no Open-Meteo provider. The
 # weather service itself is a separate binary.
 adsb-weather-server = { path = "../../adsb-weather-server", default-features = false, features = ["client"] }
+# OpenAIP airspace downloads (airspace.rs). Same version and TLS stack as the
+# rest of the workspace, so this adds no second reqwest.
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

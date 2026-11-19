@@ -1174,3 +1174,51 @@ fn persist_storage_mode(app: &tauri::AppHandle, mode: &StorageMode) -> Result<()
         .save()
         .map_err(|e| format!("Failed to save config store: {e}"))
 }
+
+/// Serialises airspace loads: two at once (StrictMode mounts twice) would both
+/// download and race to write the same cycle file.
+static AIRSPACE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// OpenAIP airspaces for `ADSB_OPENAIP_COUNTRIES`, cached per AIRAC cycle in
+/// `<stack data dir>/airspaces/`. Never fails as a whole: each country carries
+/// its own origin and error, so one missing key or one outage is reported in
+/// the panel while any cached cycle is still drawn (marked expired).
+#[tauri::command]
+pub async fn get_airspaces(
+    app: tauri::AppHandle,
+) -> Result<Vec<crate::airspace::CountryAirspaces>, String> {
+    use crate::airspace;
+    let _guard = AIRSPACE_LOCK.lock().await;
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("No app data directory: {e}"))?;
+    let dir =
+        crate::stack_data_dir(&app_data_dir, crate::stack_from_env().as_deref()).join("airspaces");
+    let key = std::env::var(airspace::KEY_ENV)
+        .ok()
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty());
+    let countries =
+        airspace::parse_countries(std::env::var(airspace::COUNTRIES_ENV).ok().as_deref());
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("HTTP client: {e}"))?;
+    let today = chrono::Utc::now().date_naive();
+
+    let mut out = Vec::with_capacity(countries.len());
+    for country in &countries {
+        let fetch = |page: u32| {
+            let (client, key) = (&client, key.as_deref());
+            async move {
+                match key {
+                    Some(k) => airspace::fetch_page(client, k, country, page).await,
+                    None => Err(airspace::NO_KEY_ERROR.to_string()),
+                }
+            }
+        };
+        out.push(airspace::load_country(&dir, country, today, fetch).await);
+    }
+    Ok(out)
+}

@@ -81,6 +81,7 @@ dependencies = [
  "adsb-weather-server",
  "axum",
  "chrono",
+ "reqwest",
  "serde",
  "serde_json",
  "tauri",

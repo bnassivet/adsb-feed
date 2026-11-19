@@ -4,6 +4,7 @@
 //! and provides a real-time aircraft tracking dashboard with
 //! DuckDB-backed historical storage.
 
+mod airspace;
 mod bridge;
 mod commands;
 mod state;
@@ -73,7 +74,10 @@ pub(crate) fn stack_from_env() -> Option<String> {
 /// A subdirectory rather than a filename suffix so that anything added later is
 /// scoped by construction. With suffixes, every new artifact has to remember to
 /// apply one, and forgetting is a silent cross-mix between stacks.
-fn stack_data_dir(app_data_dir: &std::path::Path, stack: Option<&str>) -> std::path::PathBuf {
+pub(crate) fn stack_data_dir(
+    app_data_dir: &std::path::Path,
+    stack: Option<&str>,
+) -> std::path::PathBuf {
     match stack {
         Some(name) => app_data_dir.join(name),
         None => app_data_dir.to_path_buf(),
@@ -204,6 +208,7 @@ pub fn run() {
             commands::get_storage_mode,
             commands::set_storage_mode,
             commands::get_weather_snapshot,
+            commands::get_airspaces,
             commands::get_weather_availability,
             commands::get_weather_service,
             commands::set_weather_service_enabled,
