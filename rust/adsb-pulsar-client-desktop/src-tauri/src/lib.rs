@@ -4,10 +4,17 @@
 //! and provides a real-time aircraft tracking dashboard with
 //! DuckDB-backed historical storage.
 
+mod airspace;
 mod bridge;
 mod commands;
+mod metar;
+mod radar;
+mod radar_grid;
+mod radar_history;
+mod seamarks;
 mod state;
 mod storage_mode;
+mod terrain;
 mod weather;
 mod webview_storage;
 
@@ -73,7 +80,10 @@ pub(crate) fn stack_from_env() -> Option<String> {
 /// A subdirectory rather than a filename suffix so that anything added later is
 /// scoped by construction. With suffixes, every new artifact has to remember to
 /// apply one, and forgetting is a silent cross-mix between stacks.
-fn stack_data_dir(app_data_dir: &std::path::Path, stack: Option<&str>) -> std::path::PathBuf {
+pub(crate) fn stack_data_dir(
+    app_data_dir: &std::path::Path,
+    stack: Option<&str>,
+) -> std::path::PathBuf {
     match stack {
         Some(name) => app_data_dir.join(name),
         None => app_data_dir.to_path_buf(),
@@ -119,6 +129,7 @@ pub fn run() {
             // Initialize DuckDB storage in the app data directory.
             // Failure is non-fatal — the app continues in real-time-only mode.
             let (storage, storage_config, storage_mode) = init_storage(app);
+            clean_radar_history(app);
 
             // Load persisted config from Tauri store (falls back to defaults).
             let config = load_config(app);
@@ -204,6 +215,13 @@ pub fn run() {
             commands::get_storage_mode,
             commands::set_storage_mode,
             commands::get_weather_snapshot,
+            commands::get_airspaces,
+            commands::get_metars,
+            commands::get_radar,
+            commands::get_radar_frames,
+            commands::get_seamarks,
+            commands::get_ground_elevation,
+            commands::what_is_here,
             commands::get_weather_availability,
             commands::get_weather_service,
             commands::set_weather_service_enabled,
@@ -432,6 +450,30 @@ fn build_remote_config(
 ///
 /// Returns `(handle, config)`. The config is kept for reopening after release.
 /// Returns `(None, None)` if initialization fails (app continues without history).
+/// Deletes radar frames left from an old session (radar_history.rs), in the
+/// background so startup does not wait on the disk. `[desktop]
+/// radar_cleanup_on_start = false` keeps them until the radar is next turned on.
+fn clean_radar_history(app: &tauri::App) {
+    let setting = std::env::var(radar_history::CLEANUP_ENV).ok();
+    if !radar_history::cleanup_on_start(setting.as_deref()) {
+        info!("Radar frames: start-up clean-up off");
+        return;
+    }
+    let Ok(app_data_dir) = app.path().app_data_dir() else {
+        return;
+    };
+    let dir = stack_data_dir(&app_data_dir, stack_from_env().as_deref()).join("radar");
+    std::thread::spawn(move || {
+        let removed = radar_history::clean_at_start(&dir, chrono::Utc::now());
+        if removed > 0 {
+            info!(
+                "Radar frames: deleted {removed} old file(s) in {}",
+                dir.display()
+            );
+        }
+    });
+}
+
 fn init_storage(
     app: &tauri::App,
 ) -> (

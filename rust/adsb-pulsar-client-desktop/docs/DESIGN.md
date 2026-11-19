@@ -28,6 +28,16 @@
 25. [Arrow IPC Query Pipeline](#arrow-ipc-query-pipeline)
 26. [AI Agent & AG-UI Integration](#ai-agent--ag-ui-integration)
 27. [Message Sources & the MQTT Broker](#message-sources--the-mqtt-broker)
+28. [Weather Layer](#weather-layer)
+29. [Map Tile Cache](#map-tile-cache)
+30. [Map Layers (overview)](#map-layers-overview)
+31. [Airspaces (OpenAIP)](#airspaces-openaip)
+32. [METAR stations](#metar-stations)
+33. [Rain radar (Météo-France)](#rain-radar-météo-france)
+34. [Sea overlays (OpenSeaMap, EMODnet)](#sea-overlays-openseamap-emodnet)
+35. [Relief (hillshade)](#relief-hillshade)
+36. [What's here? and height above ground](#whats-here-and-height-above-ground)
+37. [Observability (Prometheus)](#observability-prometheus)
 
 ---
 
@@ -564,7 +574,15 @@ src/
 │   ├── MapInner.tsx         # Actual Leaflet map
 │   ├── MapTileToggle.tsx    # Dark/light map theme toggle
 │   ├── MetricsBar.tsx       # Footer metrics display
-│   └── ResizeHandle.tsx     # Resizable panel divider
+│   ├── ResizeHandle.tsx     # Resizable panel divider
+│   │   # Map layers (phase 0): Filters → Map Layers sections and map overlays
+│   ├── AirspaceControls.tsx / AirspaceInfo.tsx
+│   ├── MetarControls.tsx / MetarInfo.tsx
+│   ├── RadarControls.tsx / RadarTimeline.tsx # Radar section; time bar over the map
+│   ├── SeaControls.tsx      # Seamarks, depth colours and contours
+│   ├── ReliefControls.tsx   # Hillshade
+│   ├── ChecklistCombo.tsx   # Multi-select used by airspace types and METAR categories
+│   └── WhatIsHere.tsx       # Right-click → ground height and sea depth
 ├── contexts/                # React Context providers
 │   └── AircraftTrackingContext.tsx # Global aircraft tracking provider
 ├── hooks/                   # Custom React hooks
@@ -575,7 +593,12 @@ src/
 │   ├── useMapZoom.ts        # Debounced Leaflet zoom level for H3 resolution
 │   ├── useMetrics.ts        # Metrics polling
 │   ├── useSimulatedTracks.ts # Simulated demo flight tracks
-│   └── useTauriEvent.ts     # Event listener abstraction
+│   ├── useTauriEvent.ts     # Event listener abstraction
+│   │   # Map layers (phase 0): load when switched on, poll while on
+│   ├── useAirspaces.ts / useMetars.ts / useRadar.ts
+│   ├── useRadarFrames.ts    # Radar frames for the animation; useFrameAnimation
+│   ├── useSeamarks.ts       # Seamark text for the 2° cells under the view
+│   └── useGroundElevation.ts # Ground under the selected aircraft, per ~200 m cell
 ├── lib/                     # Utilities and types
 │   ├── aircraft-details.ts  # Pure utilities: vertical tendency, sparkline, altitude range, formatTrackTime(ms, tzName?)
 │   ├── aircraft-icon.ts     # Pure SVG/HTML generation for aircraft map icons
@@ -589,7 +612,13 @@ src/
 │   ├── h3-density.ts        # H3 hexagonal density computation
 │   ├── simulation-data.ts   # 20 Montreal-area simulated flight definitions
 │   ├── track-ordering.ts    # Render-order utility for selected track
-│   └── types.ts             # TypeScript type definitions
+│   ├── types.ts             # TypeScript type definitions
+│   │   # Map layers (phase 0): pure, tested
+│   ├── airspace.ts / metar.ts / qnh.ts # Airspace styling and limits, METAR, QNH altitude
+│   ├── radar.ts             # Radar snapshot, frames, animation timing
+│   ├── sea.ts / seamark.ts  # Sea overlay sources; seamark cells and descriptions
+│   ├── relief.ts            # Hillshade source and blend
+│   └── terrain.ts           # Height above ground, What's here? text
 ```
 
 ### Build Pipeline
@@ -1634,7 +1663,15 @@ src-tauri/
 │   ├── state.rs          # Application state (Mutex<Config>, FeedHandle, storage: SharedStorage)
 │   ├── bridge.rs         # Bridge between client library and Tauri + DuckDB writes + StatusEventRecorder
 │   ├── tool_server.rs    # Loopback axum server on 127.0.0.1:8787 (agent read-only data plane)
-│   └── tool_service.rs   # Tool name → DuckDB query dispatch over SharedStorage
+│   ├── tool_service.rs   # Tool name → DuckDB query dispatch over SharedStorage
+│   │   # Map layers (phase 0), see Map Layers (overview):
+│   ├── airspace.rs       # OpenAIP fetch, cached per AIRAC cycle on disk
+│   ├── metar.rs          # AviationWeather.gov METARs around the receiver, in memory
+│   ├── radar.rs          # Météo-France radar: key check, freshness, download, cache
+│   ├── radar_grid.rs     # ODIM_H5 decode, polar stereographic, colour, PNG
+│   ├── radar_history.rs  # The last hour of mosaics on disk, rendered-image cache
+│   ├── seamarks.rs       # Overpass seamark tags per 2° cell, a week on disk
+│   └── terrain.rs        # Terrarium ground height, EMODnet point depth
 ├── build.rs              # Build script
 ├── Cargo.toml            # Rust dependencies
 ├── tauri.conf.json       # Tauri configuration
@@ -5432,6 +5469,507 @@ is never prefetched, so offline it has only the tiles already viewed — use the
 dark theme in the field.
 
 ---
+
+## Map Layers (overview)
+
+Phase 0 of `docs/MAP_ENGINES.md` added data layers to the Leaflet map without
+changing engine. Each one has its own section below. This section shows them
+together.
+
+**Diagram:** [`docs/map-layers-external-endpoints.svg`](../../../docs/map-layers-external-endpoints.svg)
+(repository `adsb-feed/docs/`) shows every external endpoint and which side
+calls it.
+
+### In the Filters panel
+
+Weather and the six data layers are nested sections of one **Map Layers**
+section (`Filters.tsx`, `Section nested`):
+
+| Nested section | Switches | Persisted as |
+|---|---|---|
+| Weather | layer, level, wind barbs, particles (see Weather Layer) | `adsb-show-weather`, `adsb-weather-level`, `adsb-weather-barbs`, `adsb-weather-particles` |
+| Rain radar | layer, opacity, *Animate last hour* | `adsb-show-radar`, `adsb-radar-opacity`, `adsb-radar-animate` |
+| METAR | layer, opacity, hover info, categories, transition altitude | `adsb-show-metar`, `adsb-metar-*`, `adsb-transition-altitude-ft` |
+| Airspaces | layer, opacity, hover info, types | `adsb-show-airspaces`, `adsb-airspace-*` |
+| Sea | seamarks (+ *Describe on hover*), depth colours, depth contours, two opacities | `adsb-show-seamarks`, `adsb-seamark-*`, `adsb-show-depth-*`, `adsb-depth-opacity` |
+| Relief | layer, opacity | `adsb-show-relief`, `adsb-relief-opacity` |
+
+Every layer is off by default. The Map Layers parent is shown only when at
+least one layer is wired.
+
+### Drawing order (Leaflet panes)
+
+| z | Pane | Content | Interactive |
+|---|---|---|---|
+| 200 | `tilePane` | base map (tile cache) | — |
+| 250 | `relief` | hillshade, `mix-blend-mode: multiply` | no |
+| 320 | `sea-depth` | EMODnet depth colours and contours | no |
+| 340 | `radar` | rain radar, one overlay per frame | no |
+| 345 | `seamarks` | OpenSeaMap tiles; tooltip by nearest pick | no |
+| 350 | `airspaces` | airspace polygons (canvas); hover box by pick | no |
+| 360 | `metars` | METAR dots (canvas); hover box by pick | no |
+| 400+ | Leaflet defaults | tracks, labels, density, weather, events | yes |
+
+No data layer takes clicks. Hover information comes from the layer's own pick
+(nearest point, or point in polygon), once per animation frame. Traffic stays
+clickable underneath.
+
+### External endpoints
+
+| Feature | Endpoint | Called from | Key | Cache |
+|---|---|---|---|---|
+| Base map | `tile.openstreetmap.org`, `server.arcgisonline.com` (Esri Dark Gray), `basemaps.cartocdn.com` (with key) | webview | CARTO only | IndexedDB tile cache (OSM never bulk) |
+| Airspaces | `api.core.openaip.net/api/airspaces` | Rust | `ADSB_OPENAIP_API_KEY` | disk, per AIRAC cycle |
+| METAR, QNH | `aviationweather.gov/api/data/metar` | Rust | — | memory, 5 min |
+| Rain radar | `public-api.meteofrance.fr/public/DPRadar/v1/…/LAME_D_EAU` | Rust | `ADSB_METEOFRANCE_API_KEY` | memory (latest) + disk (last hour) |
+| Seamarks | `tiles.openseamap.org/seamark/…` | webview | — | HTTP cache |
+| Seamark text | `overpass-api.de`, then `overpass.private.coffee` | Rust | — | disk, 7 days per 2° cell |
+| Depth colours, contours | `ows.emodnet-bathymetry.eu/wms` | webview | — | HTTP cache (100 days) |
+| Depth at a point | `rest.emodnet-bathymetry.eu/depth_sample` | Rust | — | none |
+| Relief | `server.arcgisonline.com/…/Elevation/World_Hillshade` | webview | — | HTTP cache |
+| Ground height | `s3.amazonaws.com/elevation-tiles-prod/terrarium` | Rust | — | disk, for good |
+| Weather (winds, pressure) | `api.open-meteo.com/v1/forecast` | weather service, via MQTT | — | retained MQTT message |
+
+Two rules decide which side calls an endpoint:
+- **Rust**, when there is a key, a cache on disk, decoding, or fair use to
+  enforce (one request at a time). Keys never reach the webview, and Rust
+  requests need no CSP entry.
+- **The webview**, for plain image tiles. Their hosts go in `img-src` of both
+  CSP files, which `csp.test.ts` checks against `basemap.ts`, `sea.ts` and
+  `relief.ts`.
+
+Disk caches live under the stack's data directory (`<app-data>/<stack>/`):
+`airspaces/`, `radar/`, `seamarks/`, `terrain/`.
+
+## Airspaces (OpenAIP)
+
+Controlled and special-use airspace around the receiver, from
+[openAIP](https://www.openaip.net) (CC BY-NC-SA 4.0, non-commercial). Filters → Map
+Layers → Airspaces turns it on (`adsb-show-airspaces`, off by default). This is the
+first layer of phase 0 in `MAP_ENGINES.md` (new layers in Leaflet before any
+engine change). Plan: `docs/plans/2026-11-19-openaip-airspaces.md`.
+
+### Split: Rust fetches and caches, TypeScript reads and draws
+
+| Piece | Role |
+|---|---|
+| `src-tauri/src/airspace.rs` | `airac_cycle`, `parse_countries`, `fetch_page`, `load_country`: download and cache, no interpretation |
+| `get_airspaces` (`commands.rs`) | One `CountryAirspaces` per configured country. It never fails because of a key or an outage, since each country carries its own `origin` and `error` |
+| `src/lib/airspace.ts` | Pure: `normalizeAirspace`, `formatLimit`, `prepareAirspaces` (type filter and receiver radius), `airspacesAt`, `airspaceStyle`, `airspaceStatus` |
+| `hooks/useAirspaces.ts` | Loads the first time the layer is switched on (once, even under StrictMode), then keeps the data for the session |
+| `AirspaceControls` / `AirspaceInfo` | Filters section (count, AIRAC cycle, expired alert, errors, Retry, credit) and the hover box |
+| `MapInner.tsx` | `AirspaceLayer` (polygons) and `AirspaceHover` (cursor → `airspacesAt`, once per frame) |
+
+The key is read by Rust, so it never reaches the JS bundle and needs no CSP
+host. The raw OpenAIP `items` are cached untouched, so a change in how they
+are read never needs a new download.
+
+### Cache per AIRAC cycle
+
+A file holds one country for one cycle:
+`<stack data dir>/airspaces/<CC>-<YYNN>.json`. AIRAC cycles are 28 days long,
+counted from cycle 2001 on 2020-01-02.
+
+| Situation | Result (`origin`) |
+|---|---|
+| The current cycle's file exists | read, no network (`cache`) |
+| It does not | every page downloaded, written through a temporary file, older cycles deleted (`download`) |
+| The download fails | the newest older file, `expired: true`, with the error (`stale-cache`) |
+| …and nothing is cached | empty, with the error (`none`) |
+
+A failure on any page caches nothing, because a half-downloaded country would
+look complete until the next cycle. An expired cycle is shown as an **alert**
+in the panel, not a footnote: outdated airspace is a safety issue.
+
+### Why non-interactive polygons and a hover box
+
+Airspaces are large and stacked: a CTR inside a TMA, inside a CTA. As
+interactive Leaflet paths they would take hover from the density hexes and
+clicks from the map, and Leaflet only reports the top path. So the polygons go
+on their own canvas pane (z 350: above the tiles, below the overlay pane), with
+`pointer-events: none`. On mousemove, `airspacesAt` runs a point-in-polygon
+test (bbox first) and lists **every** airspace at the cursor, lowest first. The
+largest polygons are drawn first, so a CTR stays visible over its TMA.
+
+**Opacity.** A slider in the panel (`adsb-airspace-opacity`, 0–100 %, 40 % by
+default) scales outlines and fills together. At 0 % the fill disappears but a
+faint outline stays, because the slider controls how strong airspaces look,
+not whether they are shown. In the dark theme, fills are halved and outlines
+reduced to three quarters: a fill lightens a dark basemap much more than it
+tints a light one. `airspaceStyle` re-styles the existing polygons in place
+(`setStyle`), so dragging the slider never rebuilds them.
+
+**Area types** (`adsb-airspace-hidden-types`) is a combo of checkboxes. It
+lists every type present near the receiver with its count, and has All and
+None. The setting stores the *hidden* types, so types that appear later are
+shown by default. A type hidden elsewhere stays hidden until it is unchecked,
+even while it is absent from the current data. Filtering happens after
+`prepareAirspaces`, so the options come from the unfiltered list, and the hover
+box only reports what is drawn.
+
+**Info on hover** (`adsb-airspace-hover-info`, on by default) controls the
+hover box. When it is off, `AirspaceHover` is unmounted: no mousemove listener
+is left running, and its cleanup clears any box still shown.
+
+Not drawn: FIR, UIR, ACC, FIS, VFR sectors, LTA and UTA cover the whole map,
+and airways and routes are corridors (`HIDDEN_TYPES`).
+
+### Configuration
+
+`[desktop] openaip_api_key` (secret, never printed by `desktop-env`) and
+`openaip_countries` (default `FR`) become `ADSB_OPENAIP_API_KEY` and
+`ADSB_OPENAIP_COUNTRIES` for the Tauri process. Checked in the running app with
+a real key on 2026-11-19. A free key comes from the
+openaip.net profile page, under API clients.
+
+- **No keyless path.** OpenAIP's public export bucket became "requester pays"
+  (HTTP 400 `UserProjectMissing`), and the API answers 403 without a key
+  (checked 2026-11-19).
+- **Country filter only.** `GET /api/airspaces` filters by country; it has no
+  bbox parameter. `prepareAirspaces` keeps whatever lies within 300 NM of the
+  receiver.
+
+### Limits
+
+- **Heights not corrected.** Limits are shown as published (`GND`, `ft` MSL,
+  `ft AGL`, `FL`). Comparing them with aircraft would need QNH, from the METAR
+  layer, which comes next in phase 0.
+- **No chat tool yet.** The tool descriptions are tuned for the fast path, so
+  adding a layer there is a change of its own.
+
+## METAR stations
+
+The latest METAR of every station within 300 NM of the receiver, from the
+AviationWeather.gov Data API (NOAA). No key is needed. Filters → Map Layers → METAR turns it
+on (`adsb-show-metar`, off by default). This is the second phase-0 layer, built
+like *Airspaces (OpenAIP)*. Plan: `docs/plans/2026-11-19-metar-layer.md`.
+
+| Piece | Role |
+|---|---|
+| `src-tauri/src/metar.rs` | `bbox_around` (rounded to 0.1°), `fetch` (custom User-Agent, as AWC asks), `load_metars` (in-memory cache) |
+| `get_metars(lat, lng, radiusNm, force)` | `{items, fetchedAtMs, origin, error}`. It never fails because of an outage |
+| `src/lib/metar.ts` | Pure: `normalizeMetar`, wind, visibility and cloud formatting, `metarMarkerStyle`, `metarCategories`, `filterByCategory`, `nearestMetar`, report age |
+| `hooks/useMetars.ts` | Loads when the layer is switched on, refreshes every 5 min while on; `reload` forces a refresh |
+| `MetarControls`, `MetarInfo` | Panel section (count, snapshot age, refresh, stale alert, opacity, info on hover, flight-category filter) and the hover box |
+| `ChecklistCombo` | The checkbox dropdown shared with the airspace type filter |
+
+**Cache: in memory only.** An observation is out of date within the hour, so
+nothing is kept offline. The cache in MAP_ENGINES.md says: "last reading kept,
+age always shown".
+
+| Situation | Result |
+|---|---|
+| A snapshot under 5 minutes old for the same box | served from memory |
+| Older, or a different box | downloaded |
+| `force` (Refresh / Retry) | downloaded, but never twice within 60 s (AWC asks for gentle use) |
+| The download fails | the last snapshot for that box, with its original `fetchedAtMs` and the error (`stale-cache`) |
+
+**On the map:**
+- One dot per station, coloured by flight category: VFR green, MVFR blue, IFR
+  red, LIFR magenta, unknown grey.
+- The dots sit on a non-interactive canvas pane at z 360, above the airspaces.
+- A report older than 90 minutes is drawn as a ring: its colour stays, but
+  most of the fill goes.
+- Opacity and night dimming work as for airspaces.
+- **Hover:** `nearestMetar` picks the station within 10 px of the cursor. Its
+  box shows the decoded fields, QNH and the raw report.
+- **Hover boxes** are stacked bottom-left: the station first, then the
+  airspaces above the point.
+
+**Data shapes**, checked live on 2026-11-19:
+- `wdir` is a number or `"VRB"`; `visib` is a number or a string such as
+  `"10+"`.
+- `fltCat` is null when a station reports no visibility; 20 of 106 stations
+  around Montréal did.
+- `altim` is QNH in hPa; 17 of 106 stations had none.
+- HTTP 204 means no stations in the box.
+
+### Altitude MSL from QNH (`src/lib/qnh.ts`)
+
+ADS-B barometric altitude is **pressure altitude**, referenced to
+1013.25 hPa. Terrain, buildings and airspace limits in feet are **above MSL**.
+The aircraft details panel therefore adds an *Alt MSL* row, for example
+"≈ 3,370 ft QNH 1027 CYUL". It is the value an altimeter set to the nearest
+station's QNH would read. When that row is present, the reported altitude is
+labelled `STD`.
+
+- **Formula:** `qnhAltitudeFt` is exact in the standard atmosphere,
+  `h = K·(1 − (1013.25/QNH)^N·(1 − h_p/K))`. That is about 27 ft per hPa at
+  sea level, slightly less higher up (378 ft at 0 ft and 370 ft at 3,000 ft
+  for QNH 1027.2). Temperature is ignored, so this is altimeter altitude, not
+  true altitude.
+- **Station:** `nearestQnh` takes the nearest station within 100 NM that has a
+  QNH and a report under 90 minutes old. It looks at every fetched station,
+  whatever the category filter hides.
+- **Only below the transition altitude.** This is a setting in the METAR
+  section (`adsb-transition-altitude-ft`). It defaults to 5,000 ft, the usual
+  value in France; it is 18,000 ft across North America. Above it, aircraft
+  and limits use flight levels, which are themselves pressure altitudes.
+- **Live selections only.** A DB History or imported track flew under another
+  day's pressure.
+- **Needs the METAR layer on:** nothing is fetched just for this row.
+
+### Airspaces at the aircraft (details panel)
+
+With the airspace layer on, the details panel lists every drawn airspace above
+the selected aircraft's position, and marks it **inside**, **below**, **above**
+or **?**. The type filter applies here too. Each limit is compared in its own
+reference (`verticalStatus` in `airspace.ts`):
+
+| Limit | Compared with |
+|---|---|
+| `FL` or ft STD | pressure altitude, as reported |
+| ft or m MSL | QNH altitude. This applies at any height, because the limit itself is referenced to MSL. Without QNH, pressure altitude is used and the verdict is marked `≈` |
+| `GND` (as a lower limit) | always satisfied |
+| ft AGL | unknown until there is terrain. The other limit can still decide: an aircraft above the upper limit is "above" |
+
+An example of why it matters: at QNH 1027, an aircraft reporting 1,300 ft is
+at about 1,670 ft MSL, so it is inside a TMA based at 1,500 ft MSL. A raw
+comparison would place it below.
+
+## Rain radar (Météo-France)
+
+The latest 5-minute rainfall mosaic for mainland France, coloured by rain rate
+and cut to 300 NM around the receiver. Filters → Map Layers → Rain radar turns it on
+(`adsb-show-radar`, off by default). This is the third phase-0 layer. Plan:
+`docs/plans/2026-11-19-radar-layer.md`.
+
+### The product, as served
+
+The API is `DonneesPubliquesRadar` (`/public/DPRadar/v1`), authenticated with
+an `apikey` header. The free plan allows 850 requests per 5 minutes.
+
+| Product | Format | Used |
+|---|---|---|
+| `REFLECTIVITE`, 1 km | BUFR (3.1 MB gz) | no: BUFR needs WMO and local tables |
+| `LAME_D_EAU`, 1 km | BUFR | no |
+| **`LAME_D_EAU`, 500 m** | **ODIM_H5** (2.6 MB) | **yes** |
+
+What the ODIM_H5 file contains:
+- a `uint16` grid of 3472×3472 cells, gzip-chunked, of quantity `ACRR`: rain
+  accumulated over the 5-minute window, in mm, with a gain of 0.01;
+- 65535 means outside radar coverage; 65534 means covered, no rain;
+- a polar stereographic grid:
+  `+proj=stere +lat_0=90 +lon_0=0 +lat_ts=45 +x_0=619652.07 +y_0=5262818.34`
+  on WGS84, lower-left corner at (0, 0), row 0 at the top.
+
+### Pipeline, all in Rust
+
+| Step | Where | Cost (release; debug) |
+|---|---|---|
+| Is there a new image? Read the description's `validity_time` (~1 KB), at most every 2.5 min | `radar.rs` | one small request |
+| Download the 500 m product, only when `validity_time` changed | `radar.rs` | 2.6 MB |
+| Decode ODIM_H5 (`hdf5-reader`, pure Rust, no libhdf5) | `radar_grid::decode_odim` | 46 ms; 360 ms |
+| For each pixel of a 1200×1200 Web Mercator image: inverse Mercator, forward stereographic, cell, mm/h, colour | `radar_grid::render` | 19 ms; 355 ms |
+| PNG, base64 | `encode_png` | ~10 ms; 104 ms |
+
+- **Projection:** Snyder's ellipsoidal polar stereographic with a latitude of
+  true scale. It matches pyproj to within 5 cm on the file's corners and on
+  points across France.
+- **Dev builds:** the decode and compression crates are compiled with
+  `opt-level = 3` (workspace `Cargo.toml`), because `tauri dev` is unoptimised.
+- **Rendered image cache:** keyed by image time and box, so a poll between
+  two images does not render again.
+
+### Cache and failures
+
+- **The current image is in memory.** Each downloaded mosaic is also kept on
+  disk for an hour, for the animation (below); nothing older is kept.
+- **Failed check or download:** the last image is served with its own time
+  and the error (`stale-cache`). It is not retried before the next interval,
+  so a dead network does not mean a request on every poll.
+- **Forced refresh:** has a 30 s floor.
+
+**Key:** `[desktop] meteofrance_api_key` (secret), exported as
+`ADSB_METEOFRANCE_API_KEY`. Portal keys are JWTs with their own `exp`. The
+portal's validity field is in **seconds**, and the first key made for this
+project lived 5 s. So `key_problem` reads `exp` and reports "expired on …"
+instead of the server's bare "Invalid Credentials". A 403 means the key's
+application is not subscribed to Données Publiques Radar.
+
+### Frontend
+
+- **`useRadar`:** polls every 2.5 minutes while the layer is on.
+- **`RadarLayer`:** one `L.imageOverlay` on a non-interactive pane at z 340,
+  under the airspaces (350) and the METAR stations (360). Opacity is a slider
+  (70 % by default), with 0.85 of it at night.
+- **`RadarControls`:**
+  - the image time in UTC and its age; Refresh;
+  - an alert when the image is the previous one;
+  - a legend in mm/h built from the `scale` Rust sends with every image,
+    so the legend and the image cannot disagree;
+  - the credit (Météo-France, Etalab 2.0).
+
+### Animation of the last hour
+
+Plan: `docs/plans/2026-11-19-radar-animation.md`. The API serves only the
+current image, so the hour is collected by the app:
+
+- **Kept on disk.** After a new mosaic decodes, `radar_history::save` writes
+  it to `<stack data dir>/radar/` and deletes frames more than 60 min older than
+  the newest, never the file it just wrote (~31 MB at most). Frames exist only
+  for the times the layer was on, and survive a restart.
+- **An old session is deleted, not just hidden.** `radar_history::prune` runs
+  on every `get_radar` and `get_radar_frames`: once the newest frame is over an
+  hour old, every frame goes. Turning the radar on cleans up.
+- **And at app start**, in a background thread (`clean_radar_history` in
+  `lib.rs`, `radar_history::clean_at_start`): the same rule, plus `.h5.tmp`
+  files left by a save that never finished. A restart within the hour keeps
+  its frames. `[desktop] radar_cleanup_on_start = false` turns it off;
+  `stack.sh` then exports `ADSB_RADAR_CLEANUP_ON_START=false` (unset means
+  on), and the frames stay until the radar is next turned on.
+- **Memory is bounded by the cache itself.** `RenderCache::insert` drops the
+  rendered images more than an hour older than the newest, whichever command
+  inserts. (The first version trimmed only in `get_radar_frames`, so with the
+  animation off every new image stayed: ~115 MB a day.)
+- **`get_radar_frames`** renders the kept frames for the box, oldest first,
+  on up to 4 threads. Rendered PNGs are cached per box and shared with
+  `get_radar`. The webview sends the frame times it already holds
+  (`knownMs`), and those come back without their image.
+- **`useRadarFrames`** asks when the animation is switched on and whenever the
+  latest image changes. **`useFrameAnimation`** shows each frame for 500 ms
+  and holds the newest for 2 s.
+- **`RadarLayer`** takes a `RadarView` (all images, plus the time of the one
+  shown). It keeps one overlay per frame and switches frames by opacity, so
+  the loop never flashes blank.
+- **Controls:** "Animate last hour" (`adsb-radar-animate`), the frame time and
+  position, and how many of the 12 frames have been collected so far.
+- **Timeline on the map** (`RadarTimeline`, bottom centre, while animating with
+  at least two frames): the shown frame's offset from the latest and its UTC
+  time ("−20 min · 02:50 UTC"), a slider over the frames, play/pause.
+  Dragging or scrolling pauses on the chosen frame (`useFrameAnimation.seek`);
+  play resumes from it. The wheel steps one frame per 40 px, down or right
+  later, up or left earlier, stopping at the ends. The bar sits beside the
+  Leaflet container, not inside it, so its wheel and drag never reach the map.
+- **Cost in a dev build:** the first request for 12 frames decodes and
+  renders them all (~0.8 s each, 4 at a time). A release build takes ~75 ms
+  each.
+
+**Not yet:**
+- a rain-rate readout on hover;
+- reflectivity (BUFR);
+- a speed control for the animation.
+
+## Sea overlays (OpenSeaMap, EMODnet)
+
+Filters → Map Layers → Sea. Three switches, all off by default: **Seamarks**, **Depth
+colours** and **Depth contours**. Phase 0 of `docs/MAP_ENGINES.md`. Plan:
+`docs/plans/2026-11-19-sea-overlays.md`.
+
+| Layer | Source | Pane | Notes |
+|---|---|---|---|
+| Seamarks | OpenSeaMap XYZ tiles `tiles.openseamap.org/seamark/{z}/{x}/{y}.png` | z 345, above the radar | Transparent; tiles are empty below zoom 9, so `minZoom: 9` and no requests below |
+| Depth colours | EMODnet Bathymetry WMS, `emodnet:mean_multicolour` | z 320, under everything drawn | Land is transparent (checked: alpha 0), sea opaque |
+| Depth contours | same WMS, `emodnet:contours` | same image | White lines and labels, made for the dark map |
+
+- **Frontend only.** Both are keyless image services, so there is no Rust
+  command. `lib/sea.ts` holds the URLs, the hosts, the defaults and
+  `depthLayers`, which builds the WMS `layers` value from the two depth
+  switches. Colours and contours come in **one** request, as 512 px tiles,
+  because the server takes about 0.8 s per tile.
+- **Styles not used:** `emodnet:mean_atlas_land` and the `atlas_land` style
+  also draw land, fully opaque. They are base maps, not overlays.
+- **Opacity:** seamarks 90 % by default; depth 35 %, because the colour scale
+  runs from red to dark blue. Colours and contours share one slider, since they
+  are one image. Opacity is × 0.85 at night.
+- **Legend:** a gradient in metres (0–3500 m), from colours sampled from
+  EMODnet's own legend (GetLegendGraphic). That image has a light grey box, so
+  it is not shown as is. The scale is not linear: most of the colour goes to
+  shallow water.
+- **Caching:** these layers do not go through the tile cache. They load as
+  plain images (CSP `img-src` only, in both CSP files, checked by
+  `csp.test.ts`) and rely on the HTTP cache; EMODnet sends `max-age` of 100
+  days. Seamarks are OpenStreetMap data, and OSM tiles must not be downloaded
+  in bulk anyway.
+- **Credits:** OpenSeaMap (ODbL) and EMODnet Bathymetry (CC BY 4.0), on the map
+  while a layer is on and in the panel.
+- **localStorage keys:** `adsb-show-seamarks`, `adsb-seamark-opacity`,
+  `adsb-show-depth-colours`, `adsb-show-depth-contours`, `adsb-depth-opacity`.
+
+### Seamark tooltip
+
+The tiles are images only. The text is in the OpenStreetMap tags behind them
+(`seamark:type`, `seamark:name`, `seamark:<type>:category|colour|shape`,
+`seamark:light:*`, `seamark:topmark:*`, `seamark:information`), read from the
+**Overpass API**.
+
+- **Rust (`seamarks.rs`, `get_seamarks`)**: one Overpass query per 2° × 2° cell
+  (`nwr["seamark:type"](bbox); out center tags;`), only `seamark:*` and
+  `name` kept, ways and relations at their centre. Cached per cell in
+  `<stack data dir>/seamarks/N46W006.json` for 7 days; a failed refresh serves
+  the old file. `overpass-api.de` first, then the `overpass.private.coffee`
+  mirror (the main server answered 502 when busy). One load at a time
+  (`SEAMARK_LOCK`). Measured: a cell takes 20-50 s, mostly fixed overhead,
+  hence big cells; the Brittany coast is ~8,000 seamarks, 2.6 MB raw.
+- **Only cells under the view, from zoom 9, at most 6**: `SeamarkCells` reports
+  `seamarkCellsKey` on `moveend`, and `useSeamarks` asks only when that key
+  changes. The request box is derived from the key (`cellsBounds`, inset from
+  the edges), so the hook depends on the key alone. A late answer for cells the
+  view has left is dropped.
+- **Tooltip**: `SeamarkHover` picks the nearest seamark within 12 px once per
+  frame and shows a standalone Leaflet tooltip. `describeSeamark` writes a
+  title (the name, else the kind) and up to four lines, e.g. *Lateral buoy ·
+  starboard · green, conical*, *Light Fl(3) G 12s 5M* (chart abbreviation;
+  sector lights give the first and a count), *Topmark cone, point up, green*.
+- **Tags are user-edited text**: the tooltip is built with `textContent` only,
+  never as HTML.
+- **Switch**: Seamarks → *Describe on hover* (`adsb-seamark-hover-info`, on).
+  Off means no Overpass requests at all. The panel says whether descriptions are
+  loading, how many are loaded, or to zoom in.
+- No CSP change: Overpass is called from Rust, not the webview.
+
+**Not yet:** the depth under the cursor (WMS GetFeatureInfo); offline copies
+(phase 4).
+
+## Relief (hillshade)
+
+Filters → Map Layers → Relief, off by default (`adsb-show-relief`, `adsb-relief-opacity`,
+60 %). The last phase-0 layer in `docs/MAP_ENGINES.md`. Plan:
+`docs/plans/2026-11-19-relief.md`.
+
+- **Source:** Esri World Hillshade, keyless JPEG tiles from
+  `server.arcgisonline.com`, the dark base map's host (already in the CSP,
+  same terms of use). Real detail down to z16 (`maxNativeZoom`).
+- **Blend:** the tiles are opaque grey-on-white, so the `relief` pane (z 250,
+  right above the tile pane at 200) has `mix-blend-mode: multiply`. White
+  leaves the map unchanged and only slopes darken it. The map pane has a
+  transform and therefore forms an isolated group: the blend reaches the base
+  tiles and nothing else, since every data pane is above the relief.
+- **One mode for both themes**, chosen from Python composites on the real base
+  tiles. Multiply is clear on OSM and readable on Esri Dark Gray, where the map
+  stays dark and labels survive. Soft-light brightened the whole dark map;
+  the dark hillshade with overlay, screen or soft-light either darkened
+  everything or washed it grey. No night factor.
+- Not in the tile cache: images only, HTTP cache.
+
+**Not yet:** a self-served hillshade from a DEM (phase 4); 3D terrain
+(phase 3, MapLibre).
+
+## What's here? and height above ground
+
+Plan: `docs/plans/2026-11-19-what-is-here.md`. The relief and depth layers
+are pictures and cannot give a value at a point; the data behind them can.
+
+- **Ground height: Terrarium tiles** (keyless, AWS open data). The height is
+  in each pixel's colour, `R*256 + G + B/256 − 32768` m. `terrain.rs` fetches
+  the z12 tile under a point once, keeps it on disk for good
+  (`<stack data dir>/terrain/`), keeps 16 decoded tiles in memory and
+  interpolates between pixel centres. Sea is 0 m in these tiles. Checked:
+  Mont Blanc reads 4,780 m.
+- **Sea depth: EMODnet's point query** (`depth_sample`), with the min and max
+  of the survey cell. Over land it answers a positive height, which is dropped.
+- **`what_is_here`** asks both together; either half can fail on its own.
+  Right-click → **What's here?** opens a box where the menu was: *Ground
+  1,234 m (4,049 ft)*, *Sea depth 22.7 m (22.0–23.2 m)*, both on a coast, or
+  *Sea level*.
+- **Height AGL** (aircraft details): altitude minus `max(ground, 0)`, so the
+  sea surface at sea. It uses the QNH altitude at any height when a station is
+  near (true height follows the real pressure, flight level or not), otherwise
+  pressure altitude marked *std*. There is no row on the ground.
+  `useGroundElevation` asks once per ~200 m cell, at the cell centre, so a
+  cruising aircraft costs a lookup in memory, and a new tile download about
+  every 45 s.
+- No CSP change: Rust makes the requests.
 
 ## Observability (Prometheus)
 

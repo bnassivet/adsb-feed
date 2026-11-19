@@ -2,6 +2,11 @@
 import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventFilterMode } from "@/lib/types";
 import { RangeSlider } from "@/components/RangeSlider";
 import { WeatherControls, type WeatherControlsProps } from "@/components/WeatherControls";
+import { AirspaceControls, type AirspaceControlsProps } from "./AirspaceControls";
+import { MetarControls, type MetarControlsProps } from "./MetarControls";
+import { RadarControls, type RadarControlsProps } from "./RadarControls";
+import { SeaControls, type SeaControlsProps } from "./SeaControls";
+import { ReliefControls, type ReliefControlsProps } from "./ReliefControls";
 import type { ReactNode } from "react";
 
 interface Props {
@@ -55,6 +60,16 @@ interface Props {
   onEventTimeRangeChange: (startMs: number, endMs: number) => void;
   /** Weather layer controls. Optional: without them there is no weather section. */
   weather?: WeatherControlsProps;
+  /** Airspace layer controls. Optional: without them there is no airspace section. */
+  airspaces?: AirspaceControlsProps;
+  /** METAR layer controls. Optional: without them there is no METAR section. */
+  metar?: MetarControlsProps;
+  /** Rain radar controls. Optional: without them there is no radar section. */
+  radar?: RadarControlsProps;
+  /** Sea overlay controls. Optional: without them there is no sea section. */
+  sea?: SeaControlsProps;
+  /** Relief controls. Optional: without them there is no relief section. */
+  relief?: ReliefControlsProps;
 }
 
 function msToDatetimeLocal(ms: number): string {
@@ -63,21 +78,34 @@ function msToDatetimeLocal(ms: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function Section({ title, defaultOpen, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
+/**
+ * A collapsible section. `nested` sits inside another section (Map Layers):
+ * indented, with a lighter title, so the hierarchy reads at a glance.
+ */
+function Section({ title, defaultOpen, nested, children }: { title: string; defaultOpen?: boolean; nested?: boolean; children: ReactNode }) {
   return (
-    <details open={defaultOpen || undefined} className="group border-t border-slate-700 pt-2">
-      <summary className="flex items-center gap-1.5 cursor-pointer select-none text-xs font-semibold text-slate-400 list-none [&::-webkit-details-marker]:hidden">
-        <span className="text-[10px] transition-transform duration-150 group-open:rotate-90">▶</span>
+    <details
+      open={defaultOpen || undefined}
+      className={nested ? "group/nested ml-2 border-l border-slate-700 pl-2" : "group border-t border-slate-700 pt-2"}
+    >
+      <summary
+        className={`flex items-center gap-1.5 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden ${
+          nested ? "text-[11px] font-medium text-slate-400" : "text-xs font-semibold text-slate-400"
+        }`}
+      >
+        <span
+          className={`text-[10px] transition-transform duration-150 ${nested ? "group-open/nested:rotate-90" : "group-open:rotate-90"}`}
+        >
+          ▶
+        </span>
         {title}
       </summary>
-      <div className="mt-2 flex flex-col gap-3">
-        {children}
-      </div>
+      <div className={nested ? "mt-1.5 mb-1 flex flex-col gap-3" : "mt-2 flex flex-col gap-3"}>{children}</div>
     </details>
   );
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, showPositions, onTogglePositions, showLabels, onToggleLabels, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange, showEvents, onToggleEvents, eventsCount, eventFilterMode, onEventFilterModeChange, eventUpcomingDays, onEventUpcomingDaysChange, eventTimeRangeStart, eventTimeRangeEnd, onEventTimeRangeChange, weather }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, showPositions, onTogglePositions, showLabels, onToggleLabels, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange, showEvents, onToggleEvents, eventsCount, eventFilterMode, onEventFilterModeChange, eventUpcomingDays, onEventUpcomingDaysChange, eventTimeRangeStart, eventTimeRangeEnd, onEventTimeRangeChange, weather, airspaces, metar, radar, sea, relief }: Props) {
   return (
     <div className="flex flex-col gap-2 p-4">
 
@@ -346,10 +374,39 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
         </div>
       </Section>
 
-      {/* ── Weather ── */}
-      {weather && (
-        <Section title="Weather">
-          <WeatherControls {...weather} />
+      {/* ── Map Layers: weather first, then what is drawn under the traffic ── */}
+      {(weather || radar || metar || airspaces || sea || relief) && (
+        <Section title="Map Layers">
+          {weather && (
+            <Section title="Weather" nested>
+              <WeatherControls {...weather} />
+            </Section>
+          )}
+          {radar && (
+            <Section title="Rain radar" nested>
+              <RadarControls {...radar} />
+            </Section>
+          )}
+          {metar && (
+            <Section title="METAR" nested>
+              <MetarControls {...metar} />
+            </Section>
+          )}
+          {airspaces && (
+            <Section title="Airspaces" nested>
+              <AirspaceControls {...airspaces} />
+            </Section>
+          )}
+          {sea && (
+            <Section title="Sea" nested>
+              <SeaControls {...sea} />
+            </Section>
+          )}
+          {relief && (
+            <Section title="Relief" nested>
+              <ReliefControls {...relief} />
+            </Section>
+          )}
         </Section>
       )}
 

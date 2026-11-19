@@ -18,3 +18,17 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# Radar mosaics (desktop radar_grid.rs) are 3472×3472 gzip-chunked HDF5 and a
+# 1200×1200 PNG: unoptimised, decode + encode take ~0.5 s per image under
+# `tauri dev`. Optimise only these dependencies in dev builds.
+[profile.dev.package.hdf5-reader]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.fdeflate]
+opt-level = 3
+[profile.dev.package.crc32fast]
+opt-level = 3

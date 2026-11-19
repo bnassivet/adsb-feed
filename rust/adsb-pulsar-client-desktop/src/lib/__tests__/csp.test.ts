@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { tileConfig } from "../basemap";
+import { SEA_HOSTS } from "../sea";
+import { RELIEF_HOST } from "../relief";
 
 /**
  * The CSP lives in two places kept in sync by hand -- `tauri.conf.json` and
@@ -56,5 +58,12 @@ describe("CSP covers the cached basemap", () => {
     // connect-src differs only by the agent port, templated in the dev override.
     const strip = (srcs: string[]) => srcs.filter((s) => !/:(\d+|\{agent_port\})$/.test(s));
     expect(strip(directive(dev, "connect-src"))).toEqual(strip(directive(confCsp, "connect-src")));
+  });
+});
+
+describe("CSP covers the sea overlays and the relief", () => {
+  // Plain Leaflet tile layers, not the tile cache: images only.
+  it.each([...SEA_HOSTS, RELIEF_HOST])("tauri.conf.json allows images from %s", (src) => {
+    expect(directive(confCsp, "img-src")).toContain(src);
   });
 });

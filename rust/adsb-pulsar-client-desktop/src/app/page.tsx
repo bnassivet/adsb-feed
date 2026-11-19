@@ -8,6 +8,22 @@ import { ResizeHandle } from "@/components/ResizeHandle";
 import { LeftPanel } from "@/components/LeftPanel";
 import { AircraftDetailsPanel } from "@/components/AircraftDetailsPanel";
 import { useWeatherSnapshot } from "@/hooks/useWeatherSnapshot";
+import { useAirspaces } from "@/hooks/useAirspaces";
+import { DEFAULT_AIRSPACE_OPACITY, airspacesAt, airspaceTypes, filterByType } from "@/lib/airspace";
+import { DEFAULT_METAR_OPACITY, filterByCategory, metarCategories, type CategoryKey } from "@/lib/metar";
+import { useMetars } from "@/hooks/useMetars";
+import { useRadar } from "@/hooks/useRadar";
+import { useFrameAnimation, useRadarFrames } from "@/hooks/useRadarFrames";
+import { RadarTimeline } from "@/components/RadarTimeline";
+import { animationView, DEFAULT_RADAR_OPACITY, latestView } from "@/lib/radar";
+import { DEFAULT_DEPTH_OPACITY, DEFAULT_SEAMARK_OPACITY, type SeaSettings } from "@/lib/sea";
+import { useSeamarks } from "@/hooks/useSeamarks";
+import { DEFAULT_RELIEF_OPACITY } from "@/lib/relief";
+import { DEFAULT_TRANSITION_ALTITUDE_FT, nearestQnh } from "@/lib/qnh";
+
+/** Stable default for the hidden airspace types (a literal would be a new array per render). */
+const NO_HIDDEN_TYPES: number[] = [];
+const NO_HIDDEN_CATEGORIES: CategoryKey[] = [];
 import { useHistoricalWeather } from "@/hooks/useHistoricalWeather";
 import { availableLevels, isOffHour, isStale, type WeatherLevel } from "@/lib/weather";
 import {
@@ -26,6 +42,10 @@ import { EventsOfInterestPanel } from "@/components/EventsOfInterestPanel";
 import { EventsOfInterestContent } from "@/components/EventsOfInterestContent";
 import { EventFormDialog } from "@/components/EventFormDialog";
 import { MapContextMenu } from "@/components/MapContextMenu";
+import { WhatIsHere } from "@/components/WhatIsHere";
+import { useGroundElevation } from "@/hooks/useGroundElevation";
+import { whatIsHere } from "@/lib/commands";
+import type { WhatIsHereResult } from "@/lib/terrain";
 import { useAircraftTracks } from "@/hooks/useAircraftTracks";
 import { useSimulatedTracks } from "@/hooks/useSimulatedTracks";
 import { useAgentSimulatedTracks } from "@/hooks/useAgentSimulatedTracks";
@@ -96,6 +116,42 @@ export default function Dashboard() {
   const [showDensity, setShowDensity] = useLocalStorage<boolean>("adsb-show-density", false);
   // Weather layer: winds aloft from the MQTT weather topic.
   const [showWeather, setShowWeather] = useLocalStorage<boolean>("adsb-show-weather", false);
+  const [showAirspaces, setShowAirspaces] = useLocalStorage<boolean>("adsb-show-airspaces", false);
+  const [airspaceOpacity, setAirspaceOpacity] = useLocalStorage<number>("adsb-airspace-opacity", DEFAULT_AIRSPACE_OPACITY);
+  const [airspaceHoverInfo, setAirspaceHoverInfo] = useLocalStorage<boolean>("adsb-airspace-hover-info", true);
+  const [airspaceHiddenTypes, setAirspaceHiddenTypes] = useLocalStorage<number[]>("adsb-airspace-hidden-types", NO_HIDDEN_TYPES);
+  const [showMetar, setShowMetar] = useLocalStorage<boolean>("adsb-show-metar", false);
+  const [metarOpacity, setMetarOpacity] = useLocalStorage<number>("adsb-metar-opacity", DEFAULT_METAR_OPACITY);
+  const [metarHoverInfo, setMetarHoverInfo] = useLocalStorage<boolean>("adsb-metar-hover-info", true);
+  const [showRadar, setShowRadar] = useLocalStorage<boolean>("adsb-show-radar", false);
+  const [radarOpacity, setRadarOpacity] = useLocalStorage<number>("adsb-radar-opacity", DEFAULT_RADAR_OPACITY);
+  const [radarAnimate, setRadarAnimate] = useLocalStorage<boolean>("adsb-radar-animate", false);
+  const [showSeamarks, setShowSeamarks] = useLocalStorage<boolean>("adsb-show-seamarks", false);
+  const [seamarkOpacity, setSeamarkOpacity] = useLocalStorage<number>("adsb-seamark-opacity", DEFAULT_SEAMARK_OPACITY);
+  const [showDepthColours, setShowDepthColours] = useLocalStorage<boolean>("adsb-show-depth-colours", false);
+  const [showDepthContours, setShowDepthContours] = useLocalStorage<boolean>("adsb-show-depth-contours", false);
+  const [depthOpacity, setDepthOpacity] = useLocalStorage<number>("adsb-depth-opacity", DEFAULT_DEPTH_OPACITY);
+  const [showRelief, setShowRelief] = useLocalStorage<boolean>("adsb-show-relief", false);
+  const [reliefOpacity, setReliefOpacity] = useLocalStorage<number>("adsb-relief-opacity", DEFAULT_RELIEF_OPACITY);
+  const relief = useMemo(() => ({ show: showRelief, opacity: reliefOpacity }), [showRelief, reliefOpacity]);
+  const [seamarkHoverInfo, setSeamarkHoverInfo] = useLocalStorage<boolean>("adsb-seamark-hover-info", true);
+  // The 2° cells under the view, reported by the map only while descriptions are wanted.
+  const [seamarkCells, setSeamarkCells] = useState<string | null>(null);
+  const seamarkDescriptions = showSeamarks && seamarkHoverInfo;
+  const seamarkDetails = useSeamarks(seamarkDescriptions, seamarkCells);
+  // One object for the map, stable while nothing changes.
+  const sea = useMemo<SeaSettings>(
+    () => ({
+      seamarks: showSeamarks,
+      seamarkOpacity,
+      depthColours: showDepthColours,
+      depthContours: showDepthContours,
+      depthOpacity,
+    }),
+    [showSeamarks, seamarkOpacity, showDepthColours, showDepthContours, depthOpacity],
+  );
+  const [transitionAltitudeFt, setTransitionAltitudeFt] = useLocalStorage<number>("adsb-transition-altitude-ft", DEFAULT_TRANSITION_ALTITUDE_FT);
+  const [metarHiddenCategories, setMetarHiddenCategories] = useLocalStorage<CategoryKey[]>("adsb-metar-hidden-categories", NO_HIDDEN_CATEGORIES);
   const [weatherLevel, setWeatherLevel] = useLocalStorage<WeatherLevel>("adsb-weather-level", 250);
   // Particles are a continuous animation, so they are opt-in.
   const [showWeatherBarbs, setShowWeatherBarbs] = useLocalStorage<boolean>("adsb-weather-barbs", true);
@@ -281,6 +337,36 @@ export default function Dashboard() {
   }, []);
 
   const simulatedTracks = useSimulatedTracks(showSimulation, receiverLocation);
+  // Airspaces are cut out of whole countries around the receiver; without one, all are kept.
+  const airspaceLayer = useAirspaces(showAirspaces, receiverLocation ?? null);
+  // Options come from every nearby airspace, so a hidden type stays listed and can be shown again.
+  const airspaceTypeList = useMemo(() => airspaceTypes(airspaceLayer.airspaces), [airspaceLayer.airspaces]);
+  const metarLayer = useMetars(showMetar, receiverLocation ?? null);
+  const radarLayer = useRadar(showRadar, receiverLocation ?? null);
+  // The animation asks for frames again whenever a new latest image arrives.
+  const radarAnimating = showRadar && radarAnimate;
+  const radarFrames = useRadarFrames(radarAnimating, receiverLocation ?? null, radarLayer.snapshot?.validTimeMs ?? null);
+  const radarFrameCount = radarFrames.frames?.frames.length ?? 0;
+  const radarAnimation = useFrameAnimation(radarFrameCount, radarAnimating);
+  const radarFrameIndex = radarAnimation.index;
+  const radarTimelineShown = radarAnimating && radarFrames.frames != null && radarFrameCount >= 2;
+  // Until two frames exist the animation has nothing to play: the latest image stands in.
+  const radarView = useMemo(
+    () =>
+      radarAnimating && radarFrames.frames && radarFrameCount >= 2
+        ? animationView(radarFrames.frames, radarFrameIndex)
+        : latestView(radarLayer.snapshot),
+    [radarAnimating, radarFrames.frames, radarFrameCount, radarFrameIndex, radarLayer.snapshot],
+  );
+  const metarCategoryList = useMemo(() => metarCategories(metarLayer.metars), [metarLayer.metars]);
+  const visibleMetars = useMemo(
+    () => filterByCategory(metarLayer.metars, metarHiddenCategories),
+    [metarLayer.metars, metarHiddenCategories],
+  );
+  const visibleAirspaces = useMemo(
+    () => filterByType(airspaceLayer.airspaces, airspaceHiddenTypes),
+    [airspaceLayer.airspaces, airspaceHiddenTypes],
+  );
   // Agent-generated trajectories: additive to the hardcoded demo flights above.
   //
   // Two sources, deliberately separate:
@@ -870,6 +956,27 @@ export default function Dashboard() {
    * the live snapshot. This is the "live selections only" guard being lifted:
    * it existed because historical weather did not, not because the question
    * was wrong. */
+  // QNH for the MSL row: live selections only. A recorded or imported track
+  // flew under another day's pressure, and today's METAR would mislead.
+  // All fetched stations count, whatever the category filter hides.
+  const isLiveSelection = isLive && !isDbHistorySelection && !isImportedSelection;
+  const selectedQnh =
+    selectedTrack && isLiveSelection && selectedTrack.latitude != null && selectedTrack.longitude != null
+      ? nearestQnh(metarLayer.metars, selectedTrack.latitude, selectedTrack.longitude, weatherClockMs)
+      : null;
+  // Airspaces above the selected aircraft: the drawn ones, so a hidden type stays hidden here too.
+  const selLat = selectedTrack?.latitude ?? null;
+  const selLng = selectedTrack?.longitude ?? null;
+  // Ground under the selected aircraft, for its height above ground: asked per ~200 m cell.
+  const selectedPoint = useMemo(
+    () => (selLat != null && selLng != null ? { lat: selLat, lng: selLng } : null),
+    [selLat, selLng],
+  );
+  const selectedGround = useGroundElevation(selectedPoint);
+  const selectedAirspaces = useMemo(
+    () => (selLat != null && selLng != null && visibleAirspaces.length > 0 ? airspacesAt(visibleAirspaces, selLat, selLng) : []),
+    [visibleAirspaces, selLat, selLng],
+  );
   const selectedWind = selectedTrack
     ? selectAircraftWind({
         track: selectedTrack,
@@ -1157,6 +1264,31 @@ export default function Dashboard() {
 
   const handleCloseContextMenu = useCallback(() => {
     setContextMenu(null);
+  }, []);
+
+  // "What's here?": the box opens where the menu was, loading; a newer request replaces an older one.
+  const [here, setHere] = useState<
+    { x: number; y: number; lat: number; lng: number; result: WhatIsHereResult | null; error: string | null } | null
+  >(null);
+  const hereRequest = useRef(0);
+  const handleWhatIsHere = useCallback(
+    (lat: number, lng: number) => {
+      if (!contextMenu) return;
+      const id = ++hereRequest.current;
+      setHere({ x: contextMenu.x, y: contextMenu.y, lat, lng, result: null, error: null });
+      whatIsHere(lat, lng)
+        .then((result) => {
+          if (hereRequest.current === id) setHere((h) => (h ? { ...h, result } : h));
+        })
+        .catch((e: unknown) => {
+          if (hereRequest.current === id) setHere((h) => (h ? { ...h, error: e instanceof Error ? e.message : String(e) } : h));
+        });
+    },
+    [contextMenu],
+  );
+  const handleCloseHere = useCallback(() => {
+    hereRequest.current++;
+    setHere(null);
   }, []);
 
   const handleStartMapPick = useCallback((mode: "point" | "area") => {
@@ -1497,14 +1629,110 @@ export default function Dashboard() {
             serviceError: weather.serviceError,
             onServiceToggle: weather.setServiceEnabled,
           }}
+          airspaces={{
+            show: showAirspaces,
+            onToggle: () => setShowAirspaces((prev: boolean) => !prev),
+            count: visibleAirspaces.length,
+            status: airspaceLayer.status,
+            loading: airspaceLayer.loading,
+            error: airspaceLayer.error,
+            onReload: airspaceLayer.reload,
+            opacity: airspaceOpacity,
+            onOpacityChange: setAirspaceOpacity,
+            showHoverInfo: airspaceHoverInfo,
+            onToggleHoverInfo: () => setAirspaceHoverInfo((prev: boolean) => !prev),
+            types: airspaceTypeList,
+            hiddenTypes: airspaceHiddenTypes,
+            onHiddenTypesChange: setAirspaceHiddenTypes,
+          }}
+          relief={{
+            show: showRelief,
+            onToggle: () => setShowRelief((prev: boolean) => !prev),
+            opacity: reliefOpacity,
+            onOpacityChange: setReliefOpacity,
+          }}
+          sea={{
+            seamarks: showSeamarks,
+            onToggleSeamarks: () => setShowSeamarks((prev: boolean) => !prev),
+            seamarkOpacity,
+            onSeamarkOpacityChange: setSeamarkOpacity,
+            depthColours: showDepthColours,
+            onToggleDepthColours: () => setShowDepthColours((prev: boolean) => !prev),
+            depthContours: showDepthContours,
+            onToggleDepthContours: () => setShowDepthContours((prev: boolean) => !prev),
+            depthOpacity,
+            onDepthOpacityChange: setDepthOpacity,
+            seamarkHoverInfo,
+            onToggleSeamarkHoverInfo: () => setSeamarkHoverInfo((prev: boolean) => !prev),
+            seamarkDetails: {
+              loading: seamarkDetails.loading,
+              count: seamarkDetails.items.length,
+              error: seamarkDetails.error,
+              zoomedOut: seamarkCells == null,
+            },
+          }}
+          radar={{
+            show: showRadar,
+            onToggle: () => setShowRadar((prev: boolean) => !prev),
+            validTimeMs: radarLayer.snapshot?.validTimeMs ?? null,
+            nowMs: weatherClockMs,
+            stale: radarLayer.stale,
+            loading: radarLayer.loading,
+            error: radarLayer.error ?? radarFrames.error,
+            onReload: radarLayer.reload,
+            opacity: radarOpacity,
+            onOpacityChange: setRadarOpacity,
+            scale: radarLayer.snapshot?.scale ?? [],
+            animate: radarAnimate,
+            onToggleAnimate: () => setRadarAnimate((prev: boolean) => !prev),
+            frame:
+              radarAnimating && radarFrameCount >= 2 && radarView
+                ? { validTimeMs: radarView.shownMs, position: radarFrameIndex + 1 }
+                : null,
+            frameCount: radarFrameCount,
+          }}
+          metar={{
+            show: showMetar,
+            onToggle: () => setShowMetar((prev: boolean) => !prev),
+            count: visibleMetars.length,
+            fetchedAtMs: metarLayer.fetchedAtMs,
+            nowMs: weatherClockMs,
+            stale: metarLayer.stale,
+            loading: metarLayer.loading,
+            error: metarLayer.error,
+            onReload: metarLayer.reload,
+            opacity: metarOpacity,
+            onOpacityChange: setMetarOpacity,
+            showHoverInfo: metarHoverInfo,
+            onToggleHoverInfo: () => setMetarHoverInfo((prev: boolean) => !prev),
+            categories: metarCategoryList,
+            hiddenCategories: metarHiddenCategories,
+            onHiddenCategoriesChange: setMetarHiddenCategories,
+            transitionAltitudeFt,
+            onTransitionAltitudeChange: setTransitionAltitudeFt,
+          }}
         />
 
         {/* Map + Table */}
         <main className="flex-1 flex flex-col overflow-hidden">
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
-            <div className="flex-1 min-w-0">
-              <AircraftMap tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
+            <div className="relative flex-1 min-w-0">
+              {radarTimelineShown && radarFrames.frames && (
+                // Beside the Leaflet container, not inside it: no wheel or drag reaches the map.
+                // bottom-12 clears the attribution, which wraps to two lines when
+                // radar, airspace and METAR credits are all shown.
+                <div className="pointer-events-none absolute inset-x-0 bottom-12 z-[1000] flex justify-center">
+                  <RadarTimeline
+                    frames={radarFrames.frames.frames}
+                    index={radarAnimation.index}
+                    playing={radarAnimation.playing}
+                    onSeek={radarAnimation.seek}
+                    onTogglePlay={radarAnimation.togglePlay}
+                  />
+                </div>
+              )}
+              <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={visibleMetars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={weatherClockMs} radar={radarView} radarOpacity={radarOpacity} sea={sea} relief={relief} seamarkItems={seamarkDetails.items} onSeamarkCells={seamarkDescriptions ? setSeamarkCells : undefined} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel
@@ -1519,6 +1747,10 @@ export default function Dashboard() {
                    gets the wind of the hour recorded nearest its own last_seen. */
                 wind={selectedWind}
                 receiverLocation={receiverLocation}
+                qnh={selectedQnh}
+                groundElevationM={selectedGround.groundM}
+                transitionAltitudeFt={transitionAltitudeFt}
+                airspaces={selectedAirspaces}
                 rangeLineOn={showRangeLines}
                 onToggleRangeLine={handleToggleRangeLines}
               />
@@ -1778,7 +2010,19 @@ export default function Dashboard() {
           lat={contextMenu.lat}
           lng={contextMenu.lng}
           onCreateEvent={handleCreateEventFromMap}
+          onWhatIsHere={handleWhatIsHere}
           onClose={handleCloseContextMenu}
+        />
+      )}
+      {here && (
+        <WhatIsHere
+          x={here.x}
+          y={here.y}
+          lat={here.lat}
+          lng={here.lng}
+          result={here.result}
+          error={here.error}
+          onClose={handleCloseHere}
         />
       )}
     </div>

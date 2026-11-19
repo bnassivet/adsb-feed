@@ -29,3 +29,5 @@ next-env.d.ts
 
 # Map render benchmark raw results (machine-specific; findings go in docs/)
 bench/results/
+# Offline terrain/building tiles for the bench (npm run bench:fixtures; OSM data, ODbL)
+bench/fixtures/

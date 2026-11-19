@@ -305,6 +305,15 @@ desktop_frontend_env() {
   return 0
 }
 
+# Non-secret settings read by the desktop's Rust side, one VAR=value per line;
+# printed by `desktop-env` too. radar_cleanup_on_start is exported only when
+# off, so the default (clean up old radar frames at start) needs no variable.
+desktop_backend_env() {
+  [ "$(cfg desktop radar_cleanup_on_start true)" = "false" ] && \
+    echo "ADSB_RADAR_CLEANUP_ON_START=false"
+  return 0
+}
+
 start_desktop() { # start_desktop [VAR=value ...]
   dev="$(desktop_dev_port)"
   if port_busy "$dev"; then
@@ -345,12 +354,23 @@ start_desktop() { # start_desktop [VAR=value ...]
     "CARGO_TARGET_DIR=$target"
 
   # shellcheck disable=SC2046  # word splitting is the point: one VAR=x per line
-  set -- "$@" $(desktop_frontend_env)
+  set -- "$@" $(desktop_frontend_env) $(desktop_backend_env)
 
   # Only when set: an empty value would override a key exported in the shell
   # or kept in the desktop's .env.local.
   carto_key="$(cfg desktop carto_api_key "")"
   [ -z "$carto_key" ] || set -- "$@" "NEXT_PUBLIC_CARTO_API_KEY=$carto_key"
+
+  # OpenAIP airspaces: read by Rust (get_airspaces), not the webview, so no
+  # NEXT_PUBLIC_ prefix and the key never reaches the JS bundle.
+  openaip_key="$(cfg desktop openaip_api_key "")"
+  [ -z "$openaip_key" ] || set -- "$@" "ADSB_OPENAIP_API_KEY=$openaip_key"
+  openaip_countries="$(cfg desktop openaip_countries "")"
+  [ -z "$openaip_countries" ] || set -- "$@" "ADSB_OPENAIP_COUNTRIES=$openaip_countries"
+
+  # Météo-France radar: also read by Rust only (get_radar).
+  mf_key="$(cfg desktop meteofrance_api_key "")"
+  [ -z "$mf_key" ] || set -- "$@" "ADSB_METEOFRANCE_API_KEY=$mf_key"
 
   if [ -n "$cfg_json" ]; then
     CFG_JSON="$cfg_json" start desktop env "$@" "TAURI_DEV_CONFIG=$cfg_json" \
@@ -416,6 +436,7 @@ desktop-env)
   require_config
   desktop_live_env
   desktop_frontend_env
+  desktop_backend_env
   ;;
 
 paths)

@@ -20,6 +20,16 @@ import { useDisplayTz } from "@/hooks/useDisplayTz";
 import type { AircraftWind } from "@/lib/aircraft-wind";
 import { RangeLineIcon, rangeLineTitle, RANGE_LINE_COLOR } from "@/components/RangeLineButton";
 import { formatAlongTrack, formatCrosswind, formatWind } from "@/lib/wind-format";
+import { DEFAULT_TRANSITION_ALTITUDE_FT, mslAltitude, qnhAltitudeFt, type QnhSource } from "@/lib/qnh";
+import { heightAboveGroundFt } from "@/lib/terrain";
+import { verticalStatus, type Airspace, type VerticalStatusKind } from "@/lib/airspace";
+
+const STATUS_STYLE: Record<VerticalStatusKind, string> = {
+  inside: "bg-indigo-700/70 text-indigo-100",
+  below: "bg-slate-700 text-slate-300",
+  above: "bg-slate-700 text-slate-300",
+  unknown: "bg-slate-800 text-slate-500",
+};
 
 const MIN_PANEL_WIDTH = 200;
 const MAX_PANEL_WIDTH = 480;
@@ -48,6 +58,14 @@ interface Props {
   rangeLineOn?: boolean;
   /** Toggles the mode; the Distance-row toggle is omitted without it. */
   onToggleRangeLine?: () => void;
+  /** QNH of the nearest current METAR, for live selections only; the MSL row is omitted without it. */
+  qnh?: QnhSource | null;
+  /** Ground height under the aircraft, metres (0 at sea); no height-above-ground row without it. */
+  groundElevationM?: number | null;
+  /** Below it the MSL row applies; at or above it, flight levels do. */
+  transitionAltitudeFt?: number;
+  /** Airspaces above the aircraft's position (horizontally); the section is omitted without any. */
+  airspaces?: Airspace[];
 }
 
 export function AircraftDetailsPanel({
@@ -62,6 +80,10 @@ export function AircraftDetailsPanel({
   receiverLocation = null,
   rangeLineOn = false,
   onToggleRangeLine,
+  qnh = null,
+  groundElevationM = null,
+  transitionAltitudeFt = DEFAULT_TRANSITION_ALTITUDE_FT,
+  airspaces,
 }: Props) {
   if (track === null) return null;
 
@@ -77,6 +99,10 @@ export function AircraftDetailsPanel({
       receiverLocation={receiverLocation}
       rangeLineOn={rangeLineOn}
       onToggleRangeLine={onToggleRangeLine}
+      qnh={qnh}
+      groundElevationM={groundElevationM}
+      transitionAltitudeFt={transitionAltitudeFt}
+      airspaces={airspaces}
     />
   ) : (
     <CollapsedStrip onToggle={onToggle} />
@@ -111,6 +137,10 @@ function ExpandedPanel({
   receiverLocation = null,
   rangeLineOn = false,
   onToggleRangeLine,
+  qnh = null,
+  groundElevationM = null,
+  transitionAltitudeFt = DEFAULT_TRANSITION_ALTITUDE_FT,
+  airspaces,
 }: {
   track: AircraftTrack;
   width: number;
@@ -122,6 +152,10 @@ function ExpandedPanel({
   receiverLocation?: ReceiverPoint | null;
   rangeLineOn?: boolean;
   onToggleRangeLine?: () => void;
+  qnh?: QnhSource | null;
+  groundElevationM?: number | null;
+  transitionAltitudeFt?: number;
+  airspaces?: Airspace[];
 }) {
   const { resolvedTzName } = useDisplayTz();
   // Self-contained drag: listeners created on mousedown capture the start width/x and are removed
@@ -158,6 +192,19 @@ function ExpandedPanel({
   const altBounds = altitudeRange(recentAlt);
   const squawkLabel = track.squawk ? SQUAWK_LABELS[track.squawk] : undefined;
   const distanceNm = receiverDistanceNm(track, receiverLocation);
+  const altitudeMsl = mslAltitude(track.altitude, qnh, transitionAltitudeFt);
+  // For airspace limits in ft MSL the QNH altitude applies at any height, not
+  // only below the transition altitude: the limit itself is referenced to MSL.
+  const heights = {
+    pressureFt: track.altitude,
+    mslFt: track.altitude != null && qnh ? Math.round(qnhAltitudeFt(track.altitude, qnh.qnhHpa)) : null,
+  };
+  // Height above ground: the QNH altitude at any height (true height follows the
+  // real pressure, flight level or not); pressure altitude, marked std, without QNH.
+  const agl =
+    groundElevationM != null && track.altitude != null && !track.is_on_ground
+      ? { ft: heightAboveGroundFt(heights.mslFt ?? track.altitude, groundElevationM), std: heights.mslFt == null }
+      : null;
   const azimuthDeg = receiverAzimuthDeg(track, receiverLocation);
   const elevationDeg = receiverElevationDeg(track, receiverLocation);
 
@@ -214,7 +261,15 @@ function ExpandedPanel({
         <div className="px-3 py-2 border-b border-slate-800 space-y-1">
           <Row label="Altitude">
             {track.altitude !== null ? (
-              <span>{track.altitude.toLocaleString("en-US")} ft</span>
+              <span>
+                {track.altitude.toLocaleString("en-US")} ft
+                {/* Named only when a corrected value sits beside it, to tell the two apart */}
+                {altitudeMsl !== null && (
+                  <span className="ml-1 text-[10px] text-slate-500" title="Pressure altitude: referenced to 1013.25 hPa">
+                    STD
+                  </span>
+                )}
+              </span>
             ) : (
               <span className="text-slate-500">—</span>
             )}
@@ -224,6 +279,29 @@ function ExpandedPanel({
               </span>
             )}
           </Row>
+          {altitudeMsl !== null && qnh && (
+            <Row label="Alt MSL">
+              <span data-testid="altitude-msl" title="Altimeter set to the nearest station's QNH (temperature not corrected)">
+                ≈ {altitudeMsl.toLocaleString("en-US")} ft
+                <span className="ml-1 text-[10px] text-slate-500">
+                  QNH {Math.round(qnh.qnhHpa)} {qnh.stationId}
+                </span>
+              </span>
+            </Row>
+          )}
+          {agl && groundElevationM != null && (
+            <Row label="Height AGL">
+              <span
+                data-testid="height-agl"
+                title="Altitude minus the ground under the aircraft (Terrarium elevation; the sea surface at sea)"
+              >
+                ≈ {agl.ft.toLocaleString("en-US")} ft
+                <span className="ml-1 text-[10px] text-slate-500">
+                  ground {Math.round(Math.max(groundElevationM, 0)).toLocaleString("en-US")} m{agl.std ? " · std" : ""}
+                </span>
+              </span>
+            </Row>
+          )}
           <Row label="Speed">
             {track.ground_speed !== null ? (
               <span>{track.ground_speed} kts</span>
@@ -238,6 +316,33 @@ function ExpandedPanel({
               <span className="text-slate-500">—</span>
             )}
           </Row>
+          {airspaces && airspaces.length > 0 && (
+            <div className="pt-1">
+              <div className="text-xs text-slate-500 mb-0.5">Airspaces</div>
+              <ul aria-label="Airspaces at the aircraft's position" className="space-y-0.5">
+                {airspaces.map((a) => {
+                  const v = verticalStatus(a, heights);
+                  return (
+                    <li key={a.id} className="flex items-baseline justify-between gap-2 text-xs">
+                      <span className="min-w-0">
+                        <span className="text-slate-200">{a.name}</span>
+                        <span className="ml-1 text-slate-500">
+                          {a.typeLabel}
+                          {a.classLabel ? ` ${a.classLabel}` : ""} · {a.lower} – {a.upper}
+                        </span>
+                      </span>
+                      <span className={`shrink-0 rounded px-1 text-[10px] ${STATUS_STYLE[v.status]}`}>
+                        {v.status === "unknown" ? "?" : v.status}
+                        {v.approximate && (
+                          <span title="Limit in ft MSL compared without QNH (turn on METAR): pressure altitude used">≈</span>
+                        )}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
           {receiverLocation && (
             <>
               <Row label="Distance">

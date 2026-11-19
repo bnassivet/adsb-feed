@@ -52,6 +52,17 @@ import { greatCirclePoints, midpoint, rangeLineLabel } from "@/lib/range-line";
 import type { ReceiverPoint } from "@/lib/aircraft-details";
 import { AltitudeLegend } from "./AltitudeLegend";
 import { WindSpeedLegend } from "./WindSpeedLegend";
+import { AirspaceInfo } from "./AirspaceInfo";
+import { MetarInfo } from "./MetarInfo";
+import { DEFAULT_RADAR_OPACITY, RADAR_ATTRIBUTION, type RadarImage, type RadarView } from "@/lib/radar";
+import {
+  DEPTH_ATTRIBUTION, EMODNET_WMS_URL, SEAMARK_ATTRIBUTION, SEAMARK_MAX_NATIVE_ZOOM, SEAMARK_MIN_ZOOM, SEAMARK_URL,
+  depthLayers, type SeaSettings,
+} from "@/lib/sea";
+import { RELIEF_ATTRIBUTION, RELIEF_BLEND, RELIEF_MAX_NATIVE_ZOOM, RELIEF_URL } from "@/lib/relief";
+import { describeSeamark, nearestSeamark, seamarkCellsKey, type Seamark } from "@/lib/seamark";
+import { DEFAULT_METAR_OPACITY, METAR_ATTRIBUTION, metarMarkerStyle, nearestMetar, type Metar } from "@/lib/metar";
+import { AIRSPACE_ATTRIBUTION, DEFAULT_AIRSPACE_OPACITY, airspacesAt, airspaceStyle, type Airspace } from "@/lib/airspace";
 
 /**
  * Per-leg colours for a generated route.
@@ -358,6 +369,407 @@ function MapAttribution({ text }: { text: string }) {
 
 const BARB_SIZE = 32;
 
+/**
+ * Leaflet pane for airspaces: above the tiles (200), below the overlay pane
+ * (400) where density hexes and tracks draw, and never interactive.
+ */
+const AIRSPACE_PANE = "airspaces";
+
+/** Stable default: a fresh `[]` per render would re-run the airspace effects every render. */
+const NO_AIRSPACES: Airspace[] = [];
+
+/**
+ * OpenAIP airspaces as faint polygons, on one canvas of their own.
+ *
+ * Non-interactive on purpose: they are large and overlap, so as Leaflet paths
+ * they would take hover from the density hexes and clicks from the map, and
+ * Leaflet would only ever report the top one. `AirspaceHover` answers "what
+ * is above this point" instead, for every airspace in the stack.
+ */
+function AirspaceLayer({ airspaces, opacity, theme }: { airspaces: Airspace[]; opacity: number; theme: MapTheme }) {
+  const map = useMap();
+  const polygons = useRef<{ airspace: Airspace; layer: L.Polygon }[]>([]);
+
+  useEffect(() => {
+    if (airspaces.length === 0) return;
+    const pane = map.getPane(AIRSPACE_PANE) ?? map.createPane(AIRSPACE_PANE);
+    pane.style.zIndex = "350";
+    pane.style.pointerEvents = "none";
+    const renderer = L.canvas({ pane: AIRSPACE_PANE });
+    const area = (a: Airspace) => (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]);
+    const group = L.layerGroup();
+    const built: { airspace: Airspace; layer: L.Polygon }[] = [];
+    // Largest first, so a CTR stays visible over the TMA around it.
+    for (const a of [...airspaces].sort((x, y) => area(y) - area(x))) {
+      // Default look; the restyle effect below applies the real one right after.
+      const style = airspaceStyle(a);
+      const layer = L.polygon(
+        a.ring.map(([lng, lat]) => [lat, lng] as L.LatLngTuple),
+        { ...style, fillColor: style.color, pane: AIRSPACE_PANE, renderer, interactive: false },
+      ).addTo(group);
+      built.push({ airspace: a, layer });
+    }
+    polygons.current = built;
+    group.addTo(map);
+    return () => {
+      group.remove();
+      polygons.current = [];
+    };
+  }, [map, airspaces]);
+
+  // The slider and the theme restyle in place: one canvas redraw, no rebuild.
+  // Declared after the build effect, so on a rebuild it runs second, in the same commit.
+  useEffect(() => {
+    for (const { airspace, layer } of polygons.current) {
+      const style = airspaceStyle(airspace, { opacity, theme });
+      layer.setStyle({ ...style, fillColor: style.color });
+    }
+  }, [airspaces, opacity, theme]);
+  return null;
+}
+
+/** Leaflet pane for the rain radar: under airspaces and stations, above the tiles. */
+const RADAR_PANE = "radar";
+/** Radar colours are saturated: a little less at night, as for the other layers. */
+const RADAR_NIGHT_FACTOR = 0.85;
+const NO_RADAR_IMAGES: RadarImage[] = [];
+const NO_SEA: SeaSettings = { seamarks: false, seamarkOpacity: 0, depthColours: false, depthContours: false, depthOpacity: 0 };
+
+/**
+ * The rain radar: one PNG that Rust already coloured and reprojected to Web
+ * Mercator, placed by its bounds. Non-interactive, like the other overlays.
+ */
+function RadarLayer({ view, opacity, theme }: { view: RadarView | null; opacity: number; theme: MapTheme }) {
+  const map = useMap();
+  // One overlay per frame, all loaded, all but one transparent: switching
+  // frames is an opacity change, so the animation never flashes blank.
+  const overlays = useRef(new Map<number, L.ImageOverlay>());
+  const images = view?.images ?? NO_RADAR_IMAGES;
+  // A string key: the bounds array is new on every answer, the box rarely is.
+  const boundsKey = view ? view.bounds.join(",") : "";
+  // A new box invalidates every frame; also the unmount cleanup.
+  useEffect(() => {
+    const held = overlays.current;
+    return () => {
+      for (const o of held.values()) o.remove();
+      held.clear();
+    };
+  }, [map, boundsKey]);
+  useEffect(() => {
+    if (!boundsKey) return;
+    const [s, w, n, e] = boundsKey.split(",").map(Number);
+    const pane = map.getPane(RADAR_PANE) ?? map.createPane(RADAR_PANE);
+    pane.style.zIndex = "340";
+    pane.style.pointerEvents = "none";
+    const held = overlays.current;
+    const wanted = new Set(images.map((i) => i.validTimeMs));
+    for (const [t, o] of held) {
+      if (!wanted.has(t)) {
+        o.remove();
+        held.delete(t);
+      }
+    }
+    for (const img of images) {
+      if (held.has(img.validTimeMs)) continue;
+      const o = L.imageOverlay(img.url, [[s, w], [n, e]], { pane: RADAR_PANE, interactive: false, opacity: 0 });
+      held.set(img.validTimeMs, o.addTo(map));
+    }
+  }, [map, images, boundsKey]);
+  // Declared after the build effects: a new frame gets the current opacity in the same commit.
+  const shownMs = view?.shownMs;
+  useEffect(() => {
+    const shown = opacity * (theme === "dark" ? RADAR_NIGHT_FACTOR : 1);
+    for (const [t, o] of overlays.current) o.setOpacity(t === shownMs ? shown : 0);
+  }, [images, boundsKey, shownMs, opacity, theme]);
+  return null;
+}
+
+/**
+ * Relief: the hillshade multiplied over the base tiles. Its pane sits just
+ * above the tile pane (200) and under every data pane, so the blend reaches
+ * the base map only. No night factor: multiply is already gentle on dark.
+ */
+const RELIEF_PANE = "relief";
+
+function ReliefLayer({ show, opacity }: { show: boolean; opacity: number }) {
+  const map = useMap();
+  const layer = useRef<L.TileLayer | null>(null);
+  useEffect(() => {
+    if (!show) return;
+    const pane = map.getPane(RELIEF_PANE) ?? map.createPane(RELIEF_PANE);
+    pane.style.zIndex = "250";
+    pane.style.pointerEvents = "none";
+    pane.style.mixBlendMode = RELIEF_BLEND;
+    const l = L.tileLayer(RELIEF_URL, { maxNativeZoom: RELIEF_MAX_NATIVE_ZOOM, pane: RELIEF_PANE }).addTo(map);
+    layer.current = l;
+    return () => {
+      l.remove();
+      layer.current = null;
+    };
+  }, [map, show]);
+  useEffect(() => {
+    layer.current?.setOpacity(opacity);
+  }, [show, opacity]);
+  return null;
+}
+
+/** Sea depth under everything we draw (radar 340); seamarks above the radar, under airspaces (350). */
+const DEPTH_PANE = "sea-depth";
+const SEAMARK_PANE = "seamarks";
+/** The overlays are bright; a little less at night, as for the other layers. */
+const SEA_NIGHT_FACTOR = 0.85;
+
+function seaPane(map: L.Map, name: string, z: number) {
+  const pane = map.getPane(name) ?? map.createPane(name);
+  pane.style.zIndex = String(z);
+  pane.style.pointerEvents = "none";
+}
+
+/**
+ * EMODnet depth as one WMS image per 512 px tile: colours, contours or both
+ * in a single request (`depthLayers`). The server takes ~0.8 s per tile, so
+ * fewer, bigger tiles. Rebuilt only when the layer list changes.
+ */
+function DepthLayer({ layers, opacity, theme }: { layers: string | null; opacity: number; theme: MapTheme }) {
+  const map = useMap();
+  const layer = useRef<L.TileLayer.WMS | null>(null);
+  useEffect(() => {
+    if (!layers) return;
+    seaPane(map, DEPTH_PANE, 320);
+    const l = L.tileLayer
+      .wms(EMODNET_WMS_URL, {
+        layers,
+        styles: "",
+        format: "image/png",
+        transparent: true,
+        version: "1.3.0",
+        tileSize: 512,
+        pane: DEPTH_PANE,
+      })
+      .addTo(map);
+    layer.current = l;
+    return () => {
+      l.remove();
+      layer.current = null;
+    };
+  }, [map, layers]);
+  // Declared after the build effect, so a rebuilt layer gets the opacity in the same commit.
+  useEffect(() => {
+    layer.current?.setOpacity(opacity * (theme === "dark" ? SEA_NIGHT_FACTOR : 1));
+  }, [layers, opacity, theme]);
+  return null;
+}
+
+/** OpenSeaMap seamarks: transparent tiles of buoys, lights and harbours. */
+function SeamarkLayer({ show, opacity, theme }: { show: boolean; opacity: number; theme: MapTheme }) {
+  const map = useMap();
+  const layer = useRef<L.TileLayer | null>(null);
+  useEffect(() => {
+    if (!show) return;
+    seaPane(map, SEAMARK_PANE, 345);
+    const l = L.tileLayer(SEAMARK_URL, {
+      minZoom: SEAMARK_MIN_ZOOM,
+      maxNativeZoom: SEAMARK_MAX_NATIVE_ZOOM,
+      pane: SEAMARK_PANE,
+    }).addTo(map);
+    layer.current = l;
+    return () => {
+      l.remove();
+      layer.current = null;
+    };
+  }, [map, show]);
+  useEffect(() => {
+    layer.current?.setOpacity(opacity * (theme === "dark" ? SEA_NIGHT_FACTOR : 1));
+  }, [show, opacity, theme]);
+  return null;
+}
+
+/** How close the cursor must be to a seamark to describe it. */
+const SEAMARK_PICK_PX = 12;
+const NO_SEAMARKS: Seamark[] = [];
+const NO_RELIEF = { show: false, opacity: 0 };
+
+/** Reports the 2° cells under the view (null when zoomed out), on every move. */
+function SeamarkCells({ onCells }: { onCells: (key: string | null) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    const report = () => {
+      const b = map.getBounds();
+      onCells(seamarkCellsKey({ south: b.getSouth(), west: b.getWest(), north: b.getNorth(), east: b.getEast() }, map.getZoom()));
+    };
+    report();
+    map.on("moveend", report);
+    return () => {
+      map.off("moveend", report);
+      onCells(null);
+    };
+  }, [map, onCells]);
+  return null;
+}
+
+/** The tooltip's content, as text nodes only: OpenStreetMap tags are user-edited. */
+function seamarkTooltip(s: Seamark): HTMLElement {
+  const { title, lines } = describeSeamark(s.tags);
+  const box = document.createElement("div");
+  const head = document.createElement("div");
+  head.style.fontWeight = "600";
+  head.textContent = title;
+  box.append(head);
+  for (const line of lines) {
+    const row = document.createElement("div");
+    row.textContent = line;
+    box.append(row);
+  }
+  return box;
+}
+
+/** A tooltip on the seamark nearest the cursor, picked at most once per frame. */
+function SeamarkHover({ items }: { items: Seamark[] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (items.length === 0) return;
+    const tip = L.tooltip({ direction: "top", offset: [0, -10], opacity: 0.95 });
+    let shown: string | null = null;
+    const show = (s: Seamark | null) => {
+      if ((s?.id ?? null) === shown) return;
+      shown = s?.id ?? null;
+      if (!s) {
+        tip.close();
+        return;
+      }
+      tip.setLatLng([s.lat, s.lon]).setContent(seamarkTooltip(s));
+      if (!tip.isOpen()) tip.openOn(map);
+    };
+    let frame = 0;
+    let at: L.Point | null = null;
+    const onMove = (e: L.LeafletMouseEvent) => {
+      at = e.containerPoint;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (at) show(nearestSeamark(items, at, (s) => map.latLngToContainerPoint([s.lat, s.lon]), SEAMARK_PICK_PX));
+      });
+    };
+    const onOut = () => {
+      at = null;
+      show(null);
+    };
+    map.on("mousemove", onMove);
+    map.on("mouseout", onOut);
+    return () => {
+      map.off("mousemove", onMove);
+      map.off("mouseout", onOut);
+      cancelAnimationFrame(frame);
+      tip.close();
+    };
+  }, [map, items]);
+  return null;
+}
+
+/** Leaflet pane for METAR stations: above airspaces, below density and tracks. */
+const METAR_PANE = "metars";
+const NO_METARS: Metar[] = [];
+/** How close the cursor must be to a station dot to describe it. */
+const METAR_PICK_PX = 10;
+
+/**
+ * METAR stations as dots coloured by flight category, on their own canvas.
+ * Non-interactive like the airspaces: `MetarHover` picks the nearest station
+ * instead, so dots never take clicks from the map or hover from tracks.
+ */
+function MetarLayer({ metars, opacity, theme, nowMs }: { metars: Metar[]; opacity: number; theme: MapTheme; nowMs: number }) {
+  const map = useMap();
+  const markers = useRef<{ metar: Metar; layer: L.CircleMarker }[]>([]);
+  useEffect(() => {
+    if (metars.length === 0) return;
+    const pane = map.getPane(METAR_PANE) ?? map.createPane(METAR_PANE);
+    pane.style.zIndex = "360";
+    pane.style.pointerEvents = "none";
+    const renderer = L.canvas({ pane: METAR_PANE });
+    const group = L.layerGroup();
+    markers.current = metars.map((metar) => ({
+      metar,
+      layer: L.circleMarker([metar.lat, metar.lng], { pane: METAR_PANE, renderer, interactive: false }).addTo(group),
+    }));
+    group.addTo(map);
+    return () => {
+      group.remove();
+      markers.current = [];
+    };
+  }, [map, metars]);
+  // Declared after the build effect, so a rebuild is styled in the same commit.
+  useEffect(() => {
+    for (const { metar, layer } of markers.current) {
+      const { radius, ...style } = metarMarkerStyle(metar, { opacity, theme, nowMs });
+      layer.setStyle(style);
+      layer.setRadius(radius);
+    }
+  }, [metars, opacity, theme, nowMs]);
+  return null;
+}
+
+/** Reports the station under the cursor (within a few pixels), at most once per frame. */
+function MetarHover({ metars, onPick }: { metars: Metar[]; onPick: (m: Metar | null) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    if (metars.length === 0) return;
+    let frame = 0;
+    let at: L.Point | null = null;
+    const onMove = (e: L.LeafletMouseEvent) => {
+      at = e.containerPoint;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (at) onPick(nearestMetar(metars, at, (m) => map.latLngToContainerPoint([m.lat, m.lng]), METAR_PICK_PX));
+      });
+    };
+    const onOut = () => {
+      at = null;
+      onPick(null);
+    };
+    map.on("mousemove", onMove);
+    map.on("mouseout", onOut);
+    return () => {
+      map.off("mousemove", onMove);
+      map.off("mouseout", onOut);
+      cancelAnimationFrame(frame);
+      onPick(null);
+    };
+  }, [map, metars, onPick]);
+  return null;
+}
+
+/** Reports the airspaces under the cursor, at most once per frame. */
+function AirspaceHover({ airspaces, onStack }: { airspaces: Airspace[]; onStack: (stack: Airspace[]) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    if (airspaces.length === 0) return;
+    let frame = 0;
+    let at: L.LatLng | null = null;
+    const onMove = (e: L.LeafletMouseEvent) => {
+      at = e.latlng;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (at) onStack(airspacesAt(airspaces, at.lat, at.lng));
+      });
+    };
+    const onOut = () => {
+      at = null;
+      onStack([]);
+    };
+    map.on("mousemove", onMove);
+    map.on("mouseout", onOut);
+    return () => {
+      map.off("mousemove", onMove);
+      map.off("mouseout", onOut);
+      cancelAnimationFrame(frame);
+      onStack([]);
+    };
+  }, [map, airspaces, onStack]);
+  return null;
+}
+
 /** Wind barbs at every grid point of a weather snapshot, for one level. */
 function WeatherBarbsLayer({
   snapshot,
@@ -594,6 +1006,30 @@ function WindParticlesLayer({
 }
 
 interface Props {
+  /** OpenAIP airspaces to draw; empty or absent while the layer is off. */
+  airspaces?: Airspace[];
+  /** Airspace slider, 0–1 (see `airspaceStyle`). */
+  airspaceOpacity?: number;
+  /** List the airspaces under the cursor. Defaults to true. */
+  airspaceHoverInfo?: boolean;
+  /** METAR stations to draw; empty or absent while the layer is off. */
+  metars?: Metar[];
+  metarOpacity?: number;
+  /** Describe the station under the cursor. Defaults to true. */
+  metarHoverInfo?: boolean;
+  /** Minute clock: report ages (old reports are drawn hollow). */
+  metarNowMs?: number;
+  /** The rain radar images and the one to show; null while the layer is off. */
+  radar?: RadarView | null;
+  radarOpacity?: number;
+  /** Sea overlays: OpenSeaMap seamarks and EMODnet depth. */
+  sea?: SeaSettings;
+  /** Hillshade over the base map. */
+  relief?: { show: boolean; opacity: number };
+  /** Seamark descriptions for the tooltip; empty when the hover is off. */
+  seamarkItems?: Seamark[];
+  /** Told the 2° cells under the view while seamark descriptions are wanted. */
+  onSeamarkCells?: (key: string | null) => void;
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];
   dbHistoryTracks?: AircraftTrack[];
@@ -911,9 +1347,18 @@ function labelIcon(p: LabelPlacement, text: string, color: string, selected: boo
   });
 }
 
-export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
+export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, sea = NO_SEA, seamarkItems = NO_SEAMARKS, onSeamarkCells, relief = NO_RELIEF, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
   // Memoised: the basemap layer is rebuilt (and every tile reloaded) when this changes.
   const tile = useMemo(() => tileConfig(mapTheme, CARTO_API_KEY), [mapTheme]);
+  const [airspaceStack, setAirspaceStack] = useState<Airspace[]>(NO_AIRSPACES);
+  // Mouse moves over empty sky report [] on every frame: keep the same state then.
+  const updateAirspaceStack = useCallback(
+    (next: Airspace[]) => setAirspaceStack((prev) => (prev.length === 0 && next.length === 0 ? prev : next)),
+    [],
+  );
+  // nearestMetar returns the list's own objects, so the same station (or null)
+  // on each mouse move is the same value and React skips the render.
+  const [metarPick, setMetarPick] = useState<Metar | null>(null);
   const mapCenter: [number, number] = receiverLocation
     ? [receiverLocation.lat, receiverLocation.lng]
     : DEFAULT_CENTER;
@@ -971,6 +1416,37 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         <MapClickHandler onDeselect={handleDeselect} />
         <FlyToHandler onReady={handleFlyToReady} />
         <CachedBasemap tile={tile} origin={tileCacheOrigin} />
+
+        {/* Relief, blended into the base tiles only */}
+        {relief.show && <MapAttribution text={RELIEF_ATTRIBUTION} />}
+        <ReliefLayer show={relief.show} opacity={relief.opacity} />
+
+        {/* Sea depth, then the radar, then seamarks — never interactive */}
+        {(sea.depthColours || sea.depthContours) && <MapAttribution text={DEPTH_ATTRIBUTION} />}
+        <DepthLayer
+          layers={depthLayers({ colours: sea.depthColours, contours: sea.depthContours })}
+          opacity={sea.depthOpacity}
+          theme={mapTheme}
+        />
+        {sea.seamarks && <MapAttribution text={SEAMARK_ATTRIBUTION} />}
+        <SeamarkLayer show={sea.seamarks} opacity={sea.seamarkOpacity} theme={mapTheme} />
+        {onSeamarkCells && <SeamarkCells onCells={onSeamarkCells} />}
+        {sea.seamarks && <SeamarkHover items={seamarkItems} />}
+
+        {/* Rain radar — under airspaces, never interactive */}
+        {radar && <MapAttribution text={RADAR_ATTRIBUTION} />}
+        <RadarLayer view={radar} opacity={radarOpacity} theme={mapTheme} />
+
+        {/* Airspaces — under everything else, never interactive */}
+        {airspaces.length > 0 && <MapAttribution text={AIRSPACE_ATTRIBUTION} />}
+        <AirspaceLayer airspaces={airspaces} opacity={airspaceOpacity} theme={mapTheme} />
+        {/* Unmounted when off: no mousemove listener at all, and its cleanup clears the box */}
+        {airspaceHoverInfo && <AirspaceHover airspaces={airspaces} onStack={updateAirspaceStack} />}
+
+        {/* METAR stations — above airspaces, never interactive */}
+        {metars.length > 0 && <MapAttribution text={METAR_ATTRIBUTION} />}
+        <MetarLayer metars={metars} opacity={metarOpacity} theme={mapTheme} nowMs={metarNowMs} />
+        {metarHoverInfo && <MetarHover metars={metars} onPick={setMetarPick} />}
 
         {/* Density hexagons — zoom-adaptive H3 resolution */}
         <DensityLayer showDensity={showDensity} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} receiverLocation={receiverLocation} theme={mapTheme} />
@@ -1211,6 +1687,11 @@ export function MapInner({ tracks, historyTracks, dbHistoryTracks = [], imported
         />
       )}
       <AltitudeLegend theme={mapTheme} />
+      {/* Hover readouts, stacked bottom-left: the station first, then the airspaces above the point */}
+      <div className="absolute bottom-6 left-2.5 z-[1000] flex flex-col gap-1 pointer-events-none">
+        <MetarInfo metar={metarPick} nowMs={metarNowMs} />
+        <AirspaceInfo stack={airspaceStack} />
+      </div>
       {weather && weatherParticles && <WindSpeedLegend theme={mapTheme} />}
     </div>
   );

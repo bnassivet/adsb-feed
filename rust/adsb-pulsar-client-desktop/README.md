@@ -83,6 +83,27 @@ which is what makes a freshly generated scenario inspectable before you press St
 > them the panel shows a readable error, and demo flights plus saved scenarios still
 > work — the rest of the app is unaffected.
 
+### Map Layers
+Data layers over the map, all in **Filters → Map Layers** and off by default. Each has an
+opacity slider; hover information can be switched off where there is any.
+
+| Layer | What it shows | Source | Needs |
+|---|---|---|---|
+| Weather | Winds aloft as barbs or particles, MSL pressure | Open-Meteo, through the optional weather service | MQTT source |
+| Rain radar | Latest 5-minute rainfall over France; *Animate last hour* with a time bar on the map | Météo-France (Données Publiques Radar) | free API key |
+| METAR | Stations coloured by flight category; QNH gives the selected aircraft its altitude MSL | AviationWeather.gov | — |
+| Airspaces | Controlled and special-use airspace, filter by type; the ones above the selected aircraft, with inside / below / above | openAIP | free API key |
+| Sea | Seamarks with a description on hover; depth colours and contours | OpenSeaMap, OpenStreetMap (Overpass), EMODnet | — |
+| Relief | Hillshade blended into the base map | Esri World Hillshade | — |
+
+Right-click the map → **What's here?** gives the ground height (Terrarium) and the sea depth
+(EMODnet) at that point. The aircraft details panel shows **Height AGL**, the altitude
+(QNH-corrected when a station is near) minus the ground under the aircraft.
+
+Keys and downloads stay on the Rust side, cached on disk where that helps (airspaces per
+AIRAC cycle, the last hour of radar, seamark text for a week, terrain for good). Every
+endpoint: [docs/map-layers-external-endpoints.svg](../../docs/map-layers-external-endpoints.svg).
+
 ### Additional
 - **Receiver location** marker on the map with altitude tooltip
 - **Dark / Light** map tile themes
@@ -174,6 +195,20 @@ cp .env.local.template .env.local   # git-ignored; restart the app after editing
 | `NEXT_PUBLIC_CARTO_API_KEY` | unset (Esri tiles) | `[desktop] carto_api_key`, set when not empty | CARTO basemap key, needed for CARTO raster tiles since 2026-09-25 |
 | `NEXT_PUBLIC_COPILOTKIT_DISABLE_INSPECTOR` | unset (inspector available) | `[desktop] copilotkit_inspector = false`, set only then | `true` turns off CopilotKit's dev inspector, the app's only third-party traffic in dev |
 
+### Map layer keys (`adsb-stack.toml [desktop]`)
+
+Read by the Rust side at start-up; `make up-desktop` exports them. The keys are never printed by
+`make desktop-env` and never reach the webview.
+
+| Setting | Exported as | Purpose |
+|---|---|---|
+| `openaip_api_key` | `ADSB_OPENAIP_API_KEY` | Airspaces. Free from your openaip.net profile (API clients) |
+| `openaip_countries` | `ADSB_OPENAIP_COUNTRIES` | Countries to download, default `FR` |
+| `meteofrance_api_key` | `ADSB_METEOFRANCE_API_KEY` | Rain radar. Subscribe to *Données Publiques Radar* on portail-api.meteofrance.fr and give the key validity **-1**: the portal counts validity in seconds |
+| `radar_cleanup_on_start` | `ADSB_RADAR_CLEANUP_ON_START=false` when false | Delete radar frames from a session over an hour old at start (default true) |
+
+Without a key the layer says so in its section; nothing else is affected.
+
 These are compiled in when the app starts, so a change needs a restart. A variable set in
 the environment wins over `.env.local`, and `make up-desktop` / `make client` set them from
 `adsb-stack.toml` as shown, so with the stack, change them there. `make desktop-env` prints
@@ -194,6 +229,10 @@ those hosts anyway.
 | [QUICKSTART.md](QUICKSTART.md) | Prerequisites, installation, and first run |
 | [docs/DESIGN.md](docs/DESIGN.md) | Architecture deep-dive: IPC flow, track lifecycle, state management, feature design decisions |
 | [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md) | Developer guide: patterns, conventions, performance guidelines |
+| [docs/DESIGN.md → Map Layers](docs/DESIGN.md#map-layers-overview) | The map layers together: panel, drawing order, endpoints, caches; one section per layer after it |
+| [docs/MAP_ENGINES.md](docs/MAP_ENGINES.md) | Leaflet, OpenLayers, Cesium and MapLibre measured; the phased way forward |
+| [docs/MAP_BENCH.md](docs/MAP_BENCH.md) | The map rendering benchmark and how to run it |
+| [map-layers-external-endpoints.svg](../../docs/map-layers-external-endpoints.svg) | Every external endpoint the map layers use, and which side calls it |
 | [agent/README.md](../adsb-agent/README.md) | AI agent backend: setup, configuration, voice-model install |
 
 ## Tech Stack

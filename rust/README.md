@@ -123,6 +123,8 @@ The bridge throttles ~50k msg/s down to ~2 UI updates/sec while persisting every
 
 **Real-time tracking** on an interactive Leaflet map with altitude-based colors, heading-rotated markers, polyline trails, and H3 density overlays.
 
+**Map layers** under one *Map Layers* section: weather, Météo-France rain radar (with a last-hour animation), METAR with QNH, openAIP airspaces, seamarks and sea depth, relief, plus *What's here?* (ground height, sea depth) and the selected aircraft's height above ground. See [the desktop README](adsb-pulsar-client-desktop/README.md#map-layers).
+
 **Historical analysis** with DuckDB-backed flight browsing, trajectory reconstruction, detection range radar, hourly heatmaps, and a dedicated Analysis mode for comparing flights.
 
 **Storage management** including release/reclaim for external tools, live export, import with deduplication, and zero-loss database swap.

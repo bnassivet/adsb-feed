@@ -1,7 +1,13 @@
 /** Statistics and reporting for the map render benchmark. Pure: shared by the page and the Node driver. */
 
 export const BASELINE = "leaflet";
-export const VARIANTS = ["leaflet", "canvas", "deckgl", "maplibre", "openlayers"] as const;
+export const VARIANTS = [
+  "leaflet", "canvas", "deckgl", "maplibre", "openlayers",
+  // Second OpenLayers test and first Cesium measurement (docs/MAP_ENGINES.md).
+  "openlayers-noindex", "openlayers-binned", "openlayers-deckgl", "cesium",
+  "maplibre-deckgl", "maplibre-deckgl-3d", "maplibre-deckgl-3d-il",
+  "maplibre-deckgl-terrain", "maplibre-deckgl-city", "maplibre-deckgl-buildings",
+] as const;
 export type Variant = (typeof VARIANTS)[number];
 export type Scenario = "initial" | "panzoom" | "settle" | "live" | "memory";
 export type Style = "dots" | "line";

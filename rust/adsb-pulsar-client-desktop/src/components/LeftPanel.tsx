@@ -3,6 +3,11 @@ import { useCallback, type ReactNode } from "react";
 import { FiltersPanel } from "@/components/Filters";
 import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventFilterMode } from "@/lib/types";
 import type { WeatherControlsProps } from "@/components/WeatherControls";
+import type { AirspaceControlsProps } from "./AirspaceControls";
+import type { MetarControlsProps } from "./MetarControls";
+import type { RadarControlsProps } from "./RadarControls";
+import type { SeaControlsProps } from "./SeaControls";
+import type { ReliefControlsProps } from "./ReliefControls";
 
 const MIN_PANEL_WIDTH = 180;
 const MAX_PANEL_WIDTH = 400;
@@ -62,6 +67,16 @@ interface LeftPanelProps {
   onEventTimeRangeChange: (startMs: number, endMs: number) => void;
   /** Weather layer controls. Optional: without them the panel has no weather section. */
   weather?: WeatherControlsProps;
+  /** Airspace layer controls. Optional: without them the panel has no airspace section. */
+  airspaces?: AirspaceControlsProps;
+  /** METAR layer controls. Optional: without them the panel has no METAR section. */
+  metar?: MetarControlsProps;
+  /** Rain radar controls. Optional: without them the panel has no radar section. */
+  radar?: RadarControlsProps;
+  /** Sea overlay controls. Optional: without them the panel has no sea section. */
+  sea?: SeaControlsProps;
+  /** Relief controls. Optional: without them the panel has no relief section. */
+  relief?: ReliefControlsProps;
   /** Rendered below the filters. A slot rather than typed props so the
    *  simulation state doesn't have to be drilled through this component. */
   simulationPanel?: ReactNode;

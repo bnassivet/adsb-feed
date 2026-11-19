@@ -1174,3 +1174,476 @@ fn persist_storage_mode(app: &tauri::AppHandle, mode: &StorageMode) -> Result<()
         .save()
         .map_err(|e| format!("Failed to save config store: {e}"))
 }
+
+/// Serialises airspace loads: two at once (StrictMode mounts twice) would both
+/// download and race to write the same cycle file.
+static AIRSPACE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// OpenAIP airspaces for `ADSB_OPENAIP_COUNTRIES`, cached per AIRAC cycle in
+/// `<stack data dir>/airspaces/`. Never fails as a whole: each country carries
+/// its own origin and error, so one missing key or one outage is reported in
+/// the panel while any cached cycle is still drawn (marked expired).
+#[tauri::command]
+pub async fn get_airspaces(
+    app: tauri::AppHandle,
+) -> Result<Vec<crate::airspace::CountryAirspaces>, String> {
+    use crate::airspace;
+    let _guard = AIRSPACE_LOCK.lock().await;
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("No app data directory: {e}"))?;
+    let dir =
+        crate::stack_data_dir(&app_data_dir, crate::stack_from_env().as_deref()).join("airspaces");
+    let key = std::env::var(airspace::KEY_ENV)
+        .ok()
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty());
+    let countries =
+        airspace::parse_countries(std::env::var(airspace::COUNTRIES_ENV).ok().as_deref());
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("HTTP client: {e}"))?;
+    let today = chrono::Utc::now().date_naive();
+
+    let mut out = Vec::with_capacity(countries.len());
+    for country in &countries {
+        let fetch = |page: u32| {
+            let (client, key) = (&client, key.as_deref());
+            async move {
+                match key {
+                    Some(k) => airspace::fetch_page(client, k, country, page).await,
+                    None => Err(airspace::NO_KEY_ERROR.to_string()),
+                }
+            }
+        };
+        out.push(airspace::load_country(&dir, country, today, fetch).await);
+    }
+    Ok(out)
+}
+
+/// Last METAR download, in memory only (see metar.rs). Also serialises loads.
+static METAR_CACHE: tokio::sync::Mutex<Option<crate::metar::MetarCache>> =
+    tokio::sync::Mutex::const_new(None);
+
+/// Latest METAR per station within `radius_nm` of a point (the receiver),
+/// from AviationWeather.gov. Never fails as a whole: a failed refresh serves
+/// the last snapshot with its age and the error.
+#[tauri::command]
+pub async fn get_metars(
+    lat: f64,
+    lng: f64,
+    radius_nm: f64,
+    force: bool,
+) -> Result<crate::metar::MetarSnapshot, String> {
+    use crate::metar;
+    if !(lat.is_finite()
+        && lng.is_finite()
+        && (-90.0..=90.0).contains(&lat)
+        && (-180.0..=180.0).contains(&lng))
+    {
+        return Err(format!("Invalid position {lat}, {lng}"));
+    }
+    let radius_nm = if radius_nm.is_finite() {
+        radius_nm.clamp(10.0, 600.0)
+    } else {
+        300.0
+    };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("HTTP client: {e}"))?;
+    let mut cache = METAR_CACHE.lock().await;
+    let bbox = metar::bbox_around(lat, lng, radius_nm);
+    Ok(metar::load_metars(
+        &mut cache,
+        chrono::Utc::now(),
+        bbox,
+        force,
+        |b| async move { metar::fetch(&client, b).await },
+    )
+    .await)
+}
+
+/// Last radar mosaic, in memory only (see radar.rs). Also serialises loads.
+static RADAR_CACHE: tokio::sync::Mutex<Option<crate::radar::RadarCache>> =
+    tokio::sync::Mutex::const_new(None);
+/// Rendered images (base64 PNG) by image time, for the current box: the latest
+/// image and the animation frames share it, so nothing is rendered twice.
+static RADAR_IMAGES: std::sync::Mutex<crate::radar_history::RenderCache<std::sync::Arc<String>>> =
+    std::sync::Mutex::new(crate::radar_history::RenderCache::new());
+/// One frames request renders at a time: a second would redo the same work.
+static RADAR_FRAMES_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// The box the radar is cut to, after checking the arguments.
+fn radar_area(lat: f64, lng: f64, radius_nm: f64) -> Result<crate::metar::Bbox, String> {
+    if !(lat.is_finite()
+        && lng.is_finite()
+        && (-90.0..=90.0).contains(&lat)
+        && (-180.0..=180.0).contains(&lng))
+    {
+        return Err(format!("Invalid position {lat}, {lng}"));
+    }
+    let radius_nm = if radius_nm.is_finite() {
+        radius_nm.clamp(10.0, 600.0)
+    } else {
+        300.0
+    };
+    Ok(crate::metar::bbox_around(lat, lng, radius_nm))
+}
+
+/// Where the last hour of mosaics is kept (radar_history.rs).
+fn radar_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    let app_data_dir = app.path().app_data_dir().ok()?;
+    Some(crate::stack_data_dir(&app_data_dir, crate::stack_from_env().as_deref()).join("radar"))
+}
+
+/// Colour, reproject and encode one mosaic for the box: blocking CPU work.
+fn radar_image(
+    field: &crate::radar_grid::RainField,
+    b: crate::metar::Bbox,
+) -> Result<String, String> {
+    use crate::{radar, radar_grid};
+    use base64::Engine;
+    let rgba = radar_grid::render(
+        field,
+        (b.min_lat, b.min_lon, b.max_lat, b.max_lon),
+        radar::IMAGE_PX,
+        radar::IMAGE_PX,
+    );
+    let png = radar_grid::encode_png(&rgba, radar::IMAGE_PX, radar::IMAGE_PX)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(png))
+}
+
+/// Decodes and renders saved mosaics on a few threads (each decoded field is
+/// 24 MB, so not all at once). A frame that fails is left out, with a warning.
+fn radar_images_from_files(
+    files: Vec<(chrono::DateTime<chrono::Utc>, std::path::PathBuf)>,
+    b: crate::metar::Bbox,
+) -> Vec<(chrono::DateTime<chrono::Utc>, String)> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let workers = std::thread::available_parallelism()
+        .map_or(2, |n| n.get())
+        .min(4);
+    let next = AtomicUsize::new(0);
+    let out = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| {
+                while let Some((v, path)) = files.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    let image = std::fs::read(path)
+                        .map_err(|e| e.to_string())
+                        .and_then(crate::radar_grid::decode_odim)
+                        .and_then(|field| radar_image(&field, b));
+                    match image {
+                        Ok(p) => out.lock().unwrap().push((*v, p)),
+                        Err(e) => tracing::warn!("radar frame {}: {e}", path.display()),
+                    }
+                }
+            });
+        }
+    });
+    out.into_inner().unwrap()
+}
+
+/// Météo-France rain radar around a point (the receiver): the latest 5-minute
+/// rainfall mosaic, coloured by rate and reprojected to Web Mercator. Never
+/// fails as a whole: a failed refresh serves the last image with the error.
+/// Each new mosaic is also kept on disk for the animation.
+#[tauri::command]
+pub async fn get_radar(
+    app: tauri::AppHandle,
+    lat: f64,
+    lng: f64,
+    radius_nm: f64,
+    force: bool,
+) -> Result<crate::radar::RadarSnapshot, String> {
+    use crate::{radar, radar_grid, radar_history};
+    let b = radar_area(lat, lng, radius_nm)?;
+    let key = std::env::var(radar::KEY_ENV).ok();
+    let now = chrono::Utc::now();
+    let problem = radar::key_problem(key.as_deref(), now);
+    let key = key.unwrap_or_default().trim().to_string();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("HTTP client: {e}"))?;
+    let history_dir = radar_dir(&app);
+    // Turning the radar on after a while deletes the old session's frames.
+    if let Some(dir) = history_dir.clone() {
+        let _ = tokio::task::spawn_blocking(move || radar_history::prune(&dir, now)).await;
+    }
+
+    let load = {
+        let mut cache = RADAR_CACHE.lock().await;
+        let (client, key) = (&client, key.as_str());
+        let describe = || async move {
+            if let Some(p) = problem {
+                return Err(p);
+            }
+            radar::parse_validity(&radar::get(client, key, &radar::description_url()).await?)
+        };
+        let download = || async move { radar::get(client, key, &radar::product_url()).await };
+        // Decoding ~2.6 MB of gzip-chunked HDF5 is CPU work: off the async runtime.
+        // Only a mosaic that decodes is kept for the animation.
+        let decode = |validity, bytes: Vec<u8>| {
+            tokio::task::block_in_place(|| {
+                let field = radar_grid::decode_odim(bytes.clone())?;
+                if let Some(dir) = &history_dir
+                    && let Err(e) = radar_history::save(dir, validity, &bytes)
+                {
+                    tracing::warn!("{e}");
+                }
+                Ok(field)
+            })
+        };
+        radar::load_radar(&mut cache, now, force, describe, download, decode).await
+    };
+
+    let bounds = [b.min_lat, b.min_lon, b.max_lat, b.max_lon];
+    let png_base64 = match (&load.field, load.validity) {
+        (Some(field), Some(validity)) => {
+            let cached = RADAR_IMAGES.lock().unwrap().get(b, validity);
+            match cached {
+                Some(p) => Some(p),
+                None => {
+                    let field = field.clone();
+                    let p = tokio::task::spawn_blocking(move || radar_image(&field, b))
+                        .await
+                        .map_err(|e| format!("radar render: {e}"))??;
+                    let p = std::sync::Arc::new(p);
+                    RADAR_IMAGES.lock().unwrap().insert(b, validity, p.clone());
+                    Some(p)
+                }
+            }
+        }
+        _ => None,
+    };
+    Ok(radar::RadarSnapshot {
+        png_base64: png_base64.map(|p| (*p).clone()),
+        bounds: load.field.as_ref().map(|_| bounds),
+        valid_time_ms: load.validity.map(|v| v.timestamp_millis()),
+        accumulation_minutes: load.field.as_ref().map(|f| f.accumulation_minutes()),
+        origin: load.origin,
+        error: load.error,
+        scale: radar::legend(),
+    })
+}
+
+/// The last hour of radar images kept by `get_radar`, oldest first, for the
+/// animation. Downloads nothing. `known_ms` lists the frames the webview
+/// already holds: those come back without their image.
+#[tauri::command]
+pub async fn get_radar_frames(
+    app: tauri::AppHandle,
+    lat: f64,
+    lng: f64,
+    radius_nm: f64,
+    known_ms: Vec<i64>,
+) -> Result<crate::radar_history::RadarFrames, String> {
+    use crate::radar_history::{self, RadarFrame, RadarFrames};
+    let b = radar_area(lat, lng, radius_nm)?;
+    let dir = radar_dir(&app).ok_or("No app data directory for the radar history")?;
+    let _guard = RADAR_FRAMES_LOCK.lock().await;
+    let now = chrono::Utc::now();
+    let files = tokio::task::spawn_blocking(move || radar_history::frames(&dir, now))
+        .await
+        .map_err(|e| format!("radar history: {e}"))?;
+    let wanted: Vec<_> = files.iter().map(|(v, _)| *v).collect();
+    let missing = {
+        let mut images = RADAR_IMAGES.lock().unwrap();
+        if let Some(oldest) = wanted.first() {
+            images.forget_before(*oldest);
+        }
+        images.missing(b, &wanted)
+    };
+    if !missing.is_empty() {
+        let todo: Vec<_> = files
+            .into_iter()
+            .filter(|(v, _)| missing.contains(v))
+            .collect();
+        let rendered = tokio::task::spawn_blocking(move || radar_images_from_files(todo, b))
+            .await
+            .map_err(|e| format!("radar render: {e}"))?;
+        let mut images = RADAR_IMAGES.lock().unwrap();
+        for (v, p) in rendered {
+            images.insert(b, v, std::sync::Arc::new(p));
+        }
+    }
+    let mut images = RADAR_IMAGES.lock().unwrap();
+    let frames = wanted
+        .into_iter()
+        .filter_map(|v| {
+            let image = images.get(b, v)?;
+            let ms = v.timestamp_millis();
+            Some(RadarFrame {
+                valid_time_ms: ms,
+                png_base64: (!known_ms.contains(&ms)).then(|| (*image).clone()),
+            })
+        })
+        .collect();
+    Ok(RadarFrames {
+        bounds: [b.min_lat, b.min_lon, b.max_lat, b.max_lon],
+        frames,
+    })
+}
+
+/// One seamark load at a time: Overpass asks for fair use, and two views
+/// sharing a cell must not download it twice.
+static SEAMARK_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Seamark descriptions (OpenStreetMap tags from Overpass) for the cells under
+/// a view, for the seamark tooltip. Cells are cached on disk for a week
+/// (seamarks.rs). Never fails as a whole once the view is valid: a cell that
+/// cannot be loaded is reported in `error`.
+#[tauri::command]
+pub async fn get_seamarks(
+    app: tauri::AppHandle,
+    south: f64,
+    west: f64,
+    north: f64,
+    east: f64,
+) -> Result<crate::seamarks::SeamarkSnapshot, String> {
+    use crate::seamarks::{self, Origin, SeamarkSnapshot};
+    let cells = seamarks::cells_for(south, west, north, east)?;
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("No app data directory: {e}"))?;
+    let dir =
+        crate::stack_data_dir(&app_data_dir, crate::stack_from_env().as_deref()).join("seamarks");
+    // Overpass can take a minute on a busy day.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(200))
+        .build()
+        .map_err(|e| format!("HTTP client: {e}"))?;
+    let _guard = SEAMARK_LOCK.lock().await;
+    let now = chrono::Utc::now();
+    let mut snapshot = SeamarkSnapshot {
+        items: vec![],
+        stale: false,
+        error: None,
+    };
+    for cell in cells {
+        let load = seamarks::load_cell(&dir, cell, now, |c| {
+            let client = client.clone();
+            async move { seamarks::fetch(&client, c).await }
+        })
+        .await;
+        snapshot.stale |= matches!(load.origin, Origin::StaleCache | Origin::None);
+        if let Some(e) = load.error {
+            snapshot.error = Some(format!("{}: {e}", cell.name()));
+        }
+        snapshot.items.extend(load.items);
+    }
+    Ok(snapshot)
+}
+
+/// Decoded terrain tiles by (x, y) at `terrain::ZOOM`. A few is enough for a
+/// click or a selected aircraft; when full it starts over (256 KB a tile).
+type TerrainTiles =
+    std::collections::HashMap<(u32, u32), std::sync::Arc<crate::terrain::TerrainTile>>;
+static TERRAIN_TILES: std::sync::Mutex<Option<TerrainTiles>> = std::sync::Mutex::new(None);
+const TERRAIN_TILES_MAX: usize = 16;
+
+fn http_client(timeout_s: u64) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_s))
+        .build()
+        .map_err(|e| format!("HTTP client: {e}"))
+}
+
+/// Ground height at a point, metres (0 at sea), from Terrarium tiles kept on disk.
+async fn ground_elevation(app: &tauri::AppHandle, lat: f64, lng: f64) -> Result<f64, String> {
+    use crate::terrain::{self, TerrainTile};
+    let (x, y, px, py) = terrain::locate(lat, lng, terrain::ZOOM)?;
+    let cached = TERRAIN_TILES
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|m| m.get(&(x, y)).cloned());
+    let tile = match cached {
+        Some(t) => t,
+        None => {
+            let app_data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|e| format!("No app data directory: {e}"))?;
+            let dir = crate::stack_data_dir(&app_data_dir, crate::stack_from_env().as_deref())
+                .join("terrain");
+            let client = http_client(30)?;
+            let bytes = terrain::tile_bytes(&dir, terrain::ZOOM, x, y, |url| async move {
+                let r = client
+                    .get(&url)
+                    .header(reqwest::header::USER_AGENT, terrain::USER_AGENT)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Terrain tile: {e}"))?;
+                if !r.status().is_success() {
+                    return Err(format!("Terrain tile: HTTP {}", r.status().as_u16()));
+                }
+                r.bytes()
+                    .await
+                    .map(|b| b.to_vec())
+                    .map_err(|e| format!("Terrain tile: {e}"))
+            })
+            .await?;
+            let tile = std::sync::Arc::new(
+                tokio::task::spawn_blocking(move || TerrainTile::from_png(&bytes))
+                    .await
+                    .map_err(|e| format!("terrain tile: {e}"))??,
+            );
+            let mut map = TERRAIN_TILES.lock().unwrap();
+            let map = map.get_or_insert_with(Default::default);
+            if map.len() >= TERRAIN_TILES_MAX {
+                map.clear();
+            }
+            map.insert((x, y), tile.clone());
+            tile
+        }
+    };
+    Ok(tile.height_at(px, py))
+}
+
+/// Ground height under a point, metres; for the aircraft's height above ground.
+#[tauri::command]
+pub async fn get_ground_elevation(
+    app: tauri::AppHandle,
+    lat: f64,
+    lng: f64,
+) -> Result<f64, String> {
+    ground_elevation(&app, lat, lng).await
+}
+
+/// "What's here?": ground height (Terrarium) and sea depth (EMODnet), asked
+/// together; each half reports its own failure.
+#[tauri::command]
+pub async fn what_is_here(
+    app: tauri::AppHandle,
+    lat: f64,
+    lng: f64,
+) -> Result<crate::terrain::WhatIsHere, String> {
+    use crate::terrain;
+    let depth = async {
+        let client = http_client(20)?;
+        let r = client
+            .get(terrain::depth_url(lat, lng))
+            .header(reqwest::header::USER_AGENT, terrain::USER_AGENT)
+            .send()
+            .await
+            .map_err(|e| format!("EMODnet: {e}"))?;
+        if !r.status().is_success() {
+            return Err(format!("EMODnet: HTTP {}", r.status().as_u16()));
+        }
+        let body = r.bytes().await.map_err(|e| format!("EMODnet: {e}"))?;
+        terrain::parse_depth(&body)
+    };
+    let (elevation, depth) = tokio::join!(ground_elevation(&app, lat, lng), depth);
+    Ok(terrain::WhatIsHere {
+        elevation_m: elevation.as_ref().ok().copied(),
+        elevation_error: elevation.err(),
+        depth: depth.as_ref().ok().cloned().flatten(),
+        depth_error: depth.err(),
+    })
+}

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# [desktop] copilotkit_inspector -> NEXT_PUBLIC_COPILOTKIT_DISABLE_INSPECTOR.
+# [desktop] copilotkit_inspector -> NEXT_PUBLIC_COPILOTKIT_DISABLE_INSPECTOR,
+# [desktop] radar_cleanup_on_start -> ADSB_RADAR_CLEANUP_ON_START, and the
+# desktop's secrets staying out of the printout.
 #
 # Asserted through `stack.sh desktop-env`, which prints the environment the
 # desktop is launched with, so nothing is started.
@@ -58,12 +60,40 @@ echo "false turns the inspector off"
 set_inspector false
 check "false" "$VAR=true" "$(env_line)"
 
-echo "the CARTO key is never printed"
+# set_radar_cleanup <toml value | "absent"> -- edits [desktop] of $CONFIG in place.
+set_radar_cleanup() {
+  python3 - "$CONFIG" "$1" <<'PY'
+import re, sys
+dst, value = sys.argv[1:3]
+text = open(dst).read()
+head, sep, rest = text.partition("[desktop]")
+assert sep, "config has no [desktop] section"
+body, nxt, tail = rest.partition("\n[")
+body = re.sub(r"(?m)^radar_cleanup_on_start\s*=.*\n?", "", body)
+if value != "absent":
+    body = body.rstrip("\n") + f"\nradar_cleanup_on_start = {value}\n"
+open(dst, "w").write(head + sep + body + nxt + tail)
+PY
+}
+radar_line() { STACK="$NAME" bash "$STACK_SH" desktop-env 2>&1 | grep "^ADSB_RADAR_CLEANUP_ON_START=" || echo "(unset)"; }
+
+echo "radar frames are cleaned up at start by default"
+check "template has radar_cleanup_on_start = true" "yes" \
+  "$(grep -qx 'radar_cleanup_on_start = true' "$REPO/adsb-stack-template.toml" && echo yes || echo no)"
+set_radar_cleanup absent
+check "key absent" "(unset)" "$(radar_line)"
+set_radar_cleanup true
+check "true" "(unset)" "$(radar_line)"
+set_radar_cleanup false
+check "false keeps them" "ADSB_RADAR_CLEANUP_ON_START=false" "$(radar_line)"
+
+echo "the CARTO, OpenAIP and Météo-France keys are never printed"
 python3 - "$CONFIG" <<'PY'
 import re, sys
 p = sys.argv[1]; t = open(p).read()
-t, n = re.subn(r'(?m)^carto_api_key\s*=.*$', 'carto_api_key = "secret-test-key"', t, count=1)
-assert n == 1
+for k in ("carto_api_key", "openaip_api_key", "meteofrance_api_key"):
+    t, n = re.subn(rf'(?m)^{k}\s*=.*$', f'{k} = "secret-test-key"', t, count=1)
+    assert n == 1, k
 open(p, "w").write(t)
 PY
 check "no secret in desktop-env" "no" \

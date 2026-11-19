@@ -46,6 +46,11 @@ import type {
   WeatherSnapshotRecord,
 } from "./types";
 import type { WeatherAvailability, WeatherServiceView, WeatherSnapshot } from "./weather";
+import type { CountryAirspaces } from "./airspace";
+import type { MetarSnapshot } from "./metar";
+import type { RadarFrames, RadarSnapshot } from "./radar";
+import type { SeamarkSnapshot } from "./seamark";
+import type { WhatIsHereResult } from "./terrain";
 
 export async function startFeed(): Promise<void> {
   return invoke("start_feed");
@@ -421,4 +426,59 @@ export async function reorderScenarioTracks(
 ): Promise<void> {
   // Tauri converts snake_case command args from camelCase automatically.
   return invoke("reorder_scenario_tracks", { scenarioId, trackIds });
+}
+
+/**
+ * OpenAIP airspaces for the configured countries (`ADSB_OPENAIP_COUNTRIES`),
+ * cached by Rust per AIRAC cycle. Never rejects for a missing key or an
+ * outage: each country carries its own `origin` and `error`.
+ */
+export async function getAirspaces(): Promise<CountryAirspaces[]> {
+  return invoke("get_airspaces");
+}
+
+/**
+ * Latest METAR per station within `radiusNm` of a point (the receiver), from
+ * AviationWeather.gov via Rust's in-memory cache. `force` bypasses the
+ * 5-minute cache but not its 60 s floor. A failed refresh resolves with the
+ * previous reports and an `error`, rather than rejecting.
+ */
+export async function getMetars(lat: number, lng: number, radiusNm: number, force: boolean): Promise<MetarSnapshot> {
+  return invoke("get_metars", { lat, lng, radiusNm, force });
+}
+
+/**
+ * Météo-France rain radar around a point (the receiver): the latest 5-minute
+ * image as a coloured Web Mercator PNG with its bounds and colour scale. A
+ * failed refresh resolves with the previous image and an `error`.
+ */
+export async function getRadar(lat: number, lng: number, radiusNm: number, force: boolean): Promise<RadarSnapshot> {
+  return invoke("get_radar", { lat, lng, radiusNm, force });
+}
+
+/**
+ * The last hour of radar images that `get_radar` kept, oldest first, for the
+ * animation. Downloads nothing; frames in `knownMs` come back without their image.
+ */
+export async function getRadarFrames(lat: number, lng: number, radiusNm: number, knownMs: number[]): Promise<RadarFrames> {
+  return invoke("get_radar_frames", { lat, lng, radiusNm, knownMs });
+}
+
+/**
+ * Seamark descriptions (OpenStreetMap tags via Overpass) for the 2° cells
+ * under a view. Cached on disk for a week per cell; a first load can take a
+ * minute. Rejects a view wider than six cells.
+ */
+export async function getSeamarks(south: number, west: number, north: number, east: number): Promise<SeamarkSnapshot> {
+  return invoke("get_seamarks", { south, west, north, east });
+}
+
+/** Ground height under a point, metres (0 at sea), from Terrarium tiles cached on disk. */
+export async function getGroundElevation(lat: number, lng: number): Promise<number> {
+  return invoke("get_ground_elevation", { lat, lng });
+}
+
+/** Ground height and sea depth at a point, each with its own error. */
+export async function whatIsHere(lat: number, lng: number): Promise<WhatIsHereResult> {
+  return invoke("what_is_here", { lat, lng });
 }

@@ -238,7 +238,7 @@ does not change the source; launch with `ADSB_SOURCE_KIND=mqtt scripts/stack.sh
 desktop`, or set **Settings → Connection → Feed Source** to MQTT. A desktop
 launched *without* `make` keeps the topic it stored last; if that predates the
 stage in topic names it subscribes to `adsb/weather/grid` and the layer waits
-forever — its log line `Subscribed to MQTT topic` shows which. Then press Start, open **Weather** in the left panel,
+forever — its log line `Subscribed to MQTT topic` shows which. Then press Start, open **Map Layers → Weather** in the left panel,
 tick **Winds aloft** and pick a level. **Barbs** and **Particles** switch the two
 displays independently; particles are off by default.
 
@@ -274,6 +274,23 @@ count fast, and the service warns above 8,000 a day. It paces its requests under
 the per-minute limit, and when it does hit a limit it waits for that limit's
 window to pass instead of retrying into it — `make weather-status` says which. The last good grid is kept in `.run/weather-cache.json`, and the
 layer is badged **stale** once it is more than three hours old.
+
+## 7. Map layers
+
+The other map layers need nothing from the stack: they are in the desktop's left panel under
+**Map Layers**, all off by default. Two of them need a free key in `adsb-stack.toml`, read when
+the desktop starts:
+
+```toml
+[desktop]
+openaip_api_key = "…"       # Airspaces: openaip.net profile → API clients
+openaip_countries = "FR"    # countries to download
+meteofrance_api_key = "…"   # Rain radar: Données Publiques Radar, validity -1
+```
+
+`make down-desktop` then `make up-desktop` after editing. Keys are
+never printed by `make desktop-env`. Every endpoint the layers use is in
+[`docs/map-layers-external-endpoints.svg`](docs/map-layers-external-endpoints.svg).
 
 ## Where things are
 

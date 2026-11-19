@@ -1,16 +1,24 @@
 "use client";
-/** OpenLayers with GPU rendering: WebGLVectorLayer, flat styles, colour by GPU expression. */
+/**
+ * OpenLayers with GPU rendering: WebGLVectorLayer, flat styles, colour by GPU expression.
+ * Three modes for the second OL test (docs/MAP_ENGINES.md):
+ *  - "features": one Feature per point (the 2026-11-08 variant, unchanged);
+ *  - "noindex":  same, but the source keeps no R-tree (`useSpatialIndex: false`);
+ *  - "binned":   one MultiPoint per 1000 ft altitude bin (src/bench/ol-binned.ts).
+ */
 import { useEffect, useRef } from "react";
 import OlMap from "ol/Map.js";
 import View from "ol/View.js";
 import Feature from "ol/Feature.js";
 import Point from "ol/geom/Point.js";
+import MultiPoint from "ol/geom/MultiPoint.js";
 import LineString from "ol/geom/LineString.js";
 import VectorSource from "ol/source/Vector.js";
 import WebGLVectorLayer from "ol/layer/WebGLVector.js";
 import type { FlatStyle } from "ol/style/flat.js";
 import "ol/ol.css";
 import { flatten, toMercator } from "../flatten";
+import { binByAltitude } from "../ol-binned";
 import { ALTITUDE_STOPS, LINE_RGB } from "../color";
 import { installBench, BENCH_VIEW, type BenchParams } from "../harness";
 import type { AircraftTrack } from "@/lib/types";
@@ -30,10 +38,15 @@ function dotStyle(opacity: number, radius: number): FlatStyle {
 const LINE_STYLE: FlatStyle = { "stroke-color": [...LINE_RGB, 0.5], "stroke-width": 2 };
 const HEAD_STYLE: FlatStyle = { "circle-radius": 5, "circle-fill-color": [255, 255, 255, 0.9] };
 
-function toFeatures(tracks: AircraftTrack[], style: Style): { data: Feature[]; heads: Feature[] } {
+export type OlMode = "features" | "noindex" | "binned";
+
+function toFeatures(tracks: AircraftTrack[], style: Style, mode: OlMode): { data: Feature[]; heads: Feature[] } {
   const f = flatten(tracks);
   const data: Feature[] = [];
-  if (style === "dots") {
+  if (style === "dots" && mode === "binned") {
+    // Bin floor as `alt`: colour is quantised to 1000 ft, invisible at these sizes.
+    for (const b of binByAltitude(f)) data.push(new Feature({ geometry: new MultiPoint(Array.from(b.coords), "XY"), alt: b.alt }));
+  } else if (style === "dots") {
     for (let i = 0; i < f.count; i++) {
       data.push(new Feature({
         geometry: new Point(toMercator(f.lng[i], f.lat[i])),
@@ -52,13 +65,18 @@ function toFeatures(tracks: AircraftTrack[], style: Style): { data: Feature[]; h
 }
 
 export default function OpenLayers({ params }: { params: BenchParams }) {
+  return <OpenLayersVariant params={params} mode="features" />;
+}
+
+export function OpenLayersVariant({ params, mode }: { params: BenchParams; mode: OlMode }) {
   const el = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!el.current) return;
     const live = params.scenario === "live";
-    const source = new VectorSource();
-    const headSource = new VectorSource();
+    const useSpatialIndex = mode !== "noindex";
+    const source = new VectorSource({ useSpatialIndex });
+    const headSource = new VectorSource({ useSpatialIndex });
     const layer = new WebGLVectorLayer({
       source,
       style: params.style === "dots" ? dotStyle(live ? 0.6 : 0.4, live ? 3 : 2.5) : LINE_STYLE,
@@ -78,7 +96,7 @@ export default function OpenLayers({ params }: { params: BenchParams }) {
     installBench(
       {
         setData: (tracks, style) => {
-          const { data, heads } = toFeatures(tracks, style);
+          const { data, heads } = toFeatures(tracks, style, mode);
           const done = new Promise<void>((r) => map.once("rendercomplete", () => r()));
           source.clear(true);
           source.addFeatures(data);
@@ -100,7 +118,7 @@ export default function OpenLayers({ params }: { params: BenchParams }) {
       map.setTarget(undefined);
       map.dispose();
     };
-  }, [params]);
+  }, [params, mode]);
 
   return <div ref={el} style={{ position: "fixed", inset: 0, background: "#111" }} />;
 }
