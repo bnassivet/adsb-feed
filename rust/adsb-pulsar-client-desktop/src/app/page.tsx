@@ -1632,7 +1632,9 @@ export default function Dashboard() {
             <div className="relative flex-1 min-w-0">
               {radarTimelineShown && radarFrames.frames && (
                 // Beside the Leaflet container, not inside it: no wheel or drag reaches the map.
-                <div className="pointer-events-none absolute inset-x-0 bottom-6 z-[1000] flex justify-center">
+                // bottom-12 clears the attribution, which wraps to two lines when
+                // radar, airspace and METAR credits are all shown.
+                <div className="pointer-events-none absolute inset-x-0 bottom-12 z-[1000] flex justify-center">
                   <RadarTimeline
                     frames={radarFrames.frames.frames}
                     index={radarAnimation.index}
