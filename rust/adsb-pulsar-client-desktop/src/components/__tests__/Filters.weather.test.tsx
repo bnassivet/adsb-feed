@@ -128,6 +128,7 @@ describe("FiltersPanel METAR section", () => {
     show: false, onToggle: vi.fn(), count: 0, fetchedAtMs: null, nowMs: 0, stale: false, loading: false,
     error: null, onReload: vi.fn(), opacity: 0.8, onOpacityChange: vi.fn(), showHoverInfo: true,
     onToggleHoverInfo: vi.fn(), categories: [], hiddenCategories: [], onHiddenCategoriesChange: vi.fn(),
+    transitionAltitudeFt: 5000, onTransitionAltitudeChange: vi.fn(),
   };
 
   it("shows the METAR controls when METAR props are given", () => {

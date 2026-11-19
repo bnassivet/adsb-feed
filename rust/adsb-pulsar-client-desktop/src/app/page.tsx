@@ -12,7 +12,7 @@ import { useAirspaces } from "@/hooks/useAirspaces";
 import { DEFAULT_AIRSPACE_OPACITY, airspaceTypes, filterByType } from "@/lib/airspace";
 import { DEFAULT_METAR_OPACITY, filterByCategory, metarCategories, type CategoryKey } from "@/lib/metar";
 import { useMetars } from "@/hooks/useMetars";
-import { nearestQnh } from "@/lib/qnh";
+import { DEFAULT_TRANSITION_ALTITUDE_FT, nearestQnh } from "@/lib/qnh";
 
 /** Stable default for the hidden airspace types (a literal would be a new array per render). */
 const NO_HIDDEN_TYPES: number[] = [];
@@ -112,6 +112,7 @@ export default function Dashboard() {
   const [showMetar, setShowMetar] = useLocalStorage<boolean>("adsb-show-metar", false);
   const [metarOpacity, setMetarOpacity] = useLocalStorage<number>("adsb-metar-opacity", DEFAULT_METAR_OPACITY);
   const [metarHoverInfo, setMetarHoverInfo] = useLocalStorage<boolean>("adsb-metar-hover-info", true);
+  const [transitionAltitudeFt, setTransitionAltitudeFt] = useLocalStorage<number>("adsb-transition-altitude-ft", DEFAULT_TRANSITION_ALTITUDE_FT);
   const [metarHiddenCategories, setMetarHiddenCategories] = useLocalStorage<CategoryKey[]>("adsb-metar-hidden-categories", NO_HIDDEN_CATEGORIES);
   const [weatherLevel, setWeatherLevel] = useLocalStorage<WeatherLevel>("adsb-weather-level", 250);
   // Particles are a continuous animation, so they are opt-in.
@@ -1569,6 +1570,8 @@ export default function Dashboard() {
             categories: metarCategoryList,
             hiddenCategories: metarHiddenCategories,
             onHiddenCategoriesChange: setMetarHiddenCategories,
+            transitionAltitudeFt,
+            onTransitionAltitudeChange: setTransitionAltitudeFt,
           }}
         />
 
@@ -1593,6 +1596,7 @@ export default function Dashboard() {
                 wind={selectedWind}
                 receiverLocation={receiverLocation}
                 qnh={selectedQnh}
+                transitionAltitudeFt={transitionAltitudeFt}
                 rangeLineOn={showRangeLines}
                 onToggleRangeLine={handleToggleRangeLines}
               />

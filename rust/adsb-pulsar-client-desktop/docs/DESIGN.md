@@ -5495,7 +5495,7 @@ and airways and routes are corridors (`HIDDEN_TYPES`).
 ### Configuration
 
 `[desktop] openaip_api_key` (secret, never printed by `desktop-env`) and
-`openaip_countries` (default `CA`) become `ADSB_OPENAIP_API_KEY` and
+`openaip_countries` (default `FR`) become `ADSB_OPENAIP_API_KEY` and
 `ADSB_OPENAIP_COUNTRIES` for the Tauri process. Checked in the running app with
 a real key on 2026-11-19. A free key comes from the
 openaip.net profile page, under API clients.
@@ -5579,9 +5579,10 @@ labelled `STD`.
 - **Station:** `nearestQnh` takes the nearest station within 100 NM that has a
   QNH and a report under 90 minutes old. It looks at every fetched station,
   whatever the category filter hides.
-- **Only below the transition altitude** (18,000 ft in North America). Above
-  it, aircraft and limits use flight levels, which are themselves pressure
-  altitudes.
+- **Only below the transition altitude.** This is a setting in the METAR
+  section (`adsb-transition-altitude-ft`). It defaults to 5,000 ft, the usual
+  value in France; it is 18,000 ft across North America. Above it, aircraft
+  and limits use flight levels, which are themselves pressure altitudes.
 - **Live selections only.** A DB History or imported track flew under another
   day's pressure.
 - **Needs the METAR layer on:** nothing is fetched just for this row.

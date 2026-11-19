@@ -20,7 +20,7 @@ import { useDisplayTz } from "@/hooks/useDisplayTz";
 import type { AircraftWind } from "@/lib/aircraft-wind";
 import { RangeLineIcon, rangeLineTitle, RANGE_LINE_COLOR } from "@/components/RangeLineButton";
 import { formatAlongTrack, formatCrosswind, formatWind } from "@/lib/wind-format";
-import { mslAltitude, type QnhSource } from "@/lib/qnh";
+import { DEFAULT_TRANSITION_ALTITUDE_FT, mslAltitude, type QnhSource } from "@/lib/qnh";
 
 const MIN_PANEL_WIDTH = 200;
 const MAX_PANEL_WIDTH = 480;
@@ -51,6 +51,8 @@ interface Props {
   onToggleRangeLine?: () => void;
   /** QNH of the nearest current METAR, for live selections only; the MSL row is omitted without it. */
   qnh?: QnhSource | null;
+  /** Below it the MSL row applies; at or above it, flight levels do. */
+  transitionAltitudeFt?: number;
 }
 
 export function AircraftDetailsPanel({
@@ -66,6 +68,7 @@ export function AircraftDetailsPanel({
   rangeLineOn = false,
   onToggleRangeLine,
   qnh = null,
+  transitionAltitudeFt = DEFAULT_TRANSITION_ALTITUDE_FT,
 }: Props) {
   if (track === null) return null;
 
@@ -82,6 +85,7 @@ export function AircraftDetailsPanel({
       rangeLineOn={rangeLineOn}
       onToggleRangeLine={onToggleRangeLine}
       qnh={qnh}
+      transitionAltitudeFt={transitionAltitudeFt}
     />
   ) : (
     <CollapsedStrip onToggle={onToggle} />
@@ -117,6 +121,7 @@ function ExpandedPanel({
   rangeLineOn = false,
   onToggleRangeLine,
   qnh = null,
+  transitionAltitudeFt = DEFAULT_TRANSITION_ALTITUDE_FT,
 }: {
   track: AircraftTrack;
   width: number;
@@ -129,6 +134,7 @@ function ExpandedPanel({
   rangeLineOn?: boolean;
   onToggleRangeLine?: () => void;
   qnh?: QnhSource | null;
+  transitionAltitudeFt?: number;
 }) {
   const { resolvedTzName } = useDisplayTz();
   // Self-contained drag: listeners created on mousedown capture the start width/x and are removed
@@ -165,7 +171,7 @@ function ExpandedPanel({
   const altBounds = altitudeRange(recentAlt);
   const squawkLabel = track.squawk ? SQUAWK_LABELS[track.squawk] : undefined;
   const distanceNm = receiverDistanceNm(track, receiverLocation);
-  const altitudeMsl = mslAltitude(track.altitude, qnh);
+  const altitudeMsl = mslAltitude(track.altitude, qnh, transitionAltitudeFt);
   const azimuthDeg = receiverAzimuthDeg(track, receiverLocation);
   const elevationDeg = receiverElevationDeg(track, receiverLocation);
 

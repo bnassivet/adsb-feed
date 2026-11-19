@@ -1,6 +1,7 @@
 "use client";
 import { ageMinutes, formatAge, type CategoryCount, type CategoryKey } from "@/lib/metar";
 import { ChecklistCombo } from "./ChecklistCombo";
+import { MAX_TRANSITION_ALTITUDE_FT, MIN_TRANSITION_ALTITUDE_FT } from "@/lib/qnh";
 
 export interface MetarControlsProps {
   show: boolean;
@@ -24,6 +25,9 @@ export interface MetarControlsProps {
   categories: CategoryCount[];
   hiddenCategories: CategoryKey[];
   onHiddenCategoriesChange: (hidden: CategoryKey[]) => void;
+  /** Below it, the details panel shows altitude MSL from the nearest QNH. */
+  transitionAltitudeFt: number;
+  onTransitionAltitudeChange: (ft: number) => void;
 }
 
 /** The Filters panel's METAR section, laid out like the airspace one. */
@@ -65,6 +69,24 @@ export function MetarControls(p: MetarControlsProps) {
               onHiddenChange={p.onHiddenCategoriesChange}
             />
           )}
+          <label className="flex items-center gap-2" title="Below it, the aircraft details show altitude MSL from the nearest station's QNH">
+            <span>Transition altitude</span>
+            <input
+              type="number"
+              min={MIN_TRANSITION_ALTITUDE_FT}
+              max={MAX_TRANSITION_ALTITUDE_FT}
+              step={500}
+              value={p.transitionAltitudeFt}
+              onChange={(e) => {
+                const ft = Number(e.target.value);
+                // Ignore a half-typed or out-of-range value rather than storing it.
+                if (e.target.value !== "" && ft >= MIN_TRANSITION_ALTITUDE_FT && ft <= MAX_TRANSITION_ALTITUDE_FT) p.onTransitionAltitudeChange(ft);
+              }}
+              aria-label="Transition altitude (ft)"
+              className="w-16 rounded border border-slate-600 bg-slate-800 px-1 text-right text-slate-300"
+            />
+            <span>ft</span>
+          </label>
           <div className="flex items-center justify-between gap-2">
             {p.loading ? (
               <span>Loading…</span>

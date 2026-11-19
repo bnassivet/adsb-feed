@@ -206,7 +206,7 @@ openaip_api_key = ""
 # ISO country codes to download, comma-separated. The API filters by country
 # only; the map keeps airspaces within ~300 NM of the receiver. Cached per
 # AIRAC cycle under the stack's data dir (airspaces/<CC>-<cycle>.json).
-openaip_countries = "CA"
+openaip_countries = "FR"
 
 # CopilotKit's developer inspector (the floating CopilotKit button). It exists
 # only in dev builds on localhost, and it is the app's only third-party traffic

@@ -26,6 +26,8 @@ function props(over: Partial<MetarControlsProps> = {}): MetarControlsProps {
     ],
     hiddenCategories: [],
     onHiddenCategoriesChange: vi.fn(),
+    transitionAltitudeFt: 5000,
+    onTransitionAltitudeChange: vi.fn(),
     ...over,
   };
 }
@@ -82,6 +84,24 @@ describe("MetarControls", () => {
     await userEvent.click(combo);
     await userEvent.click(screen.getByRole("checkbox", { name: "VFR (9)" }));
     expect(p.onHiddenCategoriesChange).toHaveBeenLastCalledWith(["IFR", "VFR"]);
+  });
+
+  it("sets the transition altitude used for the MSL correction", () => {
+    const p = props();
+    render(<MetarControls {...p} />);
+    const input = screen.getByRole("spinbutton", { name: /transition altitude/i });
+    expect(input).toHaveValue(5000);
+    fireEvent.change(input, { target: { value: "7000" } });
+    expect(p.onTransitionAltitudeChange).toHaveBeenCalledWith(7000);
+  });
+
+  it("ignores an empty or out-of-range transition altitude", () => {
+    const p = props();
+    render(<MetarControls {...p} />);
+    const input = screen.getByRole("spinbutton", { name: /transition altitude/i });
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.change(input, { target: { value: "90000" } });
+    expect(p.onTransitionAltitudeChange).not.toHaveBeenCalled();
   });
 
   it("credits AviationWeather.gov", () => {

@@ -20,7 +20,7 @@ const AIRAC_EPOCH: (i32, u32, u32) = (2020, 1, 2);
 const AIRAC_DAYS: i64 = 28;
 
 /// Country used when `ADSB_OPENAIP_COUNTRIES` is unset or holds nothing valid.
-pub const DEFAULT_COUNTRY: &str = "CA";
+pub const DEFAULT_COUNTRY: &str = "FR";
 
 /// Environment variables, exported by `scripts/stack.sh` from `[desktop]`.
 pub const KEY_ENV: &str = "ADSB_OPENAIP_API_KEY";
@@ -360,9 +360,9 @@ mod tests {
     // --- Countries --------------------------------------------------------
 
     #[test]
-    fn countries_default_to_canada() {
-        assert_eq!(parse_countries(None), vec!["CA"]);
-        assert_eq!(parse_countries(Some("  ")), vec!["CA"]);
+    fn countries_default_to_france() {
+        assert_eq!(parse_countries(None), vec!["FR"]);
+        assert_eq!(parse_countries(Some("  ")), vec!["FR"]);
     }
 
     #[test]
@@ -372,7 +372,7 @@ mod tests {
             parse_countries(Some("ca, us,CA, ../x, usa, f1")),
             vec!["CA", "US"]
         );
-        assert_eq!(parse_countries(Some("nope")), vec!["CA"]);
+        assert_eq!(parse_countries(Some("nope")), vec!["FR"]);
     }
 
     // --- Page parsing -----------------------------------------------------

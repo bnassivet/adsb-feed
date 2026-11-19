@@ -12,8 +12,14 @@
  */
 import { ageMinutes, isOld, type Metar } from "./metar";
 
-/** North American transition altitude. Europe varies by country (often 5000–7000 ft). */
-export const TRANSITION_ALTITUDE_FT = 18_000;
+/**
+ * Default transition altitude: 5000 ft, the usual value in France. It varies
+ * by country and sometimes by terminal area (18,000 ft across North America),
+ * so it is a setting (METAR section), not a constant.
+ */
+export const DEFAULT_TRANSITION_ALTITUDE_FT = 5_000;
+export const MIN_TRANSITION_ALTITUDE_FT = 1_000;
+export const MAX_TRANSITION_ALTITUDE_FT = 20_000;
 /** Beyond this, a station's QNH says little about the aircraft's pressure. */
 export const MAX_QNH_DISTANCE_NM = 100;
 
@@ -56,7 +62,11 @@ export function nearestQnh(metars: Metar[], lat: number, lng: number, nowMs: num
 }
 
 /** Altitude above MSL, rounded, or null when it does not apply (no data, or at/above the transition altitude). */
-export function mslAltitude(pressureAltitudeFt: number | null, qnh: QnhSource | null): number | null {
-  if (pressureAltitudeFt == null || !qnh || pressureAltitudeFt >= TRANSITION_ALTITUDE_FT) return null;
+export function mslAltitude(
+  pressureAltitudeFt: number | null,
+  qnh: QnhSource | null,
+  transitionAltitudeFt = DEFAULT_TRANSITION_ALTITUDE_FT,
+): number | null {
+  if (pressureAltitudeFt == null || !qnh || pressureAltitudeFt >= transitionAltitudeFt) return null;
   return Math.round(qnhAltitudeFt(pressureAltitudeFt, qnh.qnhHpa));
 }

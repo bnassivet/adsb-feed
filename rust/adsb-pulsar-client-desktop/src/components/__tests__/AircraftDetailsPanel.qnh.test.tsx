@@ -14,8 +14,13 @@ function track(altitude: number | null): AircraftTrack {
 
 const CYUL: QnhSource = { qnhHpa: 1027.2, stationId: "CYUL", distanceNm: 4.2 };
 
-function renderPanel(altitude: number | null, qnh: QnhSource | null | undefined) {
-  render(<AircraftDetailsPanel track={track(altitude)} isOpen width={280} onToggle={vi.fn()} onWidthChange={vi.fn()} qnh={qnh} />);
+function renderPanel(altitude: number | null, qnh: QnhSource | null | undefined, transitionAltitudeFt?: number) {
+  render(
+    <AircraftDetailsPanel
+      track={track(altitude)} isOpen width={280} onToggle={vi.fn()} onWidthChange={vi.fn()}
+      qnh={qnh} transitionAltitudeFt={transitionAltitudeFt}
+    />,
+  );
 }
 
 beforeEach(() => {
@@ -33,6 +38,13 @@ describe("AircraftDetailsPanel altitude MSL", () => {
   it("is absent above the transition altitude, without QNH, or without altitude", () => {
     renderPanel(35000, CYUL);
     expect(screen.queryByTestId("altitude-msl")).toBeNull();
+  });
+
+  it("follows the configured transition altitude", () => {
+    renderPanel(7000, CYUL);
+    expect(screen.queryByTestId("altitude-msl")).toBeNull();
+    renderPanel(7000, CYUL, 18000);
+    expect(screen.getByTestId("altitude-msl")).toBeInTheDocument();
   });
 
   it("is absent without a QNH", () => {

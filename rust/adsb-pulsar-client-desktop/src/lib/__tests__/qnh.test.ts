@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { qnhAltitudeFt, nearestQnh, mslAltitude, TRANSITION_ALTITUDE_FT, type QnhSource } from "../qnh";
+import { qnhAltitudeFt, nearestQnh, mslAltitude, DEFAULT_TRANSITION_ALTITUDE_FT, type QnhSource } from "../qnh";
 import { normalizeMetar, type Metar } from "../metar";
 
 describe("qnhAltitudeFt", () => {
@@ -58,8 +58,19 @@ describe("mslAltitude", () => {
   });
 
   it("does not correct at or above the transition altitude: flight levels are the reference there", () => {
-    expect(mslAltitude(TRANSITION_ALTITUDE_FT, q)).toBeNull();
+    expect(mslAltitude(DEFAULT_TRANSITION_ALTITUDE_FT, q)).toBeNull();
     expect(mslAltitude(35000, q)).toBeNull();
+  });
+
+  it("defaults to the usual French transition altitude, 5000 ft", () => {
+    expect(DEFAULT_TRANSITION_ALTITUDE_FT).toBe(5000);
+    expect(mslAltitude(4900, q)).not.toBeNull();
+    expect(mslAltitude(6000, q)).toBeNull();
+  });
+
+  it("takes another transition altitude (e.g. 18,000 ft in North America)", () => {
+    expect(mslAltitude(12000, q, 18000)).toBe(Math.round(qnhAltitudeFt(12000, 1027.2)));
+    expect(mslAltitude(18000, q, 18000)).toBeNull();
   });
 
   it("needs an altitude and a QNH", () => {

@@ -54,7 +54,7 @@ interprets and draws.**
 - Command `get_airspaces` returns, per country: the items, the cycle, whether
   it is expired, and an error message if any. Configuration comes from the
   environment: `ADSB_OPENAIP_API_KEY`, and `ADSB_OPENAIP_COUNTRIES` (default
-  `CA`). `scripts/stack.sh` exports both from `[desktop] openaip_api_key` and
+  `FR`). `scripts/stack.sh` exports both from `[desktop] openaip_api_key` and
   `openaip_countries`, which are kept out of `desktop-env` like the CARTO key.
 
 **TypeScript (`src/lib/airspace.ts`) contains only pure functions:**
