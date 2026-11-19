@@ -88,6 +88,12 @@ struct Storage {
 /// Catalog alias for an attached remote daemon.
 const REMOTE_CATALOG: &str = "edge";
 
+/// Faster than any airliner's ground speed, jet stream included: a fix that
+/// needs more from both its neighbours is a decode glitch (detection range).
+const PLAUSIBLE_MAX_SPEED_KT: f64 = 1000.0;
+/// Allowed on top, for decode jitter between fixes a fraction of a second apart.
+const POSITION_JITTER_NM: f64 = 0.5;
+
 const SCHEMA_OBSERVED_SQL: &str = r#"
     CREATE TABLE IF NOT EXISTS positions (
         hex_ident      TEXT    NOT NULL,
@@ -1483,6 +1489,10 @@ impl StorageHandle {
 
     /// Compute detection range by 10° azimuth sectors (synchronous).
     ///
+    /// Positions no neighbouring fix of the same aircraft could have reached
+    /// (`PLAUSIBLE_MAX_SPEED_KT`) are left out: one decode glitch thousands of
+    /// NM away would otherwise set its sector's maximum.
+    ///
     /// All trig math runs inside DuckDB's vectorized engine. Only ≤36 result
     /// rows cross the Mutex boundary regardless of dataset size.
     /// Always returns exactly 36 sectors (filling missing ones with zero).
@@ -1495,7 +1505,8 @@ impl StorageHandle {
             .lock()
             .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
 
-        let sql = r#"
+        let sql = format!(
+            r#"
             SELECT sector, MAX(distance_nm) AS max_distance_nm, COUNT(*) AS position_count,
                    MIN(altitude) AS min_altitude, MAX(altitude) AS max_altitude,
                    COUNT(DISTINCT flight_id) AS flight_count
@@ -1515,18 +1526,55 @@ impl StorageHandle {
                 )) AS distance_nm,
                 p.altitude,
                 f.flight_id
-              FROM positions p
+              FROM (
+                -- Each position with its own aircraft's two fixes before and after.
+                SELECT *,
+                  LAG(latitude, 1) OVER w AS prev_lat, LAG(longitude, 1) OVER w AS prev_lon, LAG(timestamp_ms, 1) OVER w AS prev_ms,
+                  LAG(latitude, 2) OVER w AS prev2_lat, LAG(longitude, 2) OVER w AS prev2_lon, LAG(timestamp_ms, 2) OVER w AS prev2_ms,
+                  LEAD(latitude, 1) OVER w AS next_lat, LEAD(longitude, 1) OVER w AS next_lon, LEAD(timestamp_ms, 1) OVER w AS next_ms,
+                  LEAD(latitude, 2) OVER w AS next2_lat, LEAD(longitude, 2) OVER w AS next2_lon, LEAD(timestamp_ms, 2) OVER w AS next2_ms
+                FROM positions
+                WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+                  AND timestamp_ms >= ? AND timestamp_ms <= ?
+                WINDOW w AS (PARTITION BY hex_ident ORDER BY timestamp_ms)
+              ) p
               LEFT JOIN flights f ON p.hex_ident = f.hex_ident
                 AND p.timestamp_ms BETWEEN f.first_seen_ms AND f.last_seen_ms
-              WHERE p.latitude IS NOT NULL AND p.longitude IS NOT NULL
-                AND p.timestamp_ms >= ? AND p.timestamp_ms <= ?
+              -- A decode glitch (seen live: one fix at 71°N 115°W mid-track over
+              -- France) is unreachable from every neighbour; a real fix is
+              -- reachable from at least one. The second neighbour on each side
+              -- lets the fixes around a glitch see past it. No neighbour: kept.
+              WHERE (p.prev_ms IS NULL AND p.next_ms IS NULL)
+                 OR (p.prev_ms IS NOT NULL AND 2 * 3440.065 * ASIN(SQRT(
+                      POWER(SIN(RADIANS((p.prev_lat - p.latitude) / 2)), 2) +
+                      COS(RADIANS(p.latitude)) * COS(RADIANS(p.prev_lat))
+                        * POWER(SIN(RADIANS((p.prev_lon - p.longitude) / 2)), 2)
+                    )) <= {MAX_KT} * ABS(p.timestamp_ms - p.prev_ms) / 3600000.0 + {SLACK_NM})
+                 OR (p.prev2_ms IS NOT NULL AND 2 * 3440.065 * ASIN(SQRT(
+                      POWER(SIN(RADIANS((p.prev2_lat - p.latitude) / 2)), 2) +
+                      COS(RADIANS(p.latitude)) * COS(RADIANS(p.prev2_lat))
+                        * POWER(SIN(RADIANS((p.prev2_lon - p.longitude) / 2)), 2)
+                    )) <= {MAX_KT} * ABS(p.timestamp_ms - p.prev2_ms) / 3600000.0 + {SLACK_NM})
+                 OR (p.next_ms IS NOT NULL AND 2 * 3440.065 * ASIN(SQRT(
+                      POWER(SIN(RADIANS((p.next_lat - p.latitude) / 2)), 2) +
+                      COS(RADIANS(p.latitude)) * COS(RADIANS(p.next_lat))
+                        * POWER(SIN(RADIANS((p.next_lon - p.longitude) / 2)), 2)
+                    )) <= {MAX_KT} * ABS(p.timestamp_ms - p.next_ms) / 3600000.0 + {SLACK_NM})
+                 OR (p.next2_ms IS NOT NULL AND 2 * 3440.065 * ASIN(SQRT(
+                      POWER(SIN(RADIANS((p.next2_lat - p.latitude) / 2)), 2) +
+                      COS(RADIANS(p.latitude)) * COS(RADIANS(p.next2_lat))
+                        * POWER(SIN(RADIANS((p.next2_lon - p.longitude) / 2)), 2)
+                    )) <= {MAX_KT} * ABS(p.timestamp_ms - p.next2_ms) / 3600000.0 + {SLACK_NM})
             ) sub GROUP BY sector ORDER BY sector
-        "#;
+        "#,
+            MAX_KT = PLAUSIBLE_MAX_SPEED_KT,
+            SLACK_NM = POSITION_JITTER_NM,
+        );
 
         let start_ms = query.start_ms.unwrap_or(0);
         let end_ms = query.end_ms.unwrap_or(i64::MAX);
 
-        let mut stmt = storage.conn.prepare(sql)?;
+        let mut stmt = storage.conn.prepare(&sql)?;
         let rows = stmt
             .query_map(
                 params![
@@ -5006,6 +5054,89 @@ mod tests {
 
         let total_count: u64 = sectors.iter().map(|s| s.position_count).sum();
         assert_eq!(total_count, 1, "Only the NEW position should be included");
+    }
+
+    /// Detection range over `positions`, receiver at (45, -73), all time.
+    fn range_of(positions: &[AircraftPosition]) -> Vec<DetectionRangeSector> {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle.insert_batch_sync(positions, "UTC").unwrap();
+        handle
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                receiver_lat: 45.0,
+                receiver_lon: -73.0,
+                start_ms: None,
+                end_ms: None,
+            })
+            .unwrap()
+    }
+
+    fn farthest_nm(sectors: &[DetectionRangeSector]) -> f64 {
+        sectors
+            .iter()
+            .map(|s| s.max_distance_nm)
+            .fold(0.0, f64::max)
+    }
+
+    #[test]
+    fn test_detection_range_ignores_a_position_glitch() {
+        // Seen live: one fix at 71°N 115°W in the middle of a track over France.
+        // Reaching it and leaving it both take ~millions of knots.
+        let positions = vec![
+            sample_position("G1", Some(45.50), Some(-73.0), "2024/01/15 10:00:00.000"),
+            sample_position("G1", Some(45.51), Some(-73.0), "2024/01/15 10:00:05.000"),
+            sample_position("G1", Some(71.39), Some(-115.6), "2024/01/15 10:00:06.000"),
+            sample_position("G1", Some(45.52), Some(-73.0), "2024/01/15 10:00:10.000"),
+        ];
+        let sectors = range_of(&positions);
+        assert!(farthest_nm(&sectors) < 40.0, "{} NM", farthest_nm(&sectors));
+        let total: u64 = sectors.iter().map(|s| s.position_count).sum();
+        assert_eq!(total, 3, "the glitch is not counted either");
+    }
+
+    #[test]
+    fn test_detection_range_ignores_two_glitches_in_a_row() {
+        // Also seen live: two consecutive bad fixes, plausible from each other.
+        let positions = vec![
+            sample_position("G2", Some(45.50), Some(-73.0), "2024/01/15 10:00:00.000"),
+            sample_position("G2", Some(71.368), Some(-115.54), "2024/01/15 10:00:01.000"),
+            sample_position("G2", Some(71.390), Some(-115.63), "2024/01/15 10:00:02.000"),
+            sample_position("G2", Some(45.51), Some(-73.0), "2024/01/15 10:00:05.000"),
+        ];
+        assert!(farthest_nm(&range_of(&positions)) < 40.0);
+    }
+
+    #[test]
+    fn test_detection_range_keeps_a_far_but_consistent_track() {
+        // 120 NM north at ~430 kt, a fix every 10 s, with ~0.1 NM decode jitter:
+        // real long-range traffic, not a glitch.
+        let positions: Vec<_> = (0..6)
+            .map(|i| {
+                let jitter = if i % 2 == 0 { 0.0015 } else { -0.0015 };
+                let lat = 47.0 + f64::from(i) * 0.0199 + jitter;
+                sample_position(
+                    "FAR",
+                    Some(lat),
+                    Some(-73.0),
+                    &format!("2024/01/15 10:00:{:02}.000", i * 10),
+                )
+            })
+            .collect();
+        let expected = crate::geo::haversine_nm(45.0, -73.0, 47.0 + 5.0 * 0.0199 - 0.0015, -73.0);
+        let got = farthest_nm(&range_of(&positions));
+        assert!((got - expected).abs() < 0.1, "{got} vs {expected}");
+    }
+
+    #[test]
+    fn test_detection_range_ignores_glitches_of_one_aircraft_only() {
+        // Another aircraft's track is never a neighbour: two aircraft far apart
+        // at the same instant are both real.
+        let positions = vec![
+            sample_position("N1", Some(45.5), Some(-73.0), "2024/01/15 10:00:00.000"),
+            sample_position("N2", Some(46.5), Some(-73.0), "2024/01/15 10:00:00.500"),
+            sample_position("N1", Some(45.5), Some(-73.0), "2024/01/15 10:00:01.000"),
+        ];
+        let expected = crate::geo::haversine_nm(45.0, -73.0, 46.5, -73.0);
+        assert!((farthest_nm(&range_of(&positions)) - expected).abs() < 0.1);
     }
 
     #[test]
