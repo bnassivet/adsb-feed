@@ -20,7 +20,15 @@ import { useDisplayTz } from "@/hooks/useDisplayTz";
 import type { AircraftWind } from "@/lib/aircraft-wind";
 import { RangeLineIcon, rangeLineTitle, RANGE_LINE_COLOR } from "@/components/RangeLineButton";
 import { formatAlongTrack, formatCrosswind, formatWind } from "@/lib/wind-format";
-import { DEFAULT_TRANSITION_ALTITUDE_FT, mslAltitude, type QnhSource } from "@/lib/qnh";
+import { DEFAULT_TRANSITION_ALTITUDE_FT, mslAltitude, qnhAltitudeFt, type QnhSource } from "@/lib/qnh";
+import { verticalStatus, type Airspace, type VerticalStatusKind } from "@/lib/airspace";
+
+const STATUS_STYLE: Record<VerticalStatusKind, string> = {
+  inside: "bg-indigo-700/70 text-indigo-100",
+  below: "bg-slate-700 text-slate-300",
+  above: "bg-slate-700 text-slate-300",
+  unknown: "bg-slate-800 text-slate-500",
+};
 
 const MIN_PANEL_WIDTH = 200;
 const MAX_PANEL_WIDTH = 480;
@@ -53,6 +61,8 @@ interface Props {
   qnh?: QnhSource | null;
   /** Below it the MSL row applies; at or above it, flight levels do. */
   transitionAltitudeFt?: number;
+  /** Airspaces above the aircraft's position (horizontally); the section is omitted without any. */
+  airspaces?: Airspace[];
 }
 
 export function AircraftDetailsPanel({
@@ -69,6 +79,7 @@ export function AircraftDetailsPanel({
   onToggleRangeLine,
   qnh = null,
   transitionAltitudeFt = DEFAULT_TRANSITION_ALTITUDE_FT,
+  airspaces,
 }: Props) {
   if (track === null) return null;
 
@@ -86,6 +97,7 @@ export function AircraftDetailsPanel({
       onToggleRangeLine={onToggleRangeLine}
       qnh={qnh}
       transitionAltitudeFt={transitionAltitudeFt}
+      airspaces={airspaces}
     />
   ) : (
     <CollapsedStrip onToggle={onToggle} />
@@ -122,6 +134,7 @@ function ExpandedPanel({
   onToggleRangeLine,
   qnh = null,
   transitionAltitudeFt = DEFAULT_TRANSITION_ALTITUDE_FT,
+  airspaces,
 }: {
   track: AircraftTrack;
   width: number;
@@ -135,6 +148,7 @@ function ExpandedPanel({
   onToggleRangeLine?: () => void;
   qnh?: QnhSource | null;
   transitionAltitudeFt?: number;
+  airspaces?: Airspace[];
 }) {
   const { resolvedTzName } = useDisplayTz();
   // Self-contained drag: listeners created on mousedown capture the start width/x and are removed
@@ -172,6 +186,12 @@ function ExpandedPanel({
   const squawkLabel = track.squawk ? SQUAWK_LABELS[track.squawk] : undefined;
   const distanceNm = receiverDistanceNm(track, receiverLocation);
   const altitudeMsl = mslAltitude(track.altitude, qnh, transitionAltitudeFt);
+  // For airspace limits in ft MSL the QNH altitude applies at any height, not
+  // only below the transition altitude: the limit itself is referenced to MSL.
+  const heights = {
+    pressureFt: track.altitude,
+    mslFt: track.altitude != null && qnh ? Math.round(qnhAltitudeFt(track.altitude, qnh.qnhHpa)) : null,
+  };
   const azimuthDeg = receiverAzimuthDeg(track, receiverLocation);
   const elevationDeg = receiverElevationDeg(track, receiverLocation);
 
@@ -270,6 +290,33 @@ function ExpandedPanel({
               <span className="text-slate-500">—</span>
             )}
           </Row>
+          {airspaces && airspaces.length > 0 && (
+            <div className="pt-1">
+              <div className="text-xs text-slate-500 mb-0.5">Airspaces</div>
+              <ul aria-label="Airspaces at the aircraft's position" className="space-y-0.5">
+                {airspaces.map((a) => {
+                  const v = verticalStatus(a, heights);
+                  return (
+                    <li key={a.id} className="flex items-baseline justify-between gap-2 text-xs">
+                      <span className="min-w-0">
+                        <span className="text-slate-200">{a.name}</span>
+                        <span className="ml-1 text-slate-500">
+                          {a.typeLabel}
+                          {a.classLabel ? ` ${a.classLabel}` : ""} · {a.lower} – {a.upper}
+                        </span>
+                      </span>
+                      <span className={`shrink-0 rounded px-1 text-[10px] ${STATUS_STYLE[v.status]}`}>
+                        {v.status === "unknown" ? "?" : v.status}
+                        {v.approximate && (
+                          <span title="Limit in ft MSL compared without QNH (turn on METAR): pressure altitude used">≈</span>
+                        )}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
           {receiverLocation && (
             <>
               <Row label="Distance">

@@ -56,6 +56,9 @@ export interface Airspace {
   upper: string;
   /** Lower limit in feet, approximate (AGL taken as is): for ordering only. */
   lowerFt: number;
+  /** The published limits, for comparing with an aircraft (`verticalStatus`). */
+  lowerLimit: OpenAipLimit | null;
+  upperLimit: OpenAipLimit | null;
   /** Outer ring as [lng, lat] pairs, closed. */
   ring: [number, number][];
   /** [west, south, east, north]. */
@@ -146,6 +149,8 @@ export function normalizeAirspace(raw: unknown, country: string): Airspace | nul
     lower: lower ? formatLimit(lower) : "?",
     upper: upper ? formatLimit(upper) : "?",
     lowerFt: lower ? limitFeet(lower) : 0,
+    lowerLimit: lower,
+    upperLimit: upper,
     ring,
     bbox: ringBbox(ring),
     country,
@@ -203,6 +208,51 @@ export function filterByType(list: Airspace[], hidden: readonly number[]): Airsp
   if (hidden.length === 0) return list;
   const h = new Set(hidden);
   return list.filter((a) => !h.has(a.type));
+}
+
+/** An aircraft's height, both ways: what it reports, and corrected with QNH when known. */
+export interface AircraftHeights {
+  /** ADS-B barometric altitude, referenced to 1013.25 hPa. */
+  pressureFt: number | null;
+  /** Altimeter altitude with the nearest station's QNH; null without one. */
+  mslFt: number | null;
+}
+
+export type VerticalStatusKind = "inside" | "below" | "above" | "unknown";
+
+export interface VerticalStatus {
+  status: VerticalStatusKind;
+  /** A limit in feet MSL decided it, but no QNH was available: compared with pressure altitude. */
+  approximate: boolean;
+}
+
+type Side = { ok: boolean | null; approximate: boolean };
+
+/**
+ * One limit against the aircraft. Each limit is compared in its own reference:
+ * flight levels and STD with pressure altitude, MSL with the QNH altitude (or
+ * pressure altitude, flagged, without one). GND is always satisfied as a lower
+ * limit; other heights above ground stay unknown until there is terrain.
+ */
+function side(limit: OpenAipLimit | null, kind: "lower" | "upper", h: AircraftHeights): Side {
+  const unknown = { ok: null, approximate: false };
+  if (!limit || h.pressureFt == null) return unknown;
+  const cmp = (alt: number, ft: number) => (kind === "lower" ? alt >= ft : alt <= ft);
+  if (limit.unit === 6) return { ok: cmp(h.pressureFt, limit.value * 100), approximate: false };
+  const ft = limit.unit === 0 ? limit.value * FT_PER_M : limit.value;
+  if (limit.referenceDatum === 2) return { ok: cmp(h.pressureFt, ft), approximate: false };
+  if (limit.referenceDatum === 0) return kind === "lower" && limit.value === 0 ? { ok: true, approximate: false } : unknown;
+  return { ok: cmp(h.mslFt ?? h.pressureFt, ft), approximate: h.mslFt == null };
+}
+
+/** Whether an aircraft is inside, below or above an airspace's vertical extent. */
+export function verticalStatus(a: Airspace, h: AircraftHeights): VerticalStatus {
+  const lower = side(a.lowerLimit, "lower", h);
+  const upper = side(a.upperLimit, "upper", h);
+  if (lower.ok === false) return { status: "below", approximate: lower.approximate };
+  if (upper.ok === false) return { status: "above", approximate: upper.approximate };
+  if (lower.ok && upper.ok) return { status: "inside", approximate: lower.approximate || upper.approximate };
+  return { status: "unknown", approximate: false };
 }
 
 /** Ray casting on [lng, lat] pairs. Fine at airspace scale, away from the poles and the antimeridian. */

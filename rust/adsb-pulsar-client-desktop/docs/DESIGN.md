@@ -5587,6 +5587,24 @@ labelled `STD`.
   day's pressure.
 - **Needs the METAR layer on:** nothing is fetched just for this row.
 
+### Airspaces at the aircraft (details panel)
+
+With the airspace layer on, the details panel lists every drawn airspace above
+the selected aircraft's position, and marks it **inside**, **below**, **above**
+or **?**. The type filter applies here too. Each limit is compared in its own
+reference (`verticalStatus` in `airspace.ts`):
+
+| Limit | Compared with |
+|---|---|
+| `FL` or ft STD | pressure altitude, as reported |
+| ft or m MSL | QNH altitude. This applies at any height, because the limit itself is referenced to MSL. Without QNH, pressure altitude is used and the verdict is marked `≈` |
+| `GND` (as a lower limit) | always satisfied |
+| ft AGL | unknown until there is terrain. The other limit can still decide: an aircraft above the upper limit is "above" |
+
+An example of why it matters: at QNH 1027, an aircraft reporting 1,300 ft is
+at about 1,670 ft MSL, so it is inside a TMA based at 1,500 ft MSL. A raw
+comparison would place it below.
+
 ## Observability (Prometheus)
 
 Every long-lived service in the stack exposes a Prometheus endpoint. Before

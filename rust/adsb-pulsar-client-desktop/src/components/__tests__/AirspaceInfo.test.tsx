@@ -6,7 +6,7 @@ import type { Airspace } from "@/lib/airspace";
 function a(name: string, over: Partial<Airspace> = {}): Airspace {
   return {
     id: `CA:${name}`, name, type: 7, typeLabel: "TMA", icaoClass: 2, classLabel: "C",
-    lower: "2500 ft", upper: "FL180", lowerFt: 2500, ring: [], bbox: [0, 0, 0, 0], country: "CA",
+    lower: "2500 ft", upper: "FL180", lowerFt: 2500, lowerLimit: null, upperLimit: null, ring: [], bbox: [0, 0, 0, 0], country: "CA",
     ...over,
   };
 }

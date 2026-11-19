@@ -5,6 +5,7 @@ import {
   normalizeAirspace,
   prepareAirspaces,
   airspacesAt,
+  verticalStatus,
   airspaceTypes,
   filterByType,
   airspaceStyle,
@@ -254,5 +255,48 @@ describe("airspaceTypes / filterByType", () => {
   it("drops the hidden types", () => {
     expect(filterByType(list, [7]).map((a) => a.id)).toEqual(["CA:3", "CA:4"]);
     expect(filterByType(list, [])).toBe(list);
+  });
+});
+
+describe("verticalStatus", () => {
+  // TMA 1500 ft MSL – FL065, like many French TMAs.
+  const tma = normalizeAirspace(item({ lowerLimit: ft(1500), upperLimit: fl(65) }), "FR")!;
+  const ctr = normalizeAirspace(item({ type: 4, lowerLimit: GND, upperLimit: ft(1500) }), "FR")!;
+  const agl = normalizeAirspace(item({ lowerLimit: ft(1000, 0), upperLimit: fl(65) }), "FR")!;
+
+  it("keeps the raw limits on the normalised airspace", () => {
+    expect(tma.lowerLimit).toEqual(ft(1500));
+    expect(tma.upperLimit).toEqual(fl(65));
+  });
+
+  it("compares MSL limits with the QNH altitude and flight levels with pressure altitude", () => {
+    expect(verticalStatus(tma, { pressureFt: 3000, mslFt: 3370 })).toEqual({ status: "inside", approximate: false });
+    // Pressure altitude 6600 is above FL065 even though MSL would be 6970.
+    expect(verticalStatus(tma, { pressureFt: 6600, mslFt: 6970 }).status).toBe("above");
+    // 1300 ft STD is 1670 ft MSL at QNH 1027: inside the TMA, which a raw comparison would miss.
+    expect(verticalStatus(tma, { pressureFt: 1300, mslFt: 1670 }).status).toBe("inside");
+    expect(verticalStatus(tma, { pressureFt: 1100, mslFt: 1470 }).status).toBe("below");
+  });
+
+  it("falls back to pressure altitude for MSL limits without QNH, flagged approximate", () => {
+    expect(verticalStatus(tma, { pressureFt: 3000, mslFt: null })).toEqual({ status: "inside", approximate: true });
+    // Flight levels never need QNH.
+    expect(verticalStatus(tma, { pressureFt: 7000, mslFt: null })).toEqual({ status: "above", approximate: false });
+  });
+
+  it("treats GND as satisfied, and AGL limits as unknown unless the other limit decides", () => {
+    expect(verticalStatus(ctr, { pressureFt: 800, mslFt: 1170 }).status).toBe("inside");
+    expect(verticalStatus(agl, { pressureFt: 3000, mslFt: 3370 }).status).toBe("unknown");
+    expect(verticalStatus(agl, { pressureFt: 7000, mslFt: 7370 }).status).toBe("above");
+  });
+
+  it("is unknown without an altitude", () => {
+    expect(verticalStatus(tma, { pressureFt: null, mslFt: null }).status).toBe("unknown");
+  });
+
+  it("handles limits in metres", () => {
+    const m = normalizeAirspace(item({ lowerLimit: { value: 300, unit: 0, referenceDatum: 1 }, upperLimit: fl(65) }), "FR")!;
+    expect(verticalStatus(m, { pressureFt: 900, mslFt: 1000 }).status).toBe("inside"); // 300 m ≈ 984 ft
+    expect(verticalStatus(m, { pressureFt: 900, mslFt: 950 }).status).toBe("below");
   });
 });

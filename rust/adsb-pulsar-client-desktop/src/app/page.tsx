@@ -9,7 +9,7 @@ import { LeftPanel } from "@/components/LeftPanel";
 import { AircraftDetailsPanel } from "@/components/AircraftDetailsPanel";
 import { useWeatherSnapshot } from "@/hooks/useWeatherSnapshot";
 import { useAirspaces } from "@/hooks/useAirspaces";
-import { DEFAULT_AIRSPACE_OPACITY, airspaceTypes, filterByType } from "@/lib/airspace";
+import { DEFAULT_AIRSPACE_OPACITY, airspacesAt, airspaceTypes, filterByType } from "@/lib/airspace";
 import { DEFAULT_METAR_OPACITY, filterByCategory, metarCategories, type CategoryKey } from "@/lib/metar";
 import { useMetars } from "@/hooks/useMetars";
 import { DEFAULT_TRANSITION_ALTITUDE_FT, nearestQnh } from "@/lib/qnh";
@@ -910,6 +910,13 @@ export default function Dashboard() {
     selectedTrack && isLiveSelection && selectedTrack.latitude != null && selectedTrack.longitude != null
       ? nearestQnh(metarLayer.metars, selectedTrack.latitude, selectedTrack.longitude, weatherClockMs)
       : null;
+  // Airspaces above the selected aircraft: the drawn ones, so a hidden type stays hidden here too.
+  const selLat = selectedTrack?.latitude ?? null;
+  const selLng = selectedTrack?.longitude ?? null;
+  const selectedAirspaces = useMemo(
+    () => (selLat != null && selLng != null && visibleAirspaces.length > 0 ? airspacesAt(visibleAirspaces, selLat, selLng) : []),
+    [visibleAirspaces, selLat, selLng],
+  );
   const selectedWind = selectedTrack
     ? selectAircraftWind({
         track: selectedTrack,
@@ -1597,6 +1604,7 @@ export default function Dashboard() {
                 receiverLocation={receiverLocation}
                 qnh={selectedQnh}
                 transitionAltitudeFt={transitionAltitudeFt}
+                airspaces={selectedAirspaces}
                 rangeLineOn={showRangeLines}
                 onToggleRangeLine={handleToggleRangeLines}
               />
