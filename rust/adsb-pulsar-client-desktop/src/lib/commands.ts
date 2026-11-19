@@ -48,6 +48,7 @@ import type {
 import type { WeatherAvailability, WeatherServiceView, WeatherSnapshot } from "./weather";
 import type { CountryAirspaces } from "./airspace";
 import type { MetarSnapshot } from "./metar";
+import type { RadarSnapshot } from "./radar";
 
 export async function startFeed(): Promise<void> {
   return invoke("start_feed");
@@ -442,4 +443,13 @@ export async function getAirspaces(): Promise<CountryAirspaces[]> {
  */
 export async function getMetars(lat: number, lng: number, radiusNm: number, force: boolean): Promise<MetarSnapshot> {
   return invoke("get_metars", { lat, lng, radiusNm, force });
+}
+
+/**
+ * Météo-France rain radar around a point (the receiver): the latest 5-minute
+ * image as a coloured Web Mercator PNG with its bounds and colour scale. A
+ * failed refresh resolves with the previous image and an `error`.
+ */
+export async function getRadar(lat: number, lng: number, radiusNm: number, force: boolean): Promise<RadarSnapshot> {
+  return invoke("get_radar", { lat, lng, radiusNm, force });
 }

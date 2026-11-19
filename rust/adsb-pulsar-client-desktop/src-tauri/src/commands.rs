@@ -1368,5 +1368,6 @@ pub async fn get_radar(
         accumulation_minutes: load.field.as_ref().map(|f| f.accumulation_minutes()),
         origin: load.origin,
         error: load.error,
+        scale: radar::legend(),
     })
 }

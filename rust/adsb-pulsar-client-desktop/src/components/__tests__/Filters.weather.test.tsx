@@ -142,3 +142,18 @@ describe("FiltersPanel METAR section", () => {
     expect(screen.queryByRole("checkbox", { name: /metar stations/i })).not.toBeInTheDocument();
   });
 });
+
+describe("FiltersPanel radar section", () => {
+  const radar = {
+    show: false, onToggle: vi.fn(), validTimeMs: null, nowMs: 0, stale: false, loading: false, error: null,
+    onReload: vi.fn(), opacity: 0.7, onOpacityChange: vi.fn(), scale: [],
+  };
+  it("shows the radar controls when radar props are given", () => {
+    render(<FiltersPanel {...baseProps} radar={radar} />);
+    expect(screen.getByRole("checkbox", { name: /rain radar/i })).toBeInTheDocument();
+  });
+  it("has no radar section without them", () => {
+    render(<FiltersPanel {...baseProps} />);
+    expect(screen.queryByRole("checkbox", { name: /rain radar/i })).not.toBeInTheDocument();
+  });
+});

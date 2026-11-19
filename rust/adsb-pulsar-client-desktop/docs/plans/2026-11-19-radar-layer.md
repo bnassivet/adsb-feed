@@ -1,6 +1,6 @@
 # Météo-France rain radar on the map (phase 0, third layer)
 
-Status: in progress, branch `feature/metar-layer` (follows METAR). Same pattern
+Status: implemented on branch `feature/metar-layer` (follows METAR); live API checked end to end, not yet seen in the running app. Same pattern
 as the airspace and METAR layers.
 
 ## Source, checked live on 2026-11-19 with a key

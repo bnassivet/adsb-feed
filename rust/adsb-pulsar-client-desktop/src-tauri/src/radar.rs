@@ -133,6 +133,24 @@ pub struct RadarSnapshot {
     pub accumulation_minutes: Option<f64>,
     pub origin: Origin,
     pub error: Option<String>,
+    /// The colour scale the image was drawn with, for the legend.
+    pub scale: Vec<RadarBand>,
+}
+
+/// One band of the colour scale: rates from `from_mm_h` up to the next band.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RadarBand {
+    pub from_mm_h: f64,
+    pub color: &'static str,
+}
+
+/// `radar_grid::SCALE` for the webview: the legend can never disagree with the image.
+pub fn legend() -> Vec<RadarBand> {
+    crate::radar_grid::SCALE
+        .iter()
+        .map(|&(from_mm_h, color)| RadarBand { from_mm_h, color })
+        .collect()
 }
 
 /// Rendered image side, in pixels: ~0.9 km per pixel over a 300 NM radius,
@@ -510,6 +528,18 @@ mod tests {
         );
         let rgba = crate::radar_grid::render(&field, (42.0, -5.0, 51.0, 8.0), 64, 64);
         assert_eq!(rgba.len(), 64 * 64 * 4);
+    }
+
+    #[test]
+    fn legend_is_the_render_scale() {
+        let l = legend();
+        assert_eq!(l.len(), crate::radar_grid::SCALE.len());
+        for b in &l {
+            let [r, g, bl, _] = crate::radar_grid::rate_colour(b.from_mm_h).unwrap();
+            assert_eq!(b.color, format!("#{r:02x}{g:02x}{bl:02x}"));
+        }
+        let v = serde_json::to_value(&l[0]).unwrap();
+        assert_eq!(v["fromMmH"], 0.1);
     }
 
     #[test]

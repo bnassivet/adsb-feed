@@ -12,6 +12,8 @@ import { useAirspaces } from "@/hooks/useAirspaces";
 import { DEFAULT_AIRSPACE_OPACITY, airspacesAt, airspaceTypes, filterByType } from "@/lib/airspace";
 import { DEFAULT_METAR_OPACITY, filterByCategory, metarCategories, type CategoryKey } from "@/lib/metar";
 import { useMetars } from "@/hooks/useMetars";
+import { useRadar } from "@/hooks/useRadar";
+import { DEFAULT_RADAR_OPACITY } from "@/lib/radar";
 import { DEFAULT_TRANSITION_ALTITUDE_FT, nearestQnh } from "@/lib/qnh";
 
 /** Stable default for the hidden airspace types (a literal would be a new array per render). */
@@ -112,6 +114,8 @@ export default function Dashboard() {
   const [showMetar, setShowMetar] = useLocalStorage<boolean>("adsb-show-metar", false);
   const [metarOpacity, setMetarOpacity] = useLocalStorage<number>("adsb-metar-opacity", DEFAULT_METAR_OPACITY);
   const [metarHoverInfo, setMetarHoverInfo] = useLocalStorage<boolean>("adsb-metar-hover-info", true);
+  const [showRadar, setShowRadar] = useLocalStorage<boolean>("adsb-show-radar", false);
+  const [radarOpacity, setRadarOpacity] = useLocalStorage<number>("adsb-radar-opacity", DEFAULT_RADAR_OPACITY);
   const [transitionAltitudeFt, setTransitionAltitudeFt] = useLocalStorage<number>("adsb-transition-altitude-ft", DEFAULT_TRANSITION_ALTITUDE_FT);
   const [metarHiddenCategories, setMetarHiddenCategories] = useLocalStorage<CategoryKey[]>("adsb-metar-hidden-categories", NO_HIDDEN_CATEGORIES);
   const [weatherLevel, setWeatherLevel] = useLocalStorage<WeatherLevel>("adsb-weather-level", 250);
@@ -304,6 +308,7 @@ export default function Dashboard() {
   // Options come from every nearby airspace, so a hidden type stays listed and can be shown again.
   const airspaceTypeList = useMemo(() => airspaceTypes(airspaceLayer.airspaces), [airspaceLayer.airspaces]);
   const metarLayer = useMetars(showMetar, receiverLocation ?? null);
+  const radarLayer = useRadar(showRadar, receiverLocation ?? null);
   const metarCategoryList = useMemo(() => metarCategories(metarLayer.metars), [metarLayer.metars]);
   const visibleMetars = useMemo(
     () => filterByCategory(metarLayer.metars, metarHiddenCategories),
@@ -1560,6 +1565,19 @@ export default function Dashboard() {
             hiddenTypes: airspaceHiddenTypes,
             onHiddenTypesChange: setAirspaceHiddenTypes,
           }}
+          radar={{
+            show: showRadar,
+            onToggle: () => setShowRadar((prev: boolean) => !prev),
+            validTimeMs: radarLayer.snapshot?.validTimeMs ?? null,
+            nowMs: weatherClockMs,
+            stale: radarLayer.stale,
+            loading: radarLayer.loading,
+            error: radarLayer.error,
+            onReload: radarLayer.reload,
+            opacity: radarOpacity,
+            onOpacityChange: setRadarOpacity,
+            scale: radarLayer.snapshot?.scale ?? [],
+          }}
           metar={{
             show: showMetar,
             onToggle: () => setShowMetar((prev: boolean) => !prev),
@@ -1587,7 +1605,7 @@ export default function Dashboard() {
           {/* Map row — flex row so details panel sits right of map */}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0">
-              <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={visibleMetars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={weatherClockMs} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
+              <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={visibleMetars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={weatherClockMs} radar={radarLayer.snapshot} radarOpacity={radarOpacity} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel

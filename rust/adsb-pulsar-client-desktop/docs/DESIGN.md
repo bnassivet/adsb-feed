@@ -5605,6 +5605,84 @@ An example of why it matters: at QNH 1027, an aircraft reporting 1,300 ft is
 at about 1,670 ft MSL, so it is inside a TMA based at 1,500 ft MSL. A raw
 comparison would place it below.
 
+## Rain radar (Météo-France)
+
+The latest 5-minute rainfall mosaic for mainland France, coloured by rain rate
+and cut to 300 NM around the receiver. Filters → Rain radar turns it on
+(`adsb-show-radar`, off by default). This is the third phase-0 layer. Plan:
+`docs/plans/2026-11-19-radar-layer.md`.
+
+### The product, as served
+
+The API is `DonneesPubliquesRadar` (`/public/DPRadar/v1`), authenticated with
+an `apikey` header. The free plan allows 850 requests per 5 minutes.
+
+| Product | Format | Used |
+|---|---|---|
+| `REFLECTIVITE`, 1 km | BUFR (3.1 MB gz) | no: BUFR needs WMO and local tables |
+| `LAME_D_EAU`, 1 km | BUFR | no |
+| **`LAME_D_EAU`, 500 m** | **ODIM_H5** (2.6 MB) | **yes** |
+
+What the ODIM_H5 file contains:
+- a `uint16` grid of 3472×3472 cells, gzip-chunked, of quantity `ACRR`: rain
+  accumulated over the 5-minute window, in mm, with a gain of 0.01;
+- 65535 means outside radar coverage; 65534 means covered, no rain;
+- a polar stereographic grid:
+  `+proj=stere +lat_0=90 +lon_0=0 +lat_ts=45 +x_0=619652.07 +y_0=5262818.34`
+  on WGS84, lower-left corner at (0, 0), row 0 at the top.
+
+### Pipeline, all in Rust
+
+| Step | Where | Cost (release; debug) |
+|---|---|---|
+| Is there a new image? Read the description's `validity_time` (~1 KB), at most every 2.5 min | `radar.rs` | one small request |
+| Download the 500 m product, only when `validity_time` changed | `radar.rs` | 2.6 MB |
+| Decode ODIM_H5 (`hdf5-reader`, pure Rust, no libhdf5) | `radar_grid::decode_odim` | 46 ms; 360 ms |
+| For each pixel of a 1200×1200 Web Mercator image: inverse Mercator, forward stereographic, cell, mm/h, colour | `radar_grid::render` | 19 ms; 355 ms |
+| PNG, base64 | `encode_png` | ~10 ms; 104 ms |
+
+- **Projection:** Snyder's ellipsoidal polar stereographic with a latitude of
+  true scale. It matches pyproj to within 5 cm on the file's corners and on
+  points across France.
+- **Dev builds:** the decode and compression crates are compiled with
+  `opt-level = 3` (workspace `Cargo.toml`), because `tauri dev` is unoptimised.
+- **Rendered image cache:** keyed by image time and box, so a poll between
+  two images does not render again.
+
+### Cache and failures
+
+- **Memory only.** A radar image is out of date within minutes, so nothing is
+  kept offline.
+- **Failed check or download:** the last image is served with its own time
+  and the error (`stale-cache`). It is not retried before the next interval,
+  so a dead network does not mean a request on every poll.
+- **Forced refresh:** has a 30 s floor.
+
+**Key:** `[desktop] meteofrance_api_key` (secret), exported as
+`ADSB_METEOFRANCE_API_KEY`. Portal keys are JWTs with their own `exp`. The
+portal's validity field is in **seconds**, and the first key made for this
+project lived 5 s. So `key_problem` reads `exp` and reports "expired on …"
+instead of the server's bare "Invalid Credentials". A 403 means the key's
+application is not subscribed to Données Publiques Radar.
+
+### Frontend
+
+- **`useRadar`:** polls every 2.5 minutes while the layer is on.
+- **`RadarLayer`:** one `L.imageOverlay` on a non-interactive pane at z 340,
+  under the airspaces (350) and the METAR stations (360). Opacity is a slider
+  (70 % by default), with 0.85 of it at night.
+- **`RadarControls`:**
+  - the image time in UTC and its age; Refresh;
+  - an alert when the image is the previous one;
+  - a legend in mm/h built from the `scale` Rust sends with every image,
+    so the legend and the image cannot disagree;
+  - the credit (Météo-France, Etalab 2.0).
+
+**Not yet:**
+- animation of the last hour (the API serves only the latest image);
+- a rain-rate readout on hover;
+- reflectivity (BUFR).
+
 ## Observability (Prometheus)
 
 Every long-lived service in the stack exposes a Prometheus endpoint. Before

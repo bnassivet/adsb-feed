@@ -54,6 +54,7 @@ import { AltitudeLegend } from "./AltitudeLegend";
 import { WindSpeedLegend } from "./WindSpeedLegend";
 import { AirspaceInfo } from "./AirspaceInfo";
 import { MetarInfo } from "./MetarInfo";
+import { DEFAULT_RADAR_OPACITY, RADAR_ATTRIBUTION, radarDataUrl, radarImageBounds, type RadarSnapshot } from "@/lib/radar";
 import { DEFAULT_METAR_OPACITY, METAR_ATTRIBUTION, metarMarkerStyle, nearestMetar, type Metar } from "@/lib/metar";
 import { AIRSPACE_ATTRIBUTION, DEFAULT_AIRSPACE_OPACITY, airspacesAt, airspaceStyle, type Airspace } from "@/lib/airspace";
 
@@ -421,6 +422,42 @@ function AirspaceLayer({ airspaces, opacity, theme }: { airspaces: Airspace[]; o
   return null;
 }
 
+/** Leaflet pane for the rain radar: under airspaces and stations, above the tiles. */
+const RADAR_PANE = "radar";
+/** Radar colours are saturated: a little less at night, as for the other layers. */
+const RADAR_NIGHT_FACTOR = 0.85;
+
+/**
+ * The rain radar: one PNG that Rust already coloured and reprojected to Web
+ * Mercator, placed by its bounds. Non-interactive, like the other overlays.
+ */
+function RadarLayer({ snapshot, opacity, theme }: { snapshot: RadarSnapshot | null; opacity: number; theme: MapTheme }) {
+  const map = useMap();
+  const overlay = useRef<L.ImageOverlay | null>(null);
+  const url = snapshot ? radarDataUrl(snapshot) : null;
+  const bounds = snapshot ? radarImageBounds(snapshot) : null;
+  // A string key: the bounds array is new on every snapshot, the box rarely is.
+  const boundsKey = bounds ? bounds.flat().join(",") : "";
+  useEffect(() => {
+    if (!url || !boundsKey) return;
+    const [s, w, n, e] = boundsKey.split(",").map(Number);
+    const pane = map.getPane(RADAR_PANE) ?? map.createPane(RADAR_PANE);
+    pane.style.zIndex = "340";
+    pane.style.pointerEvents = "none";
+    const o = L.imageOverlay(url, [[s, w], [n, e]], { pane: RADAR_PANE, interactive: false }).addTo(map);
+    overlay.current = o;
+    return () => {
+      o.remove();
+      overlay.current = null;
+    };
+  }, [map, url, boundsKey]);
+  // Declared after the build effect: a new image gets the current opacity in the same commit.
+  useEffect(() => {
+    overlay.current?.setOpacity(opacity * (theme === "dark" ? RADAR_NIGHT_FACTOR : 1));
+  }, [url, boundsKey, opacity, theme]);
+  return null;
+}
+
 /** Leaflet pane for METAR stations: above airspaces, below density and tracks. */
 const METAR_PANE = "metars";
 const NO_METARS: Metar[] = [];
@@ -774,6 +811,9 @@ interface Props {
   metarHoverInfo?: boolean;
   /** Minute clock: report ages (old reports are drawn hollow). */
   metarNowMs?: number;
+  /** The rain radar image; null while the layer is off. */
+  radar?: RadarSnapshot | null;
+  radarOpacity?: number;
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];
   dbHistoryTracks?: AircraftTrack[];
@@ -1091,7 +1131,7 @@ function labelIcon(p: LabelPlacement, text: string, color: string, selected: boo
   });
 }
 
-export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
+export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
   // Memoised: the basemap layer is rebuilt (and every tile reloaded) when this changes.
   const tile = useMemo(() => tileConfig(mapTheme, CARTO_API_KEY), [mapTheme]);
   const [airspaceStack, setAirspaceStack] = useState<Airspace[]>(NO_AIRSPACES);
@@ -1160,6 +1200,10 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
         <MapClickHandler onDeselect={handleDeselect} />
         <FlyToHandler onReady={handleFlyToReady} />
         <CachedBasemap tile={tile} origin={tileCacheOrigin} />
+
+        {/* Rain radar — the lowest overlay, never interactive */}
+        {radar?.pngBase64 && <MapAttribution text={RADAR_ATTRIBUTION} />}
+        <RadarLayer snapshot={radar} opacity={radarOpacity} theme={mapTheme} />
 
         {/* Airspaces — under everything else, never interactive */}
         {airspaces.length > 0 && <MapAttribution text={AIRSPACE_ATTRIBUTION} />}
