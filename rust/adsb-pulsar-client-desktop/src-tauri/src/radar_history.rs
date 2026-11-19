@@ -6,8 +6,13 @@
 //! (~2.6 MB each, ~31 MB for an hour). Frames therefore exist only for the
 //! times the layer was on, and survive a restart.
 //!
-//! Rendered PNGs (~400 KB) are kept in memory per box; the decoded fields
-//! (24 MB each) are not, so a frame is decoded once, when first rendered.
+//! Rendered PNGs (~400 KB) are kept in memory per box, at most an hour of them
+//! (`RenderCache::insert` enforces it); the decoded fields (24 MB each) are
+//! not kept, so a frame is decoded once, when first rendered.
+//!
+//! Disk retention: `save` deletes frames over an hour older than the newest
+//! (never the one it wrote); `prune`, run on every radar request, also deletes
+//! a session whose newest frame is over an hour old.
 
 use crate::metar::Bbox;
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
@@ -66,21 +71,34 @@ pub fn on_disk(dir: &Path) -> Vec<(DateTime<Utc>, PathBuf)> {
     frames
 }
 
-/// The frames to animate, with their files.
-pub fn frames(dir: &Path, now: DateTime<Utc>) -> Vec<(DateTime<Utc>, PathBuf)> {
-    let all = on_disk(dir);
-    let keep = select(all.iter().map(|(v, _)| *v).collect(), now);
-    all.into_iter().filter(|(v, _)| keep.contains(v)).collect()
+/// Is `v` within the hour that ends at `newest`?
+fn in_hour_of(newest: DateTime<Utc>, v: DateTime<Utc>) -> bool {
+    v > newest - Duration::minutes(HISTORY_MINUTES)
 }
 
-/// Keeps a downloaded mosaic, then deletes the frames that left the hour.
-/// Written to a temporary name and renamed, so a reader never sees half a file.
-pub fn save(
-    dir: &Path,
-    validity: DateTime<Utc>,
-    bytes: &[u8],
-    now: DateTime<Utc>,
-) -> Result<(), String> {
+/// The frames to animate, with their files. Deletes an old session first.
+pub fn frames(dir: &Path, now: DateTime<Utc>) -> Vec<(DateTime<Utc>, PathBuf)> {
+    prune(dir, now);
+    on_disk(dir)
+}
+
+/// Deletes every frame `select` would not animate at `now`: frames that left
+/// the hour, and a whole session once its newest frame is over an hour old.
+/// Called on every radar request, so turning the radar on cleans up.
+pub fn prune(dir: &Path, now: DateTime<Utc>) {
+    let all = on_disk(dir);
+    let keep = select(all.iter().map(|(v, _)| *v).collect(), now);
+    for (v, p) in all {
+        if !keep.contains(&v) {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
+/// Keeps a downloaded mosaic, then deletes the frames more than an hour older
+/// than the newest one; never the file just written. Written to a temporary
+/// name and renamed, so a reader never sees half a file.
+pub fn save(dir: &Path, validity: DateTime<Utc>, bytes: &[u8]) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("radar history {}: {e}", dir.display()))?;
     let path = dir.join(file_name(validity));
     let tmp = path.with_extension("h5.tmp");
@@ -88,9 +106,9 @@ pub fn save(
         .and_then(|_| std::fs::rename(&tmp, &path))
         .map_err(|e| format!("radar history {}: {e}", path.display()))?;
     let all = on_disk(dir);
-    let keep = select(all.iter().map(|(v, _)| *v).collect(), now);
+    let newest = all.last().map_or(validity, |(v, _)| *v);
     for (v, p) in all {
-        if !keep.contains(&v) {
+        if v != validity && !in_hour_of(newest, v) {
             let _ = std::fs::remove_file(p);
         }
     }
@@ -129,9 +147,14 @@ impl<T: Clone> RenderCache<T> {
         self.images.get(&validity).cloned()
     }
 
+    /// Adds a frame, then drops those more than an hour older than the
+    /// newest: the cache bounds itself, whichever command fills it.
     pub fn insert(&mut self, bbox: Bbox, validity: DateTime<Utc>, image: T) {
         self.for_box(bbox);
         self.images.insert(validity, image);
+        if let Some(&newest) = self.images.keys().next_back() {
+            self.images.retain(|v, _| in_hour_of(newest, *v));
+        }
     }
 
     /// Of `wanted`, the frames not rendered yet for this box.
@@ -233,7 +256,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path().join("radar");
         for i in 0..14 {
-            save(&d, t(i * 5), b"mosaic", t(i * 5 + 3)).unwrap();
+            save(&d, t(i * 5), b"mosaic").unwrap();
         }
         std::fs::write(d.join("notes.txt"), "kept").unwrap();
         let on = on_disk(&d);
@@ -254,7 +277,7 @@ mod tests {
     fn frames_lists_the_selected_files() {
         let dir = tempfile::tempdir().unwrap();
         for i in [0, 5, 10] {
-            save(dir.path(), t(i), b"x", t(i)).unwrap();
+            save(dir.path(), t(i), b"x").unwrap();
         }
         let f = frames(dir.path(), t(12));
         assert_eq!(
@@ -289,6 +312,50 @@ mod tests {
         }
         c.forget_before(t(5));
         assert_eq!(c.missing(B1, &[t(0), t(5), t(10)]), vec![t(0)]);
+    }
+
+    #[test]
+    fn render_cache_holds_at_most_an_hour_whoever_inserts() {
+        // get_radar inserts every new image and never asks for frames:
+        // the cache must bound itself.
+        let mut c = RenderCache::new();
+        let all: Vec<_> = (0..20).map(|i| t(i * 5)).collect();
+        for v in &all {
+            c.insert(B1, *v, ());
+        }
+        assert_eq!(c.missing(B1, &all), all[..8].to_vec(), "12 frames kept");
+        c.insert(B1, t(-60), ());
+        assert_eq!(
+            c.get(B1, t(-60)),
+            None,
+            "a frame inserted late but outside the hour is dropped"
+        );
+    }
+
+    #[test]
+    fn save_never_deletes_the_file_it_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        save(dir.path(), t(0), b"x").unwrap();
+        save(dir.path(), t(-120), b"late").unwrap();
+        let on: Vec<_> = on_disk(dir.path()).into_iter().map(|(v, _)| v).collect();
+        assert_eq!(
+            on,
+            vec![t(-120), t(0)],
+            "even an image older than the hour stays until the next save"
+        );
+    }
+
+    #[test]
+    fn prune_deletes_an_old_session_and_keeps_a_current_one() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in [0, 5, 10] {
+            save(dir.path(), t(i), b"x").unwrap();
+        }
+        prune(dir.path(), t(30));
+        assert_eq!(on_disk(dir.path()).len(), 3);
+        prune(dir.path(), t(10 + 61));
+        assert!(on_disk(dir.path()).is_empty());
+        prune(&dir.path().join("missing"), t(0));
     }
 
     #[test]

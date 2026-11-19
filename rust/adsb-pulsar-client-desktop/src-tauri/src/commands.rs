@@ -1370,6 +1370,10 @@ pub async fn get_radar(
         .build()
         .map_err(|e| format!("HTTP client: {e}"))?;
     let history_dir = radar_dir(&app);
+    // Turning the radar on after a while deletes the old session's frames.
+    if let Some(dir) = history_dir.clone() {
+        let _ = tokio::task::spawn_blocking(move || radar_history::prune(&dir, now)).await;
+    }
 
     let load = {
         let mut cache = RADAR_CACHE.lock().await;
@@ -1387,7 +1391,7 @@ pub async fn get_radar(
             tokio::task::block_in_place(|| {
                 let field = radar_grid::decode_odim(bytes.clone())?;
                 if let Some(dir) = &history_dir
-                    && let Err(e) = radar_history::save(dir, validity, &bytes, now)
+                    && let Err(e) = radar_history::save(dir, validity, &bytes)
                 {
                     tracing::warn!("{e}");
                 }
