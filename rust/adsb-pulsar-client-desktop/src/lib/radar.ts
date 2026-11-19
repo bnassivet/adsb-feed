@@ -34,13 +34,17 @@ export function legendLabels(scale: RadarBand[]): { color: string; label: string
   }));
 }
 
-export function formatValidTime(validTimeMs: number, nowMs: number): string {
-  const d = new Date(validTimeMs);
-  const hhmm = `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
-  return `${hhmm} UTC · ${formatAge(ageMinutes(validTimeMs, nowMs))}`;
+export function formatUtcTime(ms: number): string {
+  const d = new Date(ms);
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")} UTC`;
 }
 
-export const radarDataUrl = (s: RadarSnapshot) => (s.pngBase64 ? `data:image/png;base64,${s.pngBase64}` : null);
+export function formatValidTime(validTimeMs: number, nowMs: number): string {
+  return `${formatUtcTime(validTimeMs)} · ${formatAge(ageMinutes(validTimeMs, nowMs))}`;
+}
+
+const pngUrl = (base64: string) => `data:image/png;base64,${base64}`;
+export const radarDataUrl = (s: RadarSnapshot) => (s.pngBase64 ? pngUrl(s.pngBase64) : null);
 
 /** Leaflet bounds: [[south, west], [north, east]]. */
 export function radarImageBounds(s: RadarSnapshot): [[number, number], [number, number]] | null {
@@ -48,3 +52,72 @@ export function radarImageBounds(s: RadarSnapshot): [[number, number], [number, 
   const [south, west, north, east] = s.bounds;
   return [[south, west], [north, east]];
 }
+
+// ── Animation of the last hour ─────────────────────────────────────────────
+// Météo-France serves only the current image, so Rust keeps each one it
+// downloads (src-tauri/src/radar_history.rs): frames exist for the times the
+// layer was on.
+
+/** An hour of 5-minute images. */
+export const HISTORY_FRAMES = 12;
+export const ANIMATION_FRAME_MS = 500;
+/** The newest frame stays up longer, so the loop reads as "ending now". */
+export const ANIMATION_HOLD_MS = 2000;
+
+/** What `get_radar_frames` returns: an image is null when the webview said it has it. */
+export interface RadarFrames {
+  bounds: [number, number, number, number];
+  frames: { validTimeMs: number; pngBase64: string | null }[];
+}
+
+export interface RadarImage {
+  validTimeMs: number;
+  url: string;
+}
+
+/** The frames held by the webview, oldest first. */
+export interface RadarFrameSet {
+  bounds: [number, number, number, number];
+  frames: RadarImage[];
+}
+
+/** What the map draws: every image loaded, one of them shown. */
+export interface RadarView {
+  bounds: [number, number, number, number];
+  images: RadarImage[];
+  shownMs: number;
+}
+
+/**
+ * The new frame list, taking the images it left out from `prev`. A frame with
+ * no image either way (the box changed) is dropped rather than drawn blank.
+ */
+export function mergeFrames(prev: RadarFrameSet | null, next: RadarFrames): RadarFrameSet {
+  const sameBox = prev != null && prev.bounds.join() === next.bounds.join();
+  const held = new Map(sameBox ? prev.frames.map((f) => [f.validTimeMs, f.url]) : []);
+  return {
+    bounds: next.bounds,
+    frames: next.frames.flatMap((f) => {
+      const url = f.pngBase64 ? pngUrl(f.pngBase64) : held.get(f.validTimeMs);
+      return url ? [{ validTimeMs: f.validTimeMs, url }] : [];
+    }),
+  };
+}
+
+export function latestView(s: RadarSnapshot | null): RadarView | null {
+  const url = s ? radarDataUrl(s) : null;
+  if (!s || !url || !s.bounds || s.validTimeMs == null) return null;
+  return { bounds: s.bounds, images: [{ validTimeMs: s.validTimeMs, url }], shownMs: s.validTimeMs };
+}
+
+export function animationView(set: RadarFrameSet, index: number): RadarView | null {
+  if (set.frames.length === 0) return null;
+  const shown = set.frames[Math.min(Math.max(index, 0), set.frames.length - 1)];
+  return { bounds: set.bounds, images: set.frames, shownMs: shown.validTimeMs };
+}
+
+/** How long frame `index` stays up. */
+export const frameDelayMs = (index: number, count: number) =>
+  index >= count - 1 ? ANIMATION_HOLD_MS : ANIMATION_FRAME_MS;
+
+export const nextFrame = (index: number, count: number) => (index + 1 >= count ? 0 : index + 1);

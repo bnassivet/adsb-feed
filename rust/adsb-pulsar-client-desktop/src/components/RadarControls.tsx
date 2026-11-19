@@ -1,5 +1,5 @@
 "use client";
-import { formatValidTime, legendLabels, type RadarBand } from "@/lib/radar";
+import { formatUtcTime, formatValidTime, HISTORY_FRAMES, legendLabels, type RadarBand } from "@/lib/radar";
 
 export interface RadarControlsProps {
   show: boolean;
@@ -17,6 +17,13 @@ export interface RadarControlsProps {
   onOpacityChange: (opacity: number) => void;
   /** The colour scale the image was drawn with (from Rust). */
   scale: RadarBand[];
+  /** Loop through the last hour instead of showing the latest image. */
+  animate: boolean;
+  onToggleAnimate: () => void;
+  /** The frame on the map while animating (position is 1-based); null before two frames exist. */
+  frame: { validTimeMs: number; position: number } | null;
+  /** Frames kept so far. */
+  frameCount: number;
 }
 
 /** The Filters panel's rain radar section, laid out like METAR and Airspaces. */
@@ -53,6 +60,21 @@ export function RadarControls(p: RadarControlsProps) {
               </button>
             )}
           </div>
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" checked={p.animate} onChange={p.onToggleAnimate} className="accent-sky-500" />
+            <span>Animate last hour</span>
+          </label>
+          {p.animate && p.frame && (
+            <span className="ml-5 tabular-nums text-sky-300">
+              Frame {formatUtcTime(p.frame.validTimeMs)} · {p.frame.position}/{p.frameCount}
+            </span>
+          )}
+          {p.animate && p.frameCount < HISTORY_FRAMES && (
+            <p className="ml-5 text-[10px] text-slate-600">
+              {p.frameCount} of {HISTORY_FRAMES} frames so far: Météo-France serves only the latest image, so frames are
+              kept while the radar is on.
+            </p>
+          )}
           {p.stale && when && (
             <p role="alert" className="text-amber-400">
               Refresh failed: the image is from {when.split(" · ")[1]}.

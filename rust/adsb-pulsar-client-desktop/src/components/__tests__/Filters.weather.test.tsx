@@ -147,6 +147,7 @@ describe("FiltersPanel radar section", () => {
   const radar = {
     show: false, onToggle: vi.fn(), validTimeMs: null, nowMs: 0, stale: false, loading: false, error: null,
     onReload: vi.fn(), opacity: 0.7, onOpacityChange: vi.fn(), scale: [],
+    animate: false, onToggleAnimate: vi.fn(), frame: null, frameCount: 0,
   };
   it("shows the radar controls when radar props are given", () => {
     render(<FiltersPanel {...baseProps} radar={radar} />);

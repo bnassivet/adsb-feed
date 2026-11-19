@@ -6,7 +6,7 @@ import type { WeatherLevel, WeatherSnapshot } from "@/lib/weather";
 import type { ReceiverPoint } from "@/lib/aircraft-details";
 import type { Airspace } from "@/lib/airspace";
 import type { Metar } from "@/lib/metar";
-import type { RadarSnapshot } from "@/lib/radar";
+import type { RadarView } from "@/lib/radar";
 
 // Dynamic import to prevent SSR (Leaflet requires window/document)
 const MapInner = dynamic(
@@ -32,7 +32,7 @@ interface Props {
   metarOpacity?: number;
   metarHoverInfo?: boolean;
   metarNowMs?: number;
-  radar?: RadarSnapshot | null;
+  radar?: RadarView | null;
   radarOpacity?: number;
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];

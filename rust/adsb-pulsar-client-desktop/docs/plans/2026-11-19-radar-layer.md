@@ -56,6 +56,6 @@ comes from `[desktop] meteofrance_api_key`, exported as
 ## Not in this step
 
 - Animation of the last hour. The API only serves the latest image, so frames
-  would have to be collected over time.
+  would have to be collected over time. Done since: `2026-11-19-radar-animation.md`.
 - A rain-rate readout on hover.
 - Reflectivity (BUFR).

@@ -54,7 +54,7 @@ import { AltitudeLegend } from "./AltitudeLegend";
 import { WindSpeedLegend } from "./WindSpeedLegend";
 import { AirspaceInfo } from "./AirspaceInfo";
 import { MetarInfo } from "./MetarInfo";
-import { DEFAULT_RADAR_OPACITY, RADAR_ATTRIBUTION, radarDataUrl, radarImageBounds, type RadarSnapshot } from "@/lib/radar";
+import { DEFAULT_RADAR_OPACITY, RADAR_ATTRIBUTION, type RadarImage, type RadarView } from "@/lib/radar";
 import { DEFAULT_METAR_OPACITY, METAR_ATTRIBUTION, metarMarkerStyle, nearestMetar, type Metar } from "@/lib/metar";
 import { AIRSPACE_ATTRIBUTION, DEFAULT_AIRSPACE_OPACITY, airspacesAt, airspaceStyle, type Airspace } from "@/lib/airspace";
 
@@ -426,35 +426,54 @@ function AirspaceLayer({ airspaces, opacity, theme }: { airspaces: Airspace[]; o
 const RADAR_PANE = "radar";
 /** Radar colours are saturated: a little less at night, as for the other layers. */
 const RADAR_NIGHT_FACTOR = 0.85;
+const NO_RADAR_IMAGES: RadarImage[] = [];
 
 /**
  * The rain radar: one PNG that Rust already coloured and reprojected to Web
  * Mercator, placed by its bounds. Non-interactive, like the other overlays.
  */
-function RadarLayer({ snapshot, opacity, theme }: { snapshot: RadarSnapshot | null; opacity: number; theme: MapTheme }) {
+function RadarLayer({ view, opacity, theme }: { view: RadarView | null; opacity: number; theme: MapTheme }) {
   const map = useMap();
-  const overlay = useRef<L.ImageOverlay | null>(null);
-  const url = snapshot ? radarDataUrl(snapshot) : null;
-  const bounds = snapshot ? radarImageBounds(snapshot) : null;
-  // A string key: the bounds array is new on every snapshot, the box rarely is.
-  const boundsKey = bounds ? bounds.flat().join(",") : "";
+  // One overlay per frame, all loaded, all but one transparent: switching
+  // frames is an opacity change, so the animation never flashes blank.
+  const overlays = useRef(new Map<number, L.ImageOverlay>());
+  const images = view?.images ?? NO_RADAR_IMAGES;
+  // A string key: the bounds array is new on every answer, the box rarely is.
+  const boundsKey = view ? view.bounds.join(",") : "";
+  // A new box invalidates every frame; also the unmount cleanup.
   useEffect(() => {
-    if (!url || !boundsKey) return;
+    const held = overlays.current;
+    return () => {
+      for (const o of held.values()) o.remove();
+      held.clear();
+    };
+  }, [map, boundsKey]);
+  useEffect(() => {
+    if (!boundsKey) return;
     const [s, w, n, e] = boundsKey.split(",").map(Number);
     const pane = map.getPane(RADAR_PANE) ?? map.createPane(RADAR_PANE);
     pane.style.zIndex = "340";
     pane.style.pointerEvents = "none";
-    const o = L.imageOverlay(url, [[s, w], [n, e]], { pane: RADAR_PANE, interactive: false }).addTo(map);
-    overlay.current = o;
-    return () => {
-      o.remove();
-      overlay.current = null;
-    };
-  }, [map, url, boundsKey]);
-  // Declared after the build effect: a new image gets the current opacity in the same commit.
+    const held = overlays.current;
+    const wanted = new Set(images.map((i) => i.validTimeMs));
+    for (const [t, o] of held) {
+      if (!wanted.has(t)) {
+        o.remove();
+        held.delete(t);
+      }
+    }
+    for (const img of images) {
+      if (held.has(img.validTimeMs)) continue;
+      const o = L.imageOverlay(img.url, [[s, w], [n, e]], { pane: RADAR_PANE, interactive: false, opacity: 0 });
+      held.set(img.validTimeMs, o.addTo(map));
+    }
+  }, [map, images, boundsKey]);
+  // Declared after the build effects: a new frame gets the current opacity in the same commit.
+  const shownMs = view?.shownMs;
   useEffect(() => {
-    overlay.current?.setOpacity(opacity * (theme === "dark" ? RADAR_NIGHT_FACTOR : 1));
-  }, [url, boundsKey, opacity, theme]);
+    const shown = opacity * (theme === "dark" ? RADAR_NIGHT_FACTOR : 1);
+    for (const [t, o] of overlays.current) o.setOpacity(t === shownMs ? shown : 0);
+  }, [images, boundsKey, shownMs, opacity, theme]);
   return null;
 }
 
@@ -811,8 +830,8 @@ interface Props {
   metarHoverInfo?: boolean;
   /** Minute clock: report ages (old reports are drawn hollow). */
   metarNowMs?: number;
-  /** The rain radar image; null while the layer is off. */
-  radar?: RadarSnapshot | null;
+  /** The rain radar images and the one to show; null while the layer is off. */
+  radar?: RadarView | null;
   radarOpacity?: number;
   tracks: AircraftTrack[];
   historyTracks: AircraftTrack[];
@@ -1202,8 +1221,8 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
         <CachedBasemap tile={tile} origin={tileCacheOrigin} />
 
         {/* Rain radar — the lowest overlay, never interactive */}
-        {radar?.pngBase64 && <MapAttribution text={RADAR_ATTRIBUTION} />}
-        <RadarLayer snapshot={radar} opacity={radarOpacity} theme={mapTheme} />
+        {radar && <MapAttribution text={RADAR_ATTRIBUTION} />}
+        <RadarLayer view={radar} opacity={radarOpacity} theme={mapTheme} />
 
         {/* Airspaces — under everything else, never interactive */}
         {airspaces.length > 0 && <MapAttribution text={AIRSPACE_ATTRIBUTION} />}

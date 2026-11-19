@@ -5651,8 +5651,8 @@ What the ODIM_H5 file contains:
 
 ### Cache and failures
 
-- **Memory only.** A radar image is out of date within minutes, so nothing is
-  kept offline.
+- **The current image is in memory.** Each downloaded mosaic is also kept on
+  disk for an hour, for the animation (below); nothing older is kept.
 - **Failed check or download:** the last image is served with its own time
   and the error (`stale-cache`). It is not retried before the next interval,
   so a dead network does not mean a request on every poll.
@@ -5678,10 +5678,36 @@ application is not subscribed to Données Publiques Radar.
     so the legend and the image cannot disagree;
   - the credit (Météo-France, Etalab 2.0).
 
+### Animation of the last hour
+
+Plan: `docs/plans/2026-11-19-radar-animation.md`. The API serves only the
+current image, so the hour is collected by the app:
+
+- **Kept on disk.** After a new mosaic decodes, `radar_history::save` writes
+  it to `<stack data dir>/radar/` and deletes frames more than 60 min older than
+  the newest (~31 MB at most). Frames exist only for the times the layer was
+  on, and survive a restart. When the newest is over an hour old, there is
+  no animation.
+- **`get_radar_frames`** renders the kept frames for the box, oldest first,
+  on up to 4 threads. Rendered PNGs are cached per box and shared with
+  `get_radar`. The webview sends the frame times it already holds
+  (`knownMs`), and those come back without their image.
+- **`useRadarFrames`** asks when the animation is switched on and whenever the
+  latest image changes. **`useFrameAnimation`** shows each frame for 500 ms
+  and holds the newest for 2 s.
+- **`RadarLayer`** takes a `RadarView` (all images, plus the time of the one
+  shown). It keeps one overlay per frame and switches frames by opacity, so
+  the loop never flashes blank.
+- **Controls:** "Animate last hour" (`adsb-radar-animate`), the frame time and
+  position, and how many of the 12 frames have been collected so far.
+- **Cost in a dev build:** the first request for 12 frames decodes and
+  renders them all (~0.8 s each, 4 at a time). A release build takes ~75 ms
+  each.
+
 **Not yet:**
-- animation of the last hour (the API serves only the latest image);
 - a rain-rate readout on hover;
-- reflectivity (BUFR).
+- reflectivity (BUFR);
+- pause, step or speed controls for the animation.
 
 ## Observability (Prometheus)
 

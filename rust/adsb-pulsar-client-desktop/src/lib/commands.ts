@@ -48,7 +48,7 @@ import type {
 import type { WeatherAvailability, WeatherServiceView, WeatherSnapshot } from "./weather";
 import type { CountryAirspaces } from "./airspace";
 import type { MetarSnapshot } from "./metar";
-import type { RadarSnapshot } from "./radar";
+import type { RadarFrames, RadarSnapshot } from "./radar";
 
 export async function startFeed(): Promise<void> {
   return invoke("start_feed");
@@ -452,4 +452,12 @@ export async function getMetars(lat: number, lng: number, radiusNm: number, forc
  */
 export async function getRadar(lat: number, lng: number, radiusNm: number, force: boolean): Promise<RadarSnapshot> {
   return invoke("get_radar", { lat, lng, radiusNm, force });
+}
+
+/**
+ * The last hour of radar images that `get_radar` kept, oldest first, for the
+ * animation. Downloads nothing; frames in `knownMs` come back without their image.
+ */
+export async function getRadarFrames(lat: number, lng: number, radiusNm: number, knownMs: number[]): Promise<RadarFrames> {
+  return invoke("get_radar_frames", { lat, lng, radiusNm, knownMs });
 }
