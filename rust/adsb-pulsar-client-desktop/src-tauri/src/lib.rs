@@ -14,6 +14,7 @@ mod radar_history;
 mod seamarks;
 mod state;
 mod storage_mode;
+mod terrain;
 mod weather;
 mod webview_storage;
 
@@ -219,6 +220,8 @@ pub fn run() {
             commands::get_radar,
             commands::get_radar_frames,
             commands::get_seamarks,
+            commands::get_ground_elevation,
+            commands::what_is_here,
             commands::get_weather_availability,
             commands::get_weather_service,
             commands::set_weather_service_enabled,

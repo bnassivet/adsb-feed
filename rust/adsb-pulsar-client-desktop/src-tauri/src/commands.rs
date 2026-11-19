@@ -1539,3 +1539,111 @@ pub async fn get_seamarks(
     }
     Ok(snapshot)
 }
+
+/// Decoded terrain tiles by (x, y) at `terrain::ZOOM`. A few is enough for a
+/// click or a selected aircraft; when full it starts over (256 KB a tile).
+type TerrainTiles =
+    std::collections::HashMap<(u32, u32), std::sync::Arc<crate::terrain::TerrainTile>>;
+static TERRAIN_TILES: std::sync::Mutex<Option<TerrainTiles>> = std::sync::Mutex::new(None);
+const TERRAIN_TILES_MAX: usize = 16;
+
+fn http_client(timeout_s: u64) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_s))
+        .build()
+        .map_err(|e| format!("HTTP client: {e}"))
+}
+
+/// Ground height at a point, metres (0 at sea), from Terrarium tiles kept on disk.
+async fn ground_elevation(app: &tauri::AppHandle, lat: f64, lng: f64) -> Result<f64, String> {
+    use crate::terrain::{self, TerrainTile};
+    let (x, y, px, py) = terrain::locate(lat, lng, terrain::ZOOM)?;
+    let cached = TERRAIN_TILES
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|m| m.get(&(x, y)).cloned());
+    let tile = match cached {
+        Some(t) => t,
+        None => {
+            let app_data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|e| format!("No app data directory: {e}"))?;
+            let dir = crate::stack_data_dir(&app_data_dir, crate::stack_from_env().as_deref())
+                .join("terrain");
+            let client = http_client(30)?;
+            let bytes = terrain::tile_bytes(&dir, terrain::ZOOM, x, y, |url| async move {
+                let r = client
+                    .get(&url)
+                    .header(reqwest::header::USER_AGENT, terrain::USER_AGENT)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Terrain tile: {e}"))?;
+                if !r.status().is_success() {
+                    return Err(format!("Terrain tile: HTTP {}", r.status().as_u16()));
+                }
+                r.bytes()
+                    .await
+                    .map(|b| b.to_vec())
+                    .map_err(|e| format!("Terrain tile: {e}"))
+            })
+            .await?;
+            let tile = std::sync::Arc::new(
+                tokio::task::spawn_blocking(move || TerrainTile::from_png(&bytes))
+                    .await
+                    .map_err(|e| format!("terrain tile: {e}"))??,
+            );
+            let mut map = TERRAIN_TILES.lock().unwrap();
+            let map = map.get_or_insert_with(Default::default);
+            if map.len() >= TERRAIN_TILES_MAX {
+                map.clear();
+            }
+            map.insert((x, y), tile.clone());
+            tile
+        }
+    };
+    Ok(tile.height_at(px, py))
+}
+
+/// Ground height under a point, metres; for the aircraft's height above ground.
+#[tauri::command]
+pub async fn get_ground_elevation(
+    app: tauri::AppHandle,
+    lat: f64,
+    lng: f64,
+) -> Result<f64, String> {
+    ground_elevation(&app, lat, lng).await
+}
+
+/// "What's here?": ground height (Terrarium) and sea depth (EMODnet), asked
+/// together; each half reports its own failure.
+#[tauri::command]
+pub async fn what_is_here(
+    app: tauri::AppHandle,
+    lat: f64,
+    lng: f64,
+) -> Result<crate::terrain::WhatIsHere, String> {
+    use crate::terrain;
+    let depth = async {
+        let client = http_client(20)?;
+        let r = client
+            .get(terrain::depth_url(lat, lng))
+            .header(reqwest::header::USER_AGENT, terrain::USER_AGENT)
+            .send()
+            .await
+            .map_err(|e| format!("EMODnet: {e}"))?;
+        if !r.status().is_success() {
+            return Err(format!("EMODnet: HTTP {}", r.status().as_u16()));
+        }
+        let body = r.bytes().await.map_err(|e| format!("EMODnet: {e}"))?;
+        terrain::parse_depth(&body)
+    };
+    let (elevation, depth) = tokio::join!(ground_elevation(&app, lat, lng), depth);
+    Ok(terrain::WhatIsHere {
+        elevation_m: elevation.as_ref().ok().copied(),
+        elevation_error: elevation.err(),
+        depth: depth.as_ref().ok().cloned().flatten(),
+        depth_error: depth.err(),
+    })
+}
