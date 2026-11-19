@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildAltitudeBins,
   buildHeatmapGrid,
+  heatmapDisplayZone,
   buildHeatmapCellLookup,
   computeDbHistorySummary,
   formatTimeChartData,
@@ -173,6 +174,17 @@ describe("granularityToNumBuckets", () => {
 });
 
 describe("formatAdaptiveTimeLabel", () => {
+  it("reads no zone as the machine's local zone, like every other time in the app", () => {
+    // Was UTC: in Local mode the panel passes no zone, so the time chart stayed
+    // in UTC whatever Time Display said.
+    const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const ts = Date.UTC(2024, 0, 15, 15, 0);
+    for (const range of [3_600_000, 7 * 86_400_000, 60 * 86_400_000]) {
+      expect(formatAdaptiveTimeLabel(ts, range)).toBe(formatAdaptiveTimeLabel(ts, range, local));
+    }
+    expect(formatAdaptiveTimeLabel(ts, 3_600_000, "America/New_York")).toBe("10:00");
+  });
+
   // Jan 15 2024 14:30 UTC
   const ts = Date.UTC(2024, 0, 15, 14, 30, 0);
 
@@ -301,6 +313,35 @@ describe("buildHeatmapGrid", () => {
     expect(grid[0].dayLabel).toMatch(/1\/15/);
   });
 
+  it("moves UTC cells to the display zone's day and hour", () => {
+    // The server counts in UTC: 23:00 UTC on Jan 15 is 00:00 on Jan 16 in Paris
+    // (CET, +1), and 22:00 UTC on Jul 15 is 00:00 on Jul 16 (CEST, +2).
+    const JUL15 = Date.UTC(2024, 6, 15);
+    const cells = [makeCell(JAN15, 23, 4, 40), makeCell(JUL15, 22, 6, 60)];
+    const winter = buildHeatmapGrid(cells, Date.UTC(2024, 0, 15, 23, 30), Date.UTC(2024, 0, 16, 22, 30), "aircraft", "Europe/Paris");
+    expect(winter.map((r) => r.dayLabel)).toEqual(["Tue 1/16"]);
+    expect(winter[0].hours[0]).toBe(4);
+    const summer = buildHeatmapGrid(cells, Date.UTC(2024, 6, 15, 22), Date.UTC(2024, 6, 16, 21), "aircraft", "Europe/Paris");
+    expect(summer.map((r) => r.dayLabel)).toEqual(["Tue 7/16"]);
+    expect(summer[0].hours[0]).toBe(6);
+    // No zone: UTC, cells as they come.
+    expect(buildHeatmapGrid(cells, JAN15, JAN15 + DAY_MS)[0].hours[23]).toBe(4);
+  });
+
+  it("adds up the two UTC hours that land on the repeated hour of the autumn change", () => {
+    // Paris, 27 Oct 2024: 00:00 and 01:00 UTC are both 02:xx local.
+    const OCT27 = Date.UTC(2024, 9, 27);
+    const cells = [makeCell(OCT27, 0, 3, 30), makeCell(OCT27, 1, 2, 20)];
+    const grid = buildHeatmapGrid(cells, OCT27, OCT27 + 3 * 3_600_000, "messages", "Europe/Paris");
+    expect(grid[0].hours[2]).toBe(50);
+  });
+
+  it("labels a date key as that date whatever the zone", () => {
+    // Far west of UTC, formatting the key in the zone would give the day before.
+    const grid = buildHeatmapGrid([], Date.UTC(2024, 0, 15, 12), Date.UTC(2024, 0, 15, 13), "aircraft", "America/Los_Angeles");
+    expect(grid.map((r) => r.dayLabel)).toEqual(["Mon 1/15"]);
+  });
+
   it("handles multiple cells on the same day", () => {
     const cells = [
       makeCell(JAN15, 8, 2, 20),
@@ -349,6 +390,22 @@ describe("buildHeatmapCellLookup", () => {
     expect(lookup.get(`${JAN15}-14`)).toEqual(cells[1]);
   });
 
+  it("keys cells by the local day and hour of the zone, like the grid", () => {
+    // 23:00 UTC on Jan 15 is 00:00 on Jan 16 in Paris: the tooltip of that
+    // column must show this cell, not the one at 00:00 UTC.
+    const cells = [makeCell(JAN15, 23, 5, 100, 300, 2)];
+    const lookup = buildHeatmapCellLookup(cells, "Europe/Paris");
+    const JAN16 = JAN15 + 86_400_000;
+    expect(lookup.get(`${JAN16}-0`)).toEqual({ ...cells[0], day_ms: JAN16, hour: 0 });
+    expect(lookup.get(`${JAN15}-23`)).toBeUndefined();
+  });
+
+  it("adds up the two UTC hours of the autumn change, as the grid does", () => {
+    const OCT27 = Date.UTC(2024, 9, 27);
+    const lookup = buildHeatmapCellLookup([makeCell(OCT27, 0, 3, 30, 300, 1), makeCell(OCT27, 1, 2, 20, 200, 1)], "Europe/Paris");
+    expect(lookup.get(`${OCT27}-2`)).toEqual({ day_ms: OCT27, hour: 2, aircraft_count: 5, message_count: 50, raw_message_count: 500, flight_count: 2 });
+  });
+
   it("returns empty map for empty input", () => {
     const lookup = buildHeatmapCellLookup([]);
     expect(lookup.size).toBe(0);
@@ -361,5 +418,23 @@ describe("buildHeatmapCellLookup", () => {
     expect(cell.aircraft_count).toBe(5);
     expect(cell.message_count).toBe(100);
     expect(cell.raw_message_count).toBe(300);
+  });
+});
+
+describe("heatmapDisplayZone", () => {
+  const H = 3_600_000;
+  it("keeps a whole-hour zone, summer time included", () => {
+    expect(heatmapDisplayZone("Europe/Paris", Date.UTC(2024, 0, 1), Date.UTC(2024, 11, 31))).toBe("Europe/Paris");
+    expect(heatmapDisplayZone("America/Toronto", Date.UTC(2024, 0, 1), Date.UTC(2024, 0, 1) + H)).toBe("America/Toronto");
+  });
+
+  it("falls back to UTC where a local hour straddles two UTC hours", () => {
+    expect(heatmapDisplayZone("Asia/Kolkata", Date.UTC(2024, 0, 1), Date.UTC(2024, 0, 2))).toBe("UTC");
+    expect(heatmapDisplayZone("Asia/Kathmandu", Date.UTC(2024, 0, 1), Date.UTC(2024, 0, 2))).toBe("UTC");
+  });
+
+  it("is UTC for no zone or an unknown one", () => {
+    expect(heatmapDisplayZone(undefined, 0, H)).toBe("UTC");
+    expect(heatmapDisplayZone("Mars/Olympus_Mons", 0, H)).toBe("UTC");
   });
 });

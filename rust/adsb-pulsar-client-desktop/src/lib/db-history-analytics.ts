@@ -60,7 +60,9 @@ export function formatAdaptiveTimeLabel(
   tzName?: string,
 ): string {
   const d = new Date(timestampMs);
-  const tz = tzName ?? "UTC";
+  // No zone = the machine's local zone, as in formatWithTz. (It used to be UTC,
+  // so in Local mode the time chart ignored Time Display.)
+  const tz = tzName;
 
   try {
     if (rangeMs <= MS_48H) {
@@ -195,6 +197,11 @@ const MS_DAY = 24 * MS_1H;
  * Rows are sorted most-recent-day first.
  *
  * @param metric — which field to use as the cell value: `"aircraft"` or `"messages"`.
+ * @param tzName — the display zone. The server always counts in UTC hours; each
+ *   cell is moved to the local day and hour its UTC hour starts in, which is
+ *   exact for a whole-hour zone (pass `heatmapDisplayZone`'s answer). The two
+ *   UTC hours of the autumn clock change land on one local hour and add up.
+ *   Default UTC.
  */
 export function buildHeatmapGrid(
   cells: HourlyHeatmapCell[],
@@ -205,21 +212,22 @@ export function buildHeatmapGrid(
 ): HeatmapRow[] {
   if (startMs >= endMs) return [];
 
-  // Round start down to midnight, end to midnight of the last day with potential data.
+  // The first and last local day of the range, as date keys like the cells'.
   // Subtract 1ms from endMs to avoid including an empty next-day row at exact midnight boundaries.
-  const startDay = floorToDay(startMs);
-  const endDay = floorToDay(Math.max(endMs - 1, startMs));
+  const startDay = dateKey(startMs, tzName);
+  const endDay = dateKey(Math.max(endMs - 1, startMs), tzName);
 
-  // Build a map of day_ms → Map<hour, value> from sparse cells.
+  // Build a map of local date key → Map<local hour, value> from the UTC cells.
   const cellMap = new Map<number, Map<number, number>>();
   for (const c of cells) {
-    let hourMap = cellMap.get(c.day_ms);
+    const local = localParts(c.day_ms + c.hour * MS_1H, tzName);
+    let hourMap = cellMap.get(local.key);
     if (!hourMap) {
       hourMap = new Map();
-      cellMap.set(c.day_ms, hourMap);
+      cellMap.set(local.key, hourMap);
     }
     const value = metric === "aircraft" ? c.aircraft_count : metric === "messages" ? c.message_count : metric === "flights" ? c.flight_count : c.raw_message_count;
-    hourMap.set(c.hour, value);
+    hourMap.set(local.hour, (hourMap.get(local.hour) ?? 0) + value);
   }
 
   // Generate rows for each day in range, most recent first.
@@ -231,7 +239,7 @@ export function buildHeatmapGrid(
       hours[h] = hourMap?.get(h) ?? 0;
     }
     rows.push({
-      dayLabel: formatDayLabel(dayMs, tzName),
+      dayLabel: formatDayLabel(dayMs),
       dayMs,
       hours,
     });
@@ -240,37 +248,100 @@ export function buildHeatmapGrid(
   return rows;
 }
 
-/** Floor a timestamp to midnight UTC of that day. */
-function floorToDay(ms: number): number {
-  return Math.floor(ms / MS_DAY) * MS_DAY;
+/** One formatter per zone: building them is the costly part. */
+const partsFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * Local calendar date (as the epoch ms of its midnight UTC, a "date key"),
+ * hour and minute of `ms` in `tzName` (default UTC). Throws on an unknown zone.
+ */
+function localParts(ms: number, tzName?: string): { key: number; hour: number; minute: number } {
+  const zone = tzName ?? "UTC";
+  let fmt = partsFormatters.get(zone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      hourCycle: "h23",
+    });
+    partsFormatters.set(zone, fmt);
+  }
+  const parts = fmt.formatToParts(new Date(ms));
+  const part = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+  return { key: Date.UTC(part("year"), part("month") - 1, part("day")), hour: part("hour"), minute: part("minute") };
+}
+
+/** The calendar date of `ms` in `tzName`, as a date key; UTC if the zone is unknown. */
+function dateKey(ms: number, tzName?: string): number {
+  try {
+    return localParts(ms, tzName).key;
+  } catch {
+    return Math.floor(ms / MS_DAY) * MS_DAY;
+  }
 }
 
 /**
- * Build a lookup map from heatmap cells, keyed by `"${day_ms}-${hour}"`.
- * Used to quickly retrieve all metrics for a given cell in multi-metric tooltips.
+ * The zone the heatmap can be shown in: `zone` when every UTC hour of the range
+ * starts on a whole local hour there (summer time included), else "UTC". In a
+ * half- or quarter-hour zone a local hour straddles two UTC hours, and distinct
+ * aircraft counts cannot be split or added, so the heatmap stays in UTC rather
+ * than approximate. Checked at the range's ends and every 15 days between.
  */
-export function buildHeatmapCellLookup(cells: HourlyHeatmapCell[]): Map<string, HourlyHeatmapCell> {
+export function heatmapDisplayZone(zone: string | undefined, startMs: number, endMs: number): string {
+  if (!zone || zone === "UTC") return "UTC";
+  const first = Math.floor(startMs / MS_1H) * MS_1H;
+  const step = 15 * MS_DAY;
+  try {
+    for (let t = first; ; t = Math.min(t + step, endMs)) {
+      if (localParts(Math.floor(t / MS_1H) * MS_1H, zone).minute !== 0) return "UTC";
+      if (t >= endMs) return zone;
+    }
+  } catch {
+    return "UTC"; // unknown zone
+  }
+}
+
+/**
+ * Build a lookup map from heatmap cells, keyed by `"${day_ms}-${hour}"` in the
+ * zone the grid is drawn in (`tzName`, default UTC), so a tooltip shows the
+ * numbers of the cell under the pointer. Cells landing on the same local hour
+ * (the autumn clock change) are added up, as in `buildHeatmapGrid`.
+ */
+export function buildHeatmapCellLookup(cells: HourlyHeatmapCell[], tzName?: string): Map<string, HourlyHeatmapCell> {
   const map = new Map<string, HourlyHeatmapCell>();
   for (const c of cells) {
-    map.set(`${c.day_ms}-${c.hour}`, c);
+    const local = localParts(c.day_ms + c.hour * MS_1H, tzName);
+    const id = `${local.key}-${local.hour}`;
+    const prev = map.get(id);
+    map.set(
+      id,
+      prev
+        ? {
+            ...prev,
+            aircraft_count: prev.aircraft_count + c.aircraft_count,
+            message_count: prev.message_count + c.message_count,
+            raw_message_count: prev.raw_message_count + c.raw_message_count,
+            flight_count: prev.flight_count + c.flight_count,
+          }
+        : { ...c, day_ms: local.key, hour: local.hour },
+    );
   }
   return map;
 }
 
-/** Format a midnight epoch ms to a short day label like "Mon 1/15". */
-function formatDayLabel(dayMs: number, tzName?: string): string {
+/**
+ * A date key (midnight UTC of a calendar date) as a short label like
+ * "Mon 1/15". Formatted in UTC on purpose: the key already is the local date,
+ * and converting it again would give the day before west of UTC.
+ */
+function formatDayLabel(dayMs: number): string {
   const d = new Date(dayMs);
-  const tz = tzName ?? "UTC";
-  try {
-    const weekday = d.toLocaleDateString("en-US", { weekday: "short", timeZone: tz });
-    const month = d.toLocaleDateString("en-US", { month: "numeric", timeZone: tz });
-    const day = d.toLocaleDateString("en-US", { day: "numeric", timeZone: tz });
-    return `${weekday} ${month}/${day}`;
-  } catch {
-    // Fallback for invalid timezone
-    const iso = d.toISOString();
-    return iso.slice(5, 10);
-  }
+  const weekday = d.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+  return `${weekday} ${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
 }
 
 // --- Raw message types (SBS-1 transmission types) ---

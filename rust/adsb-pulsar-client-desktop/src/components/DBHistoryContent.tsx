@@ -4,8 +4,8 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { getStorageStats, getAircraftSummary, getFlightSummaryArrow, getTrajectoryBatchArrow, getAllTrajectoriesArrow, getTimeDistribution, getDetectionRange, getHourlyHeatmap, getRawMessageCount, getMessageTypeDistribution } from "@/lib/commands";
 import { arrowToTracks, arrowToFlightSummaries } from "@/lib/arrow-utils";
 import type { AircraftSummary, AircraftTrack, DetectionRangeSector, FlightSummary, HourlyHeatmapCell, MessageTypeBucket, StorageStats, TimeDistributionBucket, TimeDistributionMetric, TimeGranularity, TimeRangePreset } from "@/lib/types";
-import { useDisplayTz } from "@/hooks/useDisplayTz";
-import { formatBytes } from "@/lib/format";
+import { useDisplayTz, type DisplayTzMode } from "@/hooks/useDisplayTz";
+import { formatBytes, fromZonedInput, toZonedInput } from "@/lib/format";
 import { granularityToNumBuckets } from "@/lib/db-history-analytics";
 import { DBHistoryAnalytics } from "./DBHistoryAnalytics";
 import { StatusTimeline } from "./StatusTimeline";
@@ -40,12 +40,11 @@ const PRESET_DURATIONS: Record<Exclude<TimeRangePreset, "custom">, number> = {
 
 const PRESETS: TimeRangePreset[] = ["24h", "48h", "1w", "2w", "1m", "3m", "custom"];
 
-/** Returns a datetime-local string (YYYY-MM-DDTHH:MM) from ms epoch. */
-function toDatetimeLocal(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
+const TZ_MODES: { mode: DisplayTzMode; label: string }[] = [
+  { mode: "local", label: "Local" },
+  { mode: "utc", label: "UTC" },
+  { mode: "source", label: "Source" },
+];
 
 export function DBHistoryContent({
   onLoadTracks,
@@ -58,7 +57,9 @@ export function DBHistoryContent({
   onAddToAnalysis,
   onSwitchToAnalysis,
 }: Props) {
-  const { formatTime, resolvedTzName } = useDisplayTz();
+  const { formatTime, resolvedTzName, zoneName, tzMode, setTzMode, sourceTzName } = useDisplayTz();
+  // "Source" differs from Local only when dump1090's zone is set explicitly.
+  const tzModes = TZ_MODES.filter((m) => m.mode !== "source" || sourceTzName !== "Local" || tzMode === "source");
   const [stats, setStats] = useState<StorageStats | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -374,6 +375,24 @@ export function DBHistoryContent({
       <div className="px-3 py-1">
         <div className="flex justify-between items-center mb-1">
           <span className="text-[10px] text-slate-500 uppercase">Time Range</span>
+          {/* The display zone, shared with Settings: times, charts and the custom range follow it. */}
+          <div role="group" aria-label="Display time zone" data-testid="dbhist-tz" className="ml-auto mr-1 flex gap-0.5">
+            {tzModes.map(({ mode, label }) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setTzMode(mode)}
+                aria-pressed={tzMode === mode}
+                title={tzMode === mode ? zoneName : undefined}
+                data-testid={`dbhist-tz-${mode}`}
+                className={`px-1 py-0.5 text-[10px] rounded transition-colors ${
+                  tzMode === mode ? "bg-cyan-900/60 text-cyan-300" : "text-slate-500 hover:text-slate-400"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           {browsing && (
             <button
               onClick={handleRefreshBrowse}
@@ -413,8 +432,11 @@ export function DBHistoryContent({
               Start
               <input
                 type="datetime-local"
-                value={toDatetimeLocal(startMs)}
-                onChange={(e) => setStartMs(new Date(e.target.value).getTime())}
+                value={toZonedInput(startMs, resolvedTzName)}
+                onChange={(e) => {
+                  const ms = fromZonedInput(e.target.value, resolvedTzName);
+                  if (ms != null) setStartMs(ms);
+                }}
                 className="block w-full mt-0.5 px-1.5 py-0.5 text-xs bg-slate-800 border border-slate-600 rounded text-slate-200"
               />
             </label>
@@ -422,8 +444,11 @@ export function DBHistoryContent({
               End
               <input
                 type="datetime-local"
-                value={toDatetimeLocal(endMs)}
-                onChange={(e) => setEndMs(new Date(e.target.value).getTime())}
+                value={toZonedInput(endMs, resolvedTzName)}
+                onChange={(e) => {
+                  const ms = fromZonedInput(e.target.value, resolvedTzName);
+                  if (ms != null) setEndMs(ms);
+                }}
                 className="block w-full mt-0.5 px-1.5 py-0.5 text-xs bg-slate-800 border border-slate-600 rounded text-slate-200"
               />
             </label>
@@ -560,6 +585,7 @@ export function DBHistoryContent({
               summaries={summaries}
               timeBuckets={timeBuckets}
               tzName={resolvedTzName}
+              zoneName={zoneName}
               detectionSectors={detectionSectors}
               rangeMs={endMs - startMs}
               onZoom={handleZoom}
