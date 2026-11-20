@@ -15,6 +15,15 @@
  *            maplibre-deckgl-terrain,maplibre-deckgl-city,
  *            maplibre-deckgl-buildings  --reps 5
  *          --timeout 60000  --headless  --no-build
+ *          --net local,broadband,dsl,mobile   (tile latency + bandwidth, src/bench/net.ts)
+ *          --gpu hardware|software            (software = SwiftShader, Chromium only)
+ *          --dpr 2                            (device pixel ratio: 2 = Retina)
+ *          --cpu-throttle 4                   (CDP CPU slowdown, Chromium only)
+ *
+ * Phase 1 of docs/MAP_ENGINES.md (docs/plans/2026-11-19-map-engine-phase1-bench.md)
+ * added --net, --gpu, --dpr and --cpu-throttle as proxies for a slower network
+ * and a weaker machine. --net throttles /fixtures/ tiles only, so it changes
+ * nothing for variants that load no tiles.
  *
  * The terrain, city and buildings variants read offline tiles from
  * bench/fixtures/ (`npm run bench:fixtures`, once).
@@ -22,27 +31,17 @@
  * Runs HEADED by default: headless Chromium renders WebGL in software
  * (SwiftShader), which would make every GPU variant look slow.
  */
-import { spawn, spawnSync } from "node:child_process";
-import { createServer } from "node:http";
-import { readFile, mkdir, writeFile, stat } from "node:fs/promises";
-import { extname, join, resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+import { mkdir, writeFile, stat } from "node:fs/promises";
+import { join } from "node:path";
 import os from "node:os";
 import { webkit, chromium } from "@playwright/test";
 import { aggregate, toMarkdown, VARIANTS } from "../src/bench/stats.ts";
+import { parseNet } from "../src/bench/net.ts";
+import {
+  RESULTS, FIXTURES, build, serve, net, setNet, resetLink, chromiumArgs, prepareContext, withTimeout,
+} from "./server.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const DIST = join(ROOT, ".next-bench");
-const RESULTS = join(ROOT, "bench", "results");
-const FIXTURES = join(ROOT, "bench", "fixtures");
-// Runtime files the libraries fetch themselves and webpack does not emit. Served
-// from node_modules rather than public/ (which would ship).
-const VENDOR = {
-  "/vendor/maplibre/": join(ROOT, "node_modules", "maplibre-gl", "dist"),
-  "/vendor/cesium/": join(ROOT, "node_modules", "cesium", "Build", "Cesium"),
-  // Offline terrain and building tiles (`npm run bench:fixtures`).
-  "/fixtures/": FIXTURES,
-};
 /** Variants that read /fixtures/; the run refuses to start without them. */
 const NEEDS_FIXTURES = ["maplibre-deckgl-terrain", "maplibre-deckgl-city", "maplibre-deckgl-buildings"];
 
@@ -58,6 +57,10 @@ function parseArgs(argv) {
     timeout: 60_000,
     headless: false,
     build: true,
+    nets: ["local"],
+    gpu: "hardware",
+    dpr: 1,
+    cpuThrottle: 1,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -71,46 +74,21 @@ function parseArgs(argv) {
     else if (a === "--timeout") o.timeout = Number(argv[++i]);
     else if (a === "--headless") o.headless = true;
     else if (a === "--no-build") o.build = false;
+    else if (a === "--net") o.nets = list();
+    else if (a === "--gpu") o.gpu = argv[++i];
+    else if (a === "--dpr") o.dpr = Number(argv[++i]);
+    else if (a === "--cpu-throttle") o.cpuThrottle = Number(argv[++i]);
     else throw new Error(`unknown option ${a}`);
+  }
+  o.nets.forEach(parseNet); // fail before building, not halfway through
+  if (!["hardware", "software"].includes(o.gpu)) throw new Error(`--gpu: hardware or software, not ${o.gpu}`);
+  if ((o.gpu === "software" || o.cpuThrottle !== 1) && o.engines.some((e) => e !== "chromium")) {
+    throw new Error("--gpu software and --cpu-throttle are Chromium only: add --engines chromium");
   }
   return o;
 }
 
-// ---------------------------------------------------------------- build + serve
-function build() {
-  console.log("Building bench pages (BENCH=1, dist .next-bench)…");
-  const r = spawnSync("npx", ["next", "build", "--webpack"], {
-    cwd: ROOT,
-    stdio: "inherit",
-    env: { ...process.env, BENCH: "1", NEXT_DIST_DIR: ".next-bench" },
-  });
-  if (r.status !== 0) throw new Error("bench build failed");
-}
-
-const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json", ".txt": "text/plain", ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2", ".wasm": "application/wasm", ".jpg": "image/jpeg", ".ktx2": "image/ktx2", ".mvt": "application/vnd.mapbox-vector-tile" };
-
-function serve() {
-  const server = createServer(async (req, res) => {
-    const p = decodeURIComponent(new URL(req.url, "http://x").pathname);
-    const prefix = Object.keys(VENDOR).find((k) => p.startsWith(k));
-    const root = prefix ? VENDOR[prefix] : DIST;
-    let file = join(root, prefix ? p.slice(prefix.length) : p);
-    if (!file.startsWith(root)) return res.writeHead(403).end();
-    try {
-      if ((await stat(file)).isDirectory()) file = join(file, "index.html");
-      res.writeHead(200, { "content-type": TYPES[extname(file)] ?? "application/octet-stream" });
-      res.end(await readFile(file));
-    } catch {
-      res.writeHead(404).end();
-    }
-  });
-  return new Promise((ok) => server.listen(0, "127.0.0.1", () => ok(server)));
-}
-
 // ---------------------------------------------------------------- one run
-const withTimeout = (p, ms, what) =>
-  Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`timeout: ${what}`)), ms))]);
-
 const CENTER = { x: 640, y: 400 };
 
 /** Identical input for every variant: four drags, then +2 / -2 zoom levels by double-click. */
@@ -148,31 +126,19 @@ function idleRefreshHz() {
 
 async function runOne(browser, base, engine, variant, cfg) {
   const { size, style, scenario, rep, timeout } = cfg;
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-  // No basemap tiles or agent calls: block every non-loopback http(s) request.
-  // Deliberately NOT a catch-all "**/*" route: in WebKit, routing everything
-  // also intercepts blob: worker scripts, and OpenLayers' WebGL buffer worker
-  // then never starts -- the map renders empty and `rendercomplete` never fires.
-  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1[:/])/, (route) => route.abort());
-  // The root layout's providers call Tauri. Outside Tauri, give them an invoke
-  // that never settles so they stay idle instead of throwing or polling.
-  await ctx.addInitScript(() => {
-    let id = 0;
-    window.__TAURI_INTERNALS__ = {
-      transformCallback: () => ++id,
-      unregisterCallback: () => {},
-      invoke: () => new Promise(() => {}),
-      convertFileSrc: (p) => p,
-      metadata: { currentWindow: { label: "main" }, currentWebview: { windowLabel: "main", label: "main" } },
-    };
-    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
-  });
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: cfg.dpr });
+  resetLink(); // each run starts on an idle link
+  await prepareContext(ctx);
   const page = await ctx.newPage();
+  if (cfg.cpuThrottle !== 1) {
+    const cdp = await ctx.newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cfg.cpuThrottle });
+  }
   const consoleErrors = [];
   page.on("console", (m) => m.type() === "error" && consoleErrors.push(m.text()));
 
   const mk = (sc, metrics, error) => ({
-    variant, engine, size, style, scenario: sc, rep, dnf: !metrics, metrics: metrics ?? {}, ...(error ? { error } : {}),
+    variant, engine, size, style, scenario: sc, rep, net: net.name, dnf: !metrics, metrics: metrics ?? {}, ...(error ? { error } : {}),
   });
   const out = [];
   let gpu = null;
@@ -200,9 +166,11 @@ async function runOne(browser, base, engine, variant, cfg) {
         await page.evaluate(() => window.__bench.startFrames());
         await withTimeout(gesture(page), timeout, "gesture");
         const frames = await page.evaluate(() => window.__bench.stopFrames());
+        // Tiles still in flight when the gesture ends (null: the variant loads none).
+        const idleMs = await withTimeout(page.evaluate(() => window.__bench.idleMs()), timeout, "idle");
         await page.waitForTimeout(300);
         const settles = await page.evaluate(() => window.__bench.takeSettles());
-        out.push(mk("panzoom", frames), mk("settle", settles));
+        out.push(mk("panzoom", frames), mk("settle", idleMs === null ? settles : { ...settles, idleMs }));
       }
     }
     pageErrors = await page.evaluate(() => window.__benchPageErrors ?? null);
@@ -239,11 +207,11 @@ const started = new Date();
 for (const engineName of opts.engines) {
   const browser = await engines[engineName].launch({
     headless: opts.headless,
-    args: engineName === "chromium"
-      ? ["--js-flags=--expose-gc", "--enable-precise-memory-info", "--ignore-gpu-blocklist", "--enable-gpu", "--window-position=0,0"]
-      : [],
+    args: engineName === "chromium" ? chromiumArgs(opts.gpu) : [],
   });
   console.log(`\n== ${engineName} ${browser.version()}`);
+  for (const netName of opts.nets) {
+  setNet(netName);
   for (const scenario of opts.scenarios) {
     for (const style of opts.styles) {
       // live is a fixed workload (500 aircraft), not scaled by size.
@@ -254,17 +222,19 @@ for (const engineName of opts.engines) {
           for (const variant of order) {
             const { results, gpu } = await runOne(browser, base, engineName, variant, {
               size: size || 25_000, style, scenario, rep, timeout: opts.timeout,
+              dpr: opts.dpr, cpuThrottle: opts.cpuThrottle,
             });
             if (gpu) gpus[engineName] = gpu;
             all.push(...results);
             const r = results[0];
             const hz = r.idleHz != null && r.idleHz < 45 ? ` ⚠ idle ${r.idleHz} Hz (throttled?)` : "";
             const summary = r.dnf ? `DNF (${r.error})` : Object.entries(r.metrics).slice(0, 3).map(([k, v]) => `${k}=${Number(v).toFixed(1)}`).join(" ");
-            console.log(`${scenario.padEnd(8)} ${style.padEnd(5)} ${String(size || 25_000).padStart(8)} rep${rep} ${variant.padEnd(11)} ${summary}${hz}`);
+            console.log(`${netName.padEnd(9)} ${scenario.padEnd(8)} ${style.padEnd(5)} ${String(size || 25_000).padStart(8)} rep${rep} ${variant.padEnd(11)} ${summary}${hz}`);
           }
         }
       }
     }
+  }
   }
   await browser.close();
 }
@@ -286,6 +256,7 @@ const md = [
   "",
   `Host: ${meta.host.cpu}, ${meta.host.cores} cores, ${meta.host.memGB} GB · GPU: ${Object.entries(gpus).map(([e, g]) => `${e}: ${g}`).join("; ")}`,
   `Reps: ${opts.reps} (median shown) · ⚠n = n repetitions did not finish`,
+  `GPU mode: ${opts.gpu} · DPR ${opts.dpr} · CPU throttle ×${opts.cpuThrottle} · nets: ${opts.nets.join(", ")}`,
   "",
   toMarkdown(rows),
 ].join("\n");

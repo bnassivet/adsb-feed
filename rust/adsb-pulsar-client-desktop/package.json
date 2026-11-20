@@ -11,7 +11,9 @@
     "test:watch": "vitest",
     "tauri": "tauri",
     "bench": "node --no-warnings bench/run.mjs",
-    "bench:fixtures": "node --no-warnings bench/fixtures.mjs"
+    "bench:fixtures": "node --no-warnings bench/fixtures.mjs",
+    "bench:checks": "node --no-warnings bench/checks.mjs",
+    "bench:summary": "node --no-warnings bench/summary.mjs"
   },
   "dependencies": {
     "@copilotkit/react-core": "^1.85.0",

@@ -48,6 +48,11 @@ export interface BenchTarget {
   setData(tracks: AircraftTrack[], style: Style): Promise<void>;
   /** Subscribe to the end of a pan/zoom gesture. Returns an unsubscribe. */
   onMoveEnd(cb: () => void): () => void;
+  /**
+   * Resolve once every tile the current view needs has arrived and been drawn
+   * (MapLibre's `idle`). Only variants that load tiles provide it.
+   */
+  whenIdle?(): Promise<void>;
 }
 
 export function nextFrame(): Promise<number> {
@@ -114,6 +119,8 @@ export interface BenchApi {
   takeSettles(): Record<string, number>;
   live(): Promise<Record<string, number>>;
   heapMB(): number | null;
+  /** Time until the map's tiles have all arrived (null: the variant loads none). Called right after a gesture. */
+  idleMs(): Promise<number | null>;
 }
 
 declare global {
@@ -185,6 +192,13 @@ export function installBench(target: BenchTarget, params: BenchParams): BenchApi
     },
 
     heapMB,
+
+    async idleMs() {
+      if (!target.whenIdle) return null;
+      const t0 = performance.now();
+      await target.whenIdle();
+      return performance.now() - t0;
+    },
   };
   window.__bench = api;
   return api;

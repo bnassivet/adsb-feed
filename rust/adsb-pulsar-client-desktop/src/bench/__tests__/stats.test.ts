@@ -87,6 +87,18 @@ describe("aggregate", () => {
     expect(deck.ratio.totalMs).toBeNull();
   });
 
+  it("keeps network profiles apart, local first", () => {
+    const rows = aggregate([
+      run("maplibre", 0, 70, { net: "dsl" }), run("maplibre", 0, 50), run("maplibre", 0, 60, { net: "local" }),
+    ]);
+    expect(rows.map((r) => [r.net, r.metrics.totalMs])).toEqual([["local", 55], ["dsl", 70]]);
+  });
+
+  it("compares a throttled row with the baseline on its own network, else the local one", () => {
+    const rows = aggregate([run("leaflet", 0, 100), run("maplibre", 0, 50, { net: "dsl" })]);
+    expect(rows.find((r) => r.variant === "maplibre")!.ratio.totalMs).toBeCloseTo(0.5);
+  });
+
   it("orders variants with the baseline first", () => {
     const rows = aggregate([run("openlayers", 0, 1), run("deckgl", 0, 1), run("leaflet", 0, 1), run("maplibre", 0, 1)]);
     expect(rows.map((r) => r.variant)).toEqual(["leaflet", "deckgl", "maplibre", "openlayers"]);
@@ -104,5 +116,12 @@ describe("toMarkdown", () => {
     expect(md).toContain("| Variant | 10k | 1M |");
     expect(md).toMatch(/\| maplibre \| 50(\.0)? ms \(×0\.25\) \| 80(\.0)? ms \|/);
     expect(md).toMatch(/\| leaflet \| 200(\.0)? ms \| DNF \|/);
+  });
+
+  it("puts a throttled row in the same table, labelled with its network", () => {
+    const md = toMarkdown(aggregate([run("maplibre", 0, 50), run("maplibre", 0, 90, { net: "dsl" })]));
+    expect(md.match(/### /g)).toHaveLength(1);
+    expect(md).toMatch(/\| maplibre \| 50(\.0)? ms/);
+    expect(md).toMatch(/\| maplibre @dsl \| 90(\.0)? ms/);
   });
 });

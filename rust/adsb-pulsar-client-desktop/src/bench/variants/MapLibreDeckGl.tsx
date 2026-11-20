@@ -78,6 +78,12 @@ export function MapLibreDeckGlVariant({ params, ...opts }: { params: BenchParams
               map.on("moveend", cb);
               return () => map.off("moveend", cb);
             },
+            // Only meaningful with tiles; the flat/3d variants have none and are idle at once.
+            whenIdle: () =>
+              new Promise<void>((resolve) => {
+                if (map.loaded() && !map.isMoving()) resolve();
+                else map.once("idle", () => resolve());
+              }),
           },
           params,
         ),

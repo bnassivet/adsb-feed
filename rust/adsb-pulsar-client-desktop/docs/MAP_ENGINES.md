@@ -38,15 +38,21 @@ Synthesis of everything below. The evidence is in the sections it cites.
 | # | What | Engine | Go/no-go for the next phase |
 |---|---|---|---|
 | 0 | New layers in the app as it is: OpenAIP airspaces, one GeoJSON per AIRAC cycle, labelled with the cycle and drawn as deck.gl polygons; METAR stations, which also provide QNH; a radar WMS; OpenSeaMap and EMODnet; a pre-made relief raster | Leaflet | Are terrain, relief and airspaces actually used? If not, stop here and stay on Leaflet. |
-| 1 | Close the open measurements: tiles over the network during gestures, a weaker GPU, a visual check that a hill or building hides an aircraft, and the deck.gl / MapLibre 6 `map.transform` issue (upstream fix, or pin MapLibre 5) | bench | Every item passes, or has a mitigation that is written down. |
+| 1 | Close the open measurements: tiles over the network during gestures, a weaker GPU, a visual check that a hill or building hides an aircraft, and the deck.gl / MapLibre 6 `map.transform` issue (upstream fix, or pin MapLibre 5) | bench | Every item passes, or has a mitigation that is written down. **Done 2026-11-19: go, with three written mitigations** (*Phase 1 results*). |
 | 2 | Port: MapLibre style; the tile cache behind `addProtocol`, keeping `store.ts`, `loadTile.ts` and `prefetch.ts`; the deck.gl data layers, which move almost unchanged; markers, popups and the context menu; label layout reworked for a pitched view. `exposeTransform` moves from `src/bench/` to `src/lib/`, together with its tests | MapLibre | Feature parity with today's flat map, checked layer by layer against `MapInner.tsx`. |
 | 3 | 3D content: Terrarium terrain, buildings around airports only, airspace volumes, and aircraft heights corrected with QNH | MapLibre | — |
 | 4 | Offline: PMTiles extracts served from Rust through a Tauri custom protocol. This is the "local tile server" the 2026-11-08 cache decision was waiting for | MapLibre | — |
 
 **Risks to carry.**
-- **deck.gl and MapLibre 6.** With terrain, deck.gl 9.4.1 reads an internal
-  that MapLibre 6 moved. The shim is five lines but depends on a private field.
-  Recheck it on every upgrade of either library.
+- **deck.gl and MapLibre 6.** deck.gl 9.4.1 reads `map.transform`, which
+  MapLibre 6 moved. That breaks **every interleaved overlay and every map with
+  terrain**, not only terrain as first thought (*Phase 1 results*). The shim is
+  five lines but depends on a private field. A canary test
+  (`deck-compat-canary.test.ts`) fails once deck.gl stops reading it; recheck it
+  on every upgrade of either library.
+- **No hardware GPU.** With software WebGL, MapLibre draws a frame in about
+  2 s, flat or pitched, where Leaflet only stalls now and then. The port
+  requires hardware WebGL2 (*Phase 1 results*).
 - **Live latency.** Interleaving adds one frame of latency to live updates.
   That is negligible next to the 500 ms bridge flush, but it should stay
   measured.
@@ -55,8 +61,140 @@ Synthesis of everything below. The evidence is in the sections it cites.
 - **Licences.** OpenAIP is CC BY-NC-SA, so non-commercial use only. The OACI
   1:500,000 chart is restricted: check the terms before caching it.
 - **CSP.** Every new remote host goes into both CSP files.
-- **Hardware.** All numbers so far come from one M4 Max with tiles on local
-  disk.
+- **Hardware.** All numbers so far come from one M4 Max. Phase 1 added proxies
+  (slow network, software GPU, Retina, slow CPU), but a real weaker GPU (an
+  integrated Intel or AMD chip) is still unmeasured. The command is ready:
+  `npm run bench -- --variants leaflet,deckgl,maplibre-deckgl-3d-il,maplibre-deckgl-terrain,maplibre-deckgl-buildings --sizes 200000 --styles dots`.
+
+## Phase 1 results (2026-11-19)
+
+Plan: `docs/plans/2026-11-19-map-engine-phase1-bench.md`. Same M4 Max, 200k
+dots (the real 24 h view), 3 repetitions unless stated, Chromium 158 and WebKit
+27.2. Raw output: `bench/results/2026-11-19T*` and `checks-2026-11-19T20-22-02/`
+(gitignored). **Verdict: go for phase 2**, with the three mitigations in bold
+below written into it.
+
+### 1. Tiles over the network during gestures
+
+New `--net` option. The driver adds latency per request and queues every
+response on one shared link (`src/bench/net.ts`). It applies to fixture tiles
+only: *dsl* is 60 ms at 8 Mbit/s, *mobile* is 150 ms at 2 Mbit/s. New metric
+`idleMs`: time from the end of the gesture until MapLibre's `idle` (every tile
+in).
+
+| | WebKit p95 / worst frame | Chromium p95 / worst | `idleMs` WebKit (local / dsl / mobile) | `idleMs` Chromium |
+|---|---|---|---|---|
+| terrain (zoom 7) | 18 / 23–29 ms on every profile | 9.1–9.2 / 9.4–17 | 0 / 1.2 s / 11 s | 0 / 1.0 s / 15.6 s |
+| city (terrain, zoom 15) | 18 / 22–23 | 9.1–9.3 / 9.4–9.5 | 0 / 0 / 0 | 0 / 0 / 0 |
+| buildings | 18 / 23–24 | 9.2 / 9.4 | 0 / 1.9 s / 19 s | 0 / 1.8 s / 26.7 s |
+
+- **Frames do not depend on the network.** Tiles decode in MapLibre's workers,
+  so a slow link never blocks a frame. p95 and the worst frame are identical on
+  every profile.
+- **What a slow link costs is completeness.** The new tiles finish arriving
+  1–2 s after a gesture on DSL and 11–27 s on the mobile profile. Meanwhile the
+  terrain shows coarser levels and buildings pop in late. The city view needs
+  nothing new, because its DEM is a few overzoomed tiles that are already in.
+- **Mitigation, for phase 2:** terrain and buildings go through the tile cache
+  (`addProtocol`) from the start, prefetched around the receiver like the
+  raster basemap today. Phase 4's PMTiles takes them off the network entirely.
+  Also check whether the style's two DEM sources (terrain and hillshade, same
+  URL, as MapLibre advises) fetch every tile twice; the cache would dedupe them.
+
+### 2. A weaker GPU
+
+No second machine was available, so three proxies were used, each at 200k dots:
+
+| | Load (ms) | Pan/zoom p95 / worst frame | Live update |
+|---|---|---|---|
+| **Retina, DPR 2** (4× the pixels; the bench had always run at 1), WebKit | — | Leaflet 18 / 38 ms · deckgl 18 / 26 · interleaved 18 / 22 · terrain 18 / 27 · buildings 18 / 22 | Leaflet 44 ms · MapLibre 32 ms (one frame, as before) |
+| **CPU ×4 slower** (CDP), Chromium | Leaflet 300 · deckgl 73 · MapLibre 87–89 | MapLibre 9.2 / ≤ 17 ms · Leaflet 9.2 / 42 | Leaflet 72 ms · MapLibre 16 ms |
+| **Software WebGL** (SwiftShader), Chromium | Leaflet 80 · deckgl 31 · MapLibre 30–33 | Leaflet 17 / 2517 ms · deckgl 17 / 3800 · **MapLibre flat 2290 / 6900 · pitched 3900–5200 / 8800–9300** | about 15 ms everywhere |
+
+- **Retina and a slow CPU cost the MapLibre variants nothing visible.** They
+  stay at the display's frame rate. The shipping Leaflet, with its DOM icons,
+  is the one that slows (38–42 ms worst frames, 300 ms load).
+- **With no GPU, MapLibre is unusable.** It redraws its whole WebGL scene on
+  every gesture frame, which costs about 2 s per frame in software, even flat.
+  So the cost is not the pitch or the terrain, only the absence of a GPU.
+  Leaflet pans by CSS transform, so it only stalls now and then.
+  - Where that happens: a VM, remote desktop, or a blocklisted driver, i.e. the
+    Linux build on WebKitGTK. Never on a Mac: WKWebView always has Metal.
+  - **Mitigation, for phase 2:** hardware WebGL2 is a stated requirement. At
+    start-up the map reads the renderer (`WEBGL_debug_renderer_info`). If it
+    names SwiftShader, llvmpipe or "Software", it says so in the status bar
+    rather than leaving the map to stutter without explanation.
+- **Still open:** a real integrated GPU. The proxies bound the result from both
+  sides (an M4 Max, and no GPU at all) but are not that machine.
+
+### 3. Occlusion, checked visually and by pixels
+
+`npm run bench:checks` opens `/bench/occlusion` (`src/bench/OcclusionProbe.tsx`).
+
+- **Camera:** placed explicitly with `calculateCameraOptionsFromTo`.
+- **Probe pair:** from the rendered surface, the page computes one aircraft
+  whose line of sight a summit or tower blocks, and one at the same altitude
+  whose line is clear (`src/bench/occlusion.ts`, tested on synthetic walls).
+- **Measurement:** it shows each aircraft in turn and counts the pixels it
+  changes in a screenshot.
+- **Scenes:**
+  - *terrain*: Mount Washington, inside the Terrarium fixture, 15 km out;
+  - *buildings*: the tallest tower in the Montréal fixture, on terrain.
+
+| Scene, mode | Hidden aircraft (px changed) | Visible twin (px) | Line-of-sight margins |
+|---|---:|---:|---|
+| terrain, interleaved | **0** | 210 | blocked by 117 m, clear by 107 m |
+| terrain, overlaid | 206 | 210 | same |
+| buildings, interleaved | **3** | 317 | blocked by 97 m, clear by 14 m |
+| buildings, overlaid | 316 | 314 | same |
+
+Identical in WebKit and Chromium.
+
+- **Interleaved hides exactly what geometry says it should.** It holds for
+  terrain and for extrusions, through the shared depth buffer.
+- **Overlaid paints an aircraft that is behind a tower onto the tower's
+  face.** The screenshots show it plainly. So **the port must be
+  interleaved**, and it pays the one frame of live latency measured earlier.
+- **Lesson:** MapLibre's default `maxPitch` (60°) silently clamps
+  `calculateCameraOptionsFromTo`. The first run's camera sat 9 km higher than
+  asked, and no aircraft could be hidden. The probe sets `maxPitch: 85`. The
+  port should too, if low "approach" views are wanted.
+
+### 4. deck.gl 9.4.1 on MapLibre 6.17: `map.transform`
+
+The same probe with the shim (`exposeTransform`) off:
+
+| Without the shim | Overlaid | Interleaved |
+|---|---|---|
+| flat | ✅ draws | ❌ `transform.height` on every frame, nothing drawn |
+| terrain | ❌ `transform.elevation` in `addControl` | ❌ same |
+
+With the shim, all four cases draw, in both engines.
+
+- **Wider than first noted.** `getViewport` reads `map.transform.height` for
+  interleaved rendering whether or not terrain is on. Only an overlaid, flat map
+  works unshimmed.
+- **Neither listed fix is available here:**
+  - no deck.gl release newer than 9.4.1 could be checked from this session (no
+    registry access);
+  - pinning MapLibre 5 would mean a dependency change and losing 6.x, which
+    CopilotKit's `overrides` entry already points at.
+- **Mitigation, for phase 2:**
+  - keep the shim, moved to `src/lib/` with its tests, as already planned;
+  - keep `deck-compat-canary.test.ts`, which fails once deck.gl stops reading
+    `map.transform`, which is when the shim should go;
+  - keep `npm run bench:checks`, which shows whether the upgraded pair works
+    without the shim.
+
+### Bench changes behind these numbers
+
+- `bench/run.mjs`: `--net`, `--gpu software`, `--dpr` and `--cpu-throttle`;
+  the `idleMs` metric; and a network profile as a row in each table
+  (`variant @dsl`).
+- `bench/server.mjs`: the build, server and browser setup, shared with
+  `bench/checks.mjs`.
+- `npm run bench:summary` prints every metric of a result, where the Markdown
+  report shows only the primary one.
 
 ## What was measured (2026-11-18)
 
@@ -507,7 +645,7 @@ Buildings add 8–19 MB.
     on screen. deck.gl still processes every point each frame, so the cost
     counts, but the scene is not a realistic approach.
   - Occlusion itself, a hill or building hiding an aircraft, was not checked
-    visually.
+    visually. (Checked since, in *Phase 1 results*.)
 
 ### Cache policy
 
@@ -550,13 +688,10 @@ host. Every remote host above, in contrast, must be added to **both** CSP files.
 2. **If 3D proves worth it, port to MapLibre + deck.gl:** 3D terrain from
    Terrarium tiles, airspace volumes, buildings near airports, and offline
    basemap and relief as PMTiles.
-3. **Before porting:** the interleaved run with terrain and buildings is
-   done (above: no measurable cost here). Still open:
-   - tiles over the network during gestures;
-   - a weaker GPU than the M4 Max;
-   - a visual check that terrain and buildings hide aircraft;
-   - a fix for, or a pin around, the deck.gl/MapLibre 6 `map.transform`
-     incompatibility.
+3. **Before porting:** done in phase 1 (*Phase 1 results*): network tiles
+   during gestures, GPU proxies, occlusion checked visually and by pixels, and
+   the `map.transform` incompatibility mapped and pinned by a canary test. Only
+   a real integrated GPU remains unmeasured.
 4. **Cesium** only if a true globe becomes a requirement.
 
 ## Engine as a runtime choice

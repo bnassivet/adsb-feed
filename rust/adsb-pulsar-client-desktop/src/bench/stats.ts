@@ -23,7 +23,12 @@ export interface RunResult {
   dnf: boolean;
   metrics: Record<string, number>;
   error?: string;
+  /** Network profile the tiles were served with (`--net`, src/bench/net.ts); absent = local. */
+  net?: string;
 }
+
+const LOCAL_NET = "local";
+const netOf = (r: { net?: string }) => r.net ?? LOCAL_NET;
 
 export interface AggregateRow {
   variant: string;
@@ -31,6 +36,7 @@ export interface AggregateRow {
   size: number;
   style: Style;
   scenario: Scenario;
+  net: string;
   reps: number;
   dnfCount: number;
   /** True only when every repetition failed. */
@@ -86,11 +92,15 @@ function variantOrder(v: string): number {
   return i === -1 ? VARIANTS.length : i;
 }
 
+function netOrder(n: string): number {
+  return n === LOCAL_NET ? -1 : 0;
+}
+
 /** Median per (engine, size, style, scenario, variant), with ratios against the baseline. */
 export function aggregate(results: readonly RunResult[], baseline: string = BASELINE): AggregateRow[] {
   const groups = new Map<string, RunResult[]>();
   for (const r of results) {
-    const key = [r.engine, r.size, r.style, r.scenario, r.variant].join("|");
+    const key = [r.engine, r.size, r.style, r.scenario, r.variant, netOf(r)].join("|");
     let g = groups.get(key);
     if (!g) groups.set(key, (g = []));
     g.push(r);
@@ -108,6 +118,7 @@ export function aggregate(results: readonly RunResult[], baseline: string = BASE
     const { variant, engine, size, style, scenario } = g[0];
     rows.push({
       variant, engine, size, style, scenario,
+      net: netOf(g[0]),
       reps: g.length,
       dnfCount: g.length - ok.length,
       dnf: ok.length === 0,
@@ -119,7 +130,10 @@ export function aggregate(results: readonly RunResult[], baseline: string = BASE
   const sameGroup = (a: AggregateRow, b: AggregateRow) =>
     a.engine === b.engine && a.size === b.size && a.style === b.style && a.scenario === b.scenario;
   for (const row of rows) {
-    const base = rows.find((b) => b.variant === baseline && sameGroup(b, row));
+    // The baseline on the same network, else the local one: the bench's Leaflet
+    // baseline loads no tiles, so throttling cannot change it.
+    const bases = rows.filter((b) => b.variant === baseline && sameGroup(b, row));
+    const base = bases.find((b) => b.net === row.net) ?? bases.find((b) => b.net === LOCAL_NET);
     // A variant that never finished still reports every metric its peers have, as null.
     const keys = new Set(rows.filter((o) => sameGroup(o, row)).flatMap((o) => Object.keys(o.metrics)));
     for (const k of keys) {
@@ -136,7 +150,8 @@ export function aggregate(results: readonly RunResult[], baseline: string = BASE
       a.scenario.localeCompare(b.scenario) ||
       a.style.localeCompare(b.style) ||
       a.size - b.size ||
-      variantOrder(a.variant) - variantOrder(b.variant),
+      variantOrder(a.variant) - variantOrder(b.variant) ||
+      netOrder(a.net) - netOrder(b.net),
   );
 }
 
@@ -167,6 +182,10 @@ function cell(row: AggregateRow | undefined, key: string, unit: string): string 
   return s;
 }
 
+function rowLabel(r: AggregateRow): string {
+  return r.net === LOCAL_NET ? r.variant : `${r.variant} @${r.net}`;
+}
+
 export function toMarkdown(rows: readonly AggregateRow[]): string {
   const tables = new Map<string, AggregateRow[]>();
   for (const r of rows) {
@@ -180,13 +199,14 @@ export function toMarkdown(rows: readonly AggregateRow[]): string {
   for (const [title, t] of tables) {
     const { key, unit, label } = PRIMARY_METRIC[t[0].scenario];
     const sizes = [...new Set(t.map((r) => r.size))].sort((a, b) => a - b);
-    const variants = [...new Set(t.map((r) => r.variant))].sort((a, b) => variantOrder(a) - variantOrder(b));
+    // One table row per variant and network, in aggregate()'s order.
+    const variants = [...new Map(t.map((r) => [rowLabel(r), r])).values()];
     out.push(`### ${title}`, "", `_${label}; lower is better; ×n = ratio to ${BASELINE}_`, "");
     out.push(`| Variant | ${sizes.map(sizeLabel).join(" | ")} |`);
     out.push(`|---|${sizes.map(() => "---:").join("|")}|`);
     for (const v of variants) {
-      const cells = sizes.map((s) => cell(t.find((r) => r.variant === v && r.size === s), key, unit));
-      out.push(`| ${v} | ${cells.join(" | ")} |`);
+      const cells = sizes.map((s) => cell(t.find((r) => rowLabel(r) === rowLabel(v) && r.size === s), key, unit));
+      out.push(`| ${rowLabel(v)} | ${cells.join(" | ")} |`);
     }
     out.push("");
   }
