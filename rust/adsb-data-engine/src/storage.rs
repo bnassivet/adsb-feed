@@ -1504,6 +1504,36 @@ impl StorageHandle {
         &self,
         query: DetectionRangeQuery,
     ) -> Result<Vec<DetectionRangeSector>, StorageError> {
+        // Validated before it is formatted into the SQL: a finite positive f64
+        // literal is all that can reach the query text.
+        let band_width = match query.band_width_nm {
+            Some(w) if w.is_finite() && w > 0.0 => Some(w),
+            Some(w) => {
+                return Err(StorageError::Query(format!(
+                    "band_width_nm must be a positive number, got {w}"
+                )));
+            }
+            None => None,
+        };
+        // With bands, one pass yields two kinds of rows: per-sector aggregates
+        // (GROUPING(band) = 1, flight_count stays a true DISTINCT) and per
+        // (sector, band) counts (GROUPING(band) = 0). The window functions in
+        // the glitch filter run once either way.
+        let (band_col, grouping, is_sector_row, band_out) = match band_width {
+            Some(w) => (
+                format!("CAST(FLOOR(distance_nm / {w:?}) AS INTEGER)"),
+                "GROUPING SETS ((sector), (sector, band))",
+                "GROUPING(band)",
+                "band",
+            ),
+            None => (
+                "CAST(NULL AS INTEGER)".to_string(),
+                "sector",
+                "1",
+                "CAST(NULL AS INTEGER)",
+            ),
+        };
+
         let storage = self
             .inner
             .lock()
@@ -1513,8 +1543,10 @@ impl StorageHandle {
             r#"
             SELECT sector, MAX(distance_nm) AS max_distance_nm, COUNT(*) AS position_count,
                    MIN(altitude) AS min_altitude, MAX(altitude) AS max_altitude,
-                   COUNT(DISTINCT flight_id) AS flight_count
+                   COUNT(DISTINCT flight_id) AS flight_count,
+                   {IS_SECTOR_ROW} AS is_sector_row, {BAND_OUT} AS band
             FROM (
+              SELECT *, {BAND_COL} AS band FROM (
               SELECT
                 -- Integer sector 0..35. NOTE: DuckDB `/` is floating-point division,
                 -- so the outer FLOOR(... / 10.0) + CAST are required to avoid ~360
@@ -1569,10 +1601,15 @@ impl StorageHandle {
                       COS(RADIANS(p.latitude)) * COS(RADIANS(p.next2_lat))
                         * POWER(SIN(RADIANS((p.next2_lon - p.longitude) / 2)), 2)
                     )) <= {MAX_KT} * ABS(p.timestamp_ms - p.next2_ms) / 3600000.0 + {SLACK_NM})
-            ) sub GROUP BY sector ORDER BY sector
+              ) pts
+            ) sub GROUP BY {GROUPING} ORDER BY sector
         "#,
             MAX_KT = PLAUSIBLE_MAX_SPEED_KT,
             SLACK_NM = POSITION_JITTER_NM,
+            IS_SECTOR_ROW = is_sector_row,
+            BAND_COL = band_col,
+            GROUPING = grouping,
+            BAND_OUT = band_out,
         );
 
         let start_ms = query.start_ms.unwrap_or(0);
@@ -1599,6 +1636,8 @@ impl StorageHandle {
                     let min_altitude: Option<f64> = row.get(3)?;
                     let max_altitude: Option<f64> = row.get(4)?;
                     let flight_count: i64 = row.get(5)?;
+                    let is_sector_row: i64 = row.get(6)?;
+                    let band: Option<i32> = row.get(7)?;
                     Ok((
                         sector,
                         max_distance_nm,
@@ -1606,6 +1645,8 @@ impl StorageHandle {
                         min_altitude,
                         max_altitude,
                         flight_count,
+                        is_sector_row == 1,
+                        band,
                     ))
                 },
             )?
@@ -1620,14 +1661,30 @@ impl StorageHandle {
                 min_altitude: None,
                 max_altitude: None,
                 flight_count: 0,
+                band_counts: Vec::new(),
             })
             .collect();
 
         // Merge rows into the 36-sector array. The SQL yields exactly one row per
         // integer sector, but merge defensively (max/accumulate, never overwrite) so a
         // stray duplicate sector can never drop the true per-sector maximum.
-        for (sector_idx, max_dist, count, min_alt, max_alt, fl_count) in rows {
-            if (0..36).contains(&sector_idx) {
+        for (sector_idx, max_dist, count, min_alt, max_alt, fl_count, is_sector_row, band) in rows {
+            if !(0..36).contains(&sector_idx) {
+                continue;
+            }
+            if !is_sector_row {
+                // (sector, band) row. Only non-empty bands produce a row, so the
+                // vector never ends in zeros.
+                if let Some(b) = band.filter(|b| *b >= 0) {
+                    let bands = &mut sectors[sector_idx as usize].band_counts;
+                    if bands.len() <= b as usize {
+                        bands.resize(b as usize + 1, 0);
+                    }
+                    bands[b as usize] += count as u64;
+                }
+                continue;
+            }
+            {
                 let s = &mut sectors[sector_idx as usize];
                 s.max_distance_nm = s.max_distance_nm.max(max_dist);
                 s.position_count += count as u64;
@@ -4962,6 +5019,7 @@ mod tests {
                 receiver_lon: -73.5,
                 start_ms: Some(0),
                 end_ms: Some(i64::MAX),
+                band_width_nm: None,
             })
             .unwrap();
 
@@ -4988,6 +5046,7 @@ mod tests {
                 receiver_lon: -73.5,
                 start_ms: None,
                 end_ms: None,
+                band_width_nm: None,
             })
             .unwrap();
 
@@ -5020,6 +5079,7 @@ mod tests {
                 receiver_lon: rx_lon,
                 start_ms: None,
                 end_ms: None,
+                band_width_nm: None,
             })
             .unwrap();
 
@@ -5061,6 +5121,7 @@ mod tests {
                 receiver_lon: rx_lon,
                 start_ms: None,
                 end_ms: None,
+                band_width_nm: None,
             })
             .unwrap();
 
@@ -5117,6 +5178,7 @@ mod tests {
                 receiver_lon: rx_lon,
                 start_ms: None,
                 end_ms: None,
+                band_width_nm: None,
             })
             .unwrap();
 
@@ -5158,6 +5220,7 @@ mod tests {
                 receiver_lon: -73.0,
                 start_ms: Some(mid),
                 end_ms: Some(end),
+                band_width_nm: None,
             })
             .unwrap();
 
@@ -5175,6 +5238,7 @@ mod tests {
                 receiver_lon: -73.0,
                 start_ms: None,
                 end_ms: None,
+                band_width_nm: None,
             })
             .unwrap()
     }
@@ -5248,6 +5312,88 @@ mod tests {
         assert!((farthest_nm(&range_of(&positions)) - expected).abs() < 0.1);
     }
 
+    fn detection_range_with_bands(
+        positions: &[AircraftPosition],
+        band_width_nm: Option<f64>,
+    ) -> Result<Vec<DetectionRangeSector>, StorageError> {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle.insert_batch_sync(positions, "UTC").unwrap();
+        handle.get_detection_range_sync(crate::types::DetectionRangeQuery {
+            receiver_lat: 45.0,
+            receiver_lon: -73.0,
+            start_ms: None,
+            end_ms: None,
+            band_width_nm,
+        })
+    }
+
+    /// Positions due north of (45.0, -73.0), one aircraft each so none is
+    /// judged a glitch: ~3 NM, ~6 NM, ~30 NM; plus one ~18 NM due east.
+    fn banded_positions() -> Vec<AircraftPosition> {
+        vec![
+            sample_position("N3", Some(45.05), Some(-73.0), "2024/01/15 10:00:00.000"),
+            sample_position("N6", Some(45.1), Some(-73.0), "2024/01/15 10:00:01.000"),
+            sample_position("N30", Some(45.5), Some(-73.0), "2024/01/15 10:00:02.000"),
+            sample_position("E18", Some(45.0), Some(-72.6), "2024/01/15 10:00:03.000"),
+        ]
+    }
+
+    #[test]
+    fn test_detection_range_band_counts_bucket_by_distance() {
+        let sectors = detection_range_with_bands(&banded_positions(), Some(5.0)).unwrap();
+
+        // North sector 0: 3 NM → band 0, 6 NM → band 1, 30 NM → band 6.
+        let north = &sectors[0];
+        assert_eq!(north.position_count, 3);
+        assert_eq!(north.band_counts, vec![1, 1, 0, 0, 0, 0, 1]);
+
+        // East: ~17 NM → band 3, trailing zeros trimmed.
+        let east = sectors.iter().find(|s| s.bearing_deg == 90).unwrap();
+        assert_eq!(east.position_count, 1);
+        assert_eq!(east.band_counts, vec![0, 0, 0, 1]);
+
+        // Sector aggregates are unchanged by the extra grouping.
+        // One flight per aircraft: a DISTINCT count, not a sum over bands.
+        assert_eq!(north.flight_count, 3);
+        assert!(north.max_distance_nm > 29.0 && north.max_distance_nm < 31.0);
+
+        // Every sector's bands add up to its position count; empty sectors have none.
+        for s in &sectors {
+            assert_eq!(s.band_counts.iter().sum::<u64>(), s.position_count);
+            if s.position_count == 0 {
+                assert!(s.band_counts.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn test_detection_range_without_bands_leaves_them_out() {
+        let sectors = detection_range_with_bands(&banded_positions(), None).unwrap();
+        assert_eq!(sectors[0].position_count, 3);
+        assert!(sectors.iter().all(|s| s.band_counts.is_empty()));
+
+        // The payload is unchanged for callers that did not ask (agent, data server).
+        let json = serde_json::to_string(&sectors[0]).unwrap();
+        assert!(!json.contains("band_counts"), "{json}");
+    }
+
+    #[test]
+    fn test_detection_range_rejects_a_non_positive_band_width() {
+        for width in [0.0, -5.0, f64::NAN] {
+            assert!(
+                detection_range_with_bands(&banded_positions(), Some(width)).is_err(),
+                "band width {width} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_detection_range_query_band_width_defaults_to_none() {
+        let q: crate::types::DetectionRangeQuery =
+            serde_json::from_str(r#"{"receiver_lat":1.0,"receiver_lon":2.0}"#).unwrap();
+        assert!(q.band_width_nm.is_none());
+    }
+
     #[test]
     fn test_detection_range_null_coords_excluded() {
         let handle = StorageHandle::open(test_config()).unwrap();
@@ -5264,6 +5410,7 @@ mod tests {
                 receiver_lon: -73.0,
                 start_ms: None,
                 end_ms: None,
+                band_width_nm: None,
             })
             .unwrap();
 
@@ -5301,6 +5448,7 @@ mod tests {
                 receiver_lon: -73.0,
                 start_ms: None,
                 end_ms: None,
+                band_width_nm: None,
             })
             .unwrap();
 
@@ -5338,6 +5486,7 @@ mod tests {
                 receiver_lon: -73.0,
                 start_ms: None,
                 end_ms: None,
+                band_width_nm: None,
             })
             .unwrap();
 
@@ -5366,6 +5515,7 @@ mod tests {
                 receiver_lon: -73.0,
                 start_ms: None,
                 end_ms: None,
+                band_width_nm: None,
             })
             .unwrap();
 
@@ -5384,6 +5534,7 @@ mod tests {
                 receiver_lon: -73.0,
                 start_ms: None,
                 end_ms: None,
+                band_width_nm: None,
             })
             .unwrap();
 
@@ -5432,6 +5583,7 @@ mod tests {
                 receiver_lon: rx_lon,
                 start_ms: None,
                 end_ms: None,
+                band_width_nm: None,
             })
             .unwrap();
 
@@ -5498,6 +5650,7 @@ mod tests {
                 receiver_lon: -73.0,
                 start_ms: None,
                 end_ms: None,
+                band_width_nm: None,
             })
             .await
             .unwrap();
@@ -6879,6 +7032,7 @@ mod tests {
                 receiver_lon: -73.0,
                 start_ms: None,
                 end_ms: None,
+                band_width_nm: None,
             })
             .unwrap();
 

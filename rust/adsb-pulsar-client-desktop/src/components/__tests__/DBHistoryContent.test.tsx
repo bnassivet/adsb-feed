@@ -418,6 +418,25 @@ describe("DBHistoryContent", () => {
     });
   });
 
+  it("asks for 5 NM distance bands with the detection range", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockBrowseResponses();
+    mockInvokeResponse("get_detection_range", []);
+
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} receiverLat={45} receiverLon={-73} />);
+    await waitFor(() => expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument());
+    await user.click(screen.getByTestId("dbhist-preset-24h"));
+
+    await waitFor(() => {
+      const calls = (invoke as ReturnType<typeof vi.fn>).mock.calls;
+      const range = calls.find((c: unknown[]) => c[0] === "get_detection_range");
+      expect(range).toBeDefined();
+      expect(range![1].query.band_width_nm).toBe(5);
+    });
+  });
+
   it("queries the message type breakdown with the histogram's bucket count", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     mockInvokeResponse("get_storage_stats", sampleStats);

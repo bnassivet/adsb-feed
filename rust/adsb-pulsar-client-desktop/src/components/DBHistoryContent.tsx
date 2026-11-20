@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { RADAR_BAND_WIDTH_NM } from "@/lib/detection-radar";
 import { getStorageStats, getAircraftSummary, getFlightSummaryArrow, getTrajectoryBatchArrow, getAllTrajectoriesArrow, getTimeDistribution, getDetectionRange, getHourlyHeatmap, getRawMessageCount, getMessageTypeDistribution } from "@/lib/commands";
 import { arrowToTracks, arrowToFlightSummaries } from "@/lib/arrow-utils";
 import type { AircraftSummary, AircraftTrack, DetectionRangeSector, FlightSummary, HourlyHeatmapCell, MessageTypeBucket, StorageStats, TimeDistributionBucket, TimeDistributionMetric, TimeGranularity, TimeRangePreset } from "@/lib/types";
@@ -120,6 +121,7 @@ export function DBHistoryContent({
             receiver_lon: receiverLon!,
             start_ms: start,
             end_ms: end,
+            band_width_nm: RADAR_BAND_WIDTH_NM,
           })
         : Promise.resolve([]),
       getHourlyHeatmap({ start_ms: start, end_ms: end }),

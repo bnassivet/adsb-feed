@@ -2,7 +2,7 @@ import { beforeEach, describe, it, expect } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DBHistoryAnalytics } from "../DBHistoryAnalytics";
-import type { AircraftSummary, HourlyHeatmapCell } from "@/lib/types";
+import type { AircraftSummary, DetectionRangeSector, HourlyHeatmapCell } from "@/lib/types";
 
 function makeSummary(overrides: Partial<AircraftSummary> = {}): AircraftSummary {
   return {
@@ -529,5 +529,55 @@ describe("DBHistoryAnalytics — heatmap zone", () => {
     const label = within(screen.getByTestId("heatmap-section")).getByTestId("heatmap-zone");
     expect(label).toHaveTextContent("UTC");
     expect(label).toHaveAttribute("title", expect.stringMatching(/Asia\/Kolkata/));
+  });
+});
+
+describe("DBHistoryAnalytics — Detection range controls", () => {
+  const sectors: DetectionRangeSector[] = Array.from({ length: 36 }, (_, i) => ({
+    bearing_deg: i * 10,
+    max_distance_nm: i === 0 ? 100 : 0,
+    position_count: i === 0 ? 10 : 0,
+    min_altitude: null,
+    max_altitude: null,
+    flight_count: 0,
+    band_counts: i === 0 ? [4, 0, 1, 0, 0, 6] : undefined,
+  }));
+  const props = { summaries: [makeSummary()], timeBuckets: [], tzName: "UTC", detectionSectors: sectors };
+
+  beforeEach(() => localStorage.clear());
+
+  it("changes the ring labels when another step is chosen", async () => {
+    const user = userEvent.setup();
+    render(<DBHistoryAnalytics {...props} />);
+    expect(screen.getAllByTestId("ring-label")[0].textContent).toBe("25 NM");
+
+    await user.selectOptions(screen.getByTestId("radar-ring-step"), "50");
+    expect(screen.getAllByTestId("ring-label").map((l) => l.textContent)).toEqual(["50 NM", "100 NM"]);
+  });
+
+  it("remembers the chosen step", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<DBHistoryAnalytics {...props} />);
+    await user.selectOptions(screen.getByTestId("radar-ring-step"), "auto");
+    unmount();
+
+    render(<DBHistoryAnalytics {...props} />);
+    expect(screen.getByTestId("radar-ring-step")).toHaveValue("auto");
+  });
+
+  // Polar, 25 NM rings: [0-25: 5, 25-50: 6] → 2 cells. Polygon, 10 NM cells: [4, 1, 6] → 3.
+  it.each([
+    ["Polar", 2],
+    ["Polygon", 3],
+  ] as const)("toggles the density overlay in %s mode", async (modeLabel, cells) => {
+    const user = userEvent.setup();
+    render(<DBHistoryAnalytics {...props} />);
+    const toggle = within(screen.getByTestId("radar-mode-toggle"));
+    await user.click(toggle.getByRole("button", { name: modeLabel }));
+    expect(screen.queryAllByTestId("density-cell")).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "Density" }));
+    expect(screen.getAllByTestId("density-cell")).toHaveLength(cells);
+    expect(screen.getByRole("button", { name: "Density" })).toHaveAttribute("aria-pressed", "true");
   });
 });

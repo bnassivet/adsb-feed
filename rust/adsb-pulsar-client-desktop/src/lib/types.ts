@@ -403,6 +403,8 @@ export interface DetectionRangeQuery {
   receiver_lon: number;
   start_ms?: number | null;
   end_ms?: number | null;
+  /** When set, each sector carries `band_counts` in bins of this width (NM). */
+  band_width_nm?: number;
 }
 
 /** A single 10° azimuth sector in the detection range result. */
@@ -419,6 +421,11 @@ export interface DetectionRangeSector {
   max_altitude: number | null;
   /** Number of distinct flights observed in this sector. */
   flight_count: number;
+  /**
+   * Positions per distance bin (`band_width_nm` wide), trailing zeros trimmed.
+   * Absent unless the query set `band_width_nm`.
+   */
+  band_counts?: number[];
 }
 
 /** Query parameters for hourly activity heatmap. */
