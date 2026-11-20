@@ -44,6 +44,7 @@ class TestServerToolDefinitions:
             "getEventsOfInterest",
             "getCurrentDateTime",
             "generateSimulatedTrajectory",
+            "lookupFlightInfo",
         }
 
     @pytest.mark.parametrize("tool", SERVER_TOOLS, ids=lambda t: t.name)
@@ -54,6 +55,24 @@ class TestServerToolDefinitions:
             assert "type" in spec, f"{tool.name}.{prop} has no type"
         for req in tool.parameters.get("required", []):
             assert req in tool.parameters["properties"], f"{tool.name} requires unknown {req}"
+
+    def test_flight_info_tool_owns_route_airline_and_type_questions(self):
+        """Descriptions are the interface the model programs against: the web
+        lookup must claim 'where is it going / which airline / which type' and
+        say what it is not (a filed flight plan, or history)."""
+        tool = next(t for t in SERVER_TOOLS if t.name == "lookupFlightInfo")
+        d = tool.description.lower()
+        for phrase in ("origin", "destination", "airline", "aircraft type", "registration", "adsbdb"):
+            assert phrase in d, phrase
+        assert "not a filed flight plan" in d
+        assert "live" in d and "simulated" in d
+        assert set(tool.parameters["properties"]) == {"hexIdent", "callsign"}
+        assert tool.parameters["required"] == []
+
+    def test_history_tools_do_not_claim_routes(self):
+        for t in SERVER_TOOLS:
+            if t.name != "lookupFlightInfo":
+                assert "destination" not in t.description.lower(), t.name
 
     def test_graph_reexports_the_same_names(self):
         assert g.SERVER_TOOL_NAMES == SERVER_TOOL_NAMES

@@ -23,6 +23,8 @@ import { formatAlongTrack, formatCrosswind, formatWind } from "@/lib/wind-format
 import { DEFAULT_TRANSITION_ALTITUDE_FT, mslAltitude, qnhAltitudeFt, type QnhSource } from "@/lib/qnh";
 import { heightAboveGroundFt } from "@/lib/terrain";
 import { verticalStatus, type Airspace, type VerticalStatusKind } from "@/lib/airspace";
+import type { UseFlightInfo } from "@/hooks/useFlightInfo";
+import { FlightInfoSection } from "@/components/FlightInfoSection";
 
 const STATUS_STYLE: Record<VerticalStatusKind, string> = {
   inside: "bg-indigo-700/70 text-indigo-100",
@@ -66,6 +68,10 @@ interface Props {
   transitionAltitudeFt?: number;
   /** Airspaces above the aircraft's position (horizontally); the section is omitted without any. */
   airspaces?: Airspace[];
+  /** Web flight info for the selection; the "Show Flight Infos" section is omitted without it. */
+  flightInfo?: UseFlightInfo;
+  /** A simulated aircraft: the lookup button is disabled, nothing is sent to the web. */
+  isSimulated?: boolean;
 }
 
 export function AircraftDetailsPanel({
@@ -84,6 +90,8 @@ export function AircraftDetailsPanel({
   groundElevationM = null,
   transitionAltitudeFt = DEFAULT_TRANSITION_ALTITUDE_FT,
   airspaces,
+  flightInfo,
+  isSimulated = false,
 }: Props) {
   if (track === null) return null;
 
@@ -103,6 +111,8 @@ export function AircraftDetailsPanel({
       groundElevationM={groundElevationM}
       transitionAltitudeFt={transitionAltitudeFt}
       airspaces={airspaces}
+      flightInfo={flightInfo}
+      isSimulated={isSimulated}
     />
   ) : (
     <CollapsedStrip onToggle={onToggle} />
@@ -141,6 +151,8 @@ function ExpandedPanel({
   groundElevationM = null,
   transitionAltitudeFt = DEFAULT_TRANSITION_ALTITUDE_FT,
   airspaces,
+  flightInfo,
+  isSimulated = false,
 }: {
   track: AircraftTrack;
   width: number;
@@ -156,6 +168,8 @@ function ExpandedPanel({
   groundElevationM?: number | null;
   transitionAltitudeFt?: number;
   airspaces?: Airspace[];
+  flightInfo?: UseFlightInfo;
+  isSimulated?: boolean;
 }) {
   const { resolvedTzName } = useDisplayTz();
   // Self-contained drag: listeners created on mousedown capture the start width/x and are removed
@@ -256,6 +270,8 @@ function ExpandedPanel({
             {track.callsign ?? "—"}
           </div>
         </div>
+
+        {flightInfo && <FlightInfoSection flightInfo={flightInfo} isSimulated={isSimulated} />}
 
         {/* Altitude, Speed, Heading */}
         <div className="px-3 py-2 border-b border-slate-800 space-y-1">

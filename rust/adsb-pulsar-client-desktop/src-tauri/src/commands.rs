@@ -1616,6 +1616,71 @@ pub async fn get_ground_elevation(
     ground_elevation(&app, lat, lng).await
 }
 
+/// Airframe and route of one aircraft from the web (adsbdb), cached in DuckDB.
+/// Asked only when the user clicks "Show Flight Infos". Scenario aircraft are
+/// refused before any request; the frontend also never asks for simulated ones.
+#[tauri::command]
+pub async fn get_flight_info(
+    state: State<'_, AppState>,
+    hex_ident: String,
+    callsign: Option<String>,
+) -> Result<adsb_data_server::flight_info::FlightInfo, String> {
+    use adsb_data_server::flight_info::{
+        FlightInfoArgs, fetch_adsbdb, http_client, lookup_for_tool,
+    };
+    let client = http_client()?;
+    let args = FlightInfoArgs {
+        hex_ident: Some(hex_ident),
+        callsign,
+    };
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    lookup_for_tool(&state.storage, args, now_ms, |url| {
+        fetch_adsbdb(&client, url)
+    })
+    .await
+}
+
+/// One photo download at a time, so two quick clicks never write one file twice.
+static PHOTO_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// The aircraft's photo thumbnail as a `data:` URL, or `None` if it has none.
+/// The link is read from the flight-info cache, so call `get_flight_info` first.
+#[tauri::command]
+pub async fn get_aircraft_photo(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    hex_ident: String,
+) -> Result<Option<String>, String> {
+    let hex = adsb_data_server::flight_info::normalize_hex(&hex_ident)?;
+    let thumb = {
+        let guard = state.storage.read().await;
+        match guard.as_ref() {
+            Some(s) => {
+                let s = s.clone();
+                let h = hex.clone();
+                tokio::task::spawn_blocking(move || s.get_aircraft_info_sync(&h))
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .map_err(|e| e.to_string())?
+                    .and_then(|a| a.photo_thumb_url)
+            }
+            None => None,
+        }
+    };
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("No app data directory: {e}"))?;
+    let dir = crate::stack_data_dir(&app_data_dir, crate::stack_from_env().as_deref())
+        .join("aircraft-photos");
+    let client = http_client(15)?;
+    let _guard = PHOTO_LOCK.lock().await;
+    crate::aircraft_photo::load_photo(&dir, &hex, thumb.as_deref(), |url| {
+        crate::aircraft_photo::fetch_bytes(&client, url)
+    })
+    .await
+}
+
 /// "What's here?": ground height (Terrarium) and sea depth (EMODnet), asked
 /// together; each half reports its own failure.
 #[tauri::command]

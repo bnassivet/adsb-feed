@@ -4,6 +4,7 @@
 //! and provides a real-time aircraft tracking dashboard with
 //! DuckDB-backed historical storage.
 
+mod aircraft_photo;
 mod airspace;
 mod bridge;
 mod commands;
@@ -221,6 +222,8 @@ pub fn run() {
             commands::get_radar_frames,
             commands::get_seamarks,
             commands::get_ground_elevation,
+            commands::get_flight_info,
+            commands::get_aircraft_photo,
             commands::what_is_here,
             commands::get_weather_availability,
             commands::get_weather_service,

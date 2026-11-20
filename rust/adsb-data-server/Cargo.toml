@@ -35,6 +35,10 @@ toml = { version = "0.8", optional = true }
 # Read-only HTTP query API (optional)
 axum = { version = "0.8", optional = true }
 
+# Web flight-info lookups (adsbdb). Optional and off by default: only the
+# desktop enables `web-lookup`, so the edge recorder never builds a TLS stack.
+reqwest = { version = "0.13", default-features = false, features = ["rustls"], optional = true }
+
 # Prometheus exposition. `default-features = false` for the same reason as in
 # adsb-pulsar-client: the default `protobuf` feature pulls protobuf 2.x.
 prometheus = { version = "0.13", default-features = false, optional = true }
@@ -50,6 +54,9 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 default = ["cli", "http-api", "metrics"]
 cli = ["dep:clap", "dep:toml"]
 http-api = ["dep:axum"]
+# Real HTTP fetch for `flight_info` (and the `lookupFlightInfo` tool). The pure
+# lookup and cache logic build without it.
+web-lookup = ["dep:reqwest"]
 # Prometheus exposition at /metrics, on the query API's own listener.
 #
 # NOT reachable from the desktop: it takes this crate with

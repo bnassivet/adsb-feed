@@ -9,7 +9,9 @@
 //! (`panMapTo`, `selectAircraft`, …) and sensitive mutating tools
 //! (`startFeed`, `createEventOfInterest`, …) remain client-executed via AG-UI
 //! forwarding, so they stay under user-in-the-loop control and are never
-//! reachable from this endpoint.
+//! reachable from this endpoint. `lookupFlightInfo` is the one tool that
+//! reaches the web (adsbdb, behind the `web-lookup` feature); all it writes is
+//! its own lookup cache, never recorded data.
 //!
 //! Wire contract: `POST /tools/{name}` with a JSON args body whose field names
 //! match the `adsb-data-engine` query structs (snake_case). The response is
@@ -125,6 +127,12 @@ pub async fn dispatch(storage: &SharedStorage, name: &str, args: Value) -> Value
                 .and_then(to_value),
             Err(e) => Err(e),
         },
+        // The one tool that reaches the web (adsbdb). Live aircraft only:
+        // scenario aircraft are refused before any request is made.
+        "lookupFlightInfo" => match parse::<crate::flight_info::FlightInfoArgs>(args) {
+            Ok(a) => lookup_flight_info(storage, a).await.and_then(to_value),
+            Err(e) => Err(e),
+        },
         other => Err(format!("Unknown tool: {other}")),
     };
 
@@ -132,6 +140,29 @@ pub async fn dispatch(storage: &SharedStorage, name: &str, args: Value) -> Value
         Ok(data) => json!({ "ok": true, "data": data }),
         Err(error) => json!({ "ok": false, "error": error }),
     }
+}
+
+#[cfg(feature = "web-lookup")]
+async fn lookup_flight_info(
+    storage: &SharedStorage,
+    args: crate::flight_info::FlightInfoArgs,
+) -> Result<crate::flight_info::FlightInfo, String> {
+    use crate::flight_info::{fetch_adsbdb, http_client, lookup_for_tool};
+    let client = http_client()?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or_default();
+    lookup_for_tool(storage, args, now_ms, |url| fetch_adsbdb(&client, url)).await
+}
+
+/// Built without `web-lookup` (the edge recorder): no HTTP client to ask with.
+#[cfg(not(feature = "web-lookup"))]
+async fn lookup_flight_info(
+    _storage: &SharedStorage,
+    _args: crate::flight_info::FlightInfoArgs,
+) -> Result<crate::flight_info::FlightInfo, String> {
+    Err("lookupFlightInfo is not available in this build (no web-lookup feature)".into())
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, String> {
@@ -309,6 +340,32 @@ mod tests {
         })
         .expect("open in-memory storage");
         Arc::new(RwLock::new(Some(handle)))
+    }
+
+    #[cfg(not(feature = "web-lookup"))]
+    #[tokio::test]
+    async fn lookup_flight_info_needs_the_web_lookup_feature() {
+        let resp = dispatch(
+            &in_memory_storage(),
+            "lookupFlightInfo",
+            json!({ "hex_ident": "3C6444" }),
+        )
+        .await;
+        assert_eq!(resp["ok"], false);
+        assert!(resp["error"].as_str().unwrap().contains("not available"));
+    }
+
+    #[cfg(feature = "web-lookup")]
+    #[tokio::test]
+    async fn lookup_flight_info_without_identifiers_is_an_error() {
+        let resp = dispatch(&in_memory_storage(), "lookupFlightInfo", json!({})).await;
+        assert_eq!(resp["ok"], false);
+        assert!(
+            resp["error"]
+                .as_str()
+                .unwrap()
+                .contains("hex_ident or callsign")
+        );
     }
 
     #[tokio::test]

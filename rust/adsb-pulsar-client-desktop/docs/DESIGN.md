@@ -5543,6 +5543,8 @@ clickable underneath.
 | Relief | `server.arcgisonline.com/…/Elevation/World_Hillshade` | webview | — | HTTP cache |
 | Ground height | `s3.amazonaws.com/elevation-tiles-prod/terrarium` | Rust | — | disk, for good |
 | Weather (winds, pressure) | `api.open-meteo.com/v1/forecast` | weather service, via MQTT | — | retained MQTT message |
+| Flight info (route, airline, airframe) | `api.adsbdb.com/v0/aircraft/{hex}`, `/v0/callsign/{cs}` | Rust (`adsb-data-server`, `web-lookup`) | — | DuckDB `aircraft_info` 30 d, `flight_routes` 1 d, "unknown" 1 d |
+| Aircraft photo | `airport-data.com` (link from adsbdb) | Rust | — | disk, for good |
 
 Two rules decide which side calls an endpoint:
 - **Rust**, when there is a key, a cache on disk, decoding, or fair use to
@@ -5553,7 +5555,7 @@ Two rules decide which side calls an endpoint:
   `relief.ts`.
 
 Disk caches live under the stack's data directory (`<app-data>/<stack>/`):
-`airspaces/`, `radar/`, `seamarks/`, `terrain/`.
+`airspaces/`, `radar/`, `seamarks/`, `terrain/`, `aircraft-photos/`.
 
 ## Airspaces (OpenAIP)
 
@@ -5984,6 +5986,49 @@ are pictures and cannot give a value at a point; the data behind them can.
   cruising aircraft costs a lookup in memory, and a new tile download about
   every 45 s.
 - No CSP change: Rust makes the requests.
+
+## Flight info from the web (adsbdb)
+
+Plan: `docs/plans/2026-11-20-flight-info.md`. The receiver hears a hex and a
+callsign; where the flight is going, the airline and the airframe come from the
+public **adsbdb.com** database (keyless). It is the *scheduled* route for a
+callsign, **not a filed flight plan**, which is not public.
+
+- **On demand only.** The details panel shows a **Show Flight Infos** button
+  (`FlightInfoSection.tsx`); nothing is sent on selection. `useFlightInfo`
+  resets to idle when the selected hex or callsign changes and drops an answer
+  for the previous one.
+- **Never for simulated aircraft.** Tracks carry no simulated flag, so
+  `page.tsx` tests membership in `simulatedTracks` / `agentSimulatedTracks`
+  (`isSimulatedTrack`) and the button is disabled with *Not available for
+  simulated flights*. The Rust side refuses too: `lookup_for_tool` answers
+  `simulated: true` without a request when the hex or callsign is in
+  `scenario_tracks`. Unsaved agent trajectories are not in the DB, so the
+  frontend check is the one that covers them.
+- **One implementation, two callers.** `adsb-data-server/src/flight_info.rs`
+  holds the parsing, the cache policy and `lookup_for_tool` (fills the missing
+  identifier from the latest recorded flight). The desktop command
+  `get_flight_info` and the agent tool `lookupFlightInfo` (dispatched by
+  `server.rs`, i.e. the desktop's embedded tool server) both call it.
+- **The HTTP fetch is behind the `web-lookup` feature**, which only the desktop
+  enables. The core takes the fetch as a closure and is tested without a
+  network; the edge recorder builds without reqwest/TLS and its tool server
+  answers `lookupFlightInfo` with *not available in this build*.
+- **Cache in DuckDB, as authored tables** (`aircraft_info` by hex,
+  `flight_routes` by callsign — separate because an airframe outlives a route).
+  Authored, so they exist in remote mode too. TTLs: airframe 30 days, route 1
+  day, "unknown" (`found = false`, HTTP 404) 1 day. A failed refresh shows the
+  old row with `stale` (*offline (cached)*). Cache writes are best-effort: with
+  storage released the lookup still answers. Rows are written whole from one
+  response, so `INSERT OR REPLACE` cannot wipe a field (cf. the COALESCE rule
+  for partial updates).
+- **Photo.** `get_aircraft_photo` reads the thumbnail link from the cache (never
+  from the frontend), allows only `https` on `airport-data.com`, checks the
+  bytes are an image (≤ 2 MB), keeps them in `<stack data dir>/aircraft-photos/`
+  and returns a `data:` URL: it works offline and needs no CSP `img-src` change.
+  The panel credits *airport-data.com* with a link to the full photo.
+- Identifiers are validated (6 hex digits; callsign ≤ 8 letters/digits) before
+  they go in a URL path.
 
 ## Observability (Prometheus)
 

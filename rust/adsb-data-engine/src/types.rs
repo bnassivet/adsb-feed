@@ -746,3 +746,51 @@ pub enum ShareStatus {
     /// into the bundled build and is fetched on first use).
     Unavailable { reason: String },
 }
+
+/// An airport as described by the flight-info source (adsbdb).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Airport {
+    pub icao: String,
+    pub iata: Option<String>,
+    pub name: Option<String>,
+    pub city: Option<String>,
+    pub country: Option<String>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+}
+
+/// Cached airframe details for one ICAO hex, looked up on the web.
+///
+/// `found == false` is a negative-cache row: the source did not know this
+/// hex, and asking again on every click would only repeat that answer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AircraftInfo {
+    pub hex_ident: String,
+    pub found: bool,
+    pub icao_type: Option<String>,
+    pub type_name: Option<String>,
+    pub manufacturer: Option<String>,
+    pub registration: Option<String>,
+    pub owner: Option<String>,
+    pub owner_country: Option<String>,
+    pub photo_url: Option<String>,
+    pub photo_thumb_url: Option<String>,
+    pub fetched_at_ms: i64,
+}
+
+/// Cached route for one callsign, looked up on the web.
+///
+/// Keyed by callsign rather than hex: an airframe flies many routes, and a
+/// callsign is what a route is filed under. Not a filed flight plan — only
+/// the scheduled origin and destination.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FlightRoute {
+    pub callsign: String,
+    pub found: bool,
+    pub airline_name: Option<String>,
+    pub airline_icao: Option<String>,
+    pub airline_iata: Option<String>,
+    pub origin: Option<Airport>,
+    pub destination: Option<Airport>,
+    pub fetched_at_ms: i64,
+}

@@ -75,6 +75,20 @@ SERVER_TOOLS: list[Tool] = [
         {"startMs": _START_MS, "endMs": _END_MS},
     ),
     _tool(
+        "lookupFlightInfo",
+        "Web lookup for ONE live aircraft: where it is going and what it is. Returns the "
+        "airline, origin and destination airports (ICAO code, name, city) and the aircraft "
+        "type, manufacturer, registration and owner, from the public adsbdb database (cached). "
+        "Use it for 'where is AFR123 going?', 'which airline is this?', 'what aircraft type is "
+        "3C6444?'. Give hexIdent or callsign; the other is filled in from recorded flights. "
+        "This is the scheduled route, not a filed flight plan, and not history. Live aircraft "
+        "only: simulated aircraft are refused without any web request.",
+        {
+            "hexIdent": {"type": "string", "description": "Aircraft hex identifier (ICAO), e.g. 3C6444"},
+            "callsign": {"type": "string", "description": "Flight callsign, e.g. DLH400"},
+        },
+    ),
+    _tool(
         "getTrajectory",
         "Historical: the position history (trajectory) of one aircraft. Returns a list of "
         "lat/lon/altitude/speed/timestamp records.",

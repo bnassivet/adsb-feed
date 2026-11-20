@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 800" width="1180" height="800" role="img" aria-labelledby="title desc">
-<title id="title">ADS-B Feed: map layers and their external endpoints</title>
-<desc id="desc">The desktop app's map layers and the external services they use. The webview loads plain image tiles (base maps, seamarks, depth, relief). Rust calls every API that needs a key, a disk cache, decoding or fair-use pacing (airspaces, METAR, rain radar, seamark text, sea depth, ground height). The weather service fetches Open-Meteo and publishes a retained MQTT snapshot the desktop subscribes to.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 844" width="1180" height="844" role="img" aria-labelledby="title desc">
+<title id="title">ADS-B Feed: map layers, flight info and their external endpoints</title>
+<desc id="desc">The desktop app's map layers and the external services they use. The webview loads plain image tiles (base maps, seamarks, depth, relief). Rust calls every API that needs a key, a disk cache, decoding or fair-use pacing (airspaces, METAR, rain radar, seamark text, sea depth, ground height, and the flight info and aircraft photo shown in the details panel on request, never for simulated aircraft). The weather service fetches Open-Meteo and publishes a retained MQTT snapshot the desktop subscribes to.</desc>
 <style>
   svg {
     --bg:#ffffff; --fg:#1f2328; --muted:#59636e; --box:#ffffff; --edge:#57606a;
@@ -45,10 +45,10 @@
   .head { fill: var(--edge); }
 </style>
 <defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
-<rect class="bg" x="0" y="0" width="1180" height="800"/>
-<text class="t-h1" x="20" y="34">ADS-B Feed: map layers and their external endpoints</text>
-<text class="t-sub" x="20" y="52">Desktop app, Filters → Map Layers. Image tiles load in the webview; APIs go through Rust. Every layer is off by default.</text>
-<rect class="proc" x="18" y="70" width="444" height="520" rx="12"/>
+<rect class="bg" x="0" y="0" width="1180" height="844"/>
+<text class="t-h1" x="20" y="34">ADS-B Feed: map layers, flight info and their external endpoints</text>
+<text class="t-sub" x="20" y="52">Desktop app, Filters → Map Layers. Image tiles load in the webview; APIs go through Rust. Every layer is off by default; flight info is asked only on a click.</text>
+<rect class="proc" x="18" y="70" width="444" height="542" rx="12"/>
 <text class="t-proc" x="30" y="88">DESKTOP APP: one Tauri process (adsb-pulsar-client-desktop)</text>
 <rect class="box apps" x="30" y="100" width="420" height="210" rx="8"/>
 <text class="t-title" x="240.0" y="126">Webview</text>
@@ -59,9 +59,10 @@
 <text class="t-note" x="240.0" y="230">Image overlays: seamarks, depth, relief (HTTP cache)</text>
 <text class="t-note" x="240.0" y="250">Every image host is listed in the CSP img-src</text>
 <text class="t-note" x="240.0" y="270">Hover pick per frame · What's here? · Height AGL</text>
-<rect class="box svc" x="30" y="360" width="420" height="210" rx="8"/>
+<text class="t-note" x="240.0" y="290">Details panel: Show Flight Infos (on click, live aircraft only)</text>
+<rect class="box svc" x="30" y="360" width="420" height="232" rx="8"/>
 <text class="t-title" x="240.0" y="386">Rust backend (Tauri commands)</text>
-<text class="t-code" x="240.0" y="404">airspace · metar · radar · seamarks · terrain</text>
+<text class="t-code" x="240.0" y="404">airspace · metar · radar · seamarks · terrain · flight info</text>
 <text class="t-note" x="240.0" y="430">API keys from adsb-stack.toml [desktop], exported as env</text>
 <text class="t-note" x="240.0" y="450">Keys never reach the webview; no CSP entry needed</text>
 <text class="t-note" x="240.0" y="470">Decoding: ODIM_H5 radar, Terrarium PNG heights</text>
@@ -69,18 +70,19 @@
 <text class="t-note" x="240.0" y="510">Disk caches under &lt;app-data&gt;/&lt;stack&gt;/</text>
 <text class="t-note" x="240.0" y="530">airspaces/ (AIRAC cycle) · radar/ (last hour)</text>
 <text class="t-note" x="240.0" y="550">seamarks/ (7 days) · terrain/ (kept for good)</text>
+<text class="t-note" x="240.0" y="570">aircraft-photos/ (kept) · flight info cached in DuckDB</text>
 <path class="edge" d="M200.0,310 L200.0,360" marker-end="url(#head)"/>
 <path class="edge" d="M280.0,360 L280.0,310" marker-end="url(#head)"/>
 <text class="t-edge" x="240.0" y="340" text-anchor="middle">invoke · results (PNG base64, JSON)</text>
-<rect class="band svc" x="18" y="646" width="444" height="128" rx="10"/>
-<rect class="box svc" x="30" y="660" width="420" height="100" rx="8"/>
-<text class="t-title" x="240.0" y="686">Weather service (optional)</text>
-<text class="t-code" x="240.0" y="704">adsb-weather-server</text>
-<text class="t-note" x="240.0" y="724">Winds aloft and MSL pressure on a receiver-centred grid,</text>
-<text class="t-note" x="240.0" y="742">published as one retained MQTT message</text>
-<path class="edge dash" d="M390,660 L390,570" marker-end="url(#head)"/>
-<text class="t-edge" x="398" y="634" text-anchor="start">MQTT, retained</text>
-<rect class="ext-col" x="508" y="70" width="664" height="710" rx="12"/>
+<rect class="band svc" x="18" y="690" width="444" height="128" rx="10"/>
+<rect class="box svc" x="30" y="704" width="420" height="100" rx="8"/>
+<text class="t-title" x="240.0" y="730">Weather service (optional)</text>
+<text class="t-code" x="240.0" y="748">adsb-weather-server</text>
+<text class="t-note" x="240.0" y="768">Winds aloft and MSL pressure on a receiver-centred grid,</text>
+<text class="t-note" x="240.0" y="786">published as one retained MQTT message</text>
+<path class="edge dash" d="M390,704 L390,592" marker-end="url(#head)"/>
+<text class="t-edge" x="398" y="678" text-anchor="start">MQTT, retained</text>
+<rect class="ext-col" x="508" y="70" width="664" height="754" rx="12"/>
 <text class="t-ext" x="520" y="88">EXTERNAL ENDPOINTS (HTTPS)</text>
 <rect class="box ext" x="520" y="100" width="640" height="112" rx="8"/>
 <text class="t-gtitle" x="534" y="122">Base map tiles</text>
@@ -104,7 +106,7 @@
 <text class="t-what" x="850" y="304">Depth colours and contours</text>
 <text class="t-host" x="534" y="326">server.arcgisonline.com</text>
 <text class="t-what" x="850" y="326">World Hillshade (relief, multiply)</text>
-<rect class="box ext" x="520" y="360" width="640" height="178" rx="8"/>
+<rect class="box ext" x="520" y="360" width="640" height="222" rx="8"/>
 <text class="t-gtitle" x="534" y="382">APIs</text>
 <text class="t-gsub" x="572" y="382">Rust · disk or memory cache</text>
 <line class="sep" x1="530" y1="392" x2="1150" y2="392"/>
@@ -124,29 +126,33 @@
 <text class="t-what" x="850" y="500">Sea depth at a point</text>
 <text class="t-host" x="534" y="522">s3.amazonaws.com/elevation-tiles-prod</text>
 <text class="t-what" x="850" y="522">Terrarium ground height</text>
-<rect class="box ext" x="520" y="680" width="640" height="68" rx="8"/>
-<text class="t-gtitle" x="534" y="702">Weather</text>
-<text class="t-gsub" x="596" y="702">weather service</text>
-<line class="sep" x1="530" y1="712" x2="1150" y2="712"/>
-<text class="t-host" x="534" y="732">api.open-meteo.com/v1/forecast</text>
-<text class="t-what" x="850" y="732">Winds aloft, MSL pressure</text>
-<rect class="box ext" x="520" y="560" width="640" height="92" rx="8"/>
-<text class="t-gtitle" x="534" y="582">Legend</text>
-<line class="sep" x1="530" y1="592" x2="1150" y2="592"/>
-<rect class="keybox" x="534" y="603" width="26" height="12" rx="3"/>
-<text class="t-key" x="547" y="612" text-anchor="middle">KEY</text>
-<text class="t-what" x="568" y="612">needs a key: OpenAIP and Météo-France from adsb-stack.toml [desktop], used by Rust only;</text>
-<text class="t-what" x="568" y="628">CARTO's is part of the tile URL, so it is the one key the webview holds.</text>
-<path class="edge" d="M534,642 L560,642" marker-end="url(#head)"/>
-<path class="edge dash" d="M770,642 L796,642" marker-end="url(#head)"/>
-<text class="t-what" x="568" y="646">HTTPS request</text>
-<text class="t-what" x="804" y="646">MQTT message.  Ports are left out on purpose.</text>
+<text class="t-host" x="534" y="544">api.adsbdb.com/v0</text>
+<text class="t-what" x="850" y="544">Route, airline, airframe (on click)</text>
+<text class="t-host" x="534" y="566">airport-data.com</text>
+<text class="t-what" x="850" y="566">Aircraft photo thumbnail</text>
+<rect class="box ext" x="520" y="724" width="640" height="68" rx="8"/>
+<text class="t-gtitle" x="534" y="746">Weather</text>
+<text class="t-gsub" x="596" y="746">weather service</text>
+<line class="sep" x1="530" y1="756" x2="1150" y2="756"/>
+<text class="t-host" x="534" y="776">api.open-meteo.com/v1/forecast</text>
+<text class="t-what" x="850" y="776">Winds aloft, MSL pressure</text>
+<rect class="box ext" x="520" y="604" width="640" height="92" rx="8"/>
+<text class="t-gtitle" x="534" y="626">Legend</text>
+<line class="sep" x1="530" y1="636" x2="1150" y2="636"/>
+<rect class="keybox" x="534" y="647" width="26" height="12" rx="3"/>
+<text class="t-key" x="547" y="656" text-anchor="middle">KEY</text>
+<text class="t-what" x="568" y="656">needs a key: OpenAIP and Météo-France from adsb-stack.toml [desktop], used by Rust only;</text>
+<text class="t-what" x="568" y="672">CARTO's is part of the tile URL, so it is the one key the webview holds.</text>
+<path class="edge" d="M534,686 L560,686" marker-end="url(#head)"/>
+<path class="edge dash" d="M770,686 L796,686" marker-end="url(#head)"/>
+<text class="t-what" x="568" y="690">HTTPS request</text>
+<text class="t-what" x="804" y="690">MQTT message.  Ports are left out on purpose.</text>
 <path class="edge" d="M450,160 L490,160 L490,156.0 L520,156.0" marker-end="url(#head)"/>
 <path class="edge" d="M450,250 L470,250 L470,286.0 L520,286.0" marker-end="url(#head)"/>
 <text class="t-edge" x="484" y="152" text-anchor="middle">tiles</text>
 <text class="t-edge" x="484" y="242" text-anchor="middle">tiles</text>
 <path class="edge" d="M450,480 L520,480" marker-end="url(#head)"/>
 <text class="t-edge" x="485.0" y="472" text-anchor="middle">HTTPS</text>
-<path class="edge" d="M450,714.0 L520,714.0" marker-end="url(#head)"/>
-<text class="t-edge" x="485.0" y="706.0" text-anchor="middle">HTTPS</text>
+<path class="edge" d="M450,758 L520,758" marker-end="url(#head)"/>
+<text class="t-edge" x="485.0" y="750" text-anchor="middle">HTTPS</text>
 </svg>

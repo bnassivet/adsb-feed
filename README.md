@@ -43,15 +43,21 @@ because its snapshots only arrive over MQTT. To start it, run `npm run tauri dev
 [`rust/adsb-pulsar-client-desktop/`](rust/adsb-pulsar-client-desktop/README.md). Settings
 switches it to the MQTT topology later.
 
-### Map layers and their external endpoints
+### Map layers, flight info and their external endpoints
 
-![The desktop's map layers and the external endpoints they use](docs/map-layers-external-endpoints.svg)
+![The desktop's map layers, flight info and the external endpoints they use](docs/map-layers-external-endpoints.svg)
 
 The desktop's **Map Layers** (weather, rain radar, METAR, airspaces, sea, relief) and
 *What's here?* use public services. Plain image tiles load in the webview, and their hosts are
 listed in the CSP. Every API goes through the Rust side, which holds the two keys (openAIP,
 Météo-France) and caches on disk where that helps. Details:
 [DESIGN.md → Map Layers](rust/adsb-pulsar-client-desktop/docs/DESIGN.md#map-layers-overview).
+
+The aircraft details panel's **Show Flight Infos** button looks up the route, airline,
+airframe and a photo on [adsbdb.com](https://www.adsbdb.com) (no key), only when clicked and
+never for simulated aircraft; the agent can do the same with `lookupFlightInfo`. Answers are
+cached in DuckDB. It is the scheduled route for a callsign, not a filed flight plan. Details:
+[DESIGN.md → Flight info](rust/adsb-pulsar-client-desktop/docs/DESIGN.md#flight-info-from-the-web-adsbdb).
 
 ## Repository Structure
 
