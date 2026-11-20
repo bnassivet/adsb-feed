@@ -195,4 +195,109 @@ describe("DetectionRadar", () => {
       expect(screen.queryAllByTestId("sector-hit-zone")).toHaveLength(0);
     });
   });
+
+  describe("ring scale", () => {
+    it("labels rings at round multiples of the step", () => {
+      render(<DetectionRadar sectors={nonZeroSectors} mode="polar" ringStep={25} />);
+      const labels = screen.getAllByTestId("ring-label").map((l) => l.textContent);
+      expect(labels).toEqual(["25 NM", "50 NM", "75 NM", "100 NM"]);
+    });
+
+    it("defaults to 25 NM rings", () => {
+      render(<DetectionRadar sectors={nonZeroSectors} mode="polar" />);
+      expect(screen.getAllByTestId("ring-label")[0].textContent).toBe("25 NM");
+    });
+
+    it("raises the step rather than drawing more than 5 rings", () => {
+      const far = makeSectors([{ bearing_deg: 0, max_distance_nm: 180, position_count: 1 }]);
+      render(<DetectionRadar sectors={far} mode="polar" ringStep={25} />);
+      const labels = screen.getAllByTestId("ring-label").map((l) => l.textContent);
+      expect(labels).toEqual(["50 NM", "100 NM", "150 NM", "200 NM"]);
+    });
+
+    it("states the step under the chart", () => {
+      render(<DetectionRadar sectors={nonZeroSectors} mode="polar" ringStep={25} />);
+      expect(screen.getByText(/25 NM\/ring/)).toBeTruthy();
+    });
+  });
+
+  describe("density overlay", () => {
+    // Max 40 NM → 25 NM rings: 2 rings, 50 NM scale.
+    // Sector 0 bins: 0-5: 2, 10-15: 3, 30-35: 10. Sector 90: 5-10: 5.
+    const banded = makeSectors([
+      { bearing_deg: 0, max_distance_nm: 40, position_count: 15, band_counts: [2, 0, 3, 0, 0, 0, 10] },
+      { bearing_deg: 90, max_distance_nm: 10, position_count: 5, band_counts: [0, 5] },
+    ]);
+
+    it("polar mode colors each sector × ring band", () => {
+      render(<DetectionRadar sectors={banded} mode="polar" ringStep={25} showDensity />);
+      // sector 0: [0-25: 5, 25-50: 10]; sector 90: [0-25: 5]
+      expect(screen.getAllByTestId("density-cell")).toHaveLength(3);
+    });
+
+    it("polygon mode colors each sector × 10 NM cell", () => {
+      render(<DetectionRadar sectors={banded} mode="polygon" ringStep={25} showDensity />);
+      // sector 0: [0-10: 2, 10-20: 3, 30-40: 10]; sector 90: [0-10: 5]
+      expect(screen.getAllByTestId("density-cell")).toHaveLength(4);
+    });
+
+    it("polar wedges fade to a light veil over the density", () => {
+      render(<DetectionRadar sectors={banded} mode="polar" ringStep={25} showDensity />);
+      expect(screen.getAllByTestId("radar-wedge")[0].getAttribute("fill-opacity")).toBe("0.06");
+    });
+
+    it("polygon fades to a light veil over the density", () => {
+      render(<DetectionRadar sectors={banded} mode="polygon" ringStep={25} showDensity />);
+      expect(screen.getByTestId("radar-polygon").getAttribute("fill-opacity")).toBe("0.05");
+    });
+
+    it("polar mode keeps filled wedges when density is off", () => {
+      render(<DetectionRadar sectors={banded} mode="polar" ringStep={25} />);
+      expect(screen.getAllByTestId("radar-wedge")[0].getAttribute("fill-opacity")).toBe("0.35");
+    });
+
+    it("clips polygon-mode density to the range polygon", () => {
+      const { container } = render(
+        <DetectionRadar sectors={banded} mode="polygon" ringStep={25} showDensity />,
+      );
+      const group = screen.getAllByTestId("density-cell")[0].parentElement!;
+      const id = group.getAttribute("clip-path")!.match(/^url\(#(.+)\)$/)![1];
+      const clip = container.querySelector(`clipPath[id="${id}"]`)!;
+      expect(clip.querySelector("path")!.getAttribute("d")).toBe(
+        screen.getByTestId("radar-polygon").getAttribute("d"),
+      );
+    });
+
+    it("clips polar-mode density to the sector wedges", () => {
+      const { container } = render(
+        <DetectionRadar sectors={banded} mode="polar" ringStep={25} showDensity />,
+      );
+      const group = screen.getAllByTestId("density-cell")[0].parentElement!;
+      const id = group.getAttribute("clip-path")!.match(/^url\(#(.+)\)$/)![1];
+      const clip = container.querySelector(`clipPath[id="${id}"]`)!;
+      const clipPaths = [...clip.querySelectorAll("path")].map((p) => p.getAttribute("d"));
+      const wedges = screen.getAllByTestId("radar-wedge").map((w) => w.getAttribute("d"));
+      expect(clipPaths).toEqual(wedges);
+    });
+
+    it("draws no density cells when the option is off", () => {
+      render(<DetectionRadar sectors={banded} mode="polar" ringStep={25} />);
+      expect(screen.queryAllByTestId("density-cell")).toHaveLength(0);
+    });
+
+    it("lists positions per ring band in the tooltip", async () => {
+      const user = userEvent.setup();
+      render(<DetectionRadar sectors={banded} mode="polar" ringStep={25} showDensity />);
+      await user.hover(screen.getAllByTestId("radar-wedge")[0]);
+      const lines = screen.getAllByTestId("tooltip-band").map((l) => l.textContent);
+      expect(lines).toEqual(["0–25 NM: 5", "25–50 NM: 10"]);
+    });
+
+    it("keeps the tooltip free of bands when the option is off", async () => {
+      const user = userEvent.setup();
+      render(<DetectionRadar sectors={banded} mode="polar" ringStep={25} />);
+      await user.hover(screen.getAllByTestId("radar-wedge")[0]);
+      expect(screen.queryAllByTestId("tooltip-band")).toHaveLength(0);
+    });
+  });
 });

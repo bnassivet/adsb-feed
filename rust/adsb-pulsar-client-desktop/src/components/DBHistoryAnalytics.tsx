@@ -14,7 +14,8 @@ import {
   topEdgePath,
 } from "@/lib/chart-style";
 import type { DetectionRangeSector, FlightSummary, HeatmapMetric, HourlyHeatmapCell, MessageTypeBucket, TimeDistributionBucket, TimeDistributionMetric, TimeGranularity } from "@/lib/types";
-import type { RadarMode } from "@/lib/detection-radar";
+import type { RadarMode, RingStep } from "@/lib/detection-radar";
+import { RING_STEPS_NM } from "@/lib/detection-radar";
 import {
   buildAltitudeBins,
   buildHeatmapGrid,
@@ -35,6 +36,7 @@ import type { MessageTypeInfo, MessageTypeKey, MessageTypeTotal, StackedTypeDatu
 import type { AircraftSummary } from "@/lib/types";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { DetectionRadar } from "./DetectionRadar";
+import { heatmapColor } from "@/lib/heatmap-color";
 
 type AltitudeMode = "aircraft" | "flights";
 
@@ -867,30 +869,64 @@ const RADAR_MODES: { value: RadarMode; label: string }[] = [
   { value: "polygon", label: "Polygon" },
 ];
 
+const RING_STEP_OPTIONS: { value: RingStep; label: string }[] = [
+  { value: "auto", label: "Auto" },
+  ...RING_STEPS_NM.filter((n) => n <= 100).map((n) => ({ value: n as RingStep, label: `${n} NM` })),
+];
+
 function DetectionRangeSection({ sectors }: { sectors: DetectionRangeSector[] }) {
   const [mode, setMode] = useState<RadarMode>("polar");
+  const [showDensity, setShowDensity] = useState(false);
+  const [ringStep, setRingStep] = useLocalStorage<RingStep>("adsb-radar-ring-step", 25);
 
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
         <div className="text-[10px] text-slate-500 uppercase">Detection Range</div>
-        <div className="flex gap-0.5" data-testid="radar-mode-toggle">
-          {RADAR_MODES.map((m) => (
-            <button
-              key={m.value}
-              onClick={() => setMode(m.value)}
-              className={`px-1.5 py-0.5 text-[9px] rounded transition-colors ${
-                mode === m.value
-                  ? "bg-cyan-900/60 text-cyan-300"
-                  : "text-slate-500 hover:text-slate-400"
-              }`}
-            >
-              {m.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-1">
+          <select
+            value={String(ringStep)}
+            onChange={(e) => setRingStep(e.target.value === "auto" ? "auto" : Number(e.target.value))}
+            className="bg-transparent text-[9px] text-slate-400 border border-slate-700 rounded px-0.5 py-0"
+            aria-label="Ring step"
+            data-testid="radar-ring-step"
+          >
+            {RING_STEP_OPTIONS.map((o) => (
+              <option key={String(o.value)} value={String(o.value)} className="bg-slate-800">
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <div className="flex gap-0.5" data-testid="radar-mode-toggle">
+            {RADAR_MODES.map((m) => (
+              <button
+                key={m.value}
+                onClick={() => setMode(m.value)}
+                className={`px-1.5 py-0.5 text-[9px] rounded transition-colors ${
+                  mode === m.value
+                    ? "bg-cyan-900/60 text-cyan-300"
+                    : "text-slate-500 hover:text-slate-400"
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => setShowDensity((v) => !v)}
+            aria-pressed={showDensity}
+            title="Positions per sector and ring band"
+            className={`px-1.5 py-0.5 text-[9px] rounded transition-colors ${
+              showDensity
+                ? "bg-amber-900/50 text-amber-300"
+                : "text-slate-500 hover:text-slate-400"
+            }`}
+          >
+            Density
+          </button>
         </div>
       </div>
-      <DetectionRadar sectors={sectors} mode={mode} />
+      <DetectionRadar sectors={sectors} mode={mode} ringStep={ringStep} showDensity={showDensity} />
     </div>
   );
 }
@@ -905,25 +941,6 @@ const HEATMAP_METRICS: { value: HeatmapMetric; label: string }[] = [
 ];
 
 const HOUR_LABELS = Array.from({ length: 24 }, (_, i) => i);
-
-/** Interpolate a value [0, 1] into a color from transparent dark → cyan → amber. */
-function heatmapColor(t: number): string {
-  if (t === 0) return "transparent";
-  // 0→0.5: dark-slate → cyan
-  if (t <= 0.5) {
-    const s = t * 2; // 0→1
-    const r = Math.round(15 + s * (6 - 15));
-    const g = Math.round(23 + s * (182 - 23));
-    const b = Math.round(42 + s * (212 - 42));
-    return `rgba(${r}, ${g}, ${b}, ${0.3 + s * 0.5})`;
-  }
-  // 0.5→1: cyan → amber
-  const s = (t - 0.5) * 2; // 0→1
-  const r = Math.round(6 + s * (245 - 6));
-  const g = Math.round(182 + s * (158 - 182));
-  const b = Math.round(212 + s * (11 - 212));
-  return `rgba(${r}, ${g}, ${b}, ${0.8 + s * 0.2})`;
-}
 
 function ActivityHeatmap({
   cells,

@@ -3343,6 +3343,13 @@ When "Browse" runs, `getAircraftSummary`, `getTimeDistribution`, and `getDetecti
    - Bucketing uses integer `//`. It used `CAST(ts / w AS BIGINT)` until this change: DuckDB's `/` is float division and `CAST` rounds, so every row past a bucket's midpoint was counted in the *next* bucket (`test_time_distribution_floors_into_containing_bucket`)
 3. **Altitude histogram**: `<BarChart>` with indigo bars, ~100px tall, 10 bins of 5000ft each (0–50k ft)
 4. **Detection range radar**: Custom SVG polar chart showing max detection distance by 10-degree azimuth sector. Only shown when receiver location is configured and sectors have data.
+   - **Rings at round steps.** A selector (Auto / 10 / 25 / 50 / 100 NM, default 25, `localStorage` key `adsb-radar-ring-step`) sets the ring spacing. At most 5 rings: a step that would need more moves up to the next one (Auto starts at 10; past 200 NM, multiples of 200). The outermost ring sits on the chart edge and **every shape is scaled to it**, not to the max range, so a 25 NM wedge reaches the 25 NM ring.
+   - **Density** is a toggle that works with either mode, not a third mode. Cells are colored by position count on the activity heatmap's ramp (`src/lib/heatmap-color.ts`, shared), relative to the busiest cell, and the tooltip lists the count of each ring band. **Not linearly**: density falls off steeply with distance, so most cells held a few percent of the busiest one and landed in the ramp's near-transparent slate band (the radar looked dull). `densityIntensity` maps `t` to `0.15 + 0.85·√t`, so sparse cells spread over the cyan range and every non-empty cell is visible. The activity heatmap keeps its linear scale. Both modes stay polar; only the radial cell length differs:
+     - **Polar**: one cell per 10° sector × ring band (at most 36 × 5 = 180 paths); the wedges' fill drops to a 6% veil (more cyan on top washed the amber out).
+     - **Polygon**: one cell per 10° sector × **10 NM** (`POLYGON_DENSITY_CELL_NM`), re-binned from the backend's 5 NM bins; the polygon fill drops to a 5% veil. When the scale is not a multiple of 10 (25 NM steps give 75 or 125 NM), the last cell is clipped at the outer ring (`buildDensityCells`'s `scaleNm`). At most 36 × 40 paths on a 400 NM scale.
+     - **Cells are clipped to the range shape** (`<clipPath>` holding the polygon, or the wedges in Polar). A cell is a whole band and a ±5° arc, while the shape stops at each sector's max range and the polygon joins sector centres with straight lines, so unclipped cells spilled past the outline.
+     - Tried and dropped: a fine 5 NM radial heatmap in Polar (rings only a scale, wedges as outlines). The user preferred colour per sector × ring there.
+   - Mode and density are session state; only the step is remembered.
 
 **Chart styling ("glass")**, shared through `src/lib/chart-style.ts` (pure, tested) — Recharts plus hand-rolled SVG, no new dependency:
 - Bars are drawn by a custom `shape` (`glassBar`): a translucent fill with a **solid 1.25px top edge** in the series colour, top corners rounded to 4px (`roundedTopRectPath` / `topEdgePath`, radius clamped for thin or short bars). The edge carries identity at full strength, so the transparency never costs colour recognition.
@@ -3363,12 +3370,19 @@ Pure utility functions in `src/lib/db-history-analytics.ts`:
 Pure SVG geometry functions in `src/lib/detection-radar.ts`:
 - `computeMaxRange(sectors)` — max distance across all sectors (min 1)
 - `polarToCartesian(bearingDeg, normalizedRadius, center, maxRadius)` — aviation convention (0 = North/up)
-- `buildRadarPoints(sectors, config?)` — 36 cartesian points from sector data
+- `buildRadarPoints(sectors, config?, scaleNm?)` — 36 cartesian points from sector data, normalized to `scaleNm` (default: max range; the component passes the outer ring)
 - `buildRadarPath(points)` — closed SVG path string
-- `buildDistanceRings(maxRange, config?)` — concentric NM rings
+- `buildSectorWedges(sectors, config?, scaleNm?)` — polar-mode wedges, same scale rule
+- `resolveRingStep(maxRange, choice)` — `{ stepNm, ringCount, outerNm }`, at most `MAX_RINGS` (5)
+- `buildDistanceRings(maxRange, step, config?)` — concentric rings at multiples of the resolved step
+- `rebinBandCounts(bandCounts, binNm, stepNm, ringCount)` — folds the backend's 5 NM bins into ring bands; beyond the outer ring lands in the last band, so the total is kept
+- `densityIntensity(t)` — square-root ramp position with a 0.15 floor for non-empty cells
+- `buildDensityCells(sectors, stepNm, ringCount, config?, binNm?, scaleNm?)` — annular-sector paths with count and `t`; radii normalized to `scaleNm` and clipped at it
 - `buildCardinalLabels(config?)` — N, E, S, W label positions
 
 The detection range computation runs entirely in DuckDB (haversine + bearing trig in SQL), returning only up to 36 pre-bucketed sectors regardless of dataset size. The Rust `geo` module provides reference implementations for test validation.
+
+**Distance bands are opt-in.** `DetectionRangeQuery.band_width_nm` (the desktop sends `RADAR_BAND_WIDTH_NM` = 5) adds `band_counts` to each sector: positions per `[i·w, (i+1)·w)` NM, trailing zeros trimmed. Without it the field is omitted from the JSON, so the agent's `getDetectionRange` tool and `adsb-data-server` see the same payload as before. The query uses `GROUP BY GROUPING SETS ((sector), (sector, band))` and tells the rows apart with `GROUPING(band)`. This keeps it to one pass: the glitch filter's window functions run once, and `flight_count` stays a real `COUNT(DISTINCT)`, which summing the bands could not give. The bins are 5 NM because every selectable step is a multiple of 5, so changing the step only re-buckets in the browser and needs no new query. A width that is not a finite positive number is rejected; it is formatted into the SQL as a literal, so the existing bind parameters keep their order.
 
 **Decode glitches are left out.** A sector's value is a maximum, so one bad fix sets it: the live database held positions at 71°N 115°W and in the mid-Atlantic, in the middle of tracks over western France, and the radar showed 3,695 NM. A position is kept only if one of its aircraft's two fixes before or after (`LAG`/`LEAD` over `hex_ident`) could reach it at `PLAUSIBLE_MAX_SPEED_KT` (1000 kt) plus `POSITION_JITTER_NM` (0.5 NM); the second neighbour lets the fixes around a glitch see past it. A position with no neighbour is kept. On that database this dropped 9 of 1.56 M positions and brought six sectors from 138-3,695 NM back to 43-120 NM. A run of glitches consistent with each other would survive; none was seen.
 

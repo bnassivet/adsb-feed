@@ -219,6 +219,11 @@ pub struct DetectionRangeQuery {
     pub receiver_lon: f64,
     pub start_ms: Option<i64>,
     pub end_ms: Option<i64>,
+    /// When set, each sector also carries `band_counts`: a histogram of its
+    /// positions by distance, in bands of this width (NM). Must be > 0.
+    /// Opt-in so callers that did not ask (agent tools) get the same payload.
+    #[serde(default)]
+    pub band_width_nm: Option<f64>,
 }
 
 /// A single 10° azimuth sector in the detection range result.
@@ -236,6 +241,11 @@ pub struct DetectionRangeSector {
     pub max_altitude: Option<f64>,
     /// Number of distinct flights observed in this sector.
     pub flight_count: u64,
+    /// Positions per distance band: entry `i` counts `[i·w, (i+1)·w)` NM, where
+    /// `w` is the query's `band_width_nm`. Trailing zeros trimmed; empty when
+    /// the query asked for no bands.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub band_counts: Vec<u64>,
 }
 
 /// Query parameters for hourly activity heatmap.
