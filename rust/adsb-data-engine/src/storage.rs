@@ -26,6 +26,8 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
+mod flight_cache;
+
 /// Write Arrow RecordBatches to an IPC stream, returning the raw bytes.
 fn write_arrow_ipc(batches: impl Iterator<Item = RecordBatch>) -> Result<Vec<u8>, StorageError> {
     let mut buf = Vec::new();
@@ -231,6 +233,43 @@ const SCHEMA_AUTHORED_SQL: &str = r#"
     );
 
     CREATE INDEX IF NOT EXISTS idx_scenario_tracks_scenario ON scenario_tracks (scenario_id, ordinal);
+
+    CREATE TABLE IF NOT EXISTS aircraft_info (
+        hex_ident       TEXT    PRIMARY KEY,
+        found           BOOLEAN NOT NULL,
+        icao_type       TEXT,
+        type_name       TEXT,
+        manufacturer    TEXT,
+        registration    TEXT,
+        owner           TEXT,
+        owner_country   TEXT,
+        photo_url       TEXT,
+        photo_thumb_url TEXT,
+        fetched_at_ms   BIGINT  NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS flight_routes (
+        callsign         TEXT    PRIMARY KEY,
+        found            BOOLEAN NOT NULL,
+        airline_name     TEXT,
+        airline_icao     TEXT,
+        airline_iata     TEXT,
+        origin_icao      TEXT,
+        origin_iata      TEXT,
+        origin_name      TEXT,
+        origin_city      TEXT,
+        origin_country   TEXT,
+        origin_lat       DOUBLE,
+        origin_lon       DOUBLE,
+        dest_icao        TEXT,
+        dest_iata        TEXT,
+        dest_name        TEXT,
+        dest_city        TEXT,
+        dest_country     TEXT,
+        dest_lat         DOUBLE,
+        dest_lon         DOUBLE,
+        fetched_at_ms    BIGINT  NOT NULL
+    );
 "#;
 
 impl StorageHandle {

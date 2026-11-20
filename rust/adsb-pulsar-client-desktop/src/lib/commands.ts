@@ -9,6 +9,7 @@ import type {
   CreateScenarioTrack,
   DetectionRangeQuery,
   DetectionRangeSector,
+  FlightInfo,
   EventOfInterest,
   EventOfInterestQuery,
   FlightSummary,
@@ -476,6 +477,19 @@ export async function getSeamarks(south: number, west: number, north: number, ea
 /** Ground height under a point, metres (0 at sea), from Terrarium tiles cached on disk. */
 export async function getGroundElevation(lat: number, lng: number): Promise<number> {
   return invoke("get_ground_elevation", { lat, lng });
+}
+
+/**
+ * Airframe and route of one live aircraft from the web (adsbdb), cached in
+ * DuckDB. Never fails as a whole: problems come back in `error`.
+ */
+export async function getFlightInfo(hexIdent: string, callsign: string | null): Promise<FlightInfo> {
+  return invoke("get_flight_info", { hexIdent, callsign });
+}
+
+/** The aircraft's photo thumbnail as a `data:` URL, or null. Call `getFlightInfo` first. */
+export async function getAircraftPhoto(hexIdent: string): Promise<string | null> {
+  return invoke("get_aircraft_photo", { hexIdent });
 }
 
 /** Ground height and sea depth at a point, each with its own error. */

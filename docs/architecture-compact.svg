@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1140 680" width="1140" height="680" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1140 698" width="1140" height="698" role="img" aria-labelledby="title desc">
 <title id="title">ADS-B Feed: compact mode</title>
-<desc id="desc">Compact mode: the desktop app reads dump1090 directly and records to its own embedded DuckDB, with no broker or data server. The AI agents remain optional separate processes.</desc>
+<desc id="desc">Compact mode: the desktop app reads dump1090 directly and records to its own embedded DuckDB, with no broker or data server. The AI agents remain optional separate processes. Flight info is looked up on adsbdb.com from Rust, on request only, and cached in the embedded DuckDB.</desc>
 <style>
   svg {
     --bg:#ffffff; --fg:#1f2328; --muted:#59636e; --box:#ffffff; --edge:#57606a;
@@ -44,7 +44,7 @@
     <path class="head" d="M0,0 L10,5 L0,10 z"/>
   </marker>
 </defs>
-<rect class="bg" x="0" y="0" width="1140" height="680"/>
+<rect class="bg" x="0" y="0" width="1140" height="698"/>
 <text class="t-h1" x="20" y="34">ADS-B Feed: compact mode</text>
 <text class="t-sub" x="20" y="52">source_kind = socket, storage = embedded. No broker, no data server, no Docker: one process reads dump1090 and records its own history.</text>
 <rect class="band apps" x="10" y="60" width="1120" height="130" rx="10"/>
@@ -69,7 +69,7 @@
 <rect class="box apps" x="180" y="92" width="560" height="84" rx="8"/>
 <text class="t-title" x="460.0" y="116">Webview UI</text>
 <text class="t-code" x="460.0" y="134">Next.js 16 · React 19 · Leaflet</text>
-<text class="t-note" x="460.0" y="150">live map · DB History panel · analytics · AI chat · scenarios</text>
+<text class="t-note" x="460.0" y="150">live map · DB History panel · analytics · AI chat · scenarios · flight info</text>
 <rect class="box apps opt" x="800" y="92" width="300" height="84" rx="8"/>
 <text class="t-title" x="950.0" y="116">AI agent</text>
 <text class="t-code" x="950.0" y="134">adsb-agent · LangGraph</text>
@@ -81,11 +81,11 @@
 <rect class="box svc" x="378" y="222" width="175" height="90" rx="8"/>
 <text class="t-title" x="465.5" y="247">Commands</text>
 <text class="t-code" x="465.5" y="266">commands.rs</text>
-<text class="t-note" x="465.5" y="283">history queries · storage ops</text>
+<text class="t-note" x="465.5" y="283">history · storage · web lookups</text>
 <rect class="box svc" x="576" y="222" width="175" height="90" rx="8"/>
 <text class="t-title" x="663.5" y="247">Tool server</text>
 <text class="t-code" x="663.5" y="266">read-only data plane</text>
-<text class="t-note" x="663.5" y="283">loopback only</text>
+<text class="t-note" x="663.5" y="283">loopback · + lookupFlightInfo</text>
 <rect class="box svc opt" x="800" y="222" width="145" height="90" rx="8"/>
 <text class="t-title" x="872.5" y="247">Simulation agent</text>
 <text class="t-code" x="872.5" y="266">A2A server</text>
@@ -97,7 +97,7 @@
 <rect class="box sto" x="378" y="360" width="175" height="72" rx="8"/>
 <text class="t-title" x="465.5" y="384">Embedded DuckDB</text>
 <text class="t-code" x="465.5" y="402">adsb_history.db</text>
-<text class="t-note" x="465.5" y="418">&lt;app-data&gt;/&lt;stack&gt;/</text>
+<text class="t-note" x="465.5" y="418">+ flight-info cache</text>
 <rect class="box sto" x="596" y="360" width="155" height="72" rx="8"/>
 <text class="t-title" x="673.5" y="384">Snapshots</text>
 <text class="t-code" x="673.5" y="402">snapshots/*.db</text>
@@ -133,7 +133,7 @@
 <path class="edge" d="M445,312 V356" marker-end="url(#head)"/>
 <text class="t-edge" x="451" y="338" text-anchor="start">SQL</text>
 <path class="edge" d="M600,312 V334 H520 V356" marker-end="url(#head)"/>
-<text class="t-edge" x="560" y="330" text-anchor="middle">read-only</text>
+<text class="t-edge" x="560" y="330" text-anchor="middle">reads · cache</text>
 <path class="edge" d="M553,396 H592" marker-end="url(#head)"/>
 <path class="edge" d="M744,120 H796" marker-end="url(#head)" marker-start="url(#head)"/>
 <text class="t-edge" x="770" y="110" text-anchor="middle">AG-UI</text>
@@ -157,4 +157,5 @@
 <text class="t-layer-sub" x="336" y="622">data / control flow</text>
 <text class="t-layer-sub" x="20" y="644">The weather layer is unavailable here: its snapshots arrive over MQTT. Stacks started with make give the tool server its own port, so it can run beside the data server.</text>
 <text class="t-layer-sub" x="20" y="662">History lives only while this app runs: close it and nothing is recorded. For always-on recording, use the MQTT topology above.</text>
+<text class="t-layer-sub" x="20" y="680">Web lookups (map layers; flight info from adsbdb.com on a click, never for simulated aircraft) go out from Rust: see map-layers-external-endpoints.svg.</text>
 </svg>

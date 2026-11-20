@@ -722,3 +722,54 @@ export const DEFAULT_FILTERS: Filters = {
   speedMax: 600,
   includeImportedInFilter: false,
 };
+
+/** An airport from the flight-info source (adsbdb). Mirrors `adsb_data_engine::Airport`. */
+export interface Airport {
+  icao: string;
+  iata: string | null;
+  name: string | null;
+  city: string | null;
+  country: string | null;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+/** Airframe details for one hex. `found: false` = the source does not know it. */
+export interface AircraftInfo {
+  hex_ident: string;
+  found: boolean;
+  icao_type: string | null;
+  type_name: string | null;
+  manufacturer: string | null;
+  registration: string | null;
+  owner: string | null;
+  owner_country: string | null;
+  photo_url: string | null;
+  photo_thumb_url: string | null;
+  fetched_at_ms: number;
+}
+
+/** Scheduled route for one callsign — not a filed flight plan. */
+export interface FlightRoute {
+  callsign: string;
+  found: boolean;
+  airline_name: string | null;
+  airline_icao: string | null;
+  airline_iata: string | null;
+  origin: Airport | null;
+  destination: Airport | null;
+  fetched_at_ms: number;
+}
+
+/** Answer of `get_flight_info`. Mirrors `adsb_data_server::flight_info::FlightInfo`. */
+export interface FlightInfo {
+  hex_ident: string;
+  callsign: string | null;
+  aircraft: AircraftInfo | null;
+  route: FlightRoute | null;
+  source: "cache" | "web" | "none";
+  /** A refresh failed; cached data older than its TTL is shown. */
+  stale: boolean;
+  error: string | null;
+  simulated: boolean;
+}

@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1420 790" width="1420" height="790" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1420 808" width="1420" height="808" role="img" aria-labelledby="title desc">
 <title id="title">ADS-B Feed: layered architecture</title>
-<desc id="desc">Infrastructure, messaging, storage, services and applications layers of the ADS-B stack, with the main data flows between components, including voice input.</desc>
+<desc id="desc">Infrastructure, messaging, storage, services and applications layers of the ADS-B stack, with the main data flows between components, including voice input. The desktop also looks up flight info on adsbdb.com, on request, caching it in its own DuckDB.</desc>
 <style>
   svg {
     --bg:#ffffff; --fg:#1f2328; --muted:#59636e; --box:#ffffff; --edge:#57606a;
@@ -51,7 +51,7 @@
     <path class="head" d="M0,0 L10,5 L0,10 z"/>
   </marker>
 </defs>
-<rect class="bg" x="0" y="0" width="1420" height="790"/>
+<rect class="bg" x="0" y="0" width="1420" height="808"/>
 <text class="t-h1" x="20" y="34">ADS-B Feed: layered architecture</text>
 <text class="t-sub" x="20" y="52">MQTT is the live path. Pulsar and the Spark/Delta analytics path are optional.</text>
 <rect class="band apps" x="10" y="60" width="1400" height="130" rx="10"/>
@@ -82,7 +82,7 @@
 <rect class="box apps" x="380" y="82" width="400" height="90" rx="8"/>
 <text class="t-title" x="580.0" y="107">Desktop app</text>
 <text class="t-code" x="580.0" y="126">Tauri v2 · Next.js 16 · React 19</text>
-<text class="t-note" x="580.0" y="143">live map · DB history · weather layer · AI chat · mic button</text>
+<text class="t-note" x="580.0" y="143">live map · DB history · weather · flight info · AI chat · mic</text>
 <rect class="box apps" x="830" y="82" width="160" height="90" rx="8"/>
 <text class="t-title" x="910.0" y="107">AI agent</text>
 <text class="t-code" x="910.0" y="126">adsb-agent · LangGraph</text>
@@ -212,4 +212,5 @@
 <text class="t-layer-sub" x="392" y="732">optional or off by default</text>
 <text class="t-layer-sub" x="20" y="754">The desktop can also embed DuckDB itself instead of attaching remotely.</text>
 <text class="t-layer-sub" x="20" y="772">Voice needs the agent's voice extra. The agent starts the LFM2.5-Audio server on the first voice request; Voxtral is an alternative speech-to-text backend.</text>
+<text class="t-layer-sub" x="20" y="790">Flight info (route, airline, airframe, photo): adsbdb.com via the desktop's Rust side, on a click or the agent's lookupFlightInfo tool; never for simulated aircraft.</text>
 </svg>

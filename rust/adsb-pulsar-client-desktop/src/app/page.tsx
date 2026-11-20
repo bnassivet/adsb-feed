@@ -44,6 +44,8 @@ import { EventFormDialog } from "@/components/EventFormDialog";
 import { MapContextMenu } from "@/components/MapContextMenu";
 import { WhatIsHere } from "@/components/WhatIsHere";
 import { useGroundElevation } from "@/hooks/useGroundElevation";
+import { useFlightInfo } from "@/hooks/useFlightInfo";
+import { isSimulatedTrack } from "@/lib/flight-info";
 import { whatIsHere } from "@/lib/commands";
 import type { WhatIsHereResult } from "@/lib/terrain";
 import { useAircraftTracks } from "@/hooks/useAircraftTracks";
@@ -973,6 +975,13 @@ export default function Dashboard() {
     [selLat, selLng],
   );
   const selectedGround = useGroundElevation(selectedPoint);
+  // Web flight info, asked only from the panel's "Show Flight Infos" button.
+  // Simulated aircraft (demo flights, agent trajectories) are never looked up.
+  const selectedIsSimulated = isSimulatedTrack(selectedTrack?.hex_ident, simulatedTracks, agentSimulatedTracks);
+  const selectedFlightInfo = useFlightInfo(
+    selectedTrack ? { hex_ident: selectedTrack.hex_ident, callsign: selectedTrack.callsign?.trim() || null } : null,
+    selectedIsSimulated,
+  );
   const selectedAirspaces = useMemo(
     () => (selLat != null && selLng != null && visibleAirspaces.length > 0 ? airspacesAt(visibleAirspaces, selLat, selLng) : []),
     [visibleAirspaces, selLat, selLng],
@@ -1751,6 +1760,8 @@ export default function Dashboard() {
                 groundElevationM={selectedGround.groundM}
                 transitionAltitudeFt={transitionAltitudeFt}
                 airspaces={selectedAirspaces}
+                flightInfo={selectedFlightInfo}
+                isSimulated={selectedIsSimulated}
                 rangeLineOn={showRangeLines}
                 onToggleRangeLine={handleToggleRangeLines}
               />
