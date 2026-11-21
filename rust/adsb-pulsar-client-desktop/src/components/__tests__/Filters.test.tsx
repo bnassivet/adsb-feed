@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FiltersPanel } from "../Filters";
 import { DEFAULT_FILTERS } from "@/lib/types";
+import { BUILTIN_FILTERS, allSavedFilters } from "@/lib/saved-filters";
 
 // HistoryBrowser has its own tests; mock it here to avoid Tauri/DuckDB side effects
 vi.mock("@/components/HistoryBrowser", () => ({
@@ -129,6 +130,11 @@ describe("FiltersPanel", () => {
     renderFilters();
     // RangeSlider renders "0 kts – 600 kts" (em dash)
     expect(screen.getByText("0 kts – 600 kts")).toBeInTheDocument();
+  });
+
+  it("displays shown / total aircraft when the total is given", () => {
+    renderFilters({ trackCount: 12, totalCount: 40 });
+    expect(screen.getByTestId("filters-track-ratio")).toHaveTextContent("Showing 12/40 aircraft");
   });
 
   it("displays track count", () => {
@@ -450,6 +456,121 @@ describe("events of interest toggle", () => {
       renderFilters({ showDensity: true, densityTooltipMode: "off" });
       expect(screen.getByLabelText("Off")).toBeChecked();
       expect(screen.getByLabelText("Compact")).not.toBeChecked();
+    });
+  });
+
+  describe("callsign regex toggle", () => {
+    it("is off by default", () => {
+      renderFilters();
+      expect(screen.getByRole("button", { name: /use regular expression/i })).toHaveAttribute(
+        "aria-pressed",
+        "false",
+      );
+    });
+
+    it("turns regex mode on, keeping the query", async () => {
+      const user = userEvent.setup();
+      const { props } = renderFilters({ filters: { ...DEFAULT_FILTERS, callsign: "^AFR" } });
+      await user.click(screen.getByRole("button", { name: /use regular expression/i }));
+      expect(props.onChange).toHaveBeenCalledWith({
+        ...DEFAULT_FILTERS,
+        callsign: "^AFR",
+        callsignRegex: true,
+      });
+    });
+
+    it("shows the regex placeholder in regex mode", () => {
+      renderFilters({ filters: { ...DEFAULT_FILTERS, callsignRegex: true } });
+      expect(screen.getByPlaceholderText(/regex/i)).toBeInTheDocument();
+    });
+
+    it("flags an invalid pattern without blocking input", () => {
+      renderFilters({ filters: { ...DEFAULT_FILTERS, callsign: "AFR(", callsignRegex: true } });
+      expect(screen.getByRole("textbox", { name: /callsign/i })).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByRole("alert")).toHaveTextContent(/invalid/i);
+    });
+
+    it("does not flag regex syntax in substring mode", () => {
+      renderFilters({ filters: { ...DEFAULT_FILTERS, callsign: "AFR(" } });
+      expect(screen.getByRole("textbox", { name: /callsign/i })).not.toHaveAttribute("aria-invalid", "true");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("saved filters", () => {
+    it("is absent without saved-filter props", () => {
+      renderFilters();
+      expect(screen.queryByRole("combobox", { name: /saved filters/i })).not.toBeInTheDocument();
+    });
+
+    it("renders the picker and applies a default filter through onChange", async () => {
+      const user = userEvent.setup();
+      const { props } = renderFilters({
+        savedFilters: { list: allSavedFilters([]), onSave: vi.fn(), onDelete: vi.fn() },
+      });
+      await user.selectOptions(screen.getByRole("combobox", { name: /saved filters/i }), BUILTIN_FILTERS[1].id);
+      expect(props.onChange).toHaveBeenCalledWith({
+        ...DEFAULT_FILTERS,
+        callsign: BUILTIN_FILTERS[1].pattern,
+        callsignRegex: true,
+        savedFilterId: null,
+      });
+    });
+  });
+
+  describe("with a combined filter selected", () => {
+    const withCombo = { ...DEFAULT_FILTERS, savedFilterId: "builtin:military" };
+
+    it("shows the combination instead of an empty query", () => {
+      renderFilters({
+        filters: withCombo,
+        savedFilters: { list: allSavedFilters([]), onSave: vi.fn(), onDelete: vi.fn() },
+      });
+      expect(screen.getByRole("textbox", { name: /callsign/i })).toHaveAttribute(
+        "placeholder",
+        expect.stringMatching(/combined filter/i),
+      );
+    });
+
+    it("typing replaces the combination with the query", async () => {
+      const user = userEvent.setup();
+      const { props } = renderFilters({ filters: withCombo });
+      await user.type(screen.getByRole("textbox", { name: /callsign/i }), "A");
+      expect(props.onChange).toHaveBeenCalledWith({ ...DEFAULT_FILTERS, callsign: "A", savedFilterId: null });
+    });
+  });
+
+  describe("clear filters button", () => {
+    it("is disabled when nothing is filtered", () => {
+      renderFilters();
+      expect(screen.getByRole("button", { name: /clear filters/i })).toBeDisabled();
+    });
+
+    it("resets query, combination and ranges, keeping regex mode and the imported option", async () => {
+      const user = userEvent.setup();
+      const { props } = renderFilters({
+        filters: {
+          ...DEFAULT_FILTERS,
+          callsign: "",
+          callsignRegex: true,
+          savedFilterId: "builtin:military",
+          altitudeMin: 5000,
+          speedMax: 300,
+          includeImportedInFilter: true,
+        },
+      });
+      await user.click(screen.getByRole("button", { name: /clear filters/i }));
+      expect(props.onChange).toHaveBeenCalledWith({
+        ...DEFAULT_FILTERS,
+        callsignRegex: true,
+        savedFilterId: null,
+        includeImportedInFilter: true,
+      });
+    });
+
+    it("is enabled by a query alone", () => {
+      renderFilters({ filters: { ...DEFAULT_FILTERS, callsign: "AFR" } });
+      expect(screen.getByRole("button", { name: /clear filters/i })).toBeEnabled();
     });
   });
 });

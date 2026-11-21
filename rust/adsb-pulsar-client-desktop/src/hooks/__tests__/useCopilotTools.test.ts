@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { useCopilotTools, type DisplayToolsConfig } from "../useCopilotTools";
 import type { WeatherSnapshot } from "@/lib/weather";
+import { allSavedFilters } from "@/lib/saved-filters";
 
 // Capture all tool registrations from useFrontendTool calls
 const registeredTools = new Map<
@@ -117,8 +118,12 @@ function makeConfig(overrides: Partial<DisplayToolsConfig> = {}): DisplayToolsCo
     setSelectedHexIdents: vi.fn(),
     setLastSelectedHexIdent: vi.fn(),
     setActiveFilters: vi.fn(),
-    activeFilters: { callsign: "", altitudeMin: 0, altitudeMax: 50000, speedMin: 0, speedMax: 600, includeImportedInFilter: false },
+    activeFilters: { callsign: "", callsignRegex: false, altitudeMin: 0, altitudeMax: 50000, speedMin: 0, speedMax: 600, includeImportedInFilter: false },
     flyTo: vi.fn(),
+    savedFilters: allSavedFilters([
+      { id: "u1", name: "Majors", pattern: "^(UAL|BAW)\\d+$", description: "United + BA" },
+      { id: "u2", name: "Not majors", combine: { op: "or", terms: [{ ref: "u1", not: true }] } },
+    ]),
     ...overrides,
   };
 }
@@ -729,6 +734,71 @@ describe("useCopilotTools — display control tools", () => {
       expect(result.altitudeMax).toBe(50000);
     });
 
+    it("sets regex mode for the callsign filter", async () => {
+      const result = JSON.parse(
+        await getHandler("setFilters")({ callsign: "^AF", callsignRegex: true })
+      );
+      expect(result.callsign).toBe("^AF");
+      expect(result.callsignRegex).toBe(true);
+    });
+
+    it("refuses an invalid callsign regex without changing filters", async () => {
+      const result = JSON.parse(
+        await getHandler("setFilters")({ callsign: "AF(", callsignRegex: true })
+      );
+      expect(result.error).toMatch(/invalid regular expression/i);
+      expect(config.setActiveFilters).not.toHaveBeenCalled();
+    });
+
+    it("applies a saved filter by name (case-insensitive) in regex mode", async () => {
+      const result = JSON.parse(await getHandler("setFilters")({ savedFilter: "majors", altitudeMin: 1000 }));
+      expect(result.callsign).toBe("^(UAL|BAW)\\d+$");
+      expect(result.callsignRegex).toBe(true);
+      expect(result.altitudeMin).toBe(1000);
+      expect(config.setActiveFilters).toHaveBeenCalledWith(result);
+    });
+
+    it("refuses an unknown saved filter and lists the available names", async () => {
+      const result = JSON.parse(await getHandler("setFilters")({ savedFilter: "nope" }));
+      expect(result.error).toMatch(/unknown saved filter/i);
+      expect(result.available).toContain("Majors");
+      expect(result.available).toContain("Military — callsigns (NATO/EU)");
+      expect(config.setActiveFilters).not.toHaveBeenCalled();
+    });
+
+    it("refuses savedFilter together with callsign", async () => {
+      const result = JSON.parse(await getHandler("setFilters")({ savedFilter: "Majors", callsign: "AFR" }));
+      expect(result.error).toMatch(/not both/i);
+      expect(config.setActiveFilters).not.toHaveBeenCalled();
+    });
+
+    it("selects a combined saved filter by id and empties the query", async () => {
+      const result = JSON.parse(await getHandler("setFilters")({ savedFilter: "Military — hex or callsign (NATO/EU)" }));
+      expect(result.savedFilterId).toBe("builtin:military");
+      expect(result.callsign).toBe("");
+      expect(config.setActiveFilters).toHaveBeenCalledWith(result);
+    });
+
+    it("refuses a combined filter whose source is missing", async () => {
+      config.savedFilters = [{ id: "x", name: "Broken", combine: { op: "or", terms: [{ ref: "gone" }] } }];
+      const result = JSON.parse(await getHandler("setFilters")({ savedFilter: "Broken" }));
+      expect(result.error).toMatch(/missing/i);
+      expect(config.setActiveFilters).not.toHaveBeenCalled();
+    });
+
+    it("a callsign query replaces a selected combined filter", async () => {
+      config.activeFilters = { ...config.activeFilters, savedFilterId: "u2" };
+      const result = JSON.parse(await getHandler("setFilters")({ callsign: "BAW" }));
+      expect(result.callsign).toBe("BAW");
+      expect(result.savedFilterId).toBeNull();
+    });
+
+    it("keeps a selected combined filter when only ranges change", async () => {
+      config.activeFilters = { ...config.activeFilters, savedFilterId: "u2" };
+      const result = JSON.parse(await getHandler("setFilters")({ altitudeMin: 1000 }));
+      expect(result.savedFilterId).toBe("u2");
+    });
+
     it("clears filters when called with empty args", async () => {
       const result = JSON.parse(
         await getHandler("setFilters")({})
@@ -798,6 +868,55 @@ describe("useCopilotTools — display control tools", () => {
       const result = JSON.parse(await getHandler("searchLiveFlights")({ callsign: "d4e5" }));
       expect(result.total).toBe(1);
       expect(result.flights[0].hex_ident).toBe("D4E5F6");
+    });
+
+    it("filters by callsign regex when callsignRegex is set", async () => {
+      const result = JSON.parse(
+        await getHandler("searchLiveFlights")({ callsign: "^(ual|ryr)\\d+$", callsignRegex: true })
+      );
+      expect(result.total).toBe(2);
+      expect(result.flights.map((f: { hex_ident: string }) => f.hex_ident).sort()).toEqual(["A1B2C3", "G7H8I9"]);
+    });
+
+    it("returns an error for an invalid callsign regex", async () => {
+      const result = JSON.parse(
+        await getHandler("searchLiveFlights")({ callsign: "UAL(", callsignRegex: true })
+      );
+      expect(result.error).toMatch(/invalid regular expression/i);
+    });
+
+    it("searches with a saved filter", async () => {
+      const result = JSON.parse(await getHandler("searchLiveFlights")({ savedFilter: "Majors" }));
+      expect(result.total).toBe(2);
+      expect(result.flights.map((f: { hex_ident: string }) => f.hex_ident).sort()).toEqual(["A1B2C3", "D4E5F6"]);
+    });
+
+    it("returns an error for an unknown saved filter", async () => {
+      const result = JSON.parse(await getHandler("searchLiveFlights")({ savedFilter: "nope" }));
+      expect(result.error).toMatch(/unknown saved filter/i);
+      expect(result.available).toContain("Majors");
+    });
+
+    it("searches with a combined saved filter (NOT Majors)", async () => {
+      const result = JSON.parse(await getHandler("searchLiveFlights")({ savedFilter: "not majors" }));
+      expect(result.total).toBe(1);
+      expect(result.flights[0].hex_ident).toBe("G7H8I9");
+    });
+
+    it("advertises a savedFilter parameter on both callsign tools", () => {
+      for (const name of ["searchLiveFlights", "setFilters"]) {
+        const tool = registeredTools.get(name);
+        const shape = (tool?.parameters as { shape: Record<string, { description?: string }> }).shape;
+        expect(shape.savedFilter?.description).toMatch(/saved filter/i);
+      }
+    });
+
+    it("advertises a callsignRegex parameter on both callsign tools", () => {
+      for (const name of ["searchLiveFlights", "setFilters"]) {
+        const tool = registeredTools.get(name);
+        const shape = (tool?.parameters as { shape: Record<string, { description?: string }> }).shape;
+        expect(shape.callsignRegex?.description).toMatch(/regular expression/i);
+      }
     });
 
     it("filters by altitude range", async () => {

@@ -1,3 +1,4 @@
+import type { CallsignMatcher } from "./callsign-match";
 /** Aircraft position from a single SBS-1 message (mirrors Rust AircraftPosition). */
 export interface AircraftPosition {
   hex_ident: string;
@@ -174,6 +175,16 @@ export type StorageMode =
 export interface Filters {
   /** Raw input string; may contain comma-separated tokens for multi-ID filtering. */
   callsign: string;
+  /** When true, `callsign` is one case-insensitive regular expression (see `lib/callsign-match.ts`). */
+  callsignRegex: boolean;
+  /**
+   * A selected **combined** saved filter (`lib/saved-filters.ts`). A combination
+   * cannot be written in the query text, so it is held by id and resolved to a
+   * matcher (`combinedMatcher`) by the page. When set, `callsign` is empty.
+   */
+  savedFilterId?: string | null;
+  /** Runtime only: the resolved matcher for `savedFilterId`. Never persisted or sent to the agent. */
+  combinedMatcher?: CallsignMatcher | null;
   altitudeMin: number;
   altitudeMax: number;
   speedMin: number;
@@ -716,12 +727,38 @@ export interface UpdateScenarioTrack {
 
 export const DEFAULT_FILTERS: Filters = {
   callsign: "",
+  callsignRegex: false,
   altitudeMin: 0,
   altitudeMax: 50000,
   speedMin: 0,
   speedMax: 600,
   includeImportedInFilter: false,
 };
+
+/**
+ * Filters with the query (text or combined filter) and the ranges reset. The
+ * regex mode and "include imported" are preferences, not filters: kept.
+ */
+export function clearFilters(f: Filters): Filters {
+  return {
+    ...DEFAULT_FILTERS,
+    callsignRegex: f.callsignRegex,
+    savedFilterId: null,
+    includeImportedInFilter: f.includeImportedInFilter,
+  };
+}
+
+/** Whether `clearFilters` would change anything that filters aircraft. */
+export function hasActiveFilters(f: Filters): boolean {
+  return (
+    f.callsign.trim() !== "" ||
+    !!f.savedFilterId ||
+    f.altitudeMin !== DEFAULT_FILTERS.altitudeMin ||
+    f.altitudeMax !== DEFAULT_FILTERS.altitudeMax ||
+    f.speedMin !== DEFAULT_FILTERS.speedMin ||
+    f.speedMax !== DEFAULT_FILTERS.speedMax
+  );
+}
 
 /** An airport from the flight-info source (adsbdb). Mirrors `adsb_data_engine::Airport`. */
 export interface Airport {

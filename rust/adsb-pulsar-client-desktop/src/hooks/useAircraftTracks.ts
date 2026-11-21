@@ -3,20 +3,15 @@ import { useMemo } from "react";
 import { useAircraftTrackingContext } from "@/contexts/AircraftTrackingContext";
 import type { AircraftTrack, Filters } from "@/lib/types";
 import { DEFAULT_FILTERS } from "@/lib/types";
+import { compileCallsignQuery } from "@/lib/callsign-match";
 
 export function matchesFilters(t: AircraftTrack, filters: Filters): boolean {
-  if (filters.callsign) {
-    const tokens = filters.callsign
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean);
-    if (tokens.length > 0) {
-      const id = t.hex_ident.toLowerCase();
-      const cs = (t.callsign ?? "").toLowerCase();
-      if (!tokens.some((tok) => cs.includes(tok) || id.includes(tok))) {
-        return false;
-      }
-    }
+  if (filters.savedFilterId) {
+    // A combined saved filter replaces the query (resolved by `resolveFilters`).
+    if (filters.combinedMatcher && !filters.combinedMatcher(t.callsign, t.hex_ident)) return false;
+  } else if (filters.callsign) {
+    const { matcher } = compileCallsignQuery(filters.callsign, filters.callsignRegex ?? false);
+    if (matcher && !matcher(t.callsign, t.hex_ident)) return false;
   }
   if (t.altitude !== null) {
     if (t.altitude < filters.altitudeMin || t.altitude > filters.altitudeMax) {
@@ -31,6 +26,13 @@ export function matchesFilters(t: AircraftTrack, filters: Filters): boolean {
     }
   }
   return true;
+}
+
+/** How many of `tracks` pass `filters` (shown/total ratios). */
+export function countMatching(tracks: readonly AircraftTrack[], filters: Filters): number {
+  let n = 0;
+  for (const t of tracks) if (matchesFilters(t, filters)) n++;
+  return n;
 }
 
 /**
@@ -99,8 +101,21 @@ export function useAircraftTracks(filters: Filters) {
     [staticVersion, filters],
   );
 
+  // Unfiltered, for shown/total ratios: each mode is counted with ITS OWN
+  // filters by the page, whichever mode is active.
+  const allLive = useMemo(
+    () => Array.from(tracksMap.values()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [liveVersion],
+  );
+  const allAnalysis = useMemo(
+    () => Array.from(analysisMap.values()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [staticVersion],
+  );
+
   return {
-    tracks, history, imported, dbHistory, analysis,
+    tracks, history, imported, dbHistory, analysis, allLive, allAnalysis,
     importTracks, clearImported, loadDbHistoryTracks, clearDbHistory,
     addAnalysisTracks, removeAnalysisTrack, clearAnalysis,
     trackHistoryHours,

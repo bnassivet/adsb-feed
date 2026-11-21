@@ -1,4 +1,5 @@
 "use client";
+import { clearFilters, hasActiveFilters } from "@/lib/types";
 import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventFilterMode } from "@/lib/types";
 import { RangeSlider } from "@/components/RangeSlider";
 import { WeatherControls, type WeatherControlsProps } from "@/components/WeatherControls";
@@ -8,11 +9,23 @@ import { RadarControls, type RadarControlsProps } from "./RadarControls";
 import { SeaControls, type SeaControlsProps } from "./SeaControls";
 import { ReliefControls, type ReliefControlsProps } from "./ReliefControls";
 import type { ReactNode } from "react";
+import { compileCallsignQuery } from "@/lib/callsign-match";
+import { SavedFiltersControl } from "./SavedFilters";
+import type { SavedFilter, SavedFilterDraft } from "@/lib/saved-filters";
+
+/** Saved regex filters (defaults + the user's). Optional: without them there is no picker. */
+export interface SavedFiltersProps {
+  list: SavedFilter[];
+  onSave: (draft: SavedFilterDraft) => void;
+  onDelete: (id: string) => void;
+}
 
 interface Props {
   filters: Filters;
   onChange: (filters: Filters) => void;
   trackCount: number;
+  /** All aircraft of the mode, filtered or not. When given: "Showing shown/total aircraft". */
+  totalCount?: number;
   showHistory: boolean;
   onToggleHistory: () => void;
   historyCount: number;
@@ -70,6 +83,7 @@ interface Props {
   sea?: SeaControlsProps;
   /** Relief controls. Optional: without them there is no relief section. */
   relief?: ReliefControlsProps;
+  savedFilters?: SavedFiltersProps;
 }
 
 function msToDatetimeLocal(ms: number): string {
@@ -105,23 +119,70 @@ function Section({ title, defaultOpen, nested, children }: { title: string; defa
   );
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, showPositions, onTogglePositions, showLabels, onToggleLabels, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange, showEvents, onToggleEvents, eventsCount, eventFilterMode, onEventFilterModeChange, eventUpcomingDays, onEventUpcomingDaysChange, eventTimeRangeStart, eventTimeRangeEnd, onEventTimeRangeChange, weather, airspaces, metar, radar, sea, relief }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, totalCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, showPositions, onTogglePositions, showLabels, onToggleLabels, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange, showEvents, onToggleEvents, eventsCount, eventFilterMode, onEventFilterModeChange, eventUpcomingDays, onEventUpcomingDaysChange, eventTimeRangeStart, eventTimeRangeEnd, onEventTimeRangeChange, weather, airspaces, metar, radar, sea, relief, savedFilters }: Props) {
+  const callsignError = filters.callsignRegex
+    ? compileCallsignQuery(filters.callsign, true).error
+    : null;
+  // Editing the query replaces a selected combined filter (held by id, not in the text).
+  const replacesCombination = filters.savedFilterId ? { savedFilterId: null } : {};
   return (
     <div className="flex flex-col gap-2 p-4">
 
       {/* ── Search & Filters ── */}
       <Section title="Search & Filters" defaultOpen>
         <div>
-          <label className="block text-xs text-slate-400 mb-1">
+          <label htmlFor="filter-callsign" className="block text-xs text-slate-400 mb-1">
             Callsign / Hex
           </label>
-          <input
-            type="text"
-            value={filters.callsign}
-            onChange={(e) => onChange({ ...filters, callsign: e.target.value })}
-            placeholder="Search... (comma-separated)"
-            className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded text-sm text-slate-200 placeholder-slate-500 focus:border-blue-500 focus:outline-none"
-          />
+          <div className="relative">
+            <input
+              id="filter-callsign"
+              type="text"
+              value={filters.callsign}
+              onChange={(e) => onChange({ ...filters, callsign: e.target.value, ...replacesCombination })}
+              placeholder={
+                filters.savedFilterId
+                  ? "Combined filter active — type to replace"
+                  : filters.callsignRegex
+                    ? "Regex, e.g. ^(AFR|BAW)\\d+"
+                    : "Search... (comma-separated)"
+              }
+              aria-invalid={callsignError ? true : undefined}
+              aria-describedby={callsignError ? "filter-callsign-error" : undefined}
+              spellCheck={false}
+              className={`w-full pl-2 pr-9 py-1.5 bg-slate-700 border rounded text-sm text-slate-200 placeholder-slate-500 focus:outline-none ${
+                filters.callsignRegex ? "font-mono" : ""
+              } ${callsignError ? "border-red-500 focus:border-red-400" : "border-slate-600 focus:border-blue-500"}`}
+            />
+            <button
+              type="button"
+              aria-label="Use regular expression"
+              aria-pressed={filters.callsignRegex}
+              title="Use regular expression"
+              onClick={() => onChange({ ...filters, callsignRegex: !filters.callsignRegex, ...replacesCombination })}
+              className={`absolute right-1 top-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded font-mono text-[11px] ${
+                filters.callsignRegex
+                  ? "bg-blue-600 text-white"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-600"
+              }`}
+            >
+              .*
+            </button>
+          </div>
+          {callsignError && (
+            <p id="filter-callsign-error" role="alert" className="mt-1 text-[11px] text-red-400">
+              Invalid regex: {callsignError}
+            </p>
+          )}
+          {savedFilters && (
+            <SavedFiltersControl
+              filters={filters}
+              onChange={onChange}
+              savedFilters={savedFilters.list}
+              onSave={savedFilters.onSave}
+              onDelete={savedFilters.onDelete}
+            />
+          )}
         </div>
 
         <RangeSlider
@@ -161,10 +222,32 @@ export function FiltersPanel({ filters, onChange, trackCount, showHistory, onTog
           </label>
         )}
 
-        <div className="text-xs text-slate-400">
-          Tracking:{" "}
-          <span className="text-slate-200 font-mono">{trackCount}</span>{" "}
-          aircraft
+        <div className="flex items-center justify-between text-xs text-slate-400">
+          {totalCount === undefined ? (
+            <span>
+              Tracking:{" "}
+              <span className="text-slate-200 font-mono">{trackCount}</span>{" "}
+              aircraft
+            </span>
+          ) : (
+            <span data-testid="filters-track-ratio" title={`${trackCount} aircraft shown out of ${totalCount}`}>
+              Showing{" "}
+              <span className="text-slate-200 font-mono">
+                {trackCount}/{totalCount}
+              </span>{" "}
+              aircraft
+            </span>
+          )}
+          <button
+            type="button"
+            aria-label="Clear filters"
+            title="Clear the search and the altitude / speed ranges"
+            onClick={() => onChange(clearFilters(filters))}
+            disabled={!hasActiveFilters(filters)}
+            className="px-1.5 py-0.5 rounded text-[11px] text-slate-400 hover:text-slate-200 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+          >
+            ✕ Clear
+          </button>
         </div>
       </Section>
 

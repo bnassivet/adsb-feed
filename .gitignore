@@ -440,3 +440,4 @@ rust/target-desktop-*/
 desktop_log.txt
 *_log.txt
 .webui_secret_key
+.atomy/
