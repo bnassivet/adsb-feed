@@ -52,6 +52,43 @@ import type {
 } from "@/lib/types";
 import { trackKey } from "@/lib/types";
 import { historyWindowToSlider } from "@/lib/history-time-filter";
+import { compileCallsignQuery } from "@/lib/callsign-match";
+import { applySavedFilter, combinedMatcher, findSavedFilter, type SavedFilter } from "@/lib/saved-filters";
+
+/** Shared by `searchLiveFlights` and `setFilters`, so both tools describe regex mode the same way. */
+const CALLSIGN_REGEX_PARAM =
+  "When true, `callsign` is ONE case-insensitive JavaScript regular expression tested against the callsign and the hex ident (e.g. '^(AFR|BAW)\\d+$'; use | for alternatives, commas are part of the pattern). Default false: substring match.";
+
+function invalidCallsignRegex(message: string): string {
+  return JSON.stringify({ error: `Invalid regular expression for callsign: ${message}` });
+}
+
+/** Shared by `searchLiveFlights` and `setFilters`. Names are listed in the agent context. */
+const SAVED_FILTER_PARAM =
+  "Name of a saved filter (see the 'Saved callsign/hex regex filters' context, e.g. 'Military — hex or callsign (NATO/EU)'): a regex, or a combination of saved filters with OR/AND/XOR/NOT, tested against callsign and hex. Case-insensitive name. Do not combine with `callsign`.";
+
+/**
+ * Resolves `savedFilter` to the saved filter, or a JSON error string.
+ * `undefined` name → `null` (nothing to apply).
+ */
+function resolveSavedFilter(
+  name: string | undefined,
+  callsign: string | undefined,
+  saved: readonly SavedFilter[] | undefined,
+): SavedFilter | null | string {
+  if (name === undefined) return null;
+  if (callsign !== undefined) {
+    return JSON.stringify({ error: "Pass either savedFilter or callsign, not both" });
+  }
+  const found = findSavedFilter(saved ?? [], name);
+  if (!found) {
+    return JSON.stringify({
+      error: `Unknown saved filter '${name}'`,
+      available: (saved ?? []).map((f) => f.name),
+    });
+  }
+  return found;
+}
 import {
   availableLevels,
   describeRecordedValidity,
@@ -195,6 +232,8 @@ export interface DisplayToolsConfig {
   setLastSelectedHexIdent: (v: string | null) => void;
   activeFilters: Filters;
   setActiveFilters: (v: Filters) => void;
+  /** Saved regex filters (defaults + the user's), applied by name. */
+  savedFilters?: SavedFilter[];
   flyTo: (lat: number, lng: number, zoom: number) => void;
   /** Saved simulation scenarios. Absent when the scenario layer is not mounted. */
   scenarios?: ScenarioToolsConfig;
@@ -425,7 +464,9 @@ export function useCopilotTools(config: DisplayToolsConfig) {
     description:
       "Live — currently tracked aircraft (in-memory). Search, count, and list active flights. Filter by callsign, altitude/speed/heading ranges, squawk, or airborne/ground status; sort by altitude/speed/callsign/messages/recency. Returns { total, showing, flights } — use the total field to answer 'how many planes are flying right now' or 'how many active flights'. Call with no parameters to list all active flights. Returns total: 0 if the data feed is stopped.",
     parameters: z.object({
-      callsign: z.string().optional().describe("Substring match on callsign or hex ident (case-insensitive)"),
+      callsign: z.string().optional().describe("Substring match on callsign or hex ident (case-insensitive); comma-separated for several"),
+      callsignRegex: z.boolean().optional().describe(CALLSIGN_REGEX_PARAM),
+      savedFilter: z.string().optional().describe(SAVED_FILTER_PARAM),
       altitudeMin: z.number().optional().describe("Minimum altitude in feet"),
       altitudeMax: z.number().optional().describe("Maximum altitude in feet"),
       speedMin: z.number().optional().describe("Minimum ground speed in knots"),
@@ -440,6 +481,8 @@ export function useCopilotTools(config: DisplayToolsConfig) {
     }),
     handler: async (args: {
       callsign?: string;
+      callsignRegex?: boolean;
+      savedFilter?: string;
       altitudeMin?: number;
       altitudeMax?: number;
       speedMin?: number;
@@ -454,14 +497,17 @@ export function useCopilotTools(config: DisplayToolsConfig) {
     }) => {
       let filtered = [...configRef.current.tracks];
 
-      // Callsign/hex substring filter
-      if (args.callsign) {
-        const query = args.callsign.toLowerCase();
-        filtered = filtered.filter((t) => {
-          const cs = (t.callsign ?? "").toLowerCase();
-          const hex = t.hex_ident.toLowerCase();
-          return cs.includes(query) || hex.includes(query);
-        });
+      // Callsign/hex filter: substring (default), regex, or a saved filter — same rules as the Filters panel
+      const saved = resolveSavedFilter(args.savedFilter, args.callsign, configRef.current.savedFilters);
+      if (typeof saved === "string") return saved;
+      if (saved) {
+        const res = combinedMatcher(configRef.current.savedFilters ?? [], saved.id);
+        if ("error" in res) return JSON.stringify({ error: res.error });
+        filtered = filtered.filter((t) => res.matcher(t.callsign, t.hex_ident));
+      } else if (args.callsign) {
+        const { matcher, error } = compileCallsignQuery(args.callsign, args.callsignRegex ?? false);
+        if (error) return invalidCallsignRegex(error);
+        if (matcher) filtered = filtered.filter((t) => matcher(t.callsign, t.hex_ident));
       }
 
       // Altitude range
@@ -573,9 +619,11 @@ export function useCopilotTools(config: DisplayToolsConfig) {
   useSafeFrontendTool({
     name: "setFilters",
     description:
-      "Update aircraft display filters. Filters by callsign (substring match), altitude range, and speed range. Only provided fields are changed; omitted fields keep their current value.",
+      "Update aircraft display filters. Filters by callsign (substring or regular expression, or a saved filter by name such as the military defaults), altitude range, and speed range. Only provided fields are changed; omitted fields keep their current value.",
     parameters: z.object({
-      callsign: z.string().optional().describe("Filter by callsign or hex ident (substring match)"),
+      callsign: z.string().optional().describe("Filter by callsign or hex ident (substring match; comma-separated for several)"),
+      callsignRegex: z.boolean().optional().describe(CALLSIGN_REGEX_PARAM),
+      savedFilter: z.string().optional().describe(SAVED_FILTER_PARAM),
       altitudeMin: z.number().optional().describe("Minimum altitude in feet"),
       altitudeMax: z.number().optional().describe("Maximum altitude in feet"),
       speedMin: z.number().optional().describe("Minimum ground speed in knots"),
@@ -583,19 +631,39 @@ export function useCopilotTools(config: DisplayToolsConfig) {
     }),
     handler: async (args: {
       callsign?: string;
+      callsignRegex?: boolean;
+      savedFilter?: string;
       altitudeMin?: number;
       altitudeMax?: number;
       speedMin?: number;
       speedMax?: number;
     }) => {
+      const saved = resolveSavedFilter(args.savedFilter, args.callsign, configRef.current.savedFilters);
+      if (typeof saved === "string") return saved;
+      if (saved?.combine) {
+        const res = combinedMatcher(configRef.current.savedFilters ?? [], saved.id);
+        if ("error" in res) return JSON.stringify({ error: res.error });
+      }
+      const current = configRef.current.activeFilters;
+      // A callsign query replaces a selected combined filter, as typing does in the panel.
+      const base: Filters = saved
+        ? applySavedFilter(current, saved)
+        : {
+            ...current,
+            ...(args.callsign !== undefined && { callsign: args.callsign }),
+            ...(args.callsign !== undefined && current.savedFilterId && { savedFilterId: null }),
+            ...(args.callsignRegex !== undefined && { callsignRegex: args.callsignRegex }),
+          };
       const newFilters: Filters = {
-        ...configRef.current.activeFilters,
-        ...(args.callsign !== undefined && { callsign: args.callsign }),
+        ...base,
         ...(args.altitudeMin !== undefined && { altitudeMin: args.altitudeMin }),
         ...(args.altitudeMax !== undefined && { altitudeMax: args.altitudeMax }),
         ...(args.speedMin !== undefined && { speedMin: args.speedMin }),
         ...(args.speedMax !== undefined && { speedMax: args.speedMax }),
       };
+      // Refuse a broken pattern rather than apply a filter that silently filters nothing
+      const { error } = compileCallsignQuery(newFilters.callsign, newFilters.callsignRegex);
+      if (error) return invalidCallsignRegex(error);
       configRef.current.setActiveFilters(newFilters);
       return JSON.stringify(newFilters);
     },

@@ -11,6 +11,7 @@
  * giant blob, and lets future fields be added or removed independently.
  */
 import { useAgentContext } from "@copilotkit/react-core/v2";
+import { describeFilter, type SavedFilter } from "@/lib/saved-filters";
 import type {
   ActiveMode,
   AircraftTrack,
@@ -115,7 +116,12 @@ export interface CopilotContextConfig {
   historyWindow: { retentionHours: number; fromHoursAgo: number; toHoursAgo: number };
   /** The weather layer. Absent when the page does not provide one. */
   weather?: CopilotWeatherContext;
+  /** Saved callsign/hex regex filters, applied by name through `setFilters`/`searchLiveFlights`. */
+  savedFilters?: SavedFilter[];
 }
+
+export const SAVED_FILTERS_CONTEXT =
+  "Saved callsign/hex regex filters (apply one with setFilters or searchLiveFlights, savedFilter = its name)";
 
 export function useCopilotContext(config: CopilotContextConfig) {
   useAgentContext({
@@ -142,10 +148,23 @@ export function useCopilotContext(config: CopilotContextConfig) {
     },
   });
 
+  // The resolved combined matcher is a runtime function: never sent to the agent.
+  const serializableFilters: Omit<Filters, "combinedMatcher"> = { ...config.activeFilters };
+  delete (serializableFilters as Filters).combinedMatcher;
   useAgentContext({
     description:
       "Active aircraft filters (callsign, altitude range, speed range)",
-    value: { ...config.activeFilters },
+    value: { ...serializableFilters },
+  });
+
+  // Names and descriptions only: the patterns are long and the tools resolve them.
+  useAgentContext({
+    description: SAVED_FILTERS_CONTEXT,
+    value: (config.savedFilters ?? []).map((f) => ({
+      name: f.name,
+      ...(f.description && { description: f.description }),
+      ...(f.combine && { combines: describeFilter(config.savedFilters ?? [], f) }),
+    })),
   });
 
   useAgentContext({
