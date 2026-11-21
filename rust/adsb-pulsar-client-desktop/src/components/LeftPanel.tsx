@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, type ReactNode } from "react";
-import { FiltersPanel } from "@/components/Filters";
+import { FiltersPanel, type SavedFiltersProps } from "@/components/Filters";
 import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventFilterMode } from "@/lib/types";
 import type { WeatherControlsProps } from "@/components/WeatherControls";
 import type { AirspaceControlsProps } from "./AirspaceControls";
@@ -22,6 +22,7 @@ interface LeftPanelProps {
   filters: Filters;
   onChange: (filters: Filters) => void;
   trackCount: number;
+  totalCount?: number;
   showHistory: boolean;
   onToggleHistory: () => void;
   historyCount: number;
@@ -77,6 +78,8 @@ interface LeftPanelProps {
   sea?: SeaControlsProps;
   /** Relief controls. Optional: without them the panel has no relief section. */
   relief?: ReliefControlsProps;
+  /** Saved regex filters. Optional: without them there is no picker. */
+  savedFilters?: SavedFiltersProps;
   /** Rendered below the filters. A slot rather than typed props so the
    *  simulation state doesn't have to be drilled through this component. */
   simulationPanel?: ReactNode;

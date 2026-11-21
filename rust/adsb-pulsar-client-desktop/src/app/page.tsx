@@ -48,7 +48,7 @@ import { useFlightInfo } from "@/hooks/useFlightInfo";
 import { isSimulatedTrack } from "@/lib/flight-info";
 import { whatIsHere } from "@/lib/commands";
 import type { WhatIsHereResult } from "@/lib/terrain";
-import { useAircraftTracks } from "@/hooks/useAircraftTracks";
+import { countMatching, useAircraftTracks } from "@/hooks/useAircraftTracks";
 import { useSimulatedTracks } from "@/hooks/useSimulatedTracks";
 import { useAgentSimulatedTracks } from "@/hooks/useAgentSimulatedTracks";
 import type { SimulateRequest } from "@/lib/simulate-api";
@@ -73,6 +73,14 @@ import { useEventsOfInterest } from "@/hooks/useEventsOfInterest";
 import { useCopilotTools } from "@/hooks/useCopilotTools";
 import { useCopilotContext } from "@/hooks/useCopilotContext";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
+import {
+  allSavedFilters,
+  removeSavedFilter,
+  resolveFilters,
+  sanitizeSavedFilters,
+  upsertSavedFilter,
+  type SavedFilterDraft,
+} from "@/lib/saved-filters";
 import { startFeed, stopFeed, getConfig, getStack, getStorageStatus, releaseStorage, reclaimStorage, exportDatabase, previewImportDatabase, importDatabase, swapDatabase, getStorageStats, startSharing, stopSharing, sharingStatus } from "@/lib/commands";
 import { exportTracksToFile, importTracksFromFile } from "@/lib/file-io";
 import { listen } from "@tauri-apps/api/event";
@@ -179,6 +187,22 @@ export default function Dashboard() {
   const [showSimulation, setShowSimulation] = useLocalStorage<boolean>("adsb-show-simulation", false);
   const [liveColorMode, setLiveColorMode] = useLocalStorage<AltitudeColorMode>("adsb-live-color-mode", "track");
   const [historyColorMode, setHistoryColorMode] = useLocalStorage<AltitudeColorMode>("adsb-history-color-mode", "track");
+  // Saved regex filters: only the user's are stored; built-ins come from code. Stored as
+  // `unknown` and sanitized, so a hand-edited or older entry can't crash the panel.
+  const [storedSavedFilters, setStoredSavedFilters] = useLocalStorage<unknown>("adsb-saved-filters", []);
+  const userSavedFilters = useMemo(() => sanitizeSavedFilters(storedSavedFilters), [storedSavedFilters]);
+  const savedFilters = useMemo(() => allSavedFilters(userSavedFilters), [userSavedFilters]);
+  // A selected combined filter is held by id; resolve it against the CURRENT saved
+  // filters so an edited source applies at once.
+  const matchingFilters = useMemo(() => resolveFilters(activeFilters, savedFilters), [activeFilters, savedFilters]);
+  const handleSaveFilter = useCallback(
+    (draft: SavedFilterDraft) => setStoredSavedFilters((prev: unknown) => upsertSavedFilter(sanitizeSavedFilters(prev), draft)),
+    [setStoredSavedFilters],
+  );
+  const handleDeleteFilter = useCallback(
+    (id: string) => setStoredSavedFilters((prev: unknown) => removeSavedFilter(sanitizeSavedFilters(prev), id)),
+    [setStoredSavedFilters],
+  );
   const [includeImportedInDensity, setIncludeImportedInDensity] = useLocalStorage<boolean>("adsb-include-imported-density", false);
   const [densityAltitudeMin, setDensityAltitudeMin] = useLocalStorage<number>("adsb-density-alt-min", 0);
   const [densityAltitudeMax, setDensityAltitudeMax] = useLocalStorage<number>("adsb-density-alt-max", 50000);
@@ -313,11 +337,11 @@ export default function Dashboard() {
   }, [sortKey]);
 
   const {
-    tracks, history, imported, dbHistory, analysis,
+    tracks, history, imported, dbHistory, analysis, allLive, allAnalysis,
     importTracks, clearImported, loadDbHistoryTracks, clearDbHistory,
     addAnalysisTracks, removeAnalysisTrack, clearAnalysis,
     trackHistoryHours,
-  } = useAircraftTracks(activeFilters);
+  } = useAircraftTracks(matchingFilters);
   // History time range slider — session-only state (resets each session)
   const [historySliderMin, setHistorySliderMin] = useState(0);
   const [historySliderMax, setHistorySliderMax] = useState<number | null>(null);
@@ -567,6 +591,25 @@ export default function Dashboard() {
     () => [...tracks, ...simulatedTracks, ...agentSimulatedTracks],
     [tracks, simulatedTracks, agentSimulatedTracks],
   );
+  // Shown/total per mode, each counted with ITS OWN filters (the hook filters
+  // with the active mode's only). Simulated flights are never filtered, so they
+  // count on both sides.
+  const simulatedCount = simulatedTracks.length + agentSimulatedTracks.length;
+  const liveMatchingFilters = useMemo(() => resolveFilters(liveFilters, savedFilters), [liveFilters, savedFilters]);
+  const analysisMatchingFilters = useMemo(
+    () => resolveFilters(analysisFilters, savedFilters),
+    [analysisFilters, savedFilters],
+  );
+  const liveShownCount = useMemo(
+    () => countMatching(allLive, liveMatchingFilters) + simulatedCount,
+    [allLive, liveMatchingFilters, simulatedCount],
+  );
+  const liveTotalCount = allLive.length + simulatedCount;
+  const analysisShownCount = useMemo(
+    () => countMatching(allAnalysis, analysisMatchingFilters),
+    [allAnalysis, analysisMatchingFilters],
+  );
+  const analysisTotalCount = allAnalysis.length;
   const simReceiverLocation = useMemo(
     () => (receiverLocation ? { lat: receiverLocation.lat, lng: receiverLocation.lng } : null),
     [receiverLocation],
@@ -1024,6 +1067,7 @@ export default function Dashboard() {
    * known until the selection and the browsed span are resolved. They stay
    * unconditional, so hook order is stable across renders. */
   useCopilotTools({
+    savedFilters,
     connectionStatus: copilotConnectionStatus,
     mapTheme,
     sidebarOpen,
@@ -1102,6 +1146,7 @@ export default function Dashboard() {
   });
 
   useCopilotContext({
+    savedFilters,
     connectionStatus: copilotConnectionStatus,
     mapTheme,
     sidebarOpen,
@@ -1549,7 +1594,8 @@ export default function Dashboard() {
           onWidthChange={setSidebarWidth}
           filters={activeFilters}
           onChange={setActiveFilters}
-          trackCount={isLive ? allTracks.length : analysis.length}
+          trackCount={isLive ? liveShownCount : analysisShownCount}
+          totalCount={isLive ? liveTotalCount : analysisTotalCount}
           showHistory={showHistory}
           onToggleHistory={handleToggleHistory}
           historyCount={history.length}
@@ -1654,6 +1700,7 @@ export default function Dashboard() {
             hiddenTypes: airspaceHiddenTypes,
             onHiddenTypesChange: setAirspaceHiddenTypes,
           }}
+          savedFilters={{ list: savedFilters, onSave: handleSaveFilter, onDelete: handleDeleteFilter }}
           relief={{
             show: showRelief,
             onToggle: () => setShowRelief((prev: boolean) => !prev),
@@ -1859,8 +1906,10 @@ export default function Dashboard() {
           <ModeTabs
             activeMode={activeMode}
             onModeChange={setActiveMode}
-            liveCount={allTracks.length}
-            analysisCount={analysis.length}
+            liveCount={liveShownCount}
+            liveTotal={liveTotalCount}
+            analysisCount={analysisShownCount}
+            analysisTotal={analysisTotalCount}
             onClearAnalysis={() => {
               clearAnalysis();
               setHiddenSections(prev => { const n = new Map(prev); n.delete("analysis"); return n; });

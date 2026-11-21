@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { matchesFilters } from "../useAircraftTracks";
+import { countMatching, matchesFilters } from "../useAircraftTracks";
 import type { AircraftTrack, Filters } from "@/lib/types";
 import { DEFAULT_FILTERS } from "@/lib/types";
 
@@ -46,6 +46,29 @@ describe("matchesFilters", () => {
     const track = makeTrack({ callsign: "AIR123" });
     const filters: Filters = { ...DEFAULT_FILTERS, callsign: "air" };
     expect(matchesFilters(track, filters)).toBe(true);
+  });
+
+  it("applies the callsign query as a regex when callsignRegex is set", () => {
+    const filters: Filters = { ...DEFAULT_FILTERS, callsign: "^AIR\\d{3}$", callsignRegex: true };
+    expect(matchesFilters(makeTrack({ callsign: "AIR123" }), filters)).toBe(true);
+    expect(matchesFilters(makeTrack({ callsign: "AIR12X" }), filters)).toBe(false);
+  });
+
+  it("does not filter on an invalid regex", () => {
+    const filters: Filters = { ...DEFAULT_FILTERS, callsign: "AIR(", callsignRegex: true };
+    expect(matchesFilters(makeTrack({ callsign: "BAW1" }), filters)).toBe(true);
+  });
+
+  it("uses the resolved combined matcher, and still applies the other filters", () => {
+    const filters: Filters = {
+      ...DEFAULT_FILTERS,
+      savedFilterId: "c",
+      combinedMatcher: (cs) => cs === "AIR123",
+      altitudeMax: 30000,
+    };
+    expect(matchesFilters(makeTrack({ callsign: "AIR123", altitude: 20000 }), filters)).toBe(true);
+    expect(matchesFilters(makeTrack({ callsign: "BAW1", altitude: 20000 }), filters)).toBe(false);
+    expect(matchesFilters(makeTrack({ callsign: "AIR123", altitude: 35000 }), filters)).toBe(false);
   });
 
   it("filters by altitude range", () => {
@@ -118,5 +141,13 @@ describe("matchesFilters", () => {
     const track = makeTrack({ callsign: "BAW100", hex_ident: "AABBCC" });
     const filters: Filters = { ...DEFAULT_FILTERS, callsign: "AIR , BAW" };
     expect(matchesFilters(track, filters)).toBe(true);
+  });
+});
+
+describe("countMatching", () => {
+  it("counts the tracks passing the filters", () => {
+    const tracks = [makeTrack({ callsign: "AIR1" }), makeTrack({ callsign: "BAW2" }), makeTrack({ callsign: "AIR3" })];
+    expect(countMatching(tracks, { ...DEFAULT_FILTERS, callsign: "AIR" })).toBe(2);
+    expect(countMatching(tracks, DEFAULT_FILTERS)).toBe(3);
   });
 });

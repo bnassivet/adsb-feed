@@ -955,11 +955,80 @@ accumulation even when users navigate to Settings or other pages.
 - `historyCount: number`: Total number of history tracks matching filters
 
 **Responsibilities**:
-- Callsign search input
+- Callsign search input, with a `.*` toggle for regex mode (`Filters.callsignRegex`)
 - Altitude range sliders (0-50,000 ft)
 - Speed range sliders (0-600 kts)
 - Active track count display
 - History toggle checkbox with count (e.g., "Show history (12 past)")
+
+**Callsign search modes** (`src/lib/callsign-match.ts`, shared with the
+`searchLiveFlights` and `setFilters` chat tools):
+
+| Mode | Input | Matches when |
+|------|-------|--------------|
+| Substring (default) | `AFR, 3c6` — comma-separated tokens | any token is a case-insensitive substring of the callsign or hex ident |
+| Regex (`.*` pressed) | `^(AFR\|BAW)\d{3,4}$` — ONE pattern | the case-insensitive `RegExp` matches the (trimmed) callsign or the hex ident |
+
+- In regex mode the comma is part of the pattern (`{3,4}`). Use `|` for alternatives.
+- An **invalid pattern does not filter**. The input turns red and the error is shown,
+  but the map keeps every aircraft. A half-typed `AFR(` would otherwise blank the map
+  on every keystroke. The chat tools do the opposite and return
+  `{ error: "Invalid regular expression…" }`, and `setFilters` then leaves the
+  filters unchanged, so the model can correct itself instead of silently applying
+  a filter that does nothing.
+- The compiled matcher is cached for the last query. `matchesFilters` runs per
+  track on every ~500 ms batch, so the pattern is not recompiled per aircraft.
+- No `g`/`y` flags: they make `RegExp.test` stateful through `lastIndex`.
+
+**Saved regex filters** (`src/lib/saved-filters.ts`, `src/components/SavedFilters.tsx`):
+a *Saved filters…* picker under the input. Each entry has a name, a regex and an
+optional description.
+
+- Choosing an entry sets `callsign = pattern` and `callsignRegex = true`. Choosing
+  the placeholder clears the query.
+- **Save…** stores the current regex. It needs regex mode and a valid, non-empty
+  pattern. Saving under an existing name updates that entry.
+- **Delete** removes one of your filters. It takes two clicks; there is no
+  `window.confirm` in the webview.
+- **The selection is derived, not stored**: the picker shows the entry whose pattern
+  equals the query. Editing the text drops the selection instead of leaving a stale one.
+- **Built-ins live in code**, not in storage. They cannot be deleted or edited, a fix
+  to one reaches every install, and their names are reserved. Two ship by default:
+  - *Military — hex ranges (NATO/EU)*: ICAO address blocks (FR 3AA–3BF, UK 43C,
+    DE 3F, NL 480, BE 44F, CH 4B7, US AD8–AF3, CA C2…). Spain and Italy cannot be
+    isolated, because their military codes are scattered inside civil ranges.
+  - *Military — callsigns (NATO/EU)*: callsign prefixes (CTM, FAF, RCH, NATO,
+    ASCOT, GAF, MMF…).
+- **Combined filters** — a saved filter can be a combination of other saved filters
+  instead of a regex. It is built with **Combine…**, and **Edit…** modifies one of yours.
+  - Operators: `OR` (any term), `AND` (every term) and `XOR` (exactly one term,
+    not parity). Each term can be negated with `NOT`; a single `NOT` term is a
+    plain negation.
+  - Terms are **references** (`{ ref: id, not? }`), not copies. Fixing a source,
+    including a built-in, updates every combination that uses it. A filter still
+    used by a combination cannot be deleted.
+  - Nesting is allowed. `combinedMatcher` reports cycles, missing sources and
+    invalid regexes, and validation refuses to save a combination that has one.
+  - Why not a single regex? The regex is tested on the callsign and the hex
+    separately, so `OR` would fit in one pattern. `AND`, `XOR` and `NOT` across the
+    two fields would not. A combination is therefore evaluated per aircraft, and
+    the selection is held by id in `Filters.savedFilterId` (the query text is
+    emptied).
+  - `page.tsx` resolves the id against the current saved filters
+    (`resolveFilters`, which attaches `Filters.combinedMatcher`, a runtime-only
+    field) before `useAircraftTracks`. An edited source therefore applies at
+    once. Typing a query or toggling `.*` replaces the combination.
+  - Built-in *Military — hex or callsign (NATO/EU)* = hex-ranges `OR` callsigns.
+- User filters are stored in localStorage under `adsb-saved-filters`.
+  `sanitizeSavedFilters` drops malformed entries and anything posing as a built-in.
+- Chat: `setFilters` and `searchLiveFlights` take `savedFilter: <name>`
+  (case-insensitive).
+  - An unknown name returns `{ error, available: [names] }`.
+  - Passing both `savedFilter` and `callsign` is refused.
+  - The agent context lists names and descriptions only; the patterns stay in the
+    app. Combinations also carry their expression (`combines: "A AND NOT B"`).
+  - A combined name: `setFilters` selects it by id, `searchLiveFlights` evaluates
+    it, and an unresolvable combination is refused.
 
 **Design Note**: The `historyCount` always reflects filtered history size regardless of
 the `showHistory` toggle state. This lets users see how many past tracks are available

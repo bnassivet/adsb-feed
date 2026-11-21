@@ -17,6 +17,13 @@ function renderTabs(overrides: Partial<Parameters<typeof ModeTabs>[0]> = {}) {
 }
 
 describe("ModeTabs", () => {
+  it("shows displayed/total aircraft when totals are given", () => {
+    renderTabs({ liveCount: 10, liveTotal: 40, analysisCount: 3, analysisTotal: 3 });
+    expect(screen.getByTestId("mode-tab-live")).toHaveTextContent("Live (10/40)");
+    expect(screen.getByTestId("mode-tab-analysis")).toHaveTextContent("Analysis (3/3)");
+    expect(screen.getByTestId("mode-tab-live")).toHaveAttribute("title", "10 aircraft shown out of 40 (filters)");
+  });
+
   it("renders both tabs with correct counts", () => {
     renderTabs({ liveCount: 10, analysisCount: 3 });
     expect(screen.getByTestId("mode-tab-live")).toHaveTextContent("Live (10)");

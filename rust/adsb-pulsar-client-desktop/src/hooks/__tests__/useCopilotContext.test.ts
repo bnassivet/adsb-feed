@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook } from "@testing-library/react";
-import { useCopilotContext, type CopilotContextConfig } from "../useCopilotContext";
+import { SAVED_FILTERS_CONTEXT, useCopilotContext, type CopilotContextConfig } from "../useCopilotContext";
 import type { WeatherSnapshot } from "@/lib/weather";
 
 // Capture all readables from useAgentContext calls
@@ -31,6 +31,7 @@ function makeConfig(overrides: Partial<CopilotContextConfig> = {}): CopilotConte
     lastSelectedHexIdent: "A1B2C3",
     activeFilters: {
       callsign: "UAL",
+      callsignRegex: false,
       altitudeMin: 10000,
       altitudeMax: 40000,
       speedMin: 100,
@@ -86,6 +87,31 @@ describe("useCopilotContext", () => {
     ) as { callsign: string; altitudeMin: number };
     expect(v.callsign).toBe("UAL");
     expect(v.altitudeMin).toBe(10000);
+  });
+
+  it("lists saved filters by name and description, without patterns", () => {
+    registeredReadables.clear();
+    renderHook(() =>
+      useCopilotContext(
+        makeConfig({
+          savedFilters: [
+            { id: "u1", name: "Majors", pattern: "^(UAL|BAW)", description: "United + BA" },
+            { id: "u2", name: "Bare", pattern: "^X" },
+            { id: "u3", name: "Either", combine: { op: "or", terms: [{ ref: "u1" }, { ref: "u2", not: true }] } },
+          ],
+        }),
+      ),
+    );
+    const v = registeredReadables.get(SAVED_FILTERS_CONTEXT);
+    expect(v).toEqual([
+      { name: "Majors", description: "United + BA" },
+      { name: "Bare" },
+      { name: "Either", combines: "Majors OR NOT Bare" },
+    ]);
+  });
+
+  it("registers an empty saved-filter list when the page provides none", () => {
+    expect(registeredReadables.get(SAVED_FILTERS_CONTEXT)).toEqual([]);
   });
 
   it("registers map and sidebar state", () => {
