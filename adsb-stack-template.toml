@@ -32,7 +32,8 @@
 # deploy/README.md.
 id = "dev-laptop-dev"
 # Your antenna's real position: used as the map centre, for distance and
-# detection-range calculations, and as the origin for the mock feed.
+# detection-range calculations, as the origin for the mock feed, and by the
+# recorder to quarantine decode glitches beyond reception range.
 latitude = 46.717915
 longitude = -2.33716964
 altitude_ft = 20.0

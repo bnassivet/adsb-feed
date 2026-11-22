@@ -1,5 +1,6 @@
 /** Hover tooltip content for map dots (moved from MapInner's DotsLayer). */
-import type { AircraftTrack } from "./types";
+import type { AircraftTrack, RejectedPosition } from "./types";
+import { REASON_COLORS, REASON_LABELS, formatKnots } from "./rejected-positions";
 
 export type DotSetType = "history" | "live" | "imported" | "dbHistory";
 
@@ -38,5 +39,28 @@ export function dotTooltipHtml(
   if (type === "history" && isLast) parts.push(`<div>Last seen: ${timeAgo(t.last_seen, now)}</div>`);
   if (type === "dbHistory") parts.push(`<div style="color:#22d3ee;margin-top:2px">DB History</div>`);
   if (type === "imported") parts.push(`<div style="color:#818cf8;margin-top:2px">Imported</div>`);
+  return parts.join("");
+}
+
+/**
+ * Hover tooltip for a rejected position shown from DB History. Same layout as
+ * a DB History dot -- callsign, hex, altitude -- then the reason as the tag,
+ * and the figure it was judged on.
+ */
+export function rejectedTooltipHtml(r: RejectedPosition): string {
+  const label = escapeHtml(r.callsign ?? r.hex_ident);
+  const hex = escapeHtml(r.hex_ident);
+  const color = REASON_COLORS[r.reason];
+  const parts = [
+    `<div style="font-weight:600;color:#fff">${label}</div>`,
+    `<div>Hex: ${hex}</div>`,
+    `<div>Alt: <span style="color:#fff">${formatAlt(r.altitude)}</span></div>`,
+    `<div style="color:${color};margin-top:2px">${REASON_LABELS[r.reason]}</div>`,
+  ];
+  if (r.reason === "implausible_speed" && r.implied_speed_kt !== null) {
+    parts.push(`<div>Speed: <span style="color:#fff">${formatKnots(r.implied_speed_kt)} kt</span></div>`);
+  } else if (r.distance_nm !== null) {
+    parts.push(`<div>Distance: <span style="color:#fff">${Math.round(r.distance_nm)} NM</span></div>`);
+  }
   return parts.join("");
 }

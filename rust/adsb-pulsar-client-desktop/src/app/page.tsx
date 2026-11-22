@@ -88,7 +88,7 @@ import { ask, message, save, open } from "@tauri-apps/plugin-dialog";
 import { sortTracks, type SortKey } from "@/lib/sort-tracks";
 import { filterHistoryByTimeRange, sliderToHistoryWindow } from "@/lib/history-time-filter";
 import { DEFAULT_FILTERS, trackKey } from "@/lib/types";
-import type { AircraftTrack, ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, TrackSection, StorageAvailability, ShareStatus, CreateEventOfInterest, UpdateEventOfInterest, EventOfInterest, EventFilterMode, MapPickResult } from "@/lib/types";
+import type { AircraftTrack, ActiveMode, Config, Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, TrackSection, StorageAvailability, ShareStatus, CreateEventOfInterest, UpdateEventOfInterest, EventOfInterest, EventFilterMode, MapPickResult, RejectedPosition } from "@/lib/types";
 import type { SelectEvent } from "@/components/AircraftTable";
 import { ModeTabs } from "@/components/ModeTabs";
 import Link from "next/link";
@@ -329,6 +329,9 @@ export default function Dashboard() {
   const [selectedHexIdents, setSelectedHexIdents] = useState<Set<string>>(new Set());
   const [lastSelectedHexIdent, setLastSelectedHexIdent] = useState<string | null>(null);
   const [hiddenSections, setHiddenSections] = useState<Map<TrackSection, Set<string>>>(new Map());
+  // Rejected positions drawn on the map, chosen in DB History. Held here so
+  // they stay up when that panel or its section is closed.
+  const [rejectedOnMap, setRejectedOnMap] = useState<RejectedPosition[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>("callsign");
   const [sortAsc, setSortAsc] = useState(true);
   const handleSort = useCallback((key: SortKey) => {
@@ -1788,7 +1791,7 @@ export default function Dashboard() {
                   />
                 </div>
               )}
-              <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={visibleMetars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={weatherClockMs} radar={radarView} radarOpacity={radarOpacity} sea={sea} relief={relief} seamarkItems={seamarkDetails.items} onSeamarkCells={seamarkDescriptions ? setSeamarkCells : undefined} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
+              <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={visibleMetars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={weatherClockMs} radar={radarView} radarOpacity={radarOpacity} sea={sea} relief={relief} seamarkItems={seamarkDetails.items} onSeamarkCells={seamarkDescriptions ? setSeamarkCells : undefined} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} rejectedPositions={rejectedOnMap} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel
@@ -1840,6 +1843,8 @@ export default function Dashboard() {
                   onAddToAnalysis={addAnalysisTracks}
                   onSwitchToAnalysis={() => setActiveMode("analysis")}
                   onBrowse={handleBrowse}
+                  rejectedShown={rejectedOnMap}
+                  onRejectedShownChange={setRejectedOnMap}
                 />
               </DBHistoryPanel>
             )}
@@ -1988,6 +1993,8 @@ export default function Dashboard() {
             receiverLat={receiverLocation?.lat}
             receiverLon={receiverLocation?.lng}
             onBrowse={handleBrowse}
+            rejectedShown={rejectedOnMap}
+            onRejectedShownChange={setRejectedOnMap}
           />
         </DBHistoryPanel>
       )}

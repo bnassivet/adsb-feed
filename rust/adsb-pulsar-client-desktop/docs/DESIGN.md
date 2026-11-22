@@ -2935,6 +2935,65 @@ npm run test:watch  # Watch mode (TDD)
 5. **E2E Testing**: Add Playwright tests for UI flows
 6. **CI/CD**: Automate builds for macOS, Windows, Linux
 
+### Design Debt
+
+Known shortcuts that later work will have to pay back. Each entry says what
+breaks and where to start.
+
+#### Receiver location: one current point, per process
+
+**Where it lives.** It has two independent copies, and nothing keeps them in step:
+
+| Copy | Edited in | Used by |
+|---|---|---|
+| `[receiver]` in `adsb-stack.toml` (fleet: `site`) | the file, then `make render` | feed (mock origin), weather grid centre, **data server's quarantine sweep** (`receiver_latitude/longitude` in `data-server.toml`) |
+| desktop settings store (`config.json`) | Settings → Receiver Location | map centre and receiver marker, range lines, METAR and rain-radar cut-outs, the DB History detection-range radar (sent as query coordinates), **the desktop's embedded-mode quarantine sweep** (read on every tick) |
+
+**1. Not point-in-time.** It records where the antenna is *now*, never where it
+was. Stored rows carry a `source_id` but no position. Moving the antenna, or fixing
+a typo in the coordinates, therefore changes the past without a trace:
+
+- The radar recomputes every historical distance and bearing from the new point.
+- The quarantine cursor starts at 0 on every start, so the first sweep after a
+  restart re-judges the whole of `positions` against the new point. A wrong or
+  moved location quarantines real history (recoverable from
+  `rejected_positions`, but only speed rejects ever go back automatically).
+- `rejected_positions.distance_nm` is frozen against whatever point was
+  configured at rejection time, and which point that was is not recorded.
+
+**2. No multi-receiver support** (roadmap: Planned Features #5, *Multi-Source
+Support*, and fleets with several feed nodes on one bus). One location per
+process is applied to every row, whatever its `source_id`:
+
+- The range check measures a second antenna's traffic from the first one's
+  position. It would quarantine fixes legitimately heard by receiver B that sit
+  more than 500 NM from receiver A, and accept B's glitches that land near A.
+- The radar would blend all receivers into one polar plot.
+- The recorder stamps **its own** `source_id` on every row (`storage.rs`,
+  `insert_batch_sync`; raw messages likewise), not the feed's. A recorder fed by
+  several receivers therefore cannot tell their rows apart at all. Feed and
+  recorder sharing one id is a convention (`render-config.py`
+  `fleet_source_id`), not something the data carries.
+- The dev database already holds two ids (`dev-laptop`, `dev-laptop-dev`) for
+  the same antenna, harmless only because the antenna didn't move.
+
+**3. The copies can disagree.** The daemon's sweep and the desktop's radar (and,
+in embedded mode, its own sweep) can use different points with no warning.
+
+**Where to start** (not designed):
+
+- An observed `receivers` table, append-only: `source_id, latitude, longitude,
+  altitude_ft, valid_from_ms`, written by the recorder when its configured
+  location changes.
+- Per-record receiver attribution (the feed's `source_id` carried in the MQTT
+  payload and stored), so one recorder can serve several antennas.
+- The sweep and the radar then join each fix to *its* receiver at *its* time
+  (DuckDB `ASOF JOIN` on `source_id, timestamp_ms`). The radar takes a
+  `source_id` rather than coordinates, and a rejected row records which receiver
+  version judged it.
+- Configuration becomes the seed of that table, and the desktop reads it instead
+  of keeping its own copy.
+
 ---
 
 ## In-Memory Aircraft History
@@ -3453,7 +3512,32 @@ The detection range computation runs entirely in DuckDB (haversine + bearing tri
 
 **Distance bands are opt-in.** `DetectionRangeQuery.band_width_nm` (the desktop sends `RADAR_BAND_WIDTH_NM` = 5) adds `band_counts` to each sector: positions per `[i·w, (i+1)·w)` NM, trailing zeros trimmed. Without it the field is omitted from the JSON, so the agent's `getDetectionRange` tool and `adsb-data-server` see the same payload as before. The query uses `GROUP BY GROUPING SETS ((sector), (sector, band))` and tells the rows apart with `GROUPING(band)`. This keeps it to one pass: the glitch filter's window functions run once, and `flight_count` stays a real `COUNT(DISTINCT)`, which summing the bands could not give. The bins are 5 NM because every selectable step is a multiple of 5, so changing the step only re-buckets in the browser and needs no new query. A width that is not a finite positive number is rejected; it is formatted into the SQL as a literal, so the existing bind parameters keep their order.
 
-**Decode glitches are left out.** A sector's value is a maximum, so one bad fix sets it: the live database held positions at 71°N 115°W and in the mid-Atlantic, in the middle of tracks over western France, and the radar showed 3,695 NM. A position is kept only if one of its aircraft's two fixes before or after (`LAG`/`LEAD` over `hex_ident`) could reach it at `PLAUSIBLE_MAX_SPEED_KT` (1000 kt) plus `POSITION_JITTER_NM` (0.5 NM); the second neighbour lets the fixes around a glitch see past it. A position with no neighbour is kept. On that database this dropped 9 of 1.56 M positions and brought six sectors from 138-3,695 NM back to 43-120 NM. A run of glitches consistent with each other would survive; none was seen.
+**Decode glitches are left out.** A sector's value is a maximum, so one bad fix sets it: the live database held positions at 71°N 115°W and in the mid-Atlantic, in the middle of tracks over western France, and the radar showed 3,695 NM. A position is kept only if one of its aircraft's two fixes before or after (`LAG`/`LEAD` over `hex_ident`) could reach it at `PLAUSIBLE_MAX_SPEED_KT` (1000 kt) plus `POSITION_JITTER_NM` (0.5 NM); the second neighbour lets the fixes around a glitch see past it. A position with no neighbour is kept. On that database this dropped 9 of 1.56 M positions and brought six sectors from 138-3,695 NM back to 43-120 NM.
+
+**Glitches also come in self-consistent bursts.** Seen 2026-11-21: 4CAE9A had two fixes at 83.7°N 58°E, 0.06 NM and 0.9 s apart, in the middle of a track over France. Each one is a plausible neighbour of the other, so both passed the speed test and the radar showed 2,400 NM at 10°. dump1090 decodes later frames relative to the last fix, so one bad global CPR decode can carry over to the next few frames. The query therefore also drops anything farther than `MAX_RECEPTION_RANGE_NM` (500 NM) from the receiver. That's about twice the radio horizon at FL450 (~270 NM), which leaves room for tropospheric ducting. The neighbour test is shared with the quarantine sweep below as SQL builders (`plausible_fix_sql`, `NEIGHBOUR_COLUMNS_SQL`, `haversine_nm_sql`).
+
+### Quarantined positions (`rejected_positions`)
+
+Filtering at query time fixed only the radar. The H3 map, trajectories and stats still drew the glitches. So the **ingest owner moves them out of `positions`** into `rejected_positions`: the same 12 columns, plus `reason`, `distance_nm` and `rejected_at_ms`. Nothing is lost, and `raw_messages` is untouched.
+
+| Reason | Rule |
+|---|---|
+| `out_of_range` | more than `MAX_RECEPTION_RANGE_NM` from the receiver (skipped when no receiver is configured) |
+| `implausible_speed` | fails the neighbour test, computed **among in-range fixes only** |
+
+The order matters. A real fix whose only neighbours are a far glitch pair would fail the speed test along with the pair. Setting out-of-range fixes aside first lets it reach its true neighbours (`test_quarantine_neighbours_skip_out_of_range_fixes`).
+
+- **Who sweeps.** The data server does, on each maintenance tick before the checkpoint, using `receiver_latitude/longitude` that `render-config.py` now copies from `[receiver]` (or `site` for a fleet). The desktop does too, in embedded mode only (`src-tauri/src/quarantine.rs`, every 5 min, first run 30 s after launch), reading the receiver from its config on each tick. In remote mode `quarantine_positions_sync` is a no-op: the daemon owns the observed tables, and the views are not ours to write.
+- **`QuarantineCursor`** (engine) is shared by both. It sweeps `[watermark − 10 min, now − 60 s]`. The 60 s settle delay lets the next neighbours arrive. The 10 min overlap catches fixes whose dump1090 timestamp lags the wall clock. The watermark starts at 0, so the first sweep backfills the whole history. The sweep is idempotent and runs as one transaction (INSERT, then DELETE matching `hex_ident, timestamp_ms, latitude, longitude`, because `positions` has no key).
+- `rejected_positions` is an **observed** table: it's in `OBSERVED_TABLES`, so a remote client reads it through a view, and an older daemon without it costs only that one view. Retention pruning and export include it.
+- On the dev database (1.78 M positions) the rule set aside 11 `out_of_range` fixes (797–6,181 NM). It also set aside 168 `implausible_speed` fixes. 160 of those were mock-feed `TST00x` tracks jumping ~3,000 kt; the other 7 were single fixes of real aircraft jumping 120–195 NM in about 1 s and back.
+- **Not yet handled** (step 2): `flights.position_count` and the altitude bounds still include quarantined fixes, and a glitch burst *within* 500 NM that agrees with itself still passes.
+- **Receiver location is a single current point.** The range check uses one fixed location, now, for all history and every `source_id`. That's fine for one antenna that never moves, and wrong for anything else. See [Design Debt → Receiver location](#receiver-location-one-current-point-per-process).
+
+**DB History → Rejected Positions** is a section between the analytics and Status Timeline, collapsed by default and mounted only when opened, so a closed section costs no query. It lists the rows for the panel's time range, newest first, up to 500 (`get_rejected_positions` → `{ total, rows }`). Times use the panel's display zone.
+
+- **Speed kt** (`implied_speed_kt`, speed rejects only) is the *lowest* speed at which any of the four neighbours reaches the fix. That's the number the rule judged: even the most lenient neighbour needs more than 1000 kt. Coincident timestamps count as 1 ms apart, so it stays finite (JSON has no infinity). The column came after the table did, so it is added with `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. Speed rejects recorded without it are moved back to `positions` on open (`REQUEUE_UNSPEEDED_REJECTS_SQL`) and re-judged by the next sweep. That way one code path computes the speed, instead of a second one rebuilding neighbours from what is left.
+- **Show on the map.** Each row has an eye; checkboxes drive *Show/Hide selected*, and there's also *Show/Hide all* (all rows listed). The shown set lives in `page.tsx` (`rejectedOnMap`), not in the section, so it stays on the map when the section or the panel is closed. `RejectedPositionsLayer` (MapInner) draws, per row, a point coloured by reason and the H3 cell holding the fix at `zoomToH3Resolution(zoom)`, the density layer's resolution, so it outlines the cell the glitch used to inflate. Its info is the **same hover tooltip as every other dot**: `rejectedTooltipHtml` sits beside `dotTooltipHtml` in `lib/dot-tooltip.ts`, with the same layout (callsign, hex, altitude), the reason as the coloured tag, and the speed or distance it was judged on. It shares that file's escaping, since callsigns are whatever was received off the air, and the overlay's tooltip options (`direction: "auto"`, opacity 0.9). Rows are identified by `rejectedKey` (hex, time, lat, lon); `rejected_at_ms` is not part of it, so a re-sweep does not change a row's identity.
 
 ### Design Decisions
 
@@ -3896,6 +3980,8 @@ The `Config` struct includes three optional fields for the receiver's physical l
 - If no receiver location is configured, the map falls back to `DEFAULT_CENTER` (`[45.5, -73.6]`).
 
 **Data flow**: Dashboard (`page.tsx`) loads config on mount via `getConfig()`, derives a `receiverLocation` object, and passes it through `Map.tsx` → `MapInner.tsx`.
+
+**Also the quarantine reference.** In embedded mode the desktop's quarantine loop (`src-tauri/src/quarantine.rs`) reads these fields on every tick and moves fixes farther than 500 NM from them out of `positions` (see [Quarantined positions](#quarantined-positions-rejected_positions)). The data server uses its own copy, rendered from `[receiver]` in `adsb-stack.toml`, which this store does not follow. A single current point with two copies is recorded as design debt: see [Receiver location: one current point, per process](#receiver-location-one-current-point-per-process).
 
 ### Design Decisions
 

@@ -54,6 +54,25 @@ adsb-data-server --config /etc/adsb/data-server.toml --print-config
 
 Mutating operations are deliberately absent from the HTTP surface.
 
+## Maintenance
+
+Every `checkpoint_secs` (default 300 s; 0 disables the whole loop) the daemon,
+in this order:
+
+1. **Quarantines impossible positions.** Fixes farther than 500 NM from
+   `receiver_latitude`/`receiver_longitude`, or unreachable from every
+   neighbouring fix of the same aircraft at 1000 kt, move from `positions` to
+   `rejected_positions` (kept, with reason, distance and implied speed). Each
+   tick sweeps up to 60 s ago and re-covers the previous 10 min. The first tick
+   after a start covers the whole history. Without a receiver location only the
+   speed test runs. On open, speed rejects recorded before `implied_speed_kt`
+   existed are moved back to `positions` to be re-judged.
+2. **Prunes** to `retention_hours`, when set (rejected positions included).
+3. **Checkpoints** the WAL.
+
+The receiver location is one fixed point for the whole database. See the desktop
+`docs/DESIGN.md` → Design Debt for what that cannot represent.
+
 ## Build
 
 ```bash

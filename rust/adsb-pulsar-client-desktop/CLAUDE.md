@@ -33,6 +33,7 @@ src-tauri/src/
 ├── main.rs         # Entry point (calls lib::run)
 ├── bridge.rs       # Feed bridge: ADSBFeedClient → Tauri events (throttled) + DuckDB writes
 ├── commands.rs     # Tauri IPC commands: feed control + DuckDB historical queries + storage management (release/reclaim/export)
+├── quarantine.rs   # Embedded mode only: periodic sweep moving decode glitches to rejected_positions (QuarantineCursor)
 └── state.rs        # AppState (SharedStorage, StorageAvailability, StorageConfig), ConnectionStatus, StatusResponse
 
 src/

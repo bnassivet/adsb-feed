@@ -25,6 +25,14 @@ dump1090_tz = "Local"
 # Silence, in ms, that separates one flight from the next for the same aircraft.
 gap_threshold_ms = 3600000
 
+# Antenna position. Each maintenance tick moves fixes farther than 500 NM from
+# it into rejected_positions (decode glitches). Leave both unset to run only the
+# speed test. `make render` fills them from [receiver] in adsb-stack.toml.
+# One current position for all history: moving the antenna re-judges history
+# against the new one at the next restart.
+# receiver_latitude = 46.7
+# receiver_longitude = -2.3
+
 # --- Maintenance ------------------------------------------------------------
 # Seconds between DuckDB checkpoints; 0 disables. Checkpointing matters on an
 # edge node, which can lose power without a clean shutdown: an unbounded WAL is

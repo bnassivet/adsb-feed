@@ -418,6 +418,40 @@ export interface DetectionRangeQuery {
   band_width_nm?: number;
 }
 
+/** Query for positions quarantined as decode glitches. */
+export interface RejectedPositionQuery {
+  start_ms?: number | null;
+  end_ms?: number | null;
+  /** Most rows, newest first. Server default 500, capped at 5000. */
+  limit?: number;
+}
+
+/** Why a position was set aside by the quarantine sweep. */
+export type RejectionReason = "out_of_range" | "implausible_speed";
+
+/** One position moved out of `positions` into `rejected_positions`. */
+export interface RejectedPosition {
+  hex_ident: string;
+  callsign: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  altitude: number | null;
+  timestamp_ms: number;
+  source_id: string | null;
+  reason: RejectionReason;
+  /** From the receiver, when one was configured at rejection time. */
+  distance_nm: number | null;
+  rejected_at_ms: number;
+  /** Speed rejects only: the lowest speed (kt) at which any neighbouring fix reaches it. */
+  implied_speed_kt: number | null;
+}
+
+/** A page of rejected positions plus the total in the range. */
+export interface RejectedPositionPage {
+  total: number;
+  rows: RejectedPosition[];
+}
+
 /** A single 10° azimuth sector in the detection range result. */
 export interface DetectionRangeSector {
   /** Center bearing: 0, 10, 20, ..., 350. */

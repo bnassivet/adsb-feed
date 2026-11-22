@@ -4,12 +4,13 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { RADAR_BAND_WIDTH_NM } from "@/lib/detection-radar";
 import { getStorageStats, getAircraftSummary, getFlightSummaryArrow, getTrajectoryBatchArrow, getAllTrajectoriesArrow, getTimeDistribution, getDetectionRange, getHourlyHeatmap, getRawMessageCount, getMessageTypeDistribution } from "@/lib/commands";
 import { arrowToTracks, arrowToFlightSummaries } from "@/lib/arrow-utils";
-import type { AircraftSummary, AircraftTrack, DetectionRangeSector, FlightSummary, HourlyHeatmapCell, MessageTypeBucket, StorageStats, TimeDistributionBucket, TimeDistributionMetric, TimeGranularity, TimeRangePreset } from "@/lib/types";
+import type { AircraftSummary, AircraftTrack, DetectionRangeSector, FlightSummary, HourlyHeatmapCell, MessageTypeBucket, StorageStats, TimeDistributionBucket, TimeDistributionMetric, TimeGranularity, TimeRangePreset, RejectedPosition } from "@/lib/types";
 import { useDisplayTz, type DisplayTzMode } from "@/hooks/useDisplayTz";
 import { formatBytes, fromZonedInput, toZonedInput } from "@/lib/format";
 import { granularityToNumBuckets } from "@/lib/db-history-analytics";
 import { DBHistoryAnalytics } from "./DBHistoryAnalytics";
 import { StatusTimeline } from "./StatusTimeline";
+import { RejectedPositions } from "./RejectedPositions";
 import { browseReducer, initialBrowseState } from "@/lib/browse-reducer";
 
 interface Props {
@@ -27,6 +28,9 @@ interface Props {
   onAddToAnalysis?: (tracks: AircraftTrack[]) => void;
   /** Switch the dashboard to analysis mode after loading. */
   onSwitchToAnalysis?: () => void;
+  /** Rejected positions drawn on the map; owned by the page so they outlive this panel. */
+  rejectedShown?: RejectedPosition[];
+  onRejectedShownChange?: (shown: RejectedPosition[]) => void;
 }
 
 /** Preset durations in ms. */
@@ -57,6 +61,8 @@ export function DBHistoryContent({
   receiverLon,
   onAddToAnalysis,
   onSwitchToAnalysis,
+  rejectedShown,
+  onRejectedShownChange,
 }: Props) {
   const { formatTime, resolvedTzName, zoneName, tzMode, setTzMode, sourceTzName } = useDisplayTz();
   // "Source" differs from Local only when dump1090's zone is set explicitly.
@@ -82,6 +88,7 @@ export function DBHistoryContent({
   const [preset, setPreset] = useState<TimeRangePreset>("24h");
   const [startMs, setStartMs] = useState(() => now - PRESET_DURATIONS["24h"]);
   const [endMs, setEndMs] = useState(() => now);
+  const [rejectedOpen, setRejectedOpen] = useState(false);
   const [granularity, setGranularity] = useState<TimeGranularity>("1h");
   const [timeMetric, setTimeMetric] = useState<TimeDistributionMetric>("positions");
 
@@ -606,6 +613,30 @@ export function DBHistoryContent({
 
         </div>
       )}
+
+      {/* Rejected Positions — decode glitches the quarantine sweep set aside.
+          Mounted only while open, so a closed section costs no query. */}
+      <details
+        className="group"
+        data-testid="dbhist-rejected-positions"
+        onToggle={(e) => setRejectedOpen(e.currentTarget.open)}
+      >
+        <summary className="flex items-center gap-1.5 cursor-pointer select-none px-3 py-1.5 text-xs font-semibold text-slate-400 list-none [&::-webkit-details-marker]:hidden">
+          <span className="text-[10px] transition-transform duration-150 group-open:rotate-90">▶</span>
+          Rejected Positions
+        </summary>
+        <div className="mt-1 px-3">
+          {rejectedOpen && (
+            <RejectedPositions
+              startMs={startMs}
+              endMs={endMs}
+              formatTime={formatTime}
+              shown={rejectedShown}
+              onShownChange={onRejectedShownChange}
+            />
+          )}
+        </div>
+      </details>
 
       {/* Status Timeline — always visible, independent of browse state */}
       <details className="group" data-testid="dbhist-status-timeline">

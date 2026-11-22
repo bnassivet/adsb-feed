@@ -118,6 +118,18 @@ pub struct ServerConfig {
     #[serde(default)]
     pub share_token: Option<String>,
 
+    /// Receiver antenna latitude. With the longitude, enables the reception-
+    /// range check that quarantines decode glitches; without, only the speed
+    /// check runs.
+    #[arg(long, env = "ADSB_RECEIVER_LATITUDE")]
+    #[serde(default)]
+    pub receiver_latitude: Option<f64>,
+
+    /// Receiver antenna longitude. See `receiver_latitude`.
+    #[arg(long, env = "ADSB_RECEIVER_LONGITUDE", allow_hyphen_values = true)]
+    #[serde(default)]
+    pub receiver_longitude: Option<f64>,
+
     /// Log level.
     #[arg(long, env = "ADSB_LOG_LEVEL", default_value = "info")]
     #[serde(default = "default_log_level")]
@@ -254,6 +266,19 @@ impl ServerConfig {
         {
             self.share_token = Some(t.to_string());
         }
+        // No clap default, so unset means "not given on the command line".
+        let degrees = |v: &toml::Value| v.as_float().or_else(|| v.as_integer().map(|i| i as f64));
+        if self.receiver_latitude.is_none() {
+            self.receiver_latitude = file.get("receiver_latitude").and_then(degrees);
+        }
+        if self.receiver_longitude.is_none() {
+            self.receiver_longitude = file.get("receiver_longitude").and_then(degrees);
+        }
+    }
+
+    /// The receiver's (latitude, longitude), when both are configured.
+    pub fn receiver(&self) -> Option<(f64, f64)> {
+        self.receiver_latitude.zip(self.receiver_longitude)
     }
 
     /// The address the HTTP query API binds, or `None` when `http_bind` is not
@@ -386,6 +411,37 @@ mod tests {
         );
         assert_eq!(cfg.source_id, "pi-roof");
         assert_eq!(cfg.mqtt_broker, "broker.lan");
+    }
+
+    #[test]
+    fn receiver_location_layers_from_the_file() {
+        let mut cfg = defaults();
+        assert_eq!(cfg.receiver(), None, "no receiver unless configured");
+        // An integer degree is a valid TOML value for a coordinate.
+        cfg.overlay_file(
+            &file("receiver_latitude = 46\nreceiver_longitude = -2.5"),
+            &all_defaulted,
+        );
+        assert_eq!(cfg.receiver(), Some((46.0, -2.5)));
+    }
+
+    #[test]
+    fn receiver_needs_both_coordinates() {
+        let mut cfg = defaults();
+        cfg.overlay_file(&file("receiver_latitude = 46.7"), &all_defaulted);
+        assert_eq!(cfg.receiver(), None);
+    }
+
+    #[test]
+    fn a_receiver_flag_wins_over_the_file() {
+        let mut cfg = defaults();
+        cfg.receiver_latitude = Some(10.0);
+        cfg.receiver_longitude = Some(20.0);
+        cfg.overlay_file(
+            &file("receiver_latitude = 46.7\nreceiver_longitude = -2.3"),
+            &all_defaulted,
+        );
+        assert_eq!(cfg.receiver(), Some((10.0, 20.0)));
     }
 
     #[test]

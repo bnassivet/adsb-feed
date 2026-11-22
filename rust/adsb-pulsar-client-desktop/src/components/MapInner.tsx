@@ -3,16 +3,17 @@ import { useEffect, useMemo, useCallback, useRef, useState } from "react";
 import { MapContainer, Marker, Polyline, GeoJSON, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import { routeLegs, type AgentTrajectory } from "@/lib/simulation-data";
 import L from "leaflet";
-import type { AircraftTrack, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventOfInterest, MapPickResult, Positions } from "@/lib/types";
+import type { AircraftTrack, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventOfInterest, MapPickResult, Positions, RejectedPosition } from "@/lib/types";
 import { zoomToH3Resolution, trackKey, cornersToBox, isColumnar } from "@/lib/types";
 import { altitudeToColor, densityColor, cachedAltitudeToColor, type MapTheme } from "@/lib/colors";
 import { computeH3Density } from "@/lib/h3-density";
+import { REASON_COLORS, rejectedCell } from "@/lib/rejected-positions";
 import { buildDensityTooltip } from "@/lib/density-tooltip";
 import type { DensityProperties, DensityAltitudeRange } from "@/lib/h3-density";
 import { useMapZoom } from "@/hooks/useMapZoom";
 import { aircraftIconHtml } from "@/lib/aircraft-icon";
 import { orderTracksWithSelectedLast } from "@/lib/track-ordering";
-import { formatAlt, timeAgo } from "@/lib/dot-tooltip";
+import { formatAlt, rejectedTooltipHtml, timeAgo } from "@/lib/dot-tooltip";
 import { DeckDotsOverlay, type DotSet } from "./DeckDotsOverlay";
 import { formatTrackLabel, layoutLabels, trackLabelHtml, type LabelItem, type LabelPlacement } from "@/lib/label-layout";
 import {
@@ -136,6 +137,56 @@ function FlyToHandler({ onReady }: { onReady?: (fn: (lat: number, lng: number, z
 }
 
 /** Renders event-of-interest markers imperatively via Leaflet API. */
+const NO_REJECTED: RejectedPosition[] = [];
+
+/**
+ * Rejected positions the user chose to show: the fix, with the regular dot
+ * hover tooltip saying who and why, and the H3 cell holding it at the density
+ * layer's resolution for this zoom -- so the cell lines up with the one the
+ * glitch used to inflate.
+ */
+function RejectedPositionsLayer({ rows }: { rows: RejectedPosition[] }) {
+  const map = useMap();
+  const resolution = zoomToH3Resolution(useMapZoom(300));
+
+  useEffect(() => {
+    const layers: L.Layer[] = [];
+    for (const r of rows) {
+      if (r.latitude === null || r.longitude === null) continue;
+      const color = REASON_COLORS[r.reason];
+      const cell = rejectedCell(r, resolution);
+      if (cell) {
+        layers.push(
+          L.polygon(cell.boundary, {
+            color,
+            weight: 1.5,
+            dashArray: "3 3",
+            fillColor: color,
+            fillOpacity: 0.12,
+            interactive: false,
+          }).addTo(map)
+        );
+      }
+      const marker = L.circleMarker([r.latitude, r.longitude], {
+        radius: 5,
+        color: "#0f172a",
+        weight: 1.5,
+        fillColor: color,
+        fillOpacity: 0.95,
+      });
+      // On hover, like every other dot (DeckDotsOverlay): same options, and
+      // the same builder family -- which escapes the off-the-air callsign.
+      marker.bindTooltip(rejectedTooltipHtml(r), { direction: "auto", opacity: 0.9 });
+      layers.push(marker.addTo(map));
+    }
+    return () => {
+      for (const l of layers) l.remove();
+    };
+  }, [map, rows, resolution]);
+
+  return null;
+}
+
 function EventMarkersLayer({ events, theme }: { events: EventOfInterest[]; theme: "light" | "dark" }) {
   const map = useMap();
 
@@ -1063,6 +1114,8 @@ interface Props {
   /** Planned routes of agent-generated trajectories currently on the map. */
   simulatedRoutes?: AgentTrajectory[];
   eventsOfInterest?: EventOfInterest[];
+  /** Rejected positions to draw: point, label and H3 cell. */
+  rejectedPositions?: RejectedPosition[];
   onContextMenu?: (lat: number, lng: number, x: number, y: number) => void;
   mapPickingMode?: "point" | "area" | null;
   onMapPickComplete?: (result: MapPickResult) => void;
@@ -1347,7 +1400,7 @@ function labelIcon(p: LabelPlacement, text: string, color: string, selected: boo
   });
 }
 
-export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, sea = NO_SEA, seamarkItems = NO_SEAMARKS, onSeamarkCells, relief = NO_RELIEF, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false }: Props) {
+export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, sea = NO_SEA, seamarkItems = NO_SEAMARKS, onSeamarkCells, relief = NO_RELIEF, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false, rejectedPositions = NO_REJECTED }: Props) {
   // Memoised: the basemap layer is rebuilt (and every tile reloaded) when this changes.
   const tile = useMemo(() => tileConfig(mapTheme, CARTO_API_KEY), [mapTheme]);
   const [airspaceStack, setAirspaceStack] = useState<Airspace[]>(NO_AIRSPACES);
@@ -1618,6 +1671,7 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
 
         {/* Events of interest markers */}
         {eventsOfInterest.length > 0 && <EventMarkersLayer events={eventsOfInterest} theme={mapTheme} />}
+        {rejectedPositions.length > 0 && <RejectedPositionsLayer rows={rejectedPositions} />}
 
         {/* Range lines: receiver → every selected aircraft */}
         {showRangeLines && rangeLineOrigin && rangeLineTargets.length > 0 && (
