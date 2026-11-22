@@ -226,6 +226,44 @@ pub struct DetectionRangeQuery {
     pub band_width_nm: Option<f64>,
 }
 
+/// Query for positions moved to `rejected_positions` by the quarantine sweep.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RejectedPositionQuery {
+    pub start_ms: Option<i64>,
+    pub end_ms: Option<i64>,
+    /// Most rows returned, newest first. Default 500, capped at 5000.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// One quarantined position: what was received, and why it was set aside.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RejectedPosition {
+    pub hex_ident: String,
+    pub callsign: Option<String>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub altitude: Option<f64>,
+    pub timestamp_ms: i64,
+    pub source_id: Option<String>,
+    /// `out_of_range` or `implausible_speed`.
+    pub reason: String,
+    /// From the receiver, when one was known at rejection time.
+    pub distance_nm: Option<f64>,
+    pub rejected_at_ms: i64,
+    /// `implausible_speed` only: the lowest speed (kt) at which any of the
+    /// aircraft's neighbouring fixes reaches this one.
+    #[serde(default)]
+    pub implied_speed_kt: Option<f64>,
+}
+
+/// A page of rejected positions plus the total in the time range.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RejectedPositionPage {
+    pub total: u64,
+    pub rows: Vec<RejectedPosition>,
+}
+
 /// A single 10° azimuth sector in the detection range result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectionRangeSector {

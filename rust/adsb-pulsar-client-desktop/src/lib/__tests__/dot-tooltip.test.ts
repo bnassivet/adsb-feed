@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { dotTooltipHtml, formatAlt, timeAgo } from "../dot-tooltip";
-import type { AircraftTrack } from "../types";
+import { dotTooltipHtml, formatAlt, rejectedTooltipHtml, timeAgo } from "../dot-tooltip";
+import type { AircraftTrack, RejectedPosition } from "../types";
 
 const t = (extra: Partial<AircraftTrack> = {}) =>
   ({ hex_ident: "ABC123", callsign: "ACA101", last_seen: 0, ...extra }) as AircraftTrack;
@@ -44,5 +44,39 @@ describe("dotTooltipHtml", () => {
     const html = dotTooltipHtml("dbHistory", t({ callsign: "<img src=x>" }), 1000, false);
     expect(html).not.toContain("<img");
     expect(html).toContain("&lt;img src=x&gt;");
+  });
+});
+
+describe("rejectedTooltipHtml", () => {
+  const r = (extra: Partial<RejectedPosition> = {}): RejectedPosition => ({
+    hex_ident: "4CAE9A", callsign: "AFR123", latitude: 83.72, longitude: 58.21,
+    altitude: 39000, timestamp_ms: 1, source_id: "dev", reason: "out_of_range",
+    distance_nm: 2402.3, rejected_at_ms: 2, implied_speed_kt: null, ...extra,
+  });
+
+  it("lays out like a DB History dot: callsign, hex, altitude, then a tag", () => {
+    const html = rejectedTooltipHtml(r());
+    const dot = dotTooltipHtml("dbHistory", {
+      hex_ident: "4CAE9A", callsign: "AFR123",
+    } as AircraftTrack, 39000, false);
+    // Same first three lines as the regular dot tooltip.
+    expect(html.startsWith(dot.slice(0, dot.indexOf('<div style="color:#22d3ee')))).toBe(true);
+    expect(html).toContain("Out of range");
+    expect(html).toContain("Distance: <span style=\"color:#fff\">2402 NM</span>");
+  });
+
+  it("gives the implied speed of a speed reject, and N/A without altitude", () => {
+    const html = rejectedTooltipHtml(
+      r({ reason: "implausible_speed", implied_speed_kt: 39102.7, distance_nm: null, altitude: null })
+    );
+    expect(html).toContain("Impossible speed");
+    expect(html).toContain("Speed: <span style=\"color:#fff\">39,103 kt</span>");
+    expect(html).toContain("N/A");
+    expect(html).not.toContain("Distance");
+  });
+
+  it("escapes the callsign (it comes off the air)", () => {
+    const html = rejectedTooltipHtml(r({ callsign: "<img src=x>" }));
+    expect(html).not.toContain("<img");
   });
 });

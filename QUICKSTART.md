@@ -25,8 +25,12 @@ tracked version; edit that only when adding a setting everyone should get.
 `make config` never overwrites an existing file.
 
 Set your antenna's real position in `[receiver]` before anything else — it is
-the map centre, the origin for the mock feed, and the reference for
-detection-range analysis.
+the map centre, the origin for the mock feed, the reference for
+detection-range analysis, and what the recorder measures against when it
+quarantines decode glitches beyond 500 NM (a wrong position quarantines real
+traffic; the rows stay in `rejected_positions`). The desktop keeps its own copy
+in Settings → Receiver Location, used by its embedded-mode sweep and the radar.
+Keep the two the same.
 
 ## 1. All-local development
 

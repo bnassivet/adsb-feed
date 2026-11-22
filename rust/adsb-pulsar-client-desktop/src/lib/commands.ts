@@ -9,6 +9,8 @@ import type {
   CreateScenarioTrack,
   DetectionRangeQuery,
   DetectionRangeSector,
+  RejectedPositionPage,
+  RejectedPositionQuery,
   FlightInfo,
   EventOfInterest,
   EventOfInterestQuery,
@@ -219,6 +221,13 @@ export async function getDetectionRange(
   query: DetectionRangeQuery
 ): Promise<DetectionRangeSector[]> {
   return invoke("get_detection_range", { query });
+}
+
+/** Positions quarantined as decode glitches, newest first, with the range total. */
+export async function getRejectedPositions(
+  query: RejectedPositionQuery
+): Promise<RejectedPositionPage> {
+  return invoke("get_rejected_positions", { query });
 }
 
 /** Raw-message counts per (time bucket, transmission type). `metric` is ignored. */

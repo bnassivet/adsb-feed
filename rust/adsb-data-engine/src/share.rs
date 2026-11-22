@@ -42,12 +42,13 @@ fn sql_quote(value: &str) -> String {
 /// The complement -- `events_of_interest`, `scenarios`, `scenario_tracks` --
 /// are *authored* by whoever is using the app, so they stay in the local
 /// database even in remote mode.
-pub const OBSERVED_TABLES: [&str; 5] = [
+pub const OBSERVED_TABLES: [&str; 6] = [
     "positions",
     "raw_messages",
     "flights",
     "status_events",
     "weather_snapshots",
+    "rejected_positions",
 ];
 
 /// Whether a Quack URI names a local host.
@@ -382,6 +383,7 @@ mod attach_tests {
             "flights",
             "status_events",
             "weather_snapshots",
+            "rejected_positions",
         ] {
             assert!(
                 sql.contains(&format!(

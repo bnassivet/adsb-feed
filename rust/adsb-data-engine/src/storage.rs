@@ -83,6 +83,8 @@ struct Storage {
     share_config: Option<ShareConfig>,
     /// Live sharing state. The single authority — config only seeds the default.
     share_status: ShareStatus,
+    /// Observed tables are views over a daemon's catalog: never write them.
+    is_remote: bool,
 }
 
 /// Tables recorded from a live feed. In remote mode these are not created at
@@ -95,6 +97,103 @@ const REMOTE_CATALOG: &str = "edge";
 const PLAUSIBLE_MAX_SPEED_KT: f64 = 1000.0;
 /// Allowed on top, for decode jitter between fixes a fraction of a second apart.
 const POSITION_JITTER_NM: f64 = 0.5;
+/// Farther than any receiver hears: the radio horizon at FL450 is ~270 NM, and
+/// tropospheric ducting rarely doubles it. Decode glitches can arrive in short
+/// self-consistent bursts that the speed test cannot see; this catches them.
+pub const MAX_RECEPTION_RANGE_NM: f64 = 500.0;
+/// How far outside a quarantine window neighbours are still looked up. Two
+/// fixes either side are all the speed test reads; ten minutes covers them
+/// for anything still being tracked.
+const QUARANTINE_NEIGHBOUR_MARGIN_MS: i64 = 600_000;
+
+/// Great-circle distance in NM between two SQL lat/lon expression pairs.
+fn haversine_nm_sql(lat1: &str, lon1: &str, lat2: &str, lon2: &str) -> String {
+    format!(
+        "(2 * 3440.065 * ASIN(SQRT(\
+           POWER(SIN(RADIANS(({lat2} - {lat1}) / 2)), 2) + \
+           COS(RADIANS({lat1})) * COS(RADIANS({lat2})) \
+             * POWER(SIN(RADIANS(({lon2} - {lon1}) / 2)), 2))))"
+    )
+}
+
+/// SQL predicate: the fix in alias `p` is reachable from at least one of its
+/// own aircraft's two fixes before or after at `PLAUSIBLE_MAX_SPEED_KT` (plus
+/// jitter), or has no neighbour at all. `p` must carry the `prev_*`, `prev2_*`,
+/// `next_*`, `next2_*` columns of [`NEIGHBOUR_COLUMNS_SQL`].
+///
+/// A decode glitch (seen live: one fix at 71°N 115°W mid-track over France) is
+/// unreachable from every neighbour; a real fix is reachable from at least one.
+/// The second neighbour on each side lets the fixes around a glitch see past it.
+fn plausible_fix_sql(p: &str) -> String {
+    let reach = |n: &str| {
+        format!(
+            "({p}.{n}_ms IS NOT NULL AND {dist} <= {MAX_KT} * ABS({p}.timestamp_ms - {p}.{n}_ms) / 3600000.0 + {SLACK})",
+            dist = haversine_nm_sql(
+                &format!("{p}.latitude"),
+                &format!("{p}.longitude"),
+                &format!("{p}.{n}_lat"),
+                &format!("{p}.{n}_lon"),
+            ),
+            MAX_KT = PLAUSIBLE_MAX_SPEED_KT,
+            SLACK = POSITION_JITTER_NM,
+        )
+    };
+    format!(
+        "(({p}.prev_ms IS NULL AND {p}.next_ms IS NULL) OR {} OR {} OR {} OR {})",
+        reach("prev"),
+        reach("prev2"),
+        reach("next"),
+        reach("next2"),
+    )
+}
+
+/// SQL: the lowest speed (kt) at which any neighbour of the fix in alias `p`
+/// reaches it -- for a speed reject, by how much the most lenient neighbour
+/// misses. Coincident timestamps count as 1 ms apart, so the value stays finite.
+fn implied_speed_sql(p: &str) -> String {
+    let speed = |n: &str| {
+        format!(
+            "CASE WHEN {p}.{n}_ms IS NULL THEN NULL ELSE {dist} \
+             / (GREATEST(ABS({p}.timestamp_ms - {p}.{n}_ms), 1) / 3600000.0) END",
+            dist = haversine_nm_sql(
+                &format!("{p}.latitude"),
+                &format!("{p}.longitude"),
+                &format!("{p}.{n}_lat"),
+                &format!("{p}.{n}_lon"),
+            ),
+        )
+    };
+    format!(
+        "LEAST({}, {}, {}, {})",
+        speed("prev"),
+        speed("prev2"),
+        speed("next"),
+        speed("next2")
+    )
+}
+
+/// Speed rejects recorded before `implied_speed_kt` existed go back to
+/// `positions`; the next sweep re-judges them and records the speed. One code
+/// path computes it, rather than a second one reconstructing neighbours.
+const REQUEUE_UNSPEEDED_REJECTS_SQL: &str = "
+    BEGIN TRANSACTION;
+    INSERT INTO positions
+    SELECT hex_ident, callsign, latitude, longitude, altitude, ground_speed, track,
+           vertical_rate, squawk, is_on_ground, timestamp_ms, source_id
+    FROM rejected_positions
+    WHERE reason = 'implausible_speed' AND implied_speed_kt IS NULL;
+    DELETE FROM rejected_positions
+    WHERE reason = 'implausible_speed' AND implied_speed_kt IS NULL;
+    COMMIT;
+";
+
+/// Each position's own aircraft's two fixes before and after, for
+/// [`plausible_fix_sql`]. Needs `WINDOW w AS (PARTITION BY hex_ident ORDER BY timestamp_ms)`.
+const NEIGHBOUR_COLUMNS_SQL: &str = "\
+    LAG(latitude, 1) OVER w AS prev_lat, LAG(longitude, 1) OVER w AS prev_lon, LAG(timestamp_ms, 1) OVER w AS prev_ms,
+    LAG(latitude, 2) OVER w AS prev2_lat, LAG(longitude, 2) OVER w AS prev2_lon, LAG(timestamp_ms, 2) OVER w AS prev2_ms,
+    LEAD(latitude, 1) OVER w AS next_lat, LEAD(longitude, 1) OVER w AS next_lon, LEAD(timestamp_ms, 1) OVER w AS next_ms,
+    LEAD(latitude, 2) OVER w AS next2_lat, LEAD(longitude, 2) OVER w AS next2_lon, LEAD(timestamp_ms, 2) OVER w AS next2_ms";
 
 const SCHEMA_OBSERVED_SQL: &str = r#"
     CREATE TABLE IF NOT EXISTS positions (
@@ -114,6 +213,32 @@ const SCHEMA_OBSERVED_SQL: &str = r#"
 
     CREATE INDEX IF NOT EXISTS idx_positions_ts ON positions (timestamp_ms);
     CREATE INDEX IF NOT EXISTS idx_positions_hex_ts ON positions (hex_ident, timestamp_ms);
+
+    -- Positions moved out of `positions` by `quarantine_positions_sync`: decode
+    -- glitches kept for inspection. Same columns, plus why and when.
+    CREATE TABLE IF NOT EXISTS rejected_positions (
+        hex_ident      TEXT    NOT NULL,
+        callsign       TEXT,
+        latitude       DOUBLE,
+        longitude      DOUBLE,
+        altitude       DOUBLE,
+        ground_speed   DOUBLE,
+        track          DOUBLE,
+        vertical_rate  DOUBLE,
+        squawk         TEXT,
+        is_on_ground   BOOLEAN,
+        timestamp_ms   BIGINT  NOT NULL,
+        source_id      TEXT,
+        reason         TEXT    NOT NULL,
+        distance_nm    DOUBLE,
+        rejected_at_ms BIGINT  NOT NULL,
+        -- implausible_speed only: the lowest speed (kt) any neighbour needs.
+        implied_speed_kt DOUBLE
+    );
+    -- Tables created before implied_speed_kt existed.
+    ALTER TABLE rejected_positions ADD COLUMN IF NOT EXISTS implied_speed_kt DOUBLE;
+
+    CREATE INDEX IF NOT EXISTS idx_rejected_positions_ts ON rejected_positions (timestamp_ms);
 
     CREATE TABLE IF NOT EXISTS raw_messages (
         hex_ident         TEXT    NOT NULL,
@@ -296,7 +421,10 @@ impl StorageHandle {
 
         match &config.remote {
             // Embedded mode: this process owns everything.
-            None => conn.execute_batch(SCHEMA_OBSERVED_SQL)?,
+            None => {
+                conn.execute_batch(SCHEMA_OBSERVED_SQL)?;
+                conn.execute_batch(REQUEUE_UNSPEEDED_REJECTS_SQL)?;
+            }
 
             // Remote mode: the daemon owns the observed tables. Attaching its
             // catalog and creating views under the *same names* means every
@@ -345,6 +473,7 @@ impl StorageHandle {
                 flight_tracker: HashMap::new(),
                 share_config: config.share,
                 share_status: ShareStatus::Off,
+                is_remote,
             })),
         };
 
@@ -1382,10 +1511,181 @@ impl StorageHandle {
             params![older_than_ms],
         )?;
 
+        storage.conn.execute(
+            "DELETE FROM rejected_positions WHERE timestamp_ms < ?",
+            params![older_than_ms],
+        )?;
+
         info!(
             "Pruned {deleted} positions and {raw_deleted} raw messages older than {older_than_ms}"
         );
         Ok(deleted as u64)
+    }
+
+    /// Move impossible positions with a timestamp in `[from_ms, to_ms]` from
+    /// `positions` into `rejected_positions` (synchronous). Returns how many.
+    ///
+    /// A fix is rejected as `out_of_range` when it is farther than
+    /// [`MAX_RECEPTION_RANGE_NM`] from `receiver` (skipped without one), else as
+    /// `implausible_speed` when [`plausible_fix_sql`] fails. Neighbours up to
+    /// [`QUARANTINE_NEIGHBOUR_MARGIN_MS`] outside the window are consulted, so
+    /// a caller sweeping in slices judges the edges as a full sweep would.
+    ///
+    /// Only the ingest owner may call this: in remote mode the observed tables
+    /// belong to the daemon, and this is a no-op returning 0.
+    pub fn quarantine_positions_sync(
+        &self,
+        receiver: Option<(f64, f64)>,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<u64, StorageError> {
+        // Validated before formatting: only finite f64 literals reach the SQL.
+        if let Some((lat, lon)) = receiver
+            && !(lat.is_finite() && lon.is_finite())
+        {
+            return Err(StorageError::Query(format!(
+                "receiver location must be finite, got ({lat}, {lon})"
+            )));
+        }
+
+        let mut storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+        if storage.is_remote {
+            return Ok(0);
+        }
+
+        let distance = match receiver {
+            Some((lat, lon)) => haversine_nm_sql(
+                &format!("({lat:?})"),
+                &format!("({lon:?})"),
+                "latitude",
+                "longitude",
+            ),
+            None => "CAST(NULL AS DOUBLE)".to_string(),
+        };
+        let rejected_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let lo = from_ms.saturating_sub(QUARANTINE_NEIGHBOUR_MARGIN_MS);
+        let hi = to_ms.saturating_add(QUARANTINE_NEIGHBOUR_MARGIN_MS);
+
+        // Two disjoint classes. Out-of-range fixes are set aside first and are
+        // nobody's neighbour: a real fix whose only neighbours are a far glitch
+        // pair would otherwise fail the speed test along with it.
+        const COLS: &str = "hex_ident, callsign, latitude, longitude, altitude, ground_speed, \
+                            track, vertical_rate, squawk, is_on_ground, timestamp_ms, source_id";
+        let insert = format!(
+            r#"
+            INSERT INTO rejected_positions
+              ({COLS}, reason, distance_nm, rejected_at_ms, implied_speed_kt)
+            SELECT {COLS}, reason, distance_nm, ?, implied_speed_kt FROM (
+              WITH base AS (
+                SELECT {COLS}, {DISTANCE} AS distance_nm,
+                       COALESCE({DISTANCE} > {MAX_RANGE_NM:?}, FALSE) AS far
+                FROM positions
+                WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+                  AND timestamp_ms >= ? AND timestamp_ms <= ?
+              )
+              SELECT {COLS}, distance_nm, 'out_of_range' AS reason,
+                     CAST(NULL AS DOUBLE) AS implied_speed_kt
+              FROM base
+              WHERE far AND timestamp_ms >= ? AND timestamp_ms <= ?
+              UNION ALL
+              SELECT {COLS}, distance_nm, 'implausible_speed' AS reason,
+                     {IMPLIED_SPEED} AS implied_speed_kt
+              FROM (
+                SELECT *, {NEIGHBOURS}
+                FROM base WHERE NOT far
+                WINDOW w AS (PARTITION BY hex_ident ORDER BY timestamp_ms)
+              ) p
+              WHERE p.timestamp_ms >= ? AND p.timestamp_ms <= ? AND NOT {PLAUSIBLE}
+            )
+            "#,
+            DISTANCE = distance,
+            MAX_RANGE_NM = MAX_RECEPTION_RANGE_NM,
+            PLAUSIBLE = plausible_fix_sql("p"),
+            NEIGHBOURS = NEIGHBOUR_COLUMNS_SQL,
+            IMPLIED_SPEED = implied_speed_sql("p"),
+        );
+        // `positions` has no key: the four columns that make a fix identify it.
+        // Identical duplicates are classified alike, so they move together.
+        let delete = r#"
+            DELETE FROM positions AS p
+            WHERE p.timestamp_ms >= ? AND p.timestamp_ms <= ?
+              AND EXISTS (
+                SELECT 1 FROM rejected_positions r
+                WHERE r.rejected_at_ms = ? AND r.hex_ident = p.hex_ident
+                  AND r.timestamp_ms = p.timestamp_ms
+                  AND r.latitude = p.latitude AND r.longitude = p.longitude)
+        "#;
+
+        let tx = storage.conn.transaction()?;
+        let moved = tx.execute(
+            &insert,
+            params![rejected_at_ms, lo, hi, from_ms, to_ms, from_ms, to_ms],
+        )?;
+        let deleted = tx.execute(delete, params![from_ms, to_ms, rejected_at_ms])?;
+        tx.commit()?;
+
+        if moved > 0 {
+            info!("Quarantined {moved} impossible positions ({deleted} rows removed)");
+        }
+        Ok(moved as u64)
+    }
+
+    /// Rejected positions in a time range, newest first, with the range's
+    /// total (synchronous). See [`Self::quarantine_positions_sync`].
+    pub fn get_rejected_positions_sync(
+        &self,
+        query: crate::types::RejectedPositionQuery,
+    ) -> Result<crate::types::RejectedPositionPage, StorageError> {
+        let start_ms = query.start_ms.unwrap_or(0);
+        let end_ms = query.end_ms.unwrap_or(i64::MAX);
+        let limit = i64::from(query.limit.unwrap_or(500).min(5000));
+
+        let storage = self
+            .inner
+            .lock()
+            .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+
+        let total: i64 = storage.conn.query_row(
+            "SELECT COUNT(*) FROM rejected_positions WHERE timestamp_ms >= ? AND timestamp_ms <= ?",
+            params![start_ms, end_ms],
+            |r| r.get(0),
+        )?;
+        let mut stmt = storage.conn.prepare(
+            "SELECT hex_ident, callsign, latitude, longitude, altitude, timestamp_ms,
+                    source_id, reason, distance_nm, rejected_at_ms, implied_speed_kt
+             FROM rejected_positions
+             WHERE timestamp_ms >= ? AND timestamp_ms <= ?
+             ORDER BY timestamp_ms DESC, hex_ident
+             LIMIT ?",
+        )?;
+        let rows = stmt
+            .query_map(params![start_ms, end_ms, limit], |r| {
+                Ok(crate::types::RejectedPosition {
+                    hex_ident: r.get(0)?,
+                    callsign: r.get(1)?,
+                    latitude: r.get(2)?,
+                    longitude: r.get(3)?,
+                    altitude: r.get(4)?,
+                    timestamp_ms: r.get(5)?,
+                    source_id: r.get(6)?,
+                    reason: r.get(7)?,
+                    distance_nm: r.get(8)?,
+                    rejected_at_ms: r.get(9)?,
+                    implied_speed_kt: r.get(10)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(crate::types::RejectedPositionPage {
+            total: total as u64,
+            rows,
+        })
     }
 
     /// Get time distribution as bucketed histogram (synchronous).
@@ -1603,11 +1903,7 @@ impl StorageHandle {
                 f.flight_id
               FROM (
                 -- Each position with its own aircraft's two fixes before and after.
-                SELECT *,
-                  LAG(latitude, 1) OVER w AS prev_lat, LAG(longitude, 1) OVER w AS prev_lon, LAG(timestamp_ms, 1) OVER w AS prev_ms,
-                  LAG(latitude, 2) OVER w AS prev2_lat, LAG(longitude, 2) OVER w AS prev2_lon, LAG(timestamp_ms, 2) OVER w AS prev2_ms,
-                  LEAD(latitude, 1) OVER w AS next_lat, LEAD(longitude, 1) OVER w AS next_lon, LEAD(timestamp_ms, 1) OVER w AS next_ms,
-                  LEAD(latitude, 2) OVER w AS next2_lat, LEAD(longitude, 2) OVER w AS next2_lon, LEAD(timestamp_ms, 2) OVER w AS next2_ms
+                SELECT *, {NEIGHBOURS}
                 FROM positions
                 WHERE latitude IS NOT NULL AND longitude IS NOT NULL
                   AND timestamp_ms >= ? AND timestamp_ms <= ?
@@ -1615,36 +1911,15 @@ impl StorageHandle {
               ) p
               LEFT JOIN flights f ON p.hex_ident = f.hex_ident
                 AND p.timestamp_ms BETWEEN f.first_seen_ms AND f.last_seen_ms
-              -- A decode glitch (seen live: one fix at 71°N 115°W mid-track over
-              -- France) is unreachable from every neighbour; a real fix is
-              -- reachable from at least one. The second neighbour on each side
-              -- lets the fixes around a glitch see past it. No neighbour: kept.
-              WHERE (p.prev_ms IS NULL AND p.next_ms IS NULL)
-                 OR (p.prev_ms IS NOT NULL AND 2 * 3440.065 * ASIN(SQRT(
-                      POWER(SIN(RADIANS((p.prev_lat - p.latitude) / 2)), 2) +
-                      COS(RADIANS(p.latitude)) * COS(RADIANS(p.prev_lat))
-                        * POWER(SIN(RADIANS((p.prev_lon - p.longitude) / 2)), 2)
-                    )) <= {MAX_KT} * ABS(p.timestamp_ms - p.prev_ms) / 3600000.0 + {SLACK_NM})
-                 OR (p.prev2_ms IS NOT NULL AND 2 * 3440.065 * ASIN(SQRT(
-                      POWER(SIN(RADIANS((p.prev2_lat - p.latitude) / 2)), 2) +
-                      COS(RADIANS(p.latitude)) * COS(RADIANS(p.prev2_lat))
-                        * POWER(SIN(RADIANS((p.prev2_lon - p.longitude) / 2)), 2)
-                    )) <= {MAX_KT} * ABS(p.timestamp_ms - p.prev2_ms) / 3600000.0 + {SLACK_NM})
-                 OR (p.next_ms IS NOT NULL AND 2 * 3440.065 * ASIN(SQRT(
-                      POWER(SIN(RADIANS((p.next_lat - p.latitude) / 2)), 2) +
-                      COS(RADIANS(p.latitude)) * COS(RADIANS(p.next_lat))
-                        * POWER(SIN(RADIANS((p.next_lon - p.longitude) / 2)), 2)
-                    )) <= {MAX_KT} * ABS(p.timestamp_ms - p.next_ms) / 3600000.0 + {SLACK_NM})
-                 OR (p.next2_ms IS NOT NULL AND 2 * 3440.065 * ASIN(SQRT(
-                      POWER(SIN(RADIANS((p.next2_lat - p.latitude) / 2)), 2) +
-                      COS(RADIANS(p.latitude)) * COS(RADIANS(p.next2_lat))
-                        * POWER(SIN(RADIANS((p.next2_lon - p.longitude) / 2)), 2)
-                    )) <= {MAX_KT} * ABS(p.timestamp_ms - p.next2_ms) / 3600000.0 + {SLACK_NM})
+              WHERE {PLAUSIBLE}
               ) pts
+              -- Beyond reception range: a glitch burst that vouches for itself.
+              WHERE pts.distance_nm <= {MAX_RANGE_NM}
             ) sub GROUP BY {GROUPING} ORDER BY sector
         "#,
-            MAX_KT = PLAUSIBLE_MAX_SPEED_KT,
-            SLACK_NM = POSITION_JITTER_NM,
+            NEIGHBOURS = NEIGHBOUR_COLUMNS_SQL,
+            PLAUSIBLE = plausible_fix_sql("p"),
+            MAX_RANGE_NM = MAX_RECEPTION_RANGE_NM,
             IS_SECTOR_ROW = is_sector_row,
             BAND_COL = band_col,
             GROUPING = grouping,
@@ -3163,6 +3438,32 @@ impl StorageHandle {
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
 
+    /// Move impossible positions to `rejected_positions` (async via spawn_blocking).
+    pub async fn quarantine_positions(
+        &self,
+        receiver: Option<(f64, f64)>,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<u64, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || {
+            handle.quarantine_positions_sync(receiver, from_ms, to_ms)
+        })
+        .await
+        .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Rejected positions in a time range (async via spawn_blocking).
+    pub async fn get_rejected_positions(
+        &self,
+        query: crate::types::RejectedPositionQuery,
+    ) -> Result<crate::types::RejectedPositionPage, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.get_rejected_positions_sync(query))
+            .await
+            .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
     /// Get time distribution histogram (async via spawn_blocking).
     pub async fn get_time_distribution(
         &self,
@@ -3303,6 +3604,7 @@ impl StorageHandle {
              CREATE TABLE export_db.positions AS SELECT * FROM positions;
              CREATE TABLE export_db.raw_messages AS SELECT * FROM raw_messages;
              CREATE TABLE export_db.weather_snapshots AS SELECT * FROM weather_snapshots;
+             CREATE TABLE export_db.rejected_positions AS SELECT * FROM rejected_positions;
              DETACH export_db;",
             path_str
         ))?;
@@ -3824,6 +4126,55 @@ fn parse_timestamp_to_ms(timestamp: &str, tz: &str) -> i64 {
     }
 }
 
+/// Fixes this recent are not swept yet: their next neighbours may not have
+/// arrived, and the speed test needs them.
+pub const QUARANTINE_SETTLE_MS: i64 = 60_000;
+/// Each sweep re-covers this much before the last one: dump1090 timestamps can
+/// lag the wall clock, so a fix may land behind the watermark. Sweeping twice
+/// is harmless; the sweep is idempotent.
+pub const QUARANTINE_OVERLAP_MS: i64 = 600_000;
+
+/// Where periodic quarantine sweeps have reached, for an ingest owner (the
+/// data server, or the desktop in embedded mode). Starts at 0, so the first
+/// sweep covers the whole history once.
+#[derive(Debug, Default, Clone)]
+pub struct QuarantineCursor {
+    swept_to: i64,
+}
+
+impl QuarantineCursor {
+    /// Sweep `[watermark - overlap, now - settle]`, then advance on success.
+    pub fn sweep_sync(
+        &mut self,
+        storage: &StorageHandle,
+        receiver: Option<(f64, f64)>,
+        now_ms: i64,
+    ) -> Result<u64, StorageError> {
+        let (from, to) = self.window(now_ms);
+        let n = storage.quarantine_positions_sync(receiver, from, to)?;
+        self.swept_to = to;
+        Ok(n)
+    }
+
+    /// [`Self::sweep_sync`] off the async runtime.
+    pub async fn sweep(
+        &mut self,
+        storage: &StorageHandle,
+        receiver: Option<(f64, f64)>,
+        now_ms: i64,
+    ) -> Result<u64, StorageError> {
+        let (from, to) = self.window(now_ms);
+        let n = storage.quarantine_positions(receiver, from, to).await?;
+        self.swept_to = to;
+        Ok(n)
+    }
+
+    fn window(&self, now_ms: i64) -> (i64, i64) {
+        let from = self.swept_to.saturating_sub(QUARANTINE_OVERLAP_MS).max(0);
+        (from, now_ms - QUARANTINE_SETTLE_MS)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4126,7 +4477,7 @@ mod tests {
         let remote_path = dir.path().join("older-daemon.db");
         {
             let remote = Connection::open(&remote_path).unwrap();
-            // An older daemon: everything except weather_snapshots.
+            // An older daemon: no weather_snapshots, no rejected_positions.
             remote
                 .execute_batch(
                     "CREATE TABLE positions (hex_ident TEXT);
@@ -4155,8 +4506,8 @@ mod tests {
 
         assert_eq!(
             skipped,
-            vec!["weather_snapshots"],
-            "only the table the daemon lacks should be skipped"
+            vec!["weather_snapshots", "rejected_positions"],
+            "only the tables the daemon lacks should be skipped"
         );
         assert_eq!(
             created,
@@ -4681,6 +5032,25 @@ mod tests {
 
         let stats = handle.get_stats_sync().unwrap();
         assert_eq!(stats.row_count, 1);
+    }
+
+    #[test]
+    fn test_prune_also_removes_old_rejected_positions() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_sync(&track_with_glitches(), "UTC")
+            .unwrap();
+        handle
+            .quarantine_positions_sync(Some((45.0, -73.0)), 0, i64::MAX)
+            .unwrap();
+        handle
+            .prune_sync(parse_timestamp_to_ms("2024/01/15 10:00:12.000", "UTC"))
+            .unwrap();
+        // The pair (:09) is older than the cutoff; the speed glitch (:16) is not.
+        assert_eq!(
+            count_sql(&handle, "SELECT COUNT(*) FROM rejected_positions"),
+            1
+        );
     }
 
     #[test]
@@ -5315,6 +5685,366 @@ mod tests {
             sample_position("G2", Some(45.51), Some(-73.0), "2024/01/15 10:00:05.000"),
         ];
         assert!(farthest_nm(&range_of(&positions)) < 40.0);
+    }
+
+    #[test]
+    fn test_detection_range_ignores_a_glitch_pair_that_vouches_for_itself() {
+        // Seen live (4CAE9A): two bad fixes at 83.7°N only 0.06 NM / 0.9 s apart,
+        // so each is a plausible neighbour of the other and the speed test keeps
+        // both. No receiver hears an aircraft 2400 NM away.
+        let positions = vec![
+            sample_position("G3", Some(45.50), Some(-73.0), "2024/01/15 10:00:00.000"),
+            sample_position("G3", Some(45.51), Some(-73.0), "2024/01/15 10:00:05.000"),
+            sample_position("G3", Some(83.721), Some(58.224), "2024/01/15 10:00:09.000"),
+            sample_position("G3", Some(83.720), Some(58.214), "2024/01/15 10:00:09.900"),
+            sample_position("G3", Some(45.52), Some(-73.0), "2024/01/15 10:00:15.000"),
+            sample_position("G3", Some(45.53), Some(-73.0), "2024/01/15 10:00:20.000"),
+        ];
+        let sectors = range_of(&positions);
+        assert!(farthest_nm(&sectors) < 40.0, "{} NM", farthest_nm(&sectors));
+        let total: u64 = sectors.iter().map(|s| s.position_count).sum();
+        assert_eq!(total, 4, "neither fix of the pair is counted");
+    }
+
+    fn count_sql(handle: &StorageHandle, sql: &str) -> i64 {
+        let s = handle.inner.lock().unwrap();
+        s.conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    /// A real track north of (45, -73), with a self-vouching pair at 83.7°N
+    /// (out of range) and one in-range fix it would take ~100 000 kt to reach.
+    fn track_with_glitches() -> Vec<AircraftPosition> {
+        vec![
+            sample_position("Q1", Some(45.50), Some(-73.0), "2024/01/15 10:00:00.000"),
+            sample_position("Q1", Some(45.51), Some(-73.0), "2024/01/15 10:00:05.000"),
+            sample_position("Q1", Some(83.721), Some(58.224), "2024/01/15 10:00:09.000"),
+            sample_position("Q1", Some(83.720), Some(58.214), "2024/01/15 10:00:09.900"),
+            sample_position("Q1", Some(45.52), Some(-73.0), "2024/01/15 10:00:15.000"),
+            sample_position("Q1", Some(47.50), Some(-73.0), "2024/01/15 10:00:16.000"),
+            sample_position("Q1", Some(45.53), Some(-73.0), "2024/01/15 10:00:20.000"),
+            sample_position("Q1", Some(45.54), Some(-73.0), "2024/01/15 10:00:25.000"),
+            // No fix: never classified, never moved.
+            sample_position("Q1", None, None, "2024/01/15 10:00:26.000"),
+        ]
+    }
+
+    #[test]
+    fn test_quarantine_moves_glitches_and_keeps_the_track() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_sync(&track_with_glitches(), "UTC")
+            .unwrap();
+
+        let moved = handle
+            .quarantine_positions_sync(Some((45.0, -73.0)), 0, i64::MAX)
+            .unwrap();
+        assert_eq!(moved, 3);
+        assert_eq!(count_sql(&handle, "SELECT COUNT(*) FROM positions"), 6);
+        assert_eq!(
+            count_sql(
+                &handle,
+                "SELECT COUNT(*) FROM positions WHERE latitude > 47"
+            ),
+            0
+        );
+        assert_eq!(
+            count_sql(
+                &handle,
+                "SELECT COUNT(*) FROM rejected_positions WHERE reason = 'out_of_range' \
+                 AND distance_nm > 2000 AND hex_ident = 'Q1' AND rejected_at_ms > 0"
+            ),
+            2
+        );
+        assert_eq!(
+            count_sql(
+                &handle,
+                "SELECT COUNT(*) FROM rejected_positions WHERE reason = 'implausible_speed' \
+                 AND latitude = 47.5 AND distance_nm BETWEEN 140 AND 160"
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn test_quarantine_neighbours_skip_out_of_range_fixes() {
+        // A short track whose only neighbours are a far glitch pair: once the
+        // pair is out of the way, the real fixes reach each other.
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_sync(
+                &[
+                    sample_position("Q2", Some(45.50), Some(-73.0), "2024/01/15 10:00:00.000"),
+                    sample_position("Q2", Some(83.721), Some(58.224), "2024/01/15 10:00:09.000"),
+                    sample_position("Q2", Some(83.720), Some(58.214), "2024/01/15 10:00:09.900"),
+                    sample_position("Q2", Some(45.52), Some(-73.0), "2024/01/15 10:00:15.000"),
+                ],
+                "UTC",
+            )
+            .unwrap();
+        let moved = handle
+            .quarantine_positions_sync(Some((45.0, -73.0)), 0, i64::MAX)
+            .unwrap();
+        assert_eq!(moved, 2, "only the pair");
+        assert_eq!(count_sql(&handle, "SELECT COUNT(*) FROM positions"), 2);
+    }
+
+    #[test]
+    fn test_quarantine_cursor_leaves_recent_fixes_to_settle() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_sync(&track_with_glitches(), "UTC")
+            .unwrap();
+        let t = |s: &str| parse_timestamp_to_ms(s, "UTC");
+        let mut cursor = QuarantineCursor::default();
+        let rx = Some((45.0, -73.0));
+
+        // "Now" is 30 s after the pair: inside the settle delay, not swept.
+        assert_eq!(
+            cursor
+                .sweep_sync(&handle, rx, t("2024/01/15 10:00:39.000"))
+                .unwrap(),
+            0
+        );
+        // A minute later everything up to :16 has settled.
+        assert_eq!(
+            cursor
+                .sweep_sync(&handle, rx, t("2024/01/15 10:01:30.000"))
+                .unwrap(),
+            3
+        );
+    }
+
+    #[test]
+    fn test_quarantine_cursor_catches_a_late_fix_behind_its_watermark() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let t = |s: &str| parse_timestamp_to_ms(s, "UTC");
+        let mut cursor = QuarantineCursor::default();
+        let rx = Some((45.0, -73.0));
+        assert_eq!(
+            cursor
+                .sweep_sync(&handle, rx, t("2024/01/15 10:05:00.000"))
+                .unwrap(),
+            0
+        );
+
+        // Arrives after that sweep, stamped 3 min before its watermark.
+        handle
+            .insert_batch_sync(
+                &[sample_position(
+                    "LATE",
+                    Some(83.7),
+                    Some(58.2),
+                    "2024/01/15 10:01:00.000",
+                )],
+                "UTC",
+            )
+            .unwrap();
+        assert_eq!(
+            cursor
+                .sweep_sync(&handle, rx, t("2024/01/15 10:06:00.000"))
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_quarantine_records_the_lowest_implied_speed() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_sync(&track_with_glitches(), "UTC")
+            .unwrap();
+        handle
+            .quarantine_positions_sync(Some((45.0, -73.0)), 0, i64::MAX)
+            .unwrap();
+        let page = handle
+            .get_rejected_positions_sync(crate::types::RejectedPositionQuery::default())
+            .unwrap();
+
+        // 47.5 @ :16 is reached most easily from 45.51 @ :05, its second fix
+        // back (11 s away); every other neighbour needs more.
+        let speed = page
+            .rows
+            .iter()
+            .find(|r| r.reason == "implausible_speed")
+            .unwrap();
+        let expected = crate::geo::haversine_nm(47.5, -73.0, 45.51, -73.0) / (11.0 / 3600.0);
+        let got = speed.implied_speed_kt.unwrap();
+        assert!(
+            (got - expected).abs() / expected < 0.01,
+            "{got} vs {expected}"
+        );
+
+        // Speed is what an out-of-range fix is NOT judged on.
+        assert!(
+            page.rows
+                .iter()
+                .filter(|r| r.reason == "out_of_range")
+                .all(|r| r.implied_speed_kt.is_none())
+        );
+    }
+
+    #[test]
+    fn test_open_requeues_speed_rejects_recorded_without_a_speed() {
+        // Rows quarantined before implied_speed_kt existed go back to
+        // `positions`, so the next sweep re-judges them and records it.
+        let dir = tempfile::tempdir().unwrap();
+        let config = StorageConfig {
+            db_path: Some(dir.path().join("h.db")),
+            ..test_config()
+        };
+        {
+            let handle = StorageHandle::open(config.clone()).unwrap();
+            handle
+                .insert_batch_sync(&track_with_glitches(), "UTC")
+                .unwrap();
+            handle
+                .quarantine_positions_sync(Some((45.0, -73.0)), 0, i64::MAX)
+                .unwrap();
+            let s = handle.inner.lock().unwrap();
+            s.conn
+                .execute_batch("UPDATE rejected_positions SET implied_speed_kt = NULL")
+                .unwrap();
+        }
+        let handle = StorageHandle::open(config).unwrap();
+        assert_eq!(
+            count_sql(&handle, "SELECT COUNT(*) FROM rejected_positions"),
+            2
+        );
+        assert_eq!(
+            count_sql(
+                &handle,
+                "SELECT COUNT(*) FROM positions WHERE latitude = 47.5"
+            ),
+            1
+        );
+
+        assert_eq!(
+            handle
+                .quarantine_positions_sync(Some((45.0, -73.0)), 0, i64::MAX)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            count_sql(
+                &handle,
+                "SELECT COUNT(*) FROM rejected_positions \
+                 WHERE reason = 'implausible_speed' AND implied_speed_kt > 1000"
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn test_quarantine_is_idempotent() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_sync(&track_with_glitches(), "UTC")
+            .unwrap();
+        let rx = Some((45.0, -73.0));
+        assert_eq!(
+            handle.quarantine_positions_sync(rx, 0, i64::MAX).unwrap(),
+            3
+        );
+        assert_eq!(
+            handle.quarantine_positions_sync(rx, 0, i64::MAX).unwrap(),
+            0
+        );
+        assert_eq!(
+            count_sql(&handle, "SELECT COUNT(*) FROM rejected_positions"),
+            3
+        );
+    }
+
+    #[test]
+    fn test_quarantine_without_receiver_applies_the_speed_test_only() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_sync(&track_with_glitches(), "UTC")
+            .unwrap();
+        // The far pair vouches for itself and no range is known: it stays.
+        assert_eq!(
+            handle.quarantine_positions_sync(None, 0, i64::MAX).unwrap(),
+            1
+        );
+        assert_eq!(
+            count_sql(
+                &handle,
+                "SELECT COUNT(*) FROM rejected_positions \
+                 WHERE reason = 'implausible_speed' AND distance_nm IS NULL"
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn test_quarantine_only_touches_its_time_window() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_sync(&track_with_glitches(), "UTC")
+            .unwrap();
+        let t = |s: &str| parse_timestamp_to_ms(s, "UTC");
+        // Covers the speed glitch at :16 but not the pair at :09.
+        let moved = handle
+            .quarantine_positions_sync(
+                Some((45.0, -73.0)),
+                t("2024/01/15 10:00:12.000"),
+                t("2024/01/15 10:00:30.000"),
+            )
+            .unwrap();
+        assert_eq!(moved, 1, "neighbours outside the window still count");
+        assert_eq!(
+            count_sql(
+                &handle,
+                "SELECT COUNT(*) FROM positions WHERE latitude > 80"
+            ),
+            2
+        );
+    }
+
+    #[test]
+    fn test_quarantine_rejects_a_non_finite_receiver() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        assert!(
+            handle
+                .quarantine_positions_sync(Some((f64::NAN, -73.0)), 0, i64::MAX)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_get_rejected_positions_newest_first_with_total() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_sync(&track_with_glitches(), "UTC")
+            .unwrap();
+        handle
+            .quarantine_positions_sync(Some((45.0, -73.0)), 0, i64::MAX)
+            .unwrap();
+
+        let page = handle
+            .get_rejected_positions_sync(crate::types::RejectedPositionQuery::default())
+            .unwrap();
+        assert_eq!(page.total, 3);
+        let ts: Vec<i64> = page.rows.iter().map(|r| r.timestamp_ms).collect();
+        assert!(ts.windows(2).all(|w| w[0] >= w[1]), "newest first: {ts:?}");
+        let first = &page.rows[0];
+        assert_eq!(first.reason, "implausible_speed");
+        assert_eq!(first.latitude, Some(47.5));
+        assert_eq!(first.callsign.as_deref(), Some("TEST123"));
+
+        // Limit trims rows, not the total; the range narrows both.
+        let t = |s: &str| parse_timestamp_to_ms(s, "UTC");
+        let page = handle
+            .get_rejected_positions_sync(crate::types::RejectedPositionQuery {
+                start_ms: Some(t("2024/01/15 10:00:00.000")),
+                end_ms: Some(t("2024/01/15 10:00:10.000")),
+                limit: Some(1),
+            })
+            .unwrap();
+        assert_eq!(page.total, 2);
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(page.rows[0].reason, "out_of_range");
+        assert!(page.rows[0].distance_nm.unwrap() > 2000.0);
     }
 
     #[test]
@@ -6282,6 +7012,26 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))
             .unwrap();
         assert_eq!(raw_count, 1);
+    }
+
+    #[test]
+    fn test_export_database_carries_rejected_positions() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_sync(&track_with_glitches(), "UTC")
+            .unwrap();
+        handle
+            .quarantine_positions_sync(Some((45.0, -73.0)), 0, i64::MAX)
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let export_path = dir.path().join("export.db");
+        handle.export_database_sync(&export_path).unwrap();
+
+        let exported = Connection::open(&export_path).unwrap();
+        let n: i64 = exported
+            .query_row("SELECT COUNT(*) FROM rejected_positions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 3);
     }
 
     #[test]

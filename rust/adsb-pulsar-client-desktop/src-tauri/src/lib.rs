@@ -9,6 +9,7 @@ mod airspace;
 mod bridge;
 mod commands;
 mod metar;
+mod quarantine;
 mod radar;
 mod radar_grid;
 mod radar_history;
@@ -157,7 +158,23 @@ pub fn run() {
                 tool_server_port,
             ));
 
+            let quarantine_storage = std::sync::Arc::clone(&state.storage);
             app.manage(state);
+
+            // Embedded mode makes this app the ingest owner, so it sweeps
+            // decode glitches out of `positions` as the daemon does. Remote
+            // mode: the engine's sweep is a no-op, the daemon sweeps.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(quarantine::run_quarantine(
+                quarantine_storage,
+                move || {
+                    let state = handle.state::<AppState>();
+                    let config = state.config.lock().ok()?;
+                    config.receiver_latitude.zip(config.receiver_longitude)
+                },
+                quarantine::QUARANTINE_INITIAL_DELAY,
+                quarantine::QUARANTINE_PERIOD,
+            ));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -182,6 +199,7 @@ pub fn run() {
             commands::get_message_type_distribution,
             commands::get_storage_stats,
             commands::get_detection_range,
+            commands::get_rejected_positions,
             commands::get_hourly_heatmap,
             commands::get_raw_messages,
             commands::get_raw_messages_arrow,

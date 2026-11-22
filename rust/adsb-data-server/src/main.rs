@@ -48,6 +48,7 @@ async fn run(cfg: ServerConfig) -> anyhow::Result<()> {
             .then(|| Duration::from_secs(cfg.checkpoint_secs)),
         retention: (cfg.retention_hours > 0)
             .then(|| Duration::from_secs(cfg.retention_hours * 3600)),
+        receiver: cfg.receiver(),
     })?;
 
     if cfg.share {

@@ -153,6 +153,66 @@ describe("DBHistoryContent", () => {
     expect(btn24h).toHaveClass("bg-cyan-900/60");
   });
 
+  it("Rejected Positions sits between the analytics and Status Timeline", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockBrowseResponses();
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} />);
+    await user.click(await screen.findByTestId("dbhist-preset-24h"));
+    // Detection Range is the analytics block's last chart (needs a receiver).
+    const detection = await screen.findByTestId("dbhist-analytics");
+
+    const rejected = screen.getByTestId("dbhist-rejected-positions");
+    const timeline = screen.getByTestId("dbhist-status-timeline");
+    const FOLLOWING = Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(detection.compareDocumentPosition(rejected) & FOLLOWING).toBeTruthy();
+    expect(rejected.compareDocumentPosition(timeline) & FOLLOWING).toBeTruthy();
+  });
+
+  it("Rejected Positions is closed by default and loads only once opened", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockInvokeResponse("get_rejected_positions", {
+      total: 1,
+      rows: [{
+        hex_ident: "4CAE9A", callsign: null, latitude: 83.72, longitude: 58.21,
+        altitude: 39000, timestamp_ms: Date.now() - 60_000, source_id: "dev",
+        reason: "out_of_range", distance_nm: 2402, rejected_at_ms: Date.now(),
+      }],
+    });
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} />);
+
+    const section = await screen.findByTestId("dbhist-rejected-positions");
+    expect(section).not.toHaveAttribute("open");
+    expect(screen.queryByTestId("rejected-row")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("Rejected Positions"));
+    expect(await screen.findByTestId("rejected-row")).toHaveTextContent("4CAE9A");
+  });
+
+  it("Rejected Positions hands map show/hide to the page", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    const row = {
+      hex_ident: "4CAE9A", callsign: null, latitude: 83.72, longitude: 58.21,
+      altitude: 39000, timestamp_ms: Date.now() - 60_000, source_id: "dev",
+      reason: "out_of_range" as const, distance_nm: 2402, rejected_at_ms: Date.now(),
+      implied_speed_kt: null,
+    };
+    mockInvokeResponse("get_rejected_positions", { total: 1, rows: [row] });
+    const onRejectedShownChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <DBHistoryContent
+        {...baseProps}
+        rejectedShown={[]}
+        onRejectedShownChange={onRejectedShownChange}
+      />
+    );
+    await user.click(await screen.findByText("Rejected Positions"));
+    await user.click(await screen.findByRole("button", { name: "Show all" }));
+    expect(onRejectedShownChange).toHaveBeenLastCalledWith([row]);
+  });
+
   it("clicking a preset triggers browse with flight summaries", async () => {
     mockInvokeResponse("get_storage_stats", sampleStats);
     mockBrowseResponses();

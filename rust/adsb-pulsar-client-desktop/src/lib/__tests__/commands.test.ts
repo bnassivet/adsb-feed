@@ -10,6 +10,7 @@ import {
   getTimeDistribution,
   getStorageStats,
   getDetectionRange,
+  getRejectedPositions,
   getRecordingState,
   setRecordingState,
   getStorageStatus,
@@ -220,6 +221,25 @@ describe("Historical query commands", () => {
       expect(result.db_size_bytes).toBe(1128000);
       expect(result.oldest_timestamp_ms).toBe(1705315800000);
       expect(result.newest_timestamp_ms).toBe(1705316100000);
+    });
+  });
+
+  describe("getRejectedPositions", () => {
+    it("returns the page with its total", async () => {
+      mockInvokeResponse("get_rejected_positions", {
+        total: 12,
+        rows: [
+          {
+            hex_ident: "4CAE9A", callsign: null, latitude: 83.72, longitude: 58.21,
+            altitude: 39000, timestamp_ms: 1763741658505, source_id: "dev",
+            reason: "out_of_range", distance_nm: 2402.3, rejected_at_ms: 1763741999000,
+          },
+        ],
+      });
+      const page = await getRejectedPositions({ start_ms: 0, end_ms: 2, limit: 1 });
+      expect(page.total).toBe(12);
+      expect(page.rows[0].reason).toBe("out_of_range");
+      expect(page.rows[0].distance_nm).toBe(2402.3);
     });
   });
 

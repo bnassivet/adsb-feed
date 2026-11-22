@@ -117,18 +117,22 @@ StorageHandle          (Arc<Mutex<Storage>>, Clone-able)
 
 ### Database Schema
 
-Eight tables are created on first open, in two groups that differ in **who owns
+The tables are created on first open, in two groups that differ in **who owns
 them** — which is what decides whether they exist locally at all:
 
 | Group | Tables | Created |
 |-------|--------|---------|
-| **Observed** — recorded from a feed | `positions`, `raw_messages`, `flights`, `status_events`, `weather_snapshots` | Embedded mode only. In remote mode the daemon owns them and `share::remote_view_sql` creates views of the same names over its attached catalog, so every query works unchanged. Listed in `share::OBSERVED_TABLES`; **a new observed table must be added there too**, or remote clients silently see nothing. |
+| **Observed** — recorded from a feed | `positions`, `raw_messages`, `flights`, `status_events`, `weather_snapshots`, `rejected_positions` | Embedded mode only. In remote mode the daemon owns them and `share::remote_view_sql` creates views of the same names over its attached catalog, so every query works unchanged. Listed in `share::OBSERVED_TABLES`; **a new observed table must be added there too**, or remote clients silently see nothing. |
 | **Authored** — written by whoever uses the app | `events_of_interest`, `scenarios`, `scenario_tracks` | Always, in both modes. They are the user's, not the receiver's. |
 
-There is **no migration mechanism**: `CREATE TABLE IF NOT EXISTS`, re-executed on
-every open, is the whole story. Adding a table is safe and additive; adding a
-column to an existing one has no supported upgrade path, so column sets are
-permanent in practice. `storage.rs` (`SCHEMA_OBSERVED_SQL`, `SCHEMA_AUTHORED_SQL`)
+There is **no migration framework**: `CREATE TABLE IF NOT EXISTS`, re-executed on
+every open, is most of the story. Adding a table is safe and additive. A column
+can be added the same way, idempotently, with `ALTER TABLE … ADD COLUMN IF NOT
+EXISTS` right after the `CREATE` (first done for
+`rejected_positions.implied_speed_kt`). Rows written before the column existed
+hold `NULL`, so the code must either accept that or repair it on open, as
+`REQUEUE_UNSPEEDED_REJECTS_SQL` does. Renaming or dropping a column still has no
+path. In remote mode the ALTER runs on the daemon, never through a view. `storage.rs` (`SCHEMA_OBSERVED_SQL`, `SCHEMA_AUTHORED_SQL`)
 is the source of truth; the two oldest tables and the newest are shown here.
 
 ```sql
@@ -249,7 +253,9 @@ The stored value is always UTC epoch milliseconds regardless of input timezone.
 | `get_detection_range` | `DetectionRangeQuery` | `Vec<DetectionRangeSector>` | Max detection range by bearing sector (see below). Always returns 36 sectors. |
 | `get_hourly_heatmap` | `HourlyHeatmapQuery` | `Vec<HourlyHeatmapCell>` | Activity grid: distinct aircraft count and message count per (calendar day × hour). |
 | `get_stats` | — | `StorageStats` | Row counts, database file size, oldest/newest timestamps. |
-| `prune` | `older_than_ms: i64` | `u64` (deleted count) | Delete positions and raw messages older than the given timestamp. |
+| `prune` | `older_than_ms: i64` | `u64` (deleted count) | Delete positions, raw messages and rejected positions older than the given timestamp. |
+| `quarantine_positions` | `receiver: Option<(f64, f64)>, from_ms, to_ms` | `u64` (moved count) | Move impossible fixes in the window from `positions` to `rejected_positions`, in one transaction. `out_of_range` (farther than `MAX_RECEPTION_RANGE_NM` from the receiver; skipped without one) is classified first, then `implausible_speed` among in-range fixes only, recording `implied_speed_kt`. Neighbours up to 10 min outside the window are consulted. No-op in remote mode. See the desktop DESIGN.md → Quarantined positions. |
+| `get_rejected_positions` | `RejectedPositionQuery` | `RejectedPositionPage` | Quarantined fixes in a time range, newest first (default 500, cap 5000), with the range's total. |
 | `query_raw_messages` | `RawMessageQuery` | `Vec<RawSbsRecord>` | Raw SBS-1 lines for a specific aircraft and time window (limit 10 000). |
 | `get_raw_messages_arrow` | `RawMessageQuery` | `Vec<u8>` (IPC) | Same as `query_raw_messages` but returns Arrow IPC bytes. |
 | `get_raw_message_count` | `start_ms?, end_ms?` | `u64` | Count raw messages in optional time window. |
@@ -299,6 +305,13 @@ sectors AS (
 Missing sectors are filled with zero-distance entries in Rust after the query, so the result is always exactly 36 sectors (indices 0–35, where sector 0 = North, each covering 10°).
 
 This design minimises the amount of data crossing the `Mutex` boundary (at most 36 rows) even when the `positions` table contains millions of rows.
+
+The SQL above is the original shape. The current query also leaves out decode
+glitches: a fix none of its aircraft's two neighbours on each side can reach at
+`PLAUSIBLE_MAX_SPEED_KT` (`plausible_fix_sql`), and anything beyond
+`MAX_RECEPTION_RANGE_NM` (500 NM) from the receiver. The second rule catches
+glitch bursts whose fixes vouch for each other. The quarantine sweep uses the
+same SQL builders to move such fixes out of `positions` for good.
 
 ### Arrow IPC Helper
 
@@ -525,8 +538,8 @@ test-covered function in the module.
 | Embedded | `None` | local, owned by this process | local |
 | Remote | `Some(..)` | **views** over an attached daemon's catalog | local |
 
-*Observed* means `positions`, `raw_messages`, `flights`, `status_events` — data
-recorded from a live feed. *Authored* means `events_of_interest`, `scenarios`,
+*Observed* means `positions`, `raw_messages`, `flights`, `status_events`,
+`weather_snapshots`, `rejected_positions` — data recorded from a live feed. *Authored* means `events_of_interest`, `scenarios`,
 `scenario_tracks` — written by whoever is using the app, so they stay local in
 both modes.
 

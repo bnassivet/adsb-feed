@@ -108,6 +108,11 @@ class FeedContent(unittest.TestCase):
         self.assertAlmostEqual(feed["receiver_latitude"], 46.7)
         self.assertAlmostEqual(feed["receiver_longitude"], -2.3)
 
+    def test_recorder_gets_the_site_position_for_its_range_check(self):
+        rec = parse(rc.render_fleet_server(FLEET))
+        self.assertAlmostEqual(rec["receiver_latitude"], 46.7)
+        self.assertAlmostEqual(rec["receiver_longitude"], -2.3)
+
     def test_dump1090_address_is_the_feed_node_s_own(self):
         feed = parse(rc.render_fleet_feed(FLEET))
         self.assertEqual(feed["socket_host"], "127.0.0.1")
@@ -162,6 +167,16 @@ class StackDbPathScoping(unittest.TestCase):
     They would not merely mix data: DuckDB takes an exclusive lock, so the
     second stack's recorder simply fails to open and degrades silently.
     """
+
+    def test_recorder_gets_the_receiver_position(self):
+        rec = parse(rc.render_server(STACK, REPO / ".run"))
+        self.assertAlmostEqual(rec["receiver_latitude"], 46.7)
+        self.assertAlmostEqual(rec["receiver_longitude"], -2.3)
+
+    def test_recorder_without_a_receiver_position_omits_it(self):
+        cfg = dict(STACK, receiver={"id": "x"})
+        rec = parse(rc.render_server(cfg, REPO / ".run"))
+        self.assertNotIn("receiver_latitude", rec)
 
     def test_default_run_dir_is_unchanged(self):
         # The pre-existing layout must survive byte-for-byte, or every existing

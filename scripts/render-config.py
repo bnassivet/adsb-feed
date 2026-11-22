@@ -137,6 +137,9 @@ def render_server(cfg: dict, out: Path = OUT) -> str:
     pairs = [
         ("source_id", rx["id"]),
         ("db_path", str(db_path)),
+        # The recorder quarantines fixes beyond reception range of this antenna.
+        ("receiver_latitude", rx.get("latitude")),
+        ("receiver_longitude", rx.get("longitude")),
         ("mqtt_broker", m["host"]),
         ("mqtt_port", m["port"]),
         ("mqtt_topic", m["topic"]),
@@ -316,6 +319,8 @@ def render_fleet_server(fleet: dict) -> str:
         # machine doing the rendering, so the dev mode's repo-relative
         # resolution would be actively wrong here.
         ("db_path", node.get("db_path", "/var/lib/adsb/adsb.db")),
+        ("receiver_latitude", site.get("latitude")),
+        ("receiver_longitude", site.get("longitude")),
         ("mqtt_broker", mqtt_broker),
         ("mqtt_port", broker.get("port", 1883)),
         ("mqtt_topic", fleet_topic(fleet)),

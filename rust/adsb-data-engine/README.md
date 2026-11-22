@@ -151,7 +151,7 @@ off-host should be fronted by a TLS-terminating reverse proxy. Treat the token a
 
 ## Database Schema
 
-Seven tables with targeted indexes:
+The main tables, with targeted indexes (`storage.rs` `SCHEMA_OBSERVED_SQL` / `SCHEMA_AUTHORED_SQL` is the full list):
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
@@ -159,6 +159,7 @@ Seven tables with targeted indexes:
 | **raw_messages** | SBS-1 audit trail | hex_ident, msg_type, raw_message, timestamp_ms |
 | **flights** | Pre-computed segments | flight_id, hex_ident, flight_num, position_count, first/last_seen_ms |
 | **status_events** | Operational log | event_type, status, detail, timestamp_ms |
+| **rejected_positions** | Quarantined decode glitches, moved out of `positions` | positions' columns + reason, distance_nm, implied_speed_kt, rejected_at_ms |
 | **events_of_interest** | User annotations | title, description, lat/lon, bbox, category |
 | **scenarios** | Named simulation scenarios | id, name, description, origin, tags |
 | **scenario_tracks** | Tracks within a scenario | scenario_id, hex_ident, callsign, waypoints_json, start_offset_s |
@@ -174,7 +175,7 @@ All timestamps are stored as UTC epoch milliseconds (`BIGINT`).
 - `get_flight_summary` / `get_flight_summary_arrow` - Distinct flights from pre-computed table
 
 ### Analytics
-- `get_detection_range` - Signal range by 10-degree azimuth sectors (36 sectors, vectorized in SQL)
+- `get_detection_range` - Signal range by 10-degree azimuth sectors (36 sectors, vectorized in SQL); leaves out decode glitches (speed test, and beyond `MAX_RECEPTION_RANGE_NM` = 500 NM)
 - `get_hourly_heatmap` - Activity grid (day x hour) across positions, messages, and flights
 - `get_time_distribution` - Histogram with selectable metric (Positions, Aircraft, RawMessages, Flights)
 
@@ -183,7 +184,9 @@ All timestamps are stored as UTC epoch milliseconds (`BIGINT`).
 - CRUD for `events_of_interest` - Create, read, update, delete user annotations
 
 ### Maintenance
-- `prune` - Delete data older than a threshold
+- `prune` - Delete data older than a threshold (positions, raw messages, rejected positions)
+- `quarantine_positions` - Move impossible fixes (`out_of_range`, `implausible_speed`) from `positions` to `rejected_positions`; no-op in remote mode. `QuarantineCursor` runs it periodically for an ingest owner (the data server, or the desktop in embedded mode)
+- `get_rejected_positions` - Quarantined fixes in a time range, newest first, with the total
 - `checkpoint` - Flush WAL to disk
 - `export_database` / `import_database` - Copy or merge databases
 - `move_database_to_snapshot` - Archive current DB as timestamped snapshot

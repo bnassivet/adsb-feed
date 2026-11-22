@@ -504,6 +504,22 @@ pub async fn get_detection_range(
         .map_err(|e| e.to_string())
 }
 
+/// Positions quarantined as decode glitches, newest first.
+#[tauri::command]
+pub async fn get_rejected_positions(
+    query: adsb_data_engine::RejectedPositionQuery,
+    state: State<'_, AppState>,
+) -> Result<adsb_data_engine::RejectedPositionPage, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .get_rejected_positions(query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Get hourly activity heatmap grouped by (day, hour).
 #[tauri::command]
 pub async fn get_hourly_heatmap(

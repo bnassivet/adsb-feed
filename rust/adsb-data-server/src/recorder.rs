@@ -1,7 +1,8 @@
 //! Wires a live SBS-1 source to the shared ingest pipeline.
 
 use adsb_data_engine::{
-    IngestConfig, IngestPipeline, NoopSink, SharedStorage, StorageConfig, StorageHandle,
+    IngestConfig, IngestPipeline, NoopSink, QuarantineCursor, SharedStorage, StorageConfig,
+    StorageHandle,
 };
 use adsb_pulsar_client::source::MessageSource;
 use std::sync::Arc;
@@ -22,6 +23,9 @@ pub struct RecorderConfig {
     /// everything — the right default for an edge recorder whose whole purpose
     /// is history.
     pub retention: Option<Duration>,
+    /// Receiver antenna (lat, lon). Each maintenance tick quarantines fixes
+    /// beyond reception range of it; without one, only the speed test runs.
+    pub receiver: Option<(f64, f64)>,
 }
 
 impl Default for RecorderConfig {
@@ -31,6 +35,7 @@ impl Default for RecorderConfig {
             dump1090_tz: "Local".to_string(),
             checkpoint_interval: Some(Duration::from_secs(300)),
             retention: None,
+            receiver: None,
         }
     }
 }
@@ -123,7 +128,8 @@ impl Recorder {
         result.map_err(Into::into)
     }
 
-    /// Periodic `CHECKPOINT`, and pruning when a retention window is set.
+    /// Periodic `CHECKPOINT`, quarantine of impossible positions, and pruning
+    /// when a retention window is set.
     ///
     /// Checkpointing matters more here than in the desktop app: an edge node
     /// can lose power without a clean shutdown, and an unbounded WAL is both
@@ -134,14 +140,21 @@ impl Recorder {
         };
         let storage = self.storage();
         let retention = self.config.retention;
+        let receiver = self.config.receiver;
 
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(interval);
             tick.tick().await; // the first tick fires immediately; skip it
+            let mut quarantine = QuarantineCursor::default();
             loop {
                 tick.tick().await;
                 let guard = storage.read().await;
                 let Some(s) = guard.as_ref() else { continue };
+
+                // The engine logs what it moved; only a failure is ours to report.
+                if let Err(e) = quarantine.sweep(s, receiver, chrono_now_ms()).await {
+                    warn!("Quarantine failed: {e}");
+                }
 
                 if let Some(window) = retention {
                     let cutoff = chrono_now_ms() - window.as_millis() as i64;
@@ -236,7 +249,64 @@ mod tests {
             dump1090_tz: "UTC".to_string(),
             checkpoint_interval: None,
             retention: None,
+            receiver: None,
         }
+    }
+
+    fn fix(hex: &str, lat: f64, lon: f64, ts: &str) -> adsb_data_engine::AircraftPosition {
+        adsb_data_engine::AircraftPosition {
+            hex_ident: hex.to_string(),
+            callsign: None,
+            altitude: Some(36000.0),
+            ground_speed: None,
+            track: None,
+            latitude: Some(lat),
+            longitude: Some(lon),
+            vertical_rate: None,
+            squawk: None,
+            is_on_ground: None,
+            timestamp: ts.to_string(),
+            message_count: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn maintenance_quarantines_positions_beyond_reception_range() {
+        let r = Recorder::open(RecorderConfig {
+            checkpoint_interval: Some(Duration::from_millis(50)),
+            receiver: Some((45.0, -73.0)),
+            ..in_memory()
+        })
+        .expect("open");
+        {
+            let storage = r.storage();
+            let guard = storage.read().await;
+            let s = guard.as_ref().unwrap();
+            // Old enough to be swept: a real track and a 2400 NM glitch pair.
+            s.insert_batch_sync(
+                &[
+                    fix("Q1", 45.50, -73.0, "2024/01/15 10:00:00.000"),
+                    fix("Q1", 83.721, 58.224, "2024/01/15 10:00:09.000"),
+                    fix("Q1", 83.720, 58.214, "2024/01/15 10:00:09.900"),
+                    fix("Q1", 45.52, -73.0, "2024/01/15 10:00:15.000"),
+                ],
+                "UTC",
+            )
+            .unwrap();
+        }
+
+        // The source idles ~700 ms: several maintenance ticks.
+        r.run(ScriptedSource::new(vec![])).await.expect("run");
+
+        let storage = r.storage();
+        let guard = storage.read().await;
+        let page = guard
+            .as_ref()
+            .unwrap()
+            .get_rejected_positions_sync(Default::default())
+            .unwrap();
+        assert_eq!(page.total, 2, "the glitch pair, once each");
+        assert!(page.rows.iter().all(|p| p.reason == "out_of_range"));
     }
 
     #[tokio::test]
