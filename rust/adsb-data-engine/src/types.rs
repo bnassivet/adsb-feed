@@ -794,7 +794,7 @@ pub enum ShareStatus {
     Unavailable { reason: String },
 }
 
-/// An airport as described by the flight-info source (adsbdb).
+/// An airport as described by the flight-info source (adsbdb or hexdb).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Airport {
     pub icao: String,
@@ -822,6 +822,14 @@ pub struct AircraftInfo {
     pub owner_country: Option<String>,
     pub photo_url: Option<String>,
     pub photo_thumb_url: Option<String>,
+    /// Which web source answered (`"adsbdb"` or `"hexdb"`). `None` on rows
+    /// cached before the fallback existed, which all came from adsbdb.
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// ICAO code of the operator (`EZY`), when the source gives one: lets a
+    /// route without an airline borrow the airframe owner's name.
+    #[serde(default)]
+    pub operator_icao: Option<String>,
     pub fetched_at_ms: i64,
 }
 
@@ -839,5 +847,14 @@ pub struct FlightRoute {
     pub airline_iata: Option<String>,
     pub origin: Option<Airport>,
     pub destination: Option<Airport>,
+    /// Airports between origin and destination, in order (multi-stop flights).
+    #[serde(default)]
+    pub stops: Vec<Airport>,
+    /// When the source last updated this route (ISO 8601), if it says.
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    /// Which web source answered (`"adsbdb"` or `"hexdb"`); `None` = adsbdb.
+    #[serde(default)]
+    pub provider: Option<String>,
     pub fetched_at_ms: i64,
 }

@@ -77,8 +77,9 @@ SERVER_TOOLS: list[Tool] = [
     _tool(
         "lookupFlightInfo",
         "Web lookup for ONE live aircraft: where it is going and what it is. Returns the "
-        "airline, origin and destination airports (ICAO code, name, city) and the aircraft "
-        "type, manufacturer, registration and owner, from the public adsbdb database (cached). "
+        "airline, origin and destination airports (ICAO code, name, city), any stops in "
+        "between, and the aircraft type, manufacturer, registration and owner, from the "
+        "public hexdb.io and adsbdb databases (cached). "
         "Use it for 'where is AFR123 going?', 'which airline is this?', 'what aircraft type is "
         "3C6444?'. Give hexIdent or callsign; the other is filled in from recorded flights. "
         "This is the scheduled route, not a filed flight plan, and not history. Live aircraft "

@@ -841,7 +841,7 @@ export function hasActiveFilters(f: Filters): boolean {
   );
 }
 
-/** An airport from the flight-info source (adsbdb). Mirrors `adsb_data_engine::Airport`. */
+/** An airport from the flight-info source (adsbdb or hexdb). Mirrors `adsb_data_engine::Airport`. */
 export interface Airport {
   icao: string;
   iata: string | null;
@@ -864,6 +864,10 @@ export interface AircraftInfo {
   owner_country: string | null;
   photo_url: string | null;
   photo_thumb_url: string | null;
+  /** Which source answered: "adsbdb" | "hexdb"; null/absent on older cache rows (adsbdb). */
+  provider?: string | null;
+  /** ICAO code of the operator ("EZY"), when the source gives one. */
+  operator_icao?: string | null;
   fetched_at_ms: number;
 }
 
@@ -876,6 +880,12 @@ export interface FlightRoute {
   airline_iata: string | null;
   origin: Airport | null;
   destination: Airport | null;
+  /** Airports between origin and destination, in order (multi-stop flights). */
+  stops?: Airport[];
+  /** When the source last updated this route (ISO 8601), if it says. */
+  updated_at?: string | null;
+  /** Which source answered: "adsbdb" | "hexdb"; null/absent on older cache rows (adsbdb). */
+  provider?: string | null;
   fetched_at_ms: number;
 }
 
@@ -890,4 +900,6 @@ export interface FlightInfo {
   stale: boolean;
   error: string | null;
   simulated: boolean;
+  /** Every source asked for this answer ("adsbdb", "hexdb"), whether or not it knew. */
+  sources?: string[];
 }

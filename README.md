@@ -54,10 +54,11 @@ Météo-France) and caches on disk where that helps. Details:
 [DESIGN.md → Map Layers](rust/adsb-pulsar-client-desktop/docs/DESIGN.md#map-layers-overview).
 
 The aircraft details panel's **Show Flight Infos** button looks up the route, airline,
-airframe and a photo on [adsbdb.com](https://www.adsbdb.com) (no key), only when clicked and
+airframe and a photo on [adsbdb.com](https://www.adsbdb.com) and [hexdb.io](https://hexdb.io)
+(both keyless; routes with every stop, drawn on the map), only when clicked and
 never for simulated aircraft; the agent can do the same with `lookupFlightInfo`. Answers are
 cached in DuckDB. It is the scheduled route for a callsign, not a filed flight plan. Details:
-[DESIGN.md → Flight info](rust/adsb-pulsar-client-desktop/docs/DESIGN.md#flight-info-from-the-web-adsbdb).
+[DESIGN.md → Flight info](rust/adsb-pulsar-client-desktop/docs/DESIGN.md#flight-info-from-the-web-adsbdb-hexdb).
 
 ## Repository Structure
 

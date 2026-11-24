@@ -414,8 +414,12 @@ const SCHEMA_AUTHORED_SQL: &str = r#"
         owner_country   TEXT,
         photo_url       TEXT,
         photo_thumb_url TEXT,
-        fetched_at_ms   BIGINT  NOT NULL
+        fetched_at_ms   BIGINT  NOT NULL,
+        provider        TEXT
     );
+    -- Caches created before the hexdb fallback: NULL means adsbdb.
+    ALTER TABLE aircraft_info ADD COLUMN IF NOT EXISTS provider TEXT;
+    ALTER TABLE aircraft_info ADD COLUMN IF NOT EXISTS operator_icao TEXT;
 
     CREATE TABLE IF NOT EXISTS flight_routes (
         callsign         TEXT    PRIMARY KEY,
@@ -437,7 +441,25 @@ const SCHEMA_AUTHORED_SQL: &str = r#"
         dest_country     TEXT,
         dest_lat         DOUBLE,
         dest_lon         DOUBLE,
-        fetched_at_ms    BIGINT  NOT NULL
+        fetched_at_ms    BIGINT  NOT NULL,
+        provider         TEXT
+    );
+    ALTER TABLE flight_routes ADD COLUMN IF NOT EXISTS provider TEXT;
+    -- Intermediate stops as a JSON array of airports, and the source's date.
+    ALTER TABLE flight_routes ADD COLUMN IF NOT EXISTS stops_json TEXT;
+    ALTER TABLE flight_routes ADD COLUMN IF NOT EXISTS updated_at TEXT;
+
+    -- Airports looked up on their own, to place a route's stop that came
+    -- without coordinates.
+    CREATE TABLE IF NOT EXISTS airports (
+        icao          TEXT    PRIMARY KEY,
+        iata          TEXT,
+        name          TEXT,
+        city          TEXT,
+        country       TEXT,
+        latitude      DOUBLE,
+        longitude     DOUBLE,
+        fetched_at_ms BIGINT  NOT NULL
     );
 "#;
 
