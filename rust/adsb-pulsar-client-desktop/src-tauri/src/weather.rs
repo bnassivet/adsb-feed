@@ -9,6 +9,7 @@ use adsb_weather_server::WeatherSnapshot;
 use adsb_weather_server::api::DEFAULT_HTTP_PORT;
 use adsb_weather_server::status::{Availability, WeatherStatus};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::watch;
@@ -199,6 +200,101 @@ pub fn next_update(current: Option<&WeatherSnapshot>, payload: &[u8]) -> Weather
     }
 }
 
+/// Every receiver's latest grid, by receiver id (`<grid>/<receiver>`).
+pub type SharedReceiverWeather = Arc<RwLock<BTreeMap<String, WeatherSnapshot>>>;
+
+/// What changed for one receiver's grid.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReceiverWeatherUpdate {
+    Replace(Box<WeatherSnapshot>),
+    /// Its retained grid was cleared, or it left the map.
+    Removed,
+    Rejected(String),
+}
+
+/// The changes `incoming` brings to `held`, by receiver, sorted. A grid
+/// re-delivered unchanged brings none.
+pub fn next_receiver_updates(
+    held: &BTreeMap<String, WeatherSnapshot>,
+    incoming: &adsb_pulsar_client::source::mqtt_source::KeyedPayloads,
+) -> Vec<(String, ReceiverWeatherUpdate)> {
+    let mut updates = Vec::new();
+    for (receiver, payload) in incoming {
+        let update = if payload.is_empty() {
+            held.contains_key(receiver)
+                .then_some(ReceiverWeatherUpdate::Removed)
+        } else {
+            match next_update(held.get(receiver), payload) {
+                WeatherUpdate::Replace(snapshot) => Some(ReceiverWeatherUpdate::Replace(snapshot)),
+                WeatherUpdate::Unchanged => None,
+                WeatherUpdate::Rejected(reason) => Some(ReceiverWeatherUpdate::Rejected(reason)),
+            }
+        };
+        updates.extend(update.map(|u| (receiver.clone(), u)));
+    }
+    updates.extend(
+        held.keys()
+            .filter(|id| !incoming.contains_key(*id))
+            .map(|id| (id.clone(), ReceiverWeatherUpdate::Removed)),
+    );
+    updates.sort_by(|a, b| a.0.cmp(&b.0));
+    updates
+}
+
+/// One receiver's grid as the webview receives it; `snapshot` null = gone.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ReceiverWeatherEvent {
+    pub receiver: String,
+    pub snapshot: Option<WeatherSnapshot>,
+}
+
+/// Relays every receiver's grid (`<grid>/<receiver>`) into state and the
+/// webview (`adsb:weather-receiver`) until the feed stops. Not recorded: the
+/// recorder stores these, under each receiver.
+pub async fn relay_receiver_weather(
+    app: AppHandle,
+    mut payloads: watch::Receiver<adsb_pulsar_client::source::mqtt_source::KeyedPayloads>,
+    shared: SharedReceiverWeather,
+    mut alive_rx: watch::Receiver<bool>,
+) {
+    loop {
+        tokio::select! {
+            changed = payloads.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                let incoming = payloads.borrow_and_update().clone();
+                let updates = match shared.read() {
+                    Ok(held) => next_receiver_updates(&held, &incoming),
+                    Err(_) => next_receiver_updates(&BTreeMap::new(), &incoming),
+                };
+                for (receiver, update) in updates {
+                    let snapshot = match update {
+                        ReceiverWeatherUpdate::Replace(snapshot) => Some(*snapshot),
+                        ReceiverWeatherUpdate::Removed => None,
+                        ReceiverWeatherUpdate::Rejected(reason) => {
+                            warn!("Ignoring the weather grid for '{receiver}': {reason}");
+                            continue;
+                        }
+                    };
+                    if let Ok(mut held) = shared.write() {
+                        match &snapshot {
+                            Some(s) => {
+                                held.insert(receiver.clone(), s.clone());
+                            }
+                            None => {
+                                held.remove(&receiver);
+                            }
+                        }
+                    }
+                    let _ = app.emit("adsb:weather-receiver", ReceiverWeatherEvent { receiver, snapshot });
+                }
+            }
+            _ = alive_rx.changed() => break,
+        }
+    }
+}
+
 /// Relays aux-topic payloads into state and the webview until the feed stops.
 ///
 /// Ends when the feed's client task exits (its `alive` sender drops) or the
@@ -326,7 +422,6 @@ mod tests {
     use super::*;
     use adsb_weather_server::GridSpec;
     use adsb_weather_server::snapshot::{SNAPSHOT_VERSION, SurfaceFields};
-    use std::collections::BTreeMap;
 
     fn snapshot(mslp: f32) -> WeatherSnapshot {
         WeatherSnapshot {
@@ -351,6 +446,40 @@ mod tests {
             },
             levels: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn receiver_grids_update_by_receiver_and_unchanged_ones_are_quiet() {
+        use adsb_pulsar_client::source::mqtt_source::KeyedPayloads;
+        let mut held = BTreeMap::new();
+        held.insert("pi-a".to_string(), snapshot(1013.0));
+        held.insert("pi-gone".to_string(), snapshot(1013.0));
+
+        let mut incoming = KeyedPayloads::new();
+        incoming.insert("pi-a".into(), payload(&snapshot(1013.0))); // unchanged
+        incoming.insert("pi-b".into(), payload(&snapshot(1020.0))); // new
+        incoming.insert("pi-bad".into(), b"{nope".to_vec());
+
+        let updates = next_receiver_updates(&held, &incoming);
+        let kinds: Vec<(&str, &str)> = updates
+            .iter()
+            .map(|(id, u)| {
+                let kind = match u {
+                    ReceiverWeatherUpdate::Replace(_) => "replace",
+                    ReceiverWeatherUpdate::Removed => "removed",
+                    ReceiverWeatherUpdate::Rejected(_) => "rejected",
+                };
+                (id.as_str(), kind)
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ("pi-b", "replace"),
+                ("pi-bad", "rejected"),
+                ("pi-gone", "removed")
+            ]
+        );
     }
 
     fn payload(snap: &WeatherSnapshot) -> Vec<u8> {
@@ -490,6 +619,7 @@ mod tests {
             next_fetch_ms: None,
             snapshot_valid_time_ms: None,
             updated_at_ms: 1,
+            grids: Vec::new(),
         }
     }
 

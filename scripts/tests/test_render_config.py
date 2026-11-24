@@ -113,6 +113,17 @@ class FeedContent(unittest.TestCase):
         self.assertAlmostEqual(rec["receiver_latitude"], 46.7)
         self.assertAlmostEqual(rec["receiver_longitude"], -2.3)
 
+    def test_fleet_feed_publishes_under_its_own_id_when_the_broker_says_so(self):
+        fleet = dict(FLEET, broker=dict(FLEET["broker"], per_receiver_topic=True))
+        self.assertIs(parse(rc.render_fleet_feed(fleet))["mqtt_per_receiver_topic"], True)
+        self.assertIs(parse(rc.render_fleet_feed(FLEET))["mqtt_per_receiver_topic"], False)
+
+    def test_recorder_gets_the_site_altitude_when_given(self):
+        fleet = dict(FLEET, site=dict(FLEET["site"], altitude_ft=120))
+        self.assertAlmostEqual(
+            parse(rc.render_fleet_server(fleet))["receiver_altitude_ft"], 120)
+        self.assertNotIn("receiver_altitude_ft", parse(rc.render_fleet_server(FLEET)))
+
     def test_dump1090_address_is_the_feed_node_s_own(self):
         feed = parse(rc.render_fleet_feed(FLEET))
         self.assertEqual(feed["socket_host"], "127.0.0.1")
@@ -173,6 +184,23 @@ class StackDbPathScoping(unittest.TestCase):
         self.assertAlmostEqual(rec["receiver_latitude"], 46.7)
         self.assertAlmostEqual(rec["receiver_longitude"], -2.3)
 
+    def test_feed_publishes_under_its_own_id_when_asked(self):
+        cfg = dict(STACK, mqtt=dict(STACK["mqtt"], per_receiver_topic=True))
+        feed = parse(rc.render_feed(cfg))
+        self.assertIs(feed["mqtt_per_receiver_topic"], True)
+        # The base topic stays the base: subscribers and weather derive from it.
+        self.assertEqual(feed["mqtt_topic"], "adsb/dev/sbs/raw")
+
+    def test_an_older_stack_file_keeps_publishing_to_the_base_topic(self):
+        # adsb-stack.toml files written before the setting existed must not
+        # start publishing where an older recorder cannot hear them.
+        self.assertIs(parse(rc.render_feed(STACK))["mqtt_per_receiver_topic"], False)
+
+    def test_recorder_gets_the_receiver_altitude_for_its_location_history(self):
+        cfg = dict(STACK, receiver=dict(STACK["receiver"], altitude_ft=20.0))
+        rec = parse(rc.render_server(cfg, REPO / ".run"))
+        self.assertAlmostEqual(rec["receiver_altitude_ft"], 20.0)
+
     def test_recorder_without_a_receiver_position_omits_it(self):
         cfg = dict(STACK, receiver={"id": "x"})
         rec = parse(rc.render_server(cfg, REPO / ".run"))
@@ -225,6 +253,21 @@ class WeatherContent(unittest.TestCase):
 
     def render(self, cfg=WEATHER_STACK, out=REPO / ".run"):
         return parse(rc.render_weather(cfg, out))
+
+    def test_other_receivers_are_followed_by_default(self):
+        weather = self.render()
+        self.assertIs(weather["follow_receivers"], True)
+        self.assertEqual(weather["max_receivers"], 4)
+        self.assertEqual(weather["offline_grace_minutes"], 30)
+
+    def test_following_receivers_can_be_turned_off_and_capped(self):
+        cfg = dict(WEATHER_STACK, weather=dict(
+            WEATHER_STACK.get("weather", {}),
+            follow_receivers=False, max_receivers=2, offline_grace_minutes=5))
+        weather = self.render(cfg)
+        self.assertIs(weather["follow_receivers"], False)
+        self.assertEqual(weather["max_receivers"], 2)
+        self.assertEqual(weather["offline_grace_minutes"], 5)
 
     def test_identity_and_broker_match_the_feed(self):
         weather, feed = self.render(), parse(rc.render_feed(WEATHER_STACK))

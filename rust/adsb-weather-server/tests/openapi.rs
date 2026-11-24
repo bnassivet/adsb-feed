@@ -165,6 +165,7 @@ async fn the_schemas_say_what_serde_writes() {
         next_fetch_ms: Some(2),
         snapshot_valid_time_ms: Some(3),
         updated_at_ms: 4,
+        grids: Vec::new(),
     };
     let written: BTreeSet<String> = serde_json::to_value(&sample)
         .unwrap()

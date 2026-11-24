@@ -286,3 +286,43 @@ describe("useWeatherSnapshot: the weather service", () => {
     expect(result.current.serviceError).toBeNull();
   });
 });
+
+describe("useWeatherSnapshot — per-receiver grids", () => {
+  beforeEach(() => {
+    clearMockResponses();
+    mockInvokeResponse("get_weather_snapshot", snapshot(1_000));
+    mockInvokeResponse("get_weather_availability", "available");
+  });
+
+  it("serves the selected receiver's grid, else the shared one", async () => {
+    mockInvokeResponse("get_receiver_weather_snapshots", { "pi-a": snapshot(5_000) });
+    const { result } = renderHook(() => useWeatherSnapshot());
+
+    await waitFor(() => expect(result.current.snapshotFor("pi-a")?.valid_time_ms).toBe(5_000));
+    expect(result.current.snapshotFor("pi-zzz")?.valid_time_ms).toBe(1_000);
+    expect(result.current.snapshotFor(null)?.valid_time_ms).toBe(1_000);
+  });
+
+  it("follows adsb:weather-receiver events, including a grid going away", async () => {
+    mockInvokeResponse("get_receiver_weather_snapshots", {});
+    const { result } = renderHook(() => useWeatherSnapshot());
+    await waitFor(() => expect(result.current.snapshot).not.toBeNull());
+
+    act(() => {
+      emitMockEvent("adsb:weather-receiver", { receiver: "pi-b", snapshot: snapshot(7_000) });
+    });
+    expect(result.current.snapshotFor("pi-b")?.valid_time_ms).toBe(7_000);
+
+    act(() => {
+      emitMockEvent("adsb:weather-receiver", { receiver: "pi-b", snapshot: null });
+    });
+    expect(result.current.snapshotFor("pi-b")?.valid_time_ms).toBe(1_000);
+  });
+
+  it("works against a backend without per-receiver grids", async () => {
+    // No mock for get_receiver_weather_snapshots: it rejects.
+    const { result } = renderHook(() => useWeatherSnapshot());
+    await waitFor(() => expect(result.current.snapshot).not.toBeNull());
+    expect(result.current.snapshotFor("pi-a")?.valid_time_ms).toBe(1_000);
+  });
+});

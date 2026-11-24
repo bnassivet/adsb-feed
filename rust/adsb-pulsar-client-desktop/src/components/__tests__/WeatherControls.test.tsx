@@ -160,6 +160,35 @@ describe("WeatherControls", () => {
   });
 
   describe("the Fetch weather switch", () => {
+    it("lists the receivers it fetches grids for, once there are several", () => {
+      render(
+        <WeatherControls
+          {...props({
+            service: service({
+              grids: [
+                { receiver: "home-dev", points: 187, valid_time_ms: 0 },
+                { receiver: "pi-garden-dev", points: 70, valid_time_ms: 0 },
+              ],
+            }),
+            onServiceToggle: vi.fn(),
+          })}
+        />,
+      );
+      expect(screen.getByText("Grids: home-dev, pi-garden-dev")).toBeInTheDocument();
+    });
+
+    it("says nothing about grids with only its own", () => {
+      render(
+        <WeatherControls
+          {...props({
+            service: service({ grids: [{ receiver: "home-dev", points: 187, valid_time_ms: 0 }] }),
+            onServiceToggle: vi.fn(),
+          })}
+        />,
+      );
+      expect(screen.queryByText(/^Grids:/)).toBeNull();
+    });
+
     it("is absent without a command handler", () => {
       render(<WeatherControls {...props({ service: service() })} />);
 

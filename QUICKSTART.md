@@ -235,6 +235,14 @@ make logs N=weather      # logs its Open-Meteo calls/day estimate (~6,700 by def
 make restart-weather     # after editing [weather]; down-weather / up-weather run it alone
 ```
 
+**Several receivers?** The service also fetches a grid around every other
+receiver online on the bus (`follow_receivers`, at most `max_receivers`, shared
+grid points paid for once) and publishes each on
+`adsb/<stage>/weather/grid/<receiver.id>`. The recorder stores each under its
+receiver, and the desktop draws the grid of the receiver picked in its header.
+`make logs N=weather` shows which receivers have a grid and the calls/day for
+all of them.
+
 **The desktop must be on the MQTT source** — weather travels on the broker
 connection, so a socket session has no weather layer (the controls say so).
 `make up-desktop` passes this stack's broker and topic (`make desktop-env`) but
@@ -295,6 +303,44 @@ meteofrance_api_key = "…"   # Rain radar: Données Publiques Radar, validity -
 `make down-desktop` then `make up-desktop` after editing. Keys are
 never printed by `make desktop-env`. Every endpoint the layers use is in
 [`docs/map-layers-external-endpoints.svg`](docs/map-layers-external-endpoints.svg).
+
+## 8. Several receivers, one recorder
+
+Each feed names itself in its MQTT topic, and one recorder keeps every row
+attributed to the receiver that heard it, plus where each receiver was and
+since when.
+
+```
+[pi-garden] feed ──→ adsb/prod/sbs/raw/pi-garden-prod ─┐
+[pi-roof]   feed ──→ adsb/prod/sbs/raw/pi-roof-prod  ──┼→ broker → adsb-data-server → DuckDB
+                     adsb/prod/receiver/<id> (retained) ┘          (both receivers)
+```
+
+1. **Update every recorder first.** A recorder older than this subscribes to the
+   base topic only and would record nothing from a feed that names itself.
+2. Turn it on for the feeds: `[mqtt] per_receiver_topic = true` in
+   `adsb-stack.toml` (on in the template), or `[broker] per_receiver_topic =
+   true` in a fleet file, then `make render` / `make render-fleet`.
+3. Give each feed its own `receiver.id` / site, and its antenna's position. Each
+   feed announces that position, retained, on connect; the recorder records it.
+
+Then:
+
+```bash
+make receivers                 # every receiver, and where it is now
+make receiver-history R=pi-garden-prod
+# the antenna moved on 1 October, but its config was only edited today:
+make receiver ARGS="move --receiver pi-garden-prod --lat 46.72 --lon -2.34 --at 2026-10-01"
+```
+
+The desktop shows a **Receiver** selector once the database holds two, takes the
+location from the database (Settings is the fallback), and edits the history
+under Settings → Location History. Design: `DESIGN.md` → Receivers & Location
+History.
+
+**Moving one antenna** needs none of this: edit `[receiver]` and restart the
+recorder (`make restart`, or `systemctl restart adsb-data-server`). A new period
+opens from that moment, and data recorded before keeps the old position.
 
 ## Where things are
 

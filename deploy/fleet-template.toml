@@ -41,6 +41,10 @@ host = "pi4.lan"
 port = 1883
 qos = 0
 # topic = "adsb/prod/sbs/raw"   # derived from `stage` unless set explicitly
+# Publish to `<topic>/<site>-<stage>` so one recorder can hold several sites.
+# Turn on only once every recorder on this broker has been updated: an older
+# recorder subscribes to `<topic>` exactly and would record nothing.
+# per_receiver_topic = true
 
 # --- nodes ------------------------------------------------------------------
 # Each [nodes.*] renders one file into deploy/.rendered/<short-hostname>/.

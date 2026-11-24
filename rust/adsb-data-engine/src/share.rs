@@ -42,13 +42,18 @@ fn sql_quote(value: &str) -> String {
 /// The complement -- `events_of_interest`, `scenarios`, `scenario_tracks` --
 /// are *authored* by whoever is using the app, so they stay in the local
 /// database even in remote mode.
-pub const OBSERVED_TABLES: [&str; 6] = [
+pub const OBSERVED_TABLES: [&str; 8] = [
     "positions",
     "raw_messages",
     "flights",
     "status_events",
     "weather_snapshots",
     "rejected_positions",
+    // Written by the recorder (config, bus announcements, its CLI). A
+    // remote desktop's location-history editor writes them through the
+    // attached catalog, never through these views.
+    "receivers",
+    "receiver_locations",
 ];
 
 /// Whether a Quack URI names a local host.

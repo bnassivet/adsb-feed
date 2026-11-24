@@ -117,6 +117,9 @@ pub struct AppState {
     /// What the weather service last reported over MQTT. Like `weather`, it
     /// outlives a feed restart.
     pub weather_service: crate::weather::SharedWeatherService,
+    /// Every receiver's latest grid, from a weather service following
+    /// several. Outlives a feed restart like `weather`.
+    pub receiver_weather: crate::weather::SharedReceiverWeather,
 }
 
 impl AppState {
@@ -151,6 +154,7 @@ impl AppState {
             record_raw: Arc::new(AtomicBool::new(true)),
             weather: Arc::new(std::sync::RwLock::new(None)),
             weather_service: Arc::new(std::sync::RwLock::new(Default::default())),
+            receiver_weather: Arc::new(std::sync::RwLock::new(Default::default())),
         }
     }
 }

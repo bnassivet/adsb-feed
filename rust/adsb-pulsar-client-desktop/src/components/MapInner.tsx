@@ -1111,6 +1111,8 @@ interface Props {
   selectedHexIdents: Set<string>;
   onSelectTrack: (hex: string | null) => void;
   receiverLocation?: { lat: number; lng: number; alt: number | null };
+  /** The database's other receivers, drawn dimmer than the selected one. */
+  otherReceivers?: OtherReceiver[];
   /** Planned routes of agent-generated trajectories currently on the map. */
   simulatedRoutes?: AgentTrajectory[];
   eventsOfInterest?: EventOfInterest[];
@@ -1400,7 +1402,16 @@ function labelIcon(p: LabelPlacement, text: string, color: string, selected: boo
   });
 }
 
-export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, sea = NO_SEA, seamarkItems = NO_SEAMARKS, onSeamarkCells, relief = NO_RELIEF, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false, rejectedPositions = NO_REJECTED }: Props) {
+/** Another receiver's current position, for its marker. */
+export interface OtherReceiver {
+  id: string;
+  lat: number;
+  lng: number;
+}
+
+const NO_OTHER_RECEIVERS: OtherReceiver[] = [];
+
+export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, sea = NO_SEA, seamarkItems = NO_SEAMARKS, onSeamarkCells, relief = NO_RELIEF, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, otherReceivers = NO_OTHER_RECEIVERS, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false, rejectedPositions = NO_REJECTED }: Props) {
   // Memoised: the basemap layer is rebuilt (and every tile reloaded) when this changes.
   const tile = useMemo(() => tileConfig(mapTheme, CARTO_API_KEY), [mapTheme]);
   const [airspaceStack, setAirspaceStack] = useState<Airspace[]>(NO_AIRSPACES);
@@ -1640,6 +1651,27 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
             );
           });
         })}
+
+        {/* The other receivers in the database, dimmer than the selected one */}
+        {otherReceivers.map((r) => (
+          <Marker
+            key={r.id}
+            position={[r.lat, r.lng]}
+            opacity={0.55}
+            icon={L.divIcon({
+              html: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="22"/><line x1="5" y1="5" x2="12" y2="10"/><line x1="19" y1="5" x2="12" y2="10"/><line x1="8" y1="3" x2="12" y2="7"/><line x1="16" y1="3" x2="12" y2="7"/></svg>`,
+              className: "",
+              iconSize: [14, 14],
+              iconAnchor: [7, 14],
+            })}
+          >
+            <Tooltip direction="top" offset={[0, -10]}>
+              <div style={{ fontSize: 11 }}>
+                <div style={{ fontWeight: 600, color: "#94a3b8" }}>Receiver {r.id}</div>
+              </div>
+            </Tooltip>
+          </Marker>
+        ))}
 
         {/* Receiver location marker */}
         {receiverLocation && (

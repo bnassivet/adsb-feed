@@ -43,7 +43,12 @@ const CACHE_CAP = 8;
  */
 const WINDOW_MS = STALE_AFTER_MS;
 
-type SnapshotCache = { current: Map<number, WeatherSnapshot> };
+/** Keyed by receiver and model hour (see cacheKey). */
+type SnapshotCache = { current: Map<string, WeatherSnapshot> };
+
+function cacheKey(sourceId: string | null, validTimeMs: number): string {
+  return `${sourceId ?? ""}|${validTimeMs}`;
+}
 
 function messageOf(error: unknown): string {
   if (typeof error === "string") return error;
@@ -54,12 +59,19 @@ function messageOf(error: unknown): string {
 /** Fetches one payload and caches it by its model hour. */
 async function loadSnapshot(
   validTimeMs: number,
+  sourceId: string | null,
   cache: SnapshotCache,
 ): Promise<WeatherSnapshot | null> {
-  const row = await getWeatherAt({ valid_time_ms: validTimeMs, source_id: null });
+  // The receiver's own grid first. The configured receiver's is stored under
+  // the recorder's id, and an older recorder stored only that one, so fall
+  // back to whichever grid that hour has.
+  const row =
+    (sourceId != null
+      ? await getWeatherAt({ valid_time_ms: validTimeMs, source_id: sourceId })
+      : null) ?? (await getWeatherAt({ valid_time_ms: validTimeMs, source_id: null }));
   if (!row) return null;
   const parsed = parseRecordedSnapshot(row);
-  if (parsed) lruPut(cache.current, validTimeMs, parsed, CACHE_CAP);
+  if (parsed) lruPut(cache.current, cacheKey(sourceId, validTimeMs), parsed, CACHE_CAP);
   return parsed;
 }
 
@@ -71,7 +83,11 @@ async function loadSnapshot(
  * dependency would need a value-derived signature to avoid re-firing on
  * identity alone.
  */
-function useSlot(timeMs: number | null, cache: SnapshotCache): HistoricalWeatherSlot {
+function useSlot(
+  timeMs: number | null,
+  sourceId: string | null,
+  cache: SnapshotCache,
+): HistoricalWeatherSlot {
   const [slot, setSlot] = useState<HistoricalWeatherSlot>(IDLE);
   const requestIdRef = useRef(0);
 
@@ -112,8 +128,8 @@ function useSlot(timeMs: number | null, cache: SnapshotCache): HistoricalWeather
 
         // Keyed by the model hour, not by what was asked for: many requested
         // times resolve onto one hour, and both slots share this cache.
-        const held = lruGet(cache.current, validTimeMs);
-        const snapshot = held ?? (await loadSnapshot(validTimeMs, cache));
+        const held = lruGet(cache.current, cacheKey(sourceId, validTimeMs));
+        const snapshot = held ?? (await loadSnapshot(validTimeMs, sourceId, cache));
         // `invoke` is not abortable, so a superseded answer is dropped on
         // arrival rather than cancelled in flight.
         if (!current()) return;
@@ -143,7 +159,7 @@ function useSlot(timeMs: number | null, cache: SnapshotCache): HistoricalWeather
     return () => {
       cancelled = true;
     };
-  }, [timeMs, cache]);
+  }, [timeMs, sourceId, cache]);
 
   return slot;
 }
@@ -166,9 +182,12 @@ function useSlot(timeMs: number | null, cache: SnapshotCache): HistoricalWeather
 export function useHistoricalWeather(
   mapTimeMs: number | null,
   aircraftTimeMs: number | null,
+  /** Whose recorded grid to prefer: the receiver being shown, when the
+   *  database knows it. */
+  sourceId: string | null = null,
 ): HistoricalWeather {
-  const cache = useRef(new Map<number, WeatherSnapshot>());
-  const map = useSlot(mapTimeMs, cache);
-  const aircraft = useSlot(aircraftTimeMs, cache);
+  const cache = useRef(new Map<string, WeatherSnapshot>());
+  const map = useSlot(mapTimeMs, sourceId, cache);
+  const aircraft = useSlot(aircraftTimeMs, sourceId, cache);
   return { map, aircraft };
 }

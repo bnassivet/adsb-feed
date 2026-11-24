@@ -51,3 +51,30 @@ describe("SettingsPage → Map Tile Cache", () => {
     );
   });
 });
+
+describe("SettingsPage → Location History", () => {
+  function baseMocks() {
+    mockInvokeResponse("get_config", CONFIG);
+    mockInvokeResponse("get_storage_mode", { mode: "embedded" });
+    mockInvokeResponse("get_status", { is_running: false });
+  }
+
+  it("edits the history of the receiver the database knows", async () => {
+    baseMocks();
+    mockInvokeResponse("list_receivers", [
+      { source_id: "pi-roof-prod", name: null, first_seen_ms: 0, current: null, period_count: 0 },
+    ]);
+    mockInvokeResponse("get_receiver_locations", []);
+    render(<SettingsPage />);
+    expect(await screen.findByRole("heading", { name: /location history/i })).toBeInTheDocument();
+    expect(await screen.findByText(/no location history for pi-roof-prod/i)).toBeInTheDocument();
+  });
+
+  it("says where the history lives when the database knows no receiver", async () => {
+    baseMocks();
+    mockInvokeResponse("list_receivers", []);
+    render(<SettingsPage />);
+    expect(await screen.findByText(/kept by the recorder/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Record move" })).toBeNull();
+  });
+});

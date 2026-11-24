@@ -65,6 +65,7 @@ pub fn start_feed(
     connection_status: SharedConnectionStatus,
     weather_state: SharedWeather,
     weather_service: SharedWeatherService,
+    receiver_weather: crate::weather::SharedReceiverWeather,
     storage_mode: crate::storage_mode::StorageMode,
 ) -> Result<FeedHandle, String> {
     let test_mode = config.test_mode;
@@ -82,6 +83,7 @@ pub fn start_feed(
     // report on, so it gets a fresh (zeroed) handle rather than a wrong one.
     let mut weather_rx = None;
     let mut service_rx = None;
+    let mut receiver_weather_rx = None;
     let (mut source, metrics): (Box<dyn MessageSource>, Metrics) = match source_kind {
         SourceKind::Socket => {
             let s = SocketSource::with_forwarders(config, vec![Box::new(NoopForwarder)])
@@ -96,6 +98,8 @@ pub fn start_feed(
             // The service's status and availability are siblings of the grid
             // topic, derived by the rule the service itself uses.
             let topics = WeatherTopics::from_grid_topic(&config.weather_topic());
+            // Each receiver's own grid, one level below the shared one.
+            receiver_weather_rx = Some(s.with_keyed_aux(topics.grid.clone()));
             weather_rx = Some(s.with_aux_topic(topics.grid));
             service_rx = Some((
                 s.with_aux_topic(topics.status),
@@ -141,6 +145,8 @@ pub fn start_feed(
     let alive_rx_watchdog = alive_tx.subscribe();
     let alive_rx_weather = alive_tx.subscribe();
     let alive_rx_service = alive_tx.subscribe();
+    let alive_rx_receiver_weather = alive_tx.subscribe();
+    let app_for_receiver_weather = app.clone();
 
     let app_for_weather = app.clone();
     let app_for_service = app.clone();
@@ -323,7 +329,18 @@ pub fn start_feed(
         ))
     });
 
+    // Task 7 (MQTT only): every receiver's grid, for the selected receiver.
+    let receiver_weather_task = receiver_weather_rx.map(|rx| {
+        tokio::spawn(crate::weather::relay_receiver_weather(
+            app_for_receiver_weather,
+            rx,
+            receiver_weather,
+            alive_rx_receiver_weather,
+        ))
+    });
+
     let mut task_handles = vec![client_task, message_task, metrics_task, watchdog_task];
+    task_handles.extend(receiver_weather_task);
     task_handles.extend(weather_task);
     task_handles.extend(service_task);
 
@@ -375,6 +392,7 @@ async fn relay_messages(
         storage,
         IngestConfig {
             source_id,
+            attribute_source_id: false,
             dump1090_tz,
             flush_interval: Duration::from_millis(500),
         },

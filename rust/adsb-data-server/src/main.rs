@@ -30,6 +30,19 @@ async fn main() {
         std::process::exit(0);
     }
 
+    if let Some(config::Command::Receiver { action }) = &cfg.command {
+        std::process::exit(match run_receiver_command(&cfg, action) {
+            Ok(out) => {
+                print!("{out}");
+                0
+            }
+            Err(e) => {
+                eprintln!("{e:#}");
+                1
+            }
+        });
+    }
+
     init_tracing(&cfg.log_level);
     info!("ADS-B data server starting (source_id={})", cfg.source_id);
 
@@ -38,6 +51,64 @@ async fn main() {
         std::process::exit(1);
     }
     info!("Shutdown complete");
+}
+
+/// Runs a `receiver` subcommand against this node's database.
+///
+/// The recorder holds DuckDB's exclusive lock while it runs, so when the file
+/// cannot be opened the command attaches to the recorder's Quack share and
+/// writes through it -- the same path a remote desktop takes.
+fn run_receiver_command(
+    cfg: &ServerConfig,
+    action: &config::ReceiverAction,
+) -> anyhow::Result<String> {
+    use adsb_data_engine::types::RemoteConfig;
+    use adsb_data_engine::{StorageConfig, StorageHandle};
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let command = action.to_command(&cfg.source_id, now_ms)?;
+
+    // Never start sharing from a one-off command.
+    let local = StorageConfig {
+        share: None,
+        ..cfg.storage_config()
+    };
+    let storage = match StorageHandle::open(local) {
+        Ok(s) => s,
+        Err(local_err) if cfg.share => {
+            // Bound on all interfaces means reachable on this one.
+            let uri = cfg.share_uri.replace("0.0.0.0", "localhost");
+            StorageHandle::open(StorageConfig {
+                db_path: None,
+                source_id: cfg.source_id.clone(),
+                gap_threshold_ms: cfg.gap_threshold_ms,
+                share: None,
+                remote: Some(RemoteConfig {
+                    uri: uri.clone(),
+                    token: cfg.share_token.clone(),
+                    disable_ssl: None,
+                }),
+            })
+            .map_err(|remote_err| {
+                anyhow::anyhow!(
+                    "cannot open {} ({local_err}) nor the recorder's share at {uri} \
+                     ({remote_err})",
+                    cfg.db_path.display()
+                )
+            })?
+        }
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "cannot open {} ({e}); is the recorder running? With `share = true` \
+                 this command goes through it instead",
+                cfg.db_path.display()
+            ));
+        }
+    };
+    adsb_data_server::receiver_cli::run(&storage, &command, now_ms)
 }
 
 async fn run(cfg: ServerConfig) -> anyhow::Result<()> {
@@ -49,6 +120,7 @@ async fn run(cfg: ServerConfig) -> anyhow::Result<()> {
         retention: (cfg.retention_hours > 0)
             .then(|| Duration::from_secs(cfg.retention_hours * 3600)),
         receiver: cfg.receiver(),
+        receiver_altitude_ft: cfg.receiver_altitude_ft,
     })?;
 
     if cfg.share {
@@ -103,10 +175,32 @@ async fn run(cfg: ServerConfig) -> anyhow::Result<()> {
     // because `with_aux_topic` needs `&mut source` before the source is moved
     // into the recorder.
     let weather_rx = source.with_aux_topic(&weather_topic);
-    info!("Recording weather snapshots from '{}'", weather_topic);
+    // A weather service following several receivers also publishes each one's
+    // grid one level below, recorded under that receiver.
+    let weather_grids_rx = source.with_keyed_aux(&weather_topic);
+    info!("Recording weather snapshots from '{weather_topic}' and '{weather_topic}/+'");
+
+    // Lines are attributed to the receiver whose topic they came on: feeds on
+    // `<topic>/<source_id>` are recorded under their own id, the base topic
+    // under ours. Feeds' retained location announcements go into the
+    // receivers' location history.
+    let lines_rx = source.subscribe_sourced(4096);
+    let announcements_rx = source.with_receiver_announcements();
+    info!(
+        "Recording receivers on '{}' and '{}/+', locations from '{}'",
+        feed.mqtt_topic,
+        feed.mqtt_topic,
+        feed.receiver_announce_filter()
+    );
 
     tokio::select! {
-        result = recorder.run_with_weather(source, Some(weather_rx)) => result,
+        result = recorder.run_attributed(
+            source,
+            lines_rx,
+            Some(announcements_rx),
+            Some(weather_rx),
+            Some(weather_grids_rx),
+        ) => result,
         _ = shutdown_signal() => {
             info!("Shutdown signal received, stopping gracefully...");
             // Fold the WAL back into the file: an edge node that loses power

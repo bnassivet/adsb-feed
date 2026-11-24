@@ -22,6 +22,12 @@ interface Props {
   /** Called with time range when browse is triggered (for time distribution query) */
   onBrowse?: (startMs: number, endMs: number) => void;
   /** Receiver location for detection range analysis. */
+  /**
+   * The receiver whose radar to draw. Its stored location history places
+   * every fix; `receiverLat/Lon` is only the fallback for fixes it does
+   * not cover.
+   */
+  receiverSourceId?: string | null;
   receiverLat?: number | null;
   receiverLon?: number | null;
   /** Add selected tracks to analysis mode (additive). */
@@ -57,6 +63,7 @@ export function DBHistoryContent({
   dbHistoryCount,
   onSummariesLoaded,
   onBrowse,
+  receiverSourceId,
   receiverLat,
   receiverLon,
   onAddToAnalysis,
@@ -107,7 +114,8 @@ export function DBHistoryContent({
     onBrowse?.(start, end);
 
     const numBuckets = granularityToNumBuckets(gran, end - start);
-    const hasReceiver = receiverLat != null && receiverLon != null;
+    const hasFallback = receiverLat != null && receiverLon != null;
+    const hasReceiver = hasFallback || receiverSourceId != null;
 
     const promises: [
       Promise<AircraftSummary[] | string>,
@@ -124,8 +132,9 @@ export function DBHistoryContent({
       getTimeDistribution({ start_ms: start, end_ms: end, num_buckets: numBuckets, metric: met }),
       hasReceiver
         ? getDetectionRange({
-            receiver_lat: receiverLat!,
-            receiver_lon: receiverLon!,
+            source_id: receiverSourceId ?? null,
+            receiver_lat: hasFallback ? receiverLat : null,
+            receiver_lon: hasFallback ? receiverLon : null,
             start_ms: start,
             end_ms: end,
             band_width_nm: RADAR_BAND_WIDTH_NM,
@@ -160,7 +169,7 @@ export function DBHistoryContent({
       messageTypeBuckets: typeResults,
     });
     onSummariesLoaded?.(sums);
-  }, [granularity, timeMetric, onBrowse, onSummariesLoaded, receiverLat, receiverLon]);
+  }, [granularity, timeMetric, onBrowse, onSummariesLoaded, receiverSourceId, receiverLat, receiverLon]);
 
   function handlePresetClick(p: TimeRangePreset) {
     setPreset(p);

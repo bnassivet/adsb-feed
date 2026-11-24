@@ -67,6 +67,15 @@ export interface WeatherServiceStatus {
   next_fetch_ms: number | null;
   snapshot_valid_time_ms: number | null;
   updated_at_ms: number;
+  /** Every receiver's grid it holds, its own first. Absent from an older service. */
+  grids?: WeatherGridStatus[];
+}
+
+/** One receiver's grid in the service status (`status::GridStatus`). */
+export interface WeatherGridStatus {
+  receiver: string;
+  points: number;
+  valid_time_ms: number | null;
 }
 
 /** The service's MQTT birth / last-will payload. */
@@ -665,4 +674,16 @@ export function windReport(
     report.crosswindKt = roundInt(crosswindKt);
   }
   return report;
+}
+
+/**
+ * The grid to draw for `receiverId`: its own, published by a weather service
+ * that follows several receivers, else the shared one.
+ */
+export function pickWeatherSnapshot(
+  shared: WeatherSnapshot | null,
+  byReceiver: Record<string, WeatherSnapshot>,
+  receiverId: string | null,
+): WeatherSnapshot | null {
+  return (receiverId != null ? byReceiver[receiverId] : undefined) ?? shared;
 }

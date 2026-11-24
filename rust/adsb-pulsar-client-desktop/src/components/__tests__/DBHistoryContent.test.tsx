@@ -497,6 +497,50 @@ describe("DBHistoryContent", () => {
     });
   });
 
+  it("asks for the selected receiver's range, measured from its stored locations", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockBrowseResponses();
+    mockInvokeResponse("get_detection_range", []);
+
+    const user = userEvent.setup();
+    render(
+      <DBHistoryContent {...baseProps} receiverSourceId="pi-a" receiverLat={45} receiverLon={-73} />
+    );
+    await waitFor(() => expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument());
+    await user.click(screen.getByTestId("dbhist-preset-24h"));
+
+    await waitFor(() => {
+      const calls = (invoke as ReturnType<typeof vi.fn>).mock.calls;
+      // The mock keeps every earlier test's calls: read this test's, the last.
+      const range = calls.findLast((c: unknown[]) => c[0] === "get_detection_range");
+      expect(range).toBeDefined();
+      expect(range![1].query.source_id).toBe("pi-a");
+      expect(range![1].query.receiver_lat).toBe(45);
+    });
+  });
+
+  it("draws a receiver's radar from its stored history alone, with no fallback position", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockBrowseResponses();
+    mockInvokeResponse("get_detection_range", []);
+
+    const user = userEvent.setup();
+    render(<DBHistoryContent {...baseProps} receiverSourceId="pi-b" />);
+    await waitFor(() => expect(screen.getByTestId("dbhist-preset-24h")).toBeInTheDocument());
+    await user.click(screen.getByTestId("dbhist-preset-24h"));
+
+    await waitFor(() => {
+      const calls = (invoke as ReturnType<typeof vi.fn>).mock.calls;
+      // The mock keeps every earlier test's calls: read this test's, the last.
+      const range = calls.findLast((c: unknown[]) => c[0] === "get_detection_range");
+      expect(range).toBeDefined();
+      expect(range![1].query.source_id).toBe("pi-b");
+      expect(range![1].query.receiver_lat).toBeNull();
+    });
+  });
+
   it("queries the message type breakdown with the histogram's bucket count", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     mockInvokeResponse("get_storage_stats", sampleStats);

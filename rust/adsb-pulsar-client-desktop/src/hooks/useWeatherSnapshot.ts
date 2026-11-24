@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTauriEvent } from "./useTauriEvent";
 import {
+  getReceiverWeatherSnapshots,
   getWeatherAvailability,
   getWeatherService,
   getWeatherSnapshot,
@@ -9,6 +10,7 @@ import {
 } from "@/lib/commands";
 import {
   EMPTY_SERVICE_VIEW,
+  pickWeatherSnapshot,
   type WeatherAvailability,
   type WeatherServiceView,
   type WeatherSnapshot,
@@ -18,7 +20,10 @@ import {
 export const CONFIRM_TIMEOUT_MS = 10_000;
 
 export interface WeatherState {
+  /** The shared grid, around the weather service's own receiver. */
   snapshot: WeatherSnapshot | null;
+  /** `receiverId`'s own grid, else the shared one (see pickWeatherSnapshot). */
+  snapshotFor: (receiverId: string | null) => WeatherSnapshot | null;
   availability: WeatherAvailability;
   /** What the weather service last reported over MQTT. */
   service: WeatherServiceView;
@@ -53,6 +58,7 @@ function errorMessage(error: unknown): string {
  */
 export function useWeatherSnapshot(): WeatherState {
   const [snapshot, setSnapshot] = useState<WeatherSnapshot | null>(null);
+  const [byReceiver, setByReceiver] = useState<Record<string, WeatherSnapshot>>({});
   const [reported, setReported] = useState<WeatherAvailability>("waiting");
   const [service, setService] = useState<WeatherServiceView>(EMPTY_SERVICE_VIEW);
   const [requested, setRequested] = useState<boolean | null>(null);
@@ -67,6 +73,10 @@ export function useWeatherSnapshot(): WeatherState {
       })
       .catch(() => {});
     getWeatherAvailability().then(setReported).catch(() => {});
+    // Events that arrived first are newer than this answer: keep them.
+    getReceiverWeatherSnapshots()
+      .then((held) => setByReceiver((current) => ({ ...held, ...current })))
+      .catch(() => {});
     getWeatherService()
       .then((view) =>
         setService((current) => (current.status || current.availability ? current : view)),
@@ -75,6 +85,20 @@ export function useWeatherSnapshot(): WeatherState {
   }, []);
 
   useTauriEvent<WeatherSnapshot>("adsb:weather", setSnapshot);
+  useTauriEvent<{ receiver: string; snapshot: WeatherSnapshot | null }>(
+    "adsb:weather-receiver",
+    ({ receiver, snapshot: grid }) =>
+      setByReceiver((current) => {
+        const next = { ...current };
+        if (grid) next[receiver] = grid;
+        else delete next[receiver];
+        return next;
+      }),
+  );
+  const snapshotFor = useCallback(
+    (receiverId: string | null) => pickWeatherSnapshot(snapshot, byReceiver, receiverId),
+    [snapshot, byReceiver],
+  );
   useTauriEvent<WeatherServiceView>("adsb:weather-service", setService);
 
   useTauriEvent<unknown>("adsb:status", () => {
@@ -117,6 +141,7 @@ export function useWeatherSnapshot(): WeatherState {
 
   return {
     snapshot,
+    snapshotFor,
     availability,
     service,
     pendingEnabled: requested,

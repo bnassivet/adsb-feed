@@ -147,6 +147,53 @@ pub async fn persist_weather(
     }
 }
 
+/// Records every receiver's grid (`<grid>/<receiver>`, kept per key by
+/// `MqttSource::with_keyed_aux`) under that receiver, once per model hour.
+pub async fn persist_weather_grids(
+    storage: SharedStorage,
+    mut payloads: watch::Receiver<adsb_pulsar_client::source::mqtt_source::KeyedPayloads>,
+) {
+    // Last model hour stored per receiver: retained grids are re-delivered
+    // on every reconnect, and the map re-sends them all on any change.
+    let mut last: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+
+    while payloads.changed().await.is_ok() {
+        // Cloned out of the guard before any await (watch::Ref is not Send).
+        let held = payloads.borrow_and_update().clone();
+        for (receiver, payload) in held {
+            match next_weather(last.get(&receiver).copied(), &payload) {
+                WeatherAction::Store(snapshot) => {
+                    let record = record_from_snapshot(&snapshot, &payload, now_ms());
+                    let guard = storage.read().await;
+                    let Some(s) = guard.as_ref() else {
+                        warn!("Weather grid for '{receiver}' dropped: storage is unavailable");
+                        continue;
+                    };
+                    match s
+                        .insert_weather_snapshot_for(receiver.clone(), record)
+                        .await
+                    {
+                        Ok(stored) => {
+                            if stored {
+                                info!(
+                                    "Recorded weather grid for '{receiver}', model hour {}",
+                                    snapshot.valid_time_ms
+                                );
+                            }
+                            last.insert(receiver, snapshot.valid_time_ms);
+                        }
+                        Err(e) => warn!("Could not store the weather grid for '{receiver}': {e}"),
+                    }
+                }
+                WeatherAction::Rejected(reason) => {
+                    warn!("Ignoring the weather grid for '{receiver}': {reason}")
+                }
+                WeatherAction::Duplicate | WeatherAction::Cleared => {}
+            }
+        }
+    }
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -332,6 +379,50 @@ mod tests {
         assert_eq!(
             rows[0].source_id, "test-edge",
             "storage stamps the identity"
+        );
+    }
+
+    #[tokio::test]
+    async fn each_receiver_s_grid_is_stored_under_its_receiver() {
+        use adsb_pulsar_client::source::mqtt_source::KeyedPayloads;
+        let storage = in_memory_storage();
+        let (tx, rx) = watch::channel(KeyedPayloads::new());
+        let task = tokio::spawn(persist_weather_grids(storage.clone(), rx));
+
+        let hour = payload_of(&sample_snapshot(1_789_000_000_000));
+        tx.send_modify(|m| {
+            m.insert("pi-a".into(), hour.clone());
+            m.insert("pi-b".into(), hour.clone());
+        });
+        tokio::task::yield_now().await;
+        // pi-b gets a new hour; pi-a's retained grid is delivered again.
+        tx.send_modify(|m| {
+            m.insert(
+                "pi-b".into(),
+                payload_of(&sample_snapshot(1_789_003_600_000)),
+            );
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        task.abort();
+
+        let guard = storage.read().await;
+        let rows = guard
+            .as_ref()
+            .unwrap()
+            .query_weather_snapshots_sync(&WeatherSnapshotQuery::default())
+            .unwrap();
+        let mut stored: Vec<(String, i64)> = rows
+            .iter()
+            .map(|r| (r.source_id.clone(), r.valid_time_ms))
+            .collect();
+        stored.sort();
+        assert_eq!(
+            stored,
+            vec![
+                ("pi-a".into(), 1_789_000_000_000),
+                ("pi-b".into(), 1_789_000_000_000),
+                ("pi-b".into(), 1_789_003_600_000),
+            ]
         );
     }
 

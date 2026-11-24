@@ -24,6 +24,8 @@
 pub mod flight_info;
 #[cfg(feature = "metrics")]
 pub mod metrics_export;
+pub mod receiver_cli;
+pub mod receivers;
 pub mod recorder;
 #[cfg(feature = "http-api")]
 pub mod server;

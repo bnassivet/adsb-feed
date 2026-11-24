@@ -223,7 +223,7 @@ async fn a_retry_in_another_model_hour_fetches_everything_again() {
 }
 
 #[tokio::test]
-async fn a_completed_fetch_leaves_nothing_to_resume() {
+async fn a_completed_cycle_leaves_nothing_to_resume() {
     let (url, queries) = fixture_server().await;
     let provider = OpenMeteoProvider::new(url, "best_match")
         .unwrap()
@@ -233,12 +233,70 @@ async fn a_completed_fetch_leaves_nothing_to_resume() {
         .fetch(column_grid(), &[250], NOW_MS)
         .await
         .expect("fetch");
+    // The next refresh wants fresh data, even within the same model hour.
+    provider.end_cycle();
     provider
         .fetch(column_grid(), &[250], NOW_MS)
         .await
         .expect("refetch");
 
     assert_eq!(latitudes(&queries), ["47", "48", "47", "48"]);
+}
+
+/// One point, (48, -3): shared with [`column_grid`].
+fn neighbour_grid() -> GridSpec {
+    GridSpec {
+        lat0: 48.0,
+        lon0: -3.0,
+        dlat: 1.0,
+        dlon: 1.0,
+        nlat: 1,
+        nlon: 1,
+    }
+}
+
+#[tokio::test]
+async fn overlapping_grids_in_one_cycle_fetch_each_point_once() {
+    // Two receivers close together: grids snapped to the same lattice share
+    // points, and Open-Meteo is paid per location.
+    let (url, queries) = fixture_server().await;
+    let provider = OpenMeteoProvider::new(url, "best_match")
+        .unwrap()
+        .with_chunk(1);
+
+    provider
+        .fetch(column_grid(), &[250], NOW_MS)
+        .await
+        .expect("first receiver");
+    let neighbour = provider
+        .fetch(neighbour_grid(), &[250], NOW_MS)
+        .await
+        .expect("second receiver");
+
+    assert_eq!(
+        latitudes(&queries),
+        ["47", "48"],
+        "(48, -3) was not bought twice"
+    );
+    assert_eq!(neighbour.surface.mslp_hpa, vec![Some(1021.9)]);
+    assert_eq!(neighbour.grid, neighbour_grid());
+}
+
+#[tokio::test]
+async fn only_the_missing_points_are_requested() {
+    let (url, queries) = fixture_server().await;
+    let provider = OpenMeteoProvider::new(url, "best_match").unwrap();
+
+    provider
+        .fetch(neighbour_grid(), &[250], NOW_MS)
+        .await
+        .expect("second receiver first");
+    provider
+        .fetch(column_grid(), &[250], NOW_MS)
+        .await
+        .expect("then the first");
+
+    assert_eq!(latitudes(&queries), ["48", "47"]);
 }
 
 #[tokio::test]

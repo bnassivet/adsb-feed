@@ -30,6 +30,7 @@ make paths  STACK=prod     # which files does this resolve to?
 | `make up-agents` | ...and the AI agents |
 | `make restart-agents` | just the two AI agents, without touching the stack (also starts them if down); `down-agents` stops them |
 | `make client` | desktop + agents ONLY — for a machine whose data lives elsewhere |
+| `make receivers` | receivers in the database and where each one is (`receiver-history R=id`, `receiver ARGS=...` to edit) |
 
 Keyed by the stack name: rendered configs, PIDs, logs, the DuckDB file, the
 docker compose project, the desktop's own app-data directory
@@ -71,6 +72,21 @@ The desktop therefore has two independently configured planes: `source_kind`
 for history. Env wins every launch for the first, first launch only for the
 second. Setting one and not the other gives a working DB History panel over an
 empty map — see QUICKSTART.md topology 3.
+
+**Receivers and their locations.** With `[mqtt] per_receiver_topic` a feed
+publishes to `<topic>/<source_id>`; subscribers listen on both `<topic>` and
+`<topic>/+`, and the recorder stores each line under the receiver whose topic it
+came on (`<topic>` itself = the recorder's own id). `mqtt.topic` stays the *base*:
+weather and every subscription derive from it, so do not append the id to it.
+Each feed also publishes its position, retained, to `adsb/<stage>/receiver/<id>`.
+Positions live in the database as dated periods (`receiver_locations`, SCD2):
+the recorder adds its `[receiver]` at startup, `make receivers` /
+`receiver-history` / `receiver ARGS=...` read and edit them. Feeds also publish
+retained `online` / `offline` (last will) on `.../receiver/<id>/availability`;
+the weather service uses it to fetch a grid around each active receiver, on
+`adsb/<stage>/weather/grid/<id>` (its own grid stays on the shared topic too). Writes over Quack
+must run server-side (`quack_query_by_name`): through the attached catalog only a
+plain INSERT works. DESIGN.md → Receivers & Location History.
 
 Design detail:
 `rust/adsb-pulsar-client-desktop/docs/DESIGN.md` §27 (Message Sources & the MQTT

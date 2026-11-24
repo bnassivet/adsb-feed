@@ -63,6 +63,11 @@ impl BatchSink for NoopSink {
 pub struct IngestConfig {
     /// Identifier for this receiver, stamped onto every raw record.
     pub source_id: String,
+    /// Store rows under `source_id` rather than the storage handle's own id,
+    /// and register it as a receiver. A central recorder runs one pipeline
+    /// per receiver and sets this; the desktop does not, so what it records
+    /// stays under its own storage id.
+    pub attribute_source_id: bool,
     /// Timezone of the dump1090 timestamps, passed through to storage.
     pub dump1090_tz: String,
     /// How often the buffer is flushed. 500 ms in production (~2 updates/sec).
@@ -73,6 +78,7 @@ impl Default for IngestConfig {
     fn default() -> Self {
         Self {
             source_id: String::new(),
+            attribute_source_id: false,
             dump1090_tz: "Local".to_string(),
             flush_interval: Duration::from_millis(500),
         }
@@ -93,6 +99,9 @@ pub struct IngestPipeline {
     /// MSG lines that carry a latitude/longitude fix (the position rate).
     positions_parsed: Arc<AtomicU64>,
     last_message_time: Arc<RwLock<Instant>>,
+    /// Whether this pipeline's receiver has been registered yet (attributing
+    /// pipelines only).
+    receiver_registered: AtomicBool,
 }
 
 impl IngestPipeline {
@@ -111,6 +120,7 @@ impl IngestPipeline {
             messages_parsed: Arc::new(AtomicU64::new(0)),
             positions_parsed: Arc::new(AtomicU64::new(0)),
             last_message_time: Arc::new(RwLock::new(Instant::now())),
+            receiver_registered: AtomicBool::new(false),
         }
     }
 
@@ -301,12 +311,37 @@ impl IngestPipeline {
     /// never stalls on the recorder.
     async fn persist_batch(&self, batch: &[AircraftPosition]) {
         let guard = self.storage.read().await;
-        if let Some(ref s) = *guard
-            && let Err(e) = s
-                .insert_batch(batch.to_vec(), self.config.dump1090_tz.clone())
+        let Some(ref s) = *guard else { return };
+        self.register_receiver_once(s).await;
+        let tz = self.config.dump1090_tz.clone();
+        let written = if self.config.attribute_source_id {
+            s.insert_batch_for(self.config.source_id.clone(), batch.to_vec(), tz)
                 .await
-        {
+        } else {
+            s.insert_batch(batch.to_vec(), tz).await
+        };
+        if let Err(e) = written {
             warn!("Storage insert failed: {e}");
+        }
+    }
+
+    /// An attributing pipeline records its receiver as known, once.
+    async fn register_receiver_once(&self, s: &StorageHandle) {
+        if !self.config.attribute_source_id
+            || self.receiver_registered.swap(true, Ordering::Relaxed)
+        {
+            return;
+        }
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        if let Err(e) = s
+            .register_receiver(self.config.source_id.clone(), now_ms)
+            .await
+        {
+            warn!("Receiver '{}' not registered: {e}", self.config.source_id);
+            self.receiver_registered.store(false, Ordering::Relaxed);
         }
     }
 
@@ -316,11 +351,16 @@ impl IngestPipeline {
             return;
         }
         let guard = self.storage.read().await;
-        if let Some(ref s) = *guard
-            && let Err(e) = s
-                .insert_raw_batch(batch.to_vec(), self.config.dump1090_tz.clone())
+        let Some(ref s) = *guard else { return };
+        self.register_receiver_once(s).await;
+        let tz = self.config.dump1090_tz.clone();
+        let written = if self.config.attribute_source_id {
+            s.insert_raw_batch_for(self.config.source_id.clone(), batch.to_vec(), tz)
                 .await
-        {
+        } else {
+            s.insert_raw_batch(batch.to_vec(), tz).await
+        };
+        if let Err(e) = written {
             warn!("Raw storage insert failed: {e}");
         }
     }
@@ -525,6 +565,7 @@ mod tests {
             storage,
             IngestConfig {
                 source_id: "test-node".to_string(),
+                attribute_source_id: false,
                 dump1090_tz: "UTC".to_string(),
                 flush_interval: Duration::from_millis(20),
             },
@@ -833,5 +874,63 @@ mod tests {
 
         assert!(!raw.is_empty(), "raw message was not persisted");
         assert_eq!(raw[0].source_id, "test-node");
+    }
+
+    /// A central recorder runs one pipeline per receiver over one handle:
+    /// each must stamp its own receiver, not the handle's id.
+    #[tokio::test]
+    async fn an_attributing_pipeline_stamps_its_own_receiver() {
+        let storage = StorageHandle::open(StorageConfig {
+            db_path: None,
+            source_id: "central".to_string(),
+            gap_threshold_ms: 3_600_000,
+            share: None,
+            remote: None,
+        })
+        .expect("in-memory storage");
+        let shared: SharedStorage = Arc::new(RwLock::new(Some(storage.clone())));
+
+        let (tx, rx) = broadcast::channel(64);
+        tx.send(SAMPLE_MSG3.as_bytes().to_vec()).unwrap();
+        drop(tx);
+
+        IngestPipeline::new(
+            shared,
+            IngestConfig {
+                source_id: "pi-garden".to_string(),
+                attribute_source_id: true,
+                dump1090_tz: "UTC".to_string(),
+                flush_interval: Duration::from_millis(20),
+            },
+        )
+        .run(rx, NoopSink)
+        .await;
+
+        let raw = storage
+            .query_raw_messages_sync(RawMessageQuery {
+                hex_ident: "A1B2C3".to_string(),
+                start_ms: 0,
+                end_ms: i64::MAX,
+            })
+            .expect("query raw messages");
+        assert_eq!(raw[0].source_id, "pi-garden");
+        // Positions do not return their source; count the receiver's instead.
+        let sectors = storage
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                source_id: Some("pi-garden".to_string()),
+                receiver_lat: Some(45.0),
+                receiver_lon: Some(-73.0),
+                start_ms: None,
+                end_ms: None,
+                band_width_nm: None,
+            })
+            .expect("detection range");
+        let counted: u64 = sectors.iter().map(|s| s.position_count).sum();
+        assert_eq!(counted, 1, "the position is stored under the receiver");
+        assert_eq!(
+            storage.list_receivers_sync().unwrap()[0].source_id,
+            "pi-garden",
+            "a receiver heard from is a known receiver"
+        );
     }
 }

@@ -104,6 +104,28 @@ pub struct WeatherConfig {
     #[serde(default = "default_model")]
     pub model: String,
 
+    /// Also fetch a grid around every other receiver online on the bus (see
+    /// `receivers.rs`). `false` keeps to the configured receiver alone.
+    #[arg(
+        long,
+        env = "ADSB_WEATHER_FOLLOW_RECEIVERS",
+        default_value_t = true,
+        action = clap::ArgAction::Set
+    )]
+    #[serde(default = "default_follow_receivers")]
+    pub follow_receivers: bool,
+
+    /// Most grids fetched at once, the configured receiver's included. Each
+    /// grid costs Open-Meteo calls, and the free tier is per day.
+    #[arg(long, env = "ADSB_WEATHER_MAX_RECEIVERS", default_value = "4")]
+    #[serde(default = "default_max_receivers")]
+    pub max_receivers: usize,
+
+    /// How long an offline receiver keeps its grid, minutes.
+    #[arg(long, env = "ADSB_WEATHER_OFFLINE_GRACE_MINUTES", default_value = "30")]
+    #[serde(default = "default_offline_grace_minutes")]
+    pub offline_grace_minutes: u32,
+
     /// Forecast endpoint. Overridable for tests and self-hosted instances.
     #[arg(long, env = "ADSB_WEATHER_BASE_URL", default_value = DEFAULT_BASE_URL)]
     #[serde(default = "default_base_url")]
@@ -162,6 +184,15 @@ fn default_levels() -> Vec<u16> {
 }
 fn default_refresh_minutes() -> u32 {
     60
+}
+fn default_follow_receivers() -> bool {
+    true
+}
+fn default_max_receivers() -> usize {
+    4
+}
+fn default_offline_grace_minutes() -> u32 {
+    30
 }
 fn default_model() -> String {
     "best_match".into()
@@ -253,6 +284,16 @@ impl WeatherConfig {
             .as_integer()
             .and_then(|i| u32::try_from(i).ok()));
         overlay!("model", model, string);
+        overlay!("follow_receivers", follow_receivers, |v: &toml::Value| v
+            .as_bool());
+        overlay!("max_receivers", max_receivers, |v: &toml::Value| v
+            .as_integer()
+            .map(|i| i.max(1) as usize));
+        overlay!(
+            "offline_grace_minutes",
+            offline_grace_minutes,
+            |v: &toml::Value| v.as_integer().map(|i| i.max(0) as u32)
+        );
         overlay!("base_url", base_url, string);
         overlay!("cache_path", cache_path, |v: &toml::Value| v
             .as_str()
@@ -315,18 +356,86 @@ impl WeatherConfig {
     }
 
     /// The sampling grid this configuration describes.
+    /// Where feeds announce themselves: `adsb/<stage>/receiver` beside
+    /// `adsb/<stage>/weather/grid`, else `<mqtt_topic>/receiver`. The feed's
+    /// side of the same rule is `Config::receiver_announce_topic`.
+    pub fn receiver_topic_prefix(&self) -> String {
+        match self.mqtt_topic.strip_suffix("/weather/grid") {
+            Some(base) => format!("{base}/receiver"),
+            None => format!("{}/receiver", self.mqtt_topic),
+        }
+    }
+
+    /// This service's own receiver, named by `source_id`.
+    pub fn own_site(&self) -> Option<adsb_weather_server::receivers::ReceiverSite> {
+        Some(adsb_weather_server::receivers::ReceiverSite {
+            id: self.source_id.clone(),
+            lat: self.receiver_latitude?,
+            lon: self.receiver_longitude?,
+        })
+    }
+
+    /// The grid around `site`, with this service's radius and spacing.
+    pub fn grid_for(&self, lat: f64, lon: f64) -> anyhow::Result<GridSpec> {
+        GridSpec::centered(lat, lon, self.radius_nm, self.spacing_deg)
+            .context("invalid weather grid")
+    }
+
     pub fn grid(&self) -> anyhow::Result<GridSpec> {
         let (Some(lat), Some(lon)) = (self.receiver_latitude, self.receiver_longitude) else {
             bail!("receiver_latitude and receiver_longitude are required");
         };
-        GridSpec::centered(lat, lon, self.radius_nm, self.spacing_deg)
-            .context("invalid weather grid")
+        self.grid_for(lat, lon)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn receivers_are_followed_by_default_up_to_four() {
+        let cfg = defaults();
+        assert!(cfg.follow_receivers);
+        assert_eq!(cfg.max_receivers, 4);
+        assert_eq!(cfg.offline_grace_minutes, 30);
+    }
+
+    #[test]
+    fn receiver_settings_layer_from_the_file() {
+        let mut cfg = defaults();
+        cfg.overlay_file(
+            &file("follow_receivers = false\nmax_receivers = 2\noffline_grace_minutes = 5"),
+            &|_| true,
+        );
+        assert!(!cfg.follow_receivers);
+        assert_eq!(cfg.max_receivers, 2);
+        assert_eq!(cfg.offline_grace_minutes, 5);
+    }
+
+    #[test]
+    fn the_receiver_prefix_sits_beside_the_weather_topic() {
+        let mut cfg = defaults();
+        cfg.mqtt_topic = "adsb/prod/weather/grid".into();
+        assert_eq!(cfg.receiver_topic_prefix(), "adsb/prod/receiver");
+        cfg.mqtt_topic = "lab/wx".into();
+        assert_eq!(cfg.receiver_topic_prefix(), "lab/wx/receiver");
+    }
+
+    #[test]
+    fn the_own_site_is_the_configured_receiver_under_this_source_id() {
+        let mut cfg = defaults();
+        cfg.source_id = "home-dev".into();
+        assert_eq!(cfg.own_site(), None);
+        cfg.receiver_latitude = Some(46.7);
+        cfg.receiver_longitude = Some(-2.3);
+        let own = cfg.own_site().unwrap();
+        assert_eq!(
+            (own.id.as_str(), own.lat, own.lon),
+            ("home-dev", 46.7, -2.3)
+        );
+        assert_eq!(cfg.grid_for(46.7, -2.3).unwrap(), cfg.grid().unwrap());
+    }
 
     fn defaults() -> WeatherConfig {
         WeatherConfig::parse_from(["adsb-weather-server"])

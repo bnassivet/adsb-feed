@@ -18,7 +18,8 @@ use crate::backoff::{Backoff, looks_like_id_collision, should_log, should_reset,
 use crate::config::Config;
 use crate::error::{ClientError, Result};
 use crate::forwarder::MessageForwarder;
-use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS};
+use crate::receiver_location::ReceiverLocationMessage;
+use rumqttc::{AsyncClient, Event, Incoming, LastWill, MqttOptions, QoS};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -47,6 +48,8 @@ pub struct MqttForwarder {
     keep_alive: Duration,
     client: Option<AsyncClient>,
     connected: Arc<AtomicBool>,
+    announcement: Option<(String, Vec<u8>)>,
+    availability_topic: String,
 }
 
 impl MqttForwarder {
@@ -55,12 +58,17 @@ impl MqttForwarder {
         Self {
             broker: config.mqtt_broker.clone(),
             port: config.mqtt_port,
-            topic: config.mqtt_topic.clone(),
+            topic: config.publish_topic(),
             client_id: config.mqtt_client_id().to_string(),
             qos: qos_from_u8(config.mqtt_qos),
             keep_alive: config.socket_timeout(),
             client: None,
             connected: Arc::new(AtomicBool::new(false)),
+            // Built once: `since_ms` is when this process started with this
+            // position, which is what a recorder should date it from.
+            announcement: ReceiverLocationMessage::from_config(config, now_ms())
+                .map(|msg| (config.receiver_announce_topic(), msg.to_json())),
+            availability_topic: config.receiver_availability_topic(),
         }
     }
 
@@ -73,15 +81,50 @@ impl MqttForwarder {
     pub fn client_id(&self) -> &str {
         &self.client_id
     }
+
+    /// Where this feed says `online` (on connect) or, through its last will,
+    /// `offline`. Retained both ways.
+    pub fn availability_topic(&self) -> &str {
+        &self.availability_topic
+    }
+
+    /// Connection options: keep-alive, and the retained `offline` last will
+    /// the broker publishes if this feed vanishes without disconnecting.
+    pub fn mqtt_options(&self) -> MqttOptions {
+        let mut options = MqttOptions::new(&self.client_id, &self.broker, self.port);
+        options.set_keep_alive(self.keep_alive);
+        options.set_last_will(LastWill::new(
+            &self.availability_topic,
+            AVAILABILITY_OFFLINE,
+            QoS::AtLeastOnce,
+            true,
+        ));
+        options
+    }
+
+    /// The retained location announcement published on every connect, as
+    /// (topic, payload), when the receiver's position is configured.
+    pub fn announcement(&self) -> Option<&(String, Vec<u8>)> {
+        self.announcement.as_ref()
+    }
+}
+
+/// Payloads of [`Config::receiver_availability_topic`], as the weather
+/// service uses for its own availability.
+pub const AVAILABILITY_ONLINE: &str = "online";
+pub const AVAILABILITY_OFFLINE: &str = "offline";
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 #[async_trait::async_trait]
 impl MessageForwarder for MqttForwarder {
     async fn connect(&mut self) -> Result<()> {
-        let mut options = MqttOptions::new(&self.client_id, &self.broker, self.port);
-        options.set_keep_alive(self.keep_alive);
-
-        let (client, mut eventloop) = AsyncClient::new(options, 1024);
+        let (client, mut eventloop) = AsyncClient::new(self.mqtt_options(), 1024);
         self.client = Some(client);
 
         // rumqttc only makes progress while its event loop is polled, and the
@@ -89,6 +132,11 @@ impl MessageForwarder for MqttForwarder {
         // its own reconnection, so this task runs for the life of the
         // forwarder and reports transitions through `connected`.
         let connected = Arc::clone(&self.connected);
+        let announcer = self.client.clone().zip(self.announcement.clone());
+        let availability = self
+            .client
+            .clone()
+            .map(|c| (c, self.availability_topic.clone()));
         let broker = format!("{}:{}", self.broker, self.port);
         let client_id = self.client_id.clone();
         tokio::spawn(async move {
@@ -110,6 +158,26 @@ impl MessageForwarder for MqttForwarder {
                         // Deliberately NOT resetting `attempt` here: see below.
                         connected_at = Some(Instant::now());
                         connected.store(true, Ordering::Relaxed);
+
+                        // Retained, so a subscriber that connects later still
+                        // learns where this receiver is; re-sent on every
+                        // connect in case the broker lost its retained store.
+                        if let Some((client, topic)) = &availability
+                            && let Err(e) = client.try_publish(
+                                topic,
+                                QoS::AtLeastOnce,
+                                true,
+                                AVAILABILITY_ONLINE,
+                            )
+                        {
+                            warn!("Receiver availability on '{topic}' failed: {e}");
+                        }
+                        if let Some((client, (topic, payload))) = &announcer
+                            && let Err(e) =
+                                client.try_publish(topic, QoS::AtLeastOnce, true, payload.clone())
+                        {
+                            warn!("Receiver location announcement on '{topic}' failed: {e}");
+                        }
                     }
                     Ok(_) => {}
                     Err(e) => {
@@ -233,6 +301,62 @@ mod tests {
         let forwarder = MqttForwarder::new(&config);
         assert_eq!(forwarder.topic(), "adsb/custom");
         assert_eq!(forwarder.client_id(), "pi-roof");
+    }
+
+    #[test]
+    fn test_forwarder_publishes_under_its_own_id_when_per_receiver() {
+        let config = Config {
+            source_id: "pi-roof-prod".to_string(),
+            mqtt_topic: "adsb/prod/sbs/raw".to_string(),
+            mqtt_per_receiver_topic: true,
+            ..mqtt_config()
+        };
+        assert_eq!(
+            MqttForwarder::new(&config).topic(),
+            "adsb/prod/sbs/raw/pi-roof-prod"
+        );
+    }
+
+    #[test]
+    fn test_a_located_forwarder_has_a_retained_announcement_to_publish() {
+        let config = Config {
+            source_id: "pi-roof-prod".to_string(),
+            mqtt_topic: "adsb/prod/sbs/raw".to_string(),
+            receiver_latitude: Some(46.7),
+            receiver_longitude: Some(-2.3),
+            ..mqtt_config()
+        };
+        let (topic, payload) = MqttForwarder::new(&config)
+            .announcement()
+            .expect("an announcement")
+            .clone();
+        assert_eq!(topic, "adsb/prod/receiver/pi-roof-prod");
+        let msg = crate::receiver_location::ReceiverLocationMessage::parse(&payload).unwrap();
+        assert_eq!((msg.latitude, msg.longitude), (46.7, -2.3));
+        assert!(msg.since_ms > 0, "stamped with the forwarder's start");
+    }
+
+    #[test]
+    fn test_the_forwarder_leaves_an_offline_will_and_says_online_on_connect() {
+        let config = Config {
+            source_id: "pi-roof-prod".to_string(),
+            mqtt_topic: "adsb/prod/sbs/raw".to_string(),
+            ..mqtt_config()
+        };
+        let forwarder = MqttForwarder::new(&config);
+        let will = forwarder.mqtt_options().last_will().expect("a last will");
+        assert_eq!(will.topic, "adsb/prod/receiver/pi-roof-prod/availability");
+        assert_eq!(&will.message[..], b"offline");
+        assert!(will.retain, "a late subscriber must still learn it is down");
+        assert_eq!(
+            forwarder.availability_topic(),
+            "adsb/prod/receiver/pi-roof-prod/availability"
+        );
+    }
+
+    #[test]
+    fn test_an_unlocated_forwarder_announces_nothing() {
+        assert!(MqttForwarder::new(&mqtt_config()).announcement().is_none());
     }
 
     #[test]

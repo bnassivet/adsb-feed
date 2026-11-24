@@ -2980,19 +2980,17 @@ process is applied to every row, whatever its `source_id`:
 **3. The copies can disagree.** The daemon's sweep and the desktop's radar (and,
 in embedded mode, its own sweep) can use different points with no warning.
 
-**Where to start** (not designed):
+**Resolved 2026-11-23** — see [Receivers & Location History](#receivers--location-history).
+The original sketch was an append-only table read with `ASOF JOIN` and the
+`source_id` carried in the MQTT payload. What was built differs on both points:
 
-- An observed `receivers` table, append-only: `source_id, latitude, longitude,
-  altitude_ft, valid_from_ms`, written by the recorder when its configured
-  location changes.
-- Per-record receiver attribution (the feed's `source_id` carried in the MQTT
-  payload and stored), so one recorder can serve several antennas.
-- The sweep and the radar then join each fix to *its* receiver at *its* time
-  (DuckDB `ASOF JOIN` on `source_id, timestamp_ms`). The radar takes a
-  `source_id` rather than coordinates, and a rejected row records which receiver
-  version judged it.
-- Configuration becomes the seed of that table, and the desktop reads it instead
-  of keeping its own copy.
+- **Closed periods (`valid_to_ms`) rather than append-only rows.** Back-dated
+  moves, corrections and removals then stay single, checked operations, and the
+  range join is plain SQL that runs the same over Quack.
+- **The id in the topic, not the payload.** SBS lines stay exactly what
+  dump1090 wrote, and an older recorder keeps working on the base topic.
+
+The section is kept as the record of why.
 
 ---
 
@@ -3532,7 +3530,7 @@ The order matters. A real fix whose only neighbours are a far glitch pair would 
 - `rejected_positions` is an **observed** table: it's in `OBSERVED_TABLES`, so a remote client reads it through a view, and an older daemon without it costs only that one view. Retention pruning and export include it.
 - On the dev database (1.78 M positions) the rule set aside 11 `out_of_range` fixes (797–6,181 NM). It also set aside 168 `implausible_speed` fixes. 160 of those were mock-feed `TST00x` tracks jumping ~3,000 kt; the other 7 were single fixes of real aircraft jumping 120–195 NM in about 1 s and back.
 - **Not yet handled** (step 2): `flights.position_count` and the altitude bounds still include quarantined fixes, and a glitch burst *within* 500 NM that agrees with itself still passes.
-- **Receiver location is a single current point.** The range check uses one fixed location, now, for all history and every `source_id`. That's fine for one antenna that never moves, and wrong for anything else. See [Design Debt → Receiver location](#receiver-location-one-current-point-per-process).
+- **Receiver location is point-in-time and per receiver.** The range check measures each fix from its own receiver's location at the fix's time (`receiver_locations`), with the configured point only as a fallback. See [Receivers & Location History](#receivers--location-history).
 
 **DB History → Rejected Positions** is a section between the analytics and Status Timeline, collapsed by default and mounted only when opened, so a closed section costs no query. It lists the rows for the panel's time range, newest first, up to 500 (`get_rejected_positions` → `{ total, rows }`). Times use the panel's display zone.
 
@@ -3981,7 +3979,7 @@ The `Config` struct includes three optional fields for the receiver's physical l
 
 **Data flow**: Dashboard (`page.tsx`) loads config on mount via `getConfig()`, derives a `receiverLocation` object, and passes it through `Map.tsx` → `MapInner.tsx`.
 
-**Also the quarantine reference.** In embedded mode the desktop's quarantine loop (`src-tauri/src/quarantine.rs`) reads these fields on every tick and moves fixes farther than 500 NM from them out of `positions` (see [Quarantined positions](#quarantined-positions-rejected_positions)). The data server uses its own copy, rendered from `[receiver]` in `adsb-stack.toml`, which this store does not follow. A single current point with two copies is recorded as design debt: see [Receiver location: one current point, per process](#receiver-location-one-current-point-per-process).
+**Also the quarantine reference.** In embedded mode the desktop's quarantine loop (`src-tauri/src/quarantine.rs`) reads these fields on every tick and moves fixes farther than 500 NM from them out of `positions` (see [Quarantined positions](#quarantined-positions-rejected_positions)). Since [Receivers & Location History](#receivers--location-history), these fields are the **fallback**: when the database has a location for the receiver being shown, the map, range math, radar and sweep use the database's, at each fix's time.
 
 ### Design Decisions
 
@@ -4621,6 +4619,205 @@ discovery), plus the `/voice/*` routes above. See `adsb-agent/src/adsb_agent/mai
 See [`adsb-agent/README.md`](../../adsb-agent/README.md) for backend setup, environment variables, the
 model-capability requirement (a reliable tool-calling model such as Qwen2.5-7B-Instruct),
 and voice-model installation.
+
+---
+
+## Receivers & Location History
+
+Plan: `docs/plans/2026-11-23-receiver-location-history-multi-receiver.md`.
+Resolves the design debt [Receiver location: one current point, per process](#receiver-location-one-current-point-per-process).
+
+### What changed
+
+A receiver's position is now **data, stored with the fixes it measured**,
+instead of a setting each process keeps its own copy of:
+
+- every receiver the database knows is a row in `receivers`;
+- where it was, and when, is a list of periods in `receiver_locations`
+  (a slowly changing dimension, type 2);
+- every calculation that needs a position takes **the location in force at the
+  fix's timestamp**, for **the fix's own receiver**;
+- one recorder can ingest several receivers into one database, and keeps every
+  row attributed to the receiver that heard it.
+
+### Data model
+
+Two observed tables (`SCHEMA_OBSERVED_SQL`), shared over Quack like the others
+(`share::OBSERVED_TABLES`):
+
+```sql
+receivers (source_id TEXT PRIMARY KEY, name TEXT, first_seen_ms BIGINT NOT NULL)
+
+receiver_locations (
+  source_id TEXT, valid_from_ms BIGINT,     -- PRIMARY KEY (source_id, valid_from_ms)
+  valid_to_ms BIGINT,                       -- NULL = current
+  latitude DOUBLE, longitude DOUBLE, altitude_ft DOUBLE,
+  origin TEXT,                              -- config | mqtt | cli | desktop | backfill
+  recorded_at_ms BIGINT, note TEXT)
+```
+
+Periods are **half-open**, `[valid_from_ms, valid_to_ms)`: a move at T closes
+one period at T and opens the next at T, so a fix stamped exactly T belongs to
+exactly one. The range join every consumer uses is
+`ts >= valid_from_ms AND (valid_to_ms IS NULL OR ts < valid_to_ms)`.
+
+**Invariants** (per receiver): sorted, never overlapping, at most one open
+period and only the last, no empty period. Gaps are allowed and mean "location
+unknown".
+
+### Operations: pure rules, one transactional swap
+
+`adsb-data-engine/src/receiver_history.rs` holds the rules as pure functions
+over one receiver's `Vec<LocationPeriod>`. Each returns the replacement set,
+`None` for a no-op, or a `HistoryError`:
+
+| Operation | Meaning | Used by |
+|---|---|---|
+| `observe(pos, at)` | "I am here as of `at`." Same position = no-op; a new one closes the current period at `at`. Dated at the current start = in-place correction; earlier = `StaleObservation` | recorder config at startup, feed announcements |
+| `move_at(pos, at)` | "It moved at `at`", possibly in the past: splits the period containing `at`, keeps later ones; fills a gap or the time before the first period. At an existing start = `PeriodStartsAt` (that is a correction) | CLI, desktop editor |
+| `correct(from, pos)` | "That period was really here": position and provenance replaced, dates kept | CLI, desktop editor |
+| `remove(from)` | "That period never happened": the previous adjacent period absorbs its span, otherwise it becomes a gap | CLI, desktop editor |
+
+"Same position" is within about 1 m and 1 ft (`SAME_POSITION_NM`), so float
+round-trips through TOML and JSON, and a retained message replayed on every
+reconnect, never open a new period. A known altitude never equals an unknown
+one: learning it is a change worth recording.
+
+`storage/receivers.rs` reads the receiver's periods, applies the change and
+**swaps the whole set** (`DELETE` then `INSERT`, plus the `receivers` upsert)
+in one transaction. A refused or no-op change writes nothing. The rules are
+therefore checked in one place, unit-tested without DuckDB, and the table never
+holds a half-applied edit.
+
+**Remote mode writes run on the daemon.** Through an attached Quack catalog only
+a plain `INSERT` works: `UPDATE` and `DELETE` fail with *"Can only delete from
+base table"*, `ON CONFLICT` with *"GetStorageInfo not implemented"*. So a remote
+handle builds one `BEGIN … COMMIT` script with quoted literals (`swap_script`)
+and runs it with `SELECT * FROM quack_query_by_name('edge', ?)`, where the
+tables are real. A failed script leaves that server session inside its
+transaction, so it is always followed by an explicit `ROLLBACK`. This is the
+path both the desktop editor (remote mode) and the CLI (while the recorder holds
+the file lock) take, and an in-process Quack test covers it end to end.
+
+### Where periods come from
+
+| Origin | Written when | Dated |
+|---|---|---|
+| `config` | the recorder opens, from its `[receiver]` (`Recorder::open` → `bootstrap_receiver_location_sync`) | now |
+| `backfill` | the same, for a receiver with stored fixes but no history yet | its oldest stored fix, so existing data gets a location. Correct it with a move if the antenna was elsewhere then |
+| `mqtt` | a feed's retained announcement arrives (`receivers::record_announcement`) | the feed's `since_ms` (process start), clamped to now; if a newer period already exists, now |
+| `cli` | `adsb-data-server receiver move/correct/remove` | as given |
+| `desktop` | Settings → Location History | as given |
+
+**The announcement.** The MQTT forwarder publishes, **retained**, on every
+connect, a `ReceiverLocationMessage` JSON (`latitude, longitude, altitude_ft,
+since_ms`) to `adsb/<stage>/receiver/<source_id>`, when its config has a
+position. A recorder subscribed to `adsb/<stage>/receiver/+` therefore learns a
+remote Pi's location, and any later edit of its config, with no manual step.
+`since_ms` is the feed process's start, so a recorder that was down during a
+move still dates the new period from when the feed started with it.
+
+### Using the location in force
+
+- **Quarantine sweep** (`quarantine_positions_sync`): `located_positions_sql`
+  range-joins each fix to its receiver's period and measures from `rx_lat/rx_lon`.
+  The configured receiver is only the fallback for fixes no period covers. A fix
+  heard before a move is no longer quarantined for being far from the new site.
+  `rejected_positions.distance_nm` is now measured from the right location.
+- **Detection range** (`get_detection_range_sync`): `DetectionRangeQuery` takes
+  an optional `source_id` filter; `receiver_lat/lon` became an optional fallback.
+  Each fix's bearing and distance come from its own receiver's location at the
+  time, so a radar spanning a move no longer bends. A fix with no known location
+  is left out rather than measured from somewhere arbitrary.
+
+### Several receivers, one recorder
+
+```
+[pi-garden]  feed ──publish──→ adsb/prod/sbs/raw/pi-garden-prod ──┐
+[pi-roof]    feed ──publish──→ adsb/prod/sbs/raw/pi-roof-prod  ───┤→ broker → recorder
+[old feed]   feed ──publish──→ adsb/prod/sbs/raw  ────────────────┘   (subscribes to
+                                                                        sbs/raw AND sbs/raw/+)
+```
+
+- **The id travels in the topic, not the payload.** With
+  `mqtt_per_receiver_topic` the forwarder publishes to `<mqtt_topic>/<source_id>`
+  (`Config::publish_topic`). SBS lines stay byte-for-byte what dump1090 wrote,
+  and the broker already routes on topics. `mqtt_topic` stays the **base**: the
+  weather topic and every subscription derive from it unchanged. The source_id
+  must be one topic level (`validate` refuses `/`, `+`, `#`).
+- **Subscribers listen on both** (`Config::sbs_subscriptions`): the base, for
+  feeds that do not name themselves, and `<base>/+`. `route_publish` returns
+  `Route::Sbs { receiver }` with the id read back allocation-free
+  (`receiver_from_topic`). Lines on the base topic belong to the recorder's own
+  id, exactly as before. Turning the setting on therefore needs only recorders
+  new enough to subscribe to `<base>/+`, which is why it defaults to off in code
+  and in fleets, and is on in the stack template.
+- **Attribution is opt-in per consumer.** `MqttSource::subscribe_sourced` is a
+  second channel of `SourcedLine { receiver, line }`, filled only when asked
+  for. The plain line channel the desktop uses is unchanged; the live map merges
+  every receiver, which is what a live map should do.
+- **One pipeline per receiver.** `receivers::demux` starts an `IngestPipeline`
+  the first time it hears a receiver, with `IngestConfig::attribute_source_id`,
+  so the per-aircraft merge never mixes two receivers' fixes and every row is
+  stored under the receiver that heard it (`insert_batch_for` /
+  `insert_raw_batch_for`). The desktop's pipeline leaves it off, so what it
+  records stays under its storage id.
+- **Flights stay aircraft-level.** The flight tracker is keyed by hex, so two
+  receivers hearing the same aircraft extend the same flight. Positions keep
+  their own `source_id`.
+
+### Desktop
+
+- `useReceivers` reads the database's receivers (on open, every minute, and
+  whenever storage becomes available). `resolveReceiverLocation` picks the
+  receiver to show (the selection, else this app's `source_id`, else the only
+  located one) and **takes its location from the database**, with Settings as
+  the fallback. It never lends this app's Settings location to another receiver.
+  A remote desktop therefore centres on the daemon's receiver with nothing typed
+  in; previously a new named stack fell back to Montréal.
+- A header selector (`ReceiverSelector`) appears once the database holds two
+  receivers; the others are drawn as dimmer markers.
+- The DB History radar sends the selected receiver's `source_id`, but **only for
+  a receiver the database knows**: an embedded desktop stamps its rows with its
+  storage id (`desktop`), not its configured one, and filtering by the latter
+  would empty the radar.
+- Settings → **Location History** (`ReceiverHistoryTable`) lists the periods and
+  records moves, corrections and removals through `apply_receiver_change`
+  (origin `desktop`). For the same reason as the radar, it is offered only for
+  a receiver the database knows; an embedded desktop with none is told the
+  recorder keeps the history and the Settings location applies.
+
+### CLI
+
+```bash
+adsb-data-server --config /etc/adsb/data-server.toml receiver list
+adsb-data-server ... receiver history [--receiver ID]
+adsb-data-server ... receiver move --lat 46.7 --lon -2.3 [--alt-ft 20] --at 2026-10-01 [--note ..]
+adsb-data-server ... receiver correct --from 2026-10-01T00:00:00.000Z --lat .. --lon ..
+adsb-data-server ... receiver remove --from 2026-10-01T00:00:00.000Z
+make receivers | make receiver-history [R=id] | make receiver ARGS="move ..."
+```
+
+`--receiver` defaults to the node's `source_id`. Instants accept `now`, epoch
+ms, a date (midnight UTC) or RFC 3339; history prints starts at millisecond
+precision so they can be pasted into `--from`. The command opens the file
+without sharing; when the running recorder holds the lock it goes through the
+recorder's Quack share (`share = true`).
+
+### Known limits
+
+- **Desktop live-only mode does not read announcements yet.** Without a
+  database the desktop uses its Settings location; subscribing the live feed to
+  `adsb/<stage>/receiver/+` would close that gap.
+- **The quarantine fallback is the recorder's own location.** A remote receiver
+  with no history yet (an older feed that does not announce) is judged from it,
+  as before. Give it a history with `receiver move`.
+- ~~Weather is centred on one receiver~~: resolved 2026-11-24, see Weather Layer → A grid around each active receiver.
+- **`make doctor` does not warn** about a feed with per-receiver topics talking
+  to a recorder too old to subscribe below the base topic.
+- **Import keeps one history per receiver.** A receiver's history is imported
+  only when this database has none for it, because two histories of one receiver
+  could overlap and the table cannot refuse that by itself.
 
 ---
 
@@ -5330,6 +5527,85 @@ agent's server tools call has no weather. Plan:
 clean numbers. The Python `tools.py` fallback list mirrors both schemas;
 `tests/test_weather_tools.py` pins the routing prose and that neither tool is in
 `SERVER_TOOL_NAMES`.
+
+### A grid around each active receiver
+
+Plan: `docs/plans/2026-11-24-weather-grid-per-receiver.md`. Builds on
+[Receivers & Location History](#receivers--location-history).
+
+**Which receivers.** Each feed publishes, retained, its position
+(`adsb/<stage>/receiver/<id>`) and its availability
+(`adsb/<stage>/receiver/<id>/availability`: `online` on every connect, `offline`
+as its last will). The weather service subscribes to both on its existing
+connection (`publisher::Following`); `receivers::ActiveReceivers` folds them into
+the sites to fetch:
+
+- its own configured receiver (named by its `source_id`), always;
+- every other receiver with a position that is online, or went offline less than
+  `offline_grace_minutes` ago;
+- at most `max_receivers`, the most recently online first.
+
+A retained `offline` seen at startup, with no `online` before it, gets **no**
+grace: that feed may have been down for weeks, and paying for its grid again on
+every restart would be waste. A receiver whose availability was never seen is
+not active, because a retained announcement outlives the feed that sent it.
+
+**Fetching.** `receivers::follow` turns the sites into grids
+(`GridSpec::centered`, unchanged) and publishes the set. `Refresher::with_grids`
+fetches the whole set each cycle; the state machine (enable/disable, rate
+limits, backoff, status) is the one already described above.
+
+- **Shared points are bought once.** Grids are snapped to the same world
+  lattice, so neighbouring receivers overlap exactly. The provider's cache is
+  keyed by grid point for one model hour and one set of levels, and `fetch`
+  requests only the points it lacks. Measured on the local broker: a second
+  receiver about 150 km away added 17 points to 187. The cache lives for one
+  cycle: `WeatherProvider::end_cycle`, called after a successful cycle, releases
+  it, so the next refresh fetches afresh even within the same hour. A retry after
+  a failure reuses what was already paid for.
+- **A failure stops the cycle** and keeps the grids already fetched.
+- **A receiver joining after a success is topped up at once**: only the missing
+  grids are fetched, and the next full refresh keeps its time. A refresher
+  waiting out a failure or a rate limit does **not** wake for it; the next cycle
+  fetches it anyway.
+- **A receiver leaving is dropped at once**, at no cost. Its retained grid stays
+  on the broker as that site's last valid weather.
+- The budget line is logged for the union of points on every change of set.
+
+**Publishing.** Each receiver's grid goes, retained, on
+`adsb/<stage>/weather/grid/<id>` (`WeatherTopics::grid_for`), republished when its
+valid time changes and on every connect. The service's own grid **also** stays on
+`adsb/<stage>/weather/grid`, through the original channel and cache file, so a
+desktop or recorder older than this keeps working. `WeatherStatus.grids` lists
+every grid held (receiver, points, valid time).
+
+**Recording.** `MqttSource::with_keyed_aux(prefix)` subscribes to `<prefix>/+` and
+keeps each payload whole, latest per key (an empty payload removes the key). It
+sees only what nothing else claimed, so the SBS path and exact aux topics are
+unchanged. The recorder stores each grid with
+`insert_weather_snapshot_for(receiver)`, once per model hour per receiver.
+
+**Desktop.** The bridge relays each receiver's grid (`adsb:weather-receiver`,
+`get_receiver_weather_snapshots`). `useWeatherSnapshot().snapshotFor(id)` returns
+that receiver's grid, else the shared one (`pickWeatherSnapshot`), and the page
+passes the selected receiver. The weather layer, the weather panel and the chat's
+wind tools therefore follow the Receiver selector. Historical weather asks for
+the selected receiver's recorded grid first, then any grid for that hour; its
+cache is keyed by receiver.
+
+**Configuration** (`[weather]`, rendered to `weather.toml`):
+
+| Key | Default | |
+|---|---|---|
+| `follow_receivers` | `true` | `false` = the configured receiver's grid only, as before |
+| `max_receivers` | `4` | grids at once, the service's own included |
+| `offline_grace_minutes` | `30` | how long an offline receiver keeps costing calls |
+
+The weather panel lists the receivers with a grid (`Grids: …`) once there is
+more than one, from `status.grids`.
+
+**Not done:** the desktop does not record the per-receiver grids in embedded
+mode (the recorder does).
 
 ### Configuration
 

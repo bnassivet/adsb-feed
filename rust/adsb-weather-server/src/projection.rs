@@ -25,6 +25,7 @@ pub fn project(enabled: bool, reported: &ReportedState, now_ms: i64) -> WeatherS
         last_error: reported.last_error.clone(),
         next_fetch_ms: reported.next_fetch_ms,
         snapshot_valid_time_ms: reported.snapshot_valid_time_ms,
+        grids: reported.grids.clone(),
         updated_at_ms: now_ms,
     }
 }
@@ -95,6 +96,11 @@ mod tests {
 
     fn reported(state: ServiceState) -> ReportedState {
         ReportedState {
+            grids: vec![crate::status::GridStatus {
+                receiver: "pi-a".into(),
+                points: 4,
+                valid_time_ms: Some(0),
+            }],
             state,
             consecutive_failures: 3,
             rate_limit: Some(RateLimitScope::Hourly),
@@ -146,6 +152,7 @@ mod tests {
         assert_eq!(status.last_error.as_deref(), Some("refused"));
         assert_eq!(status.next_fetch_ms, Some(2));
         assert_eq!(status.snapshot_valid_time_ms, Some(0));
+        assert_eq!(status.grids[0].receiver, "pi-a", "grids reach the status");
         assert_eq!(status.updated_at_ms, NOW);
     }
 

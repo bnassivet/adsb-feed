@@ -34,6 +34,12 @@ id = "dev-laptop-dev"
 # Your antenna's real position: used as the map centre, for distance and
 # detection-range calculations, as the origin for the mock feed, and by the
 # recorder to quarantine decode glitches beyond reception range.
+#
+# The recorder also keeps this position in the database as a dated history.
+# Edit it after moving the antenna and restart the recorder: a new period
+# opens from that moment, and data recorded before keeps the old position.
+# For a move that happened earlier, back-date it with the recorder's
+# `receiver move` command instead.
 latitude = 46.717915
 longitude = -2.33716964
 altitude_ft = 20.0
@@ -57,6 +63,11 @@ topic = "adsb/dev/sbs/raw"
 # 0 = at most once. Right for a live feed: a subscriber that was not connected
 # has missed nothing it can still use, and durability is the recorder's job.
 qos = 0
+# Publish to `<topic>/<receiver.id>` rather than `<topic>`, so a recorder can
+# tell receivers apart and record several into one database. Recorders listen
+# on both, so this only needs a recorder new enough to know about it -- an
+# older one hears nothing once it is on.
+per_receiver_topic = true
 
 [storage]
 # Dev-local. The deployed Pi uses /var/lib/adsb/adsb.db via /etc/adsb/*.toml.
@@ -113,6 +124,15 @@ spacing_deg = 1.0
 # variables per point, and a request for more than 10 variables costs extra.
 levels = [850, 700, 500, 300, 250, 200]
 refresh_minutes = 60
+# Also fetch a grid around every other receiver online on the bus (each feed
+# announces its position and says online/offline), published to
+# adsb/<stage>/weather/grid/<receiver.id>. Shared grid points are fetched once,
+# but each extra receiver still costs calls: max_receivers caps the grids,
+# this receiver's included, and a receiver offline longer than the grace
+# period stops costing anything.
+follow_receivers = true
+max_receivers = 4
+offline_grace_minutes = 30
 # best_match lets Open-Meteo choose. A specific model (see open-meteo.com/en/docs)
 # can be finer over one region.
 model = "best_match"

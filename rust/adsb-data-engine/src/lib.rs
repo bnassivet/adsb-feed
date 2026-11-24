@@ -4,10 +4,12 @@
 //! - SBS-1 message parsing (`sbs_parser`)
 //! - DuckDB storage and query operations (`storage`)
 //! - Domain types for positions, queries, and statistics (`types`)
+//! - Receiver location history, one SCD2 period per position (`receiver_history`)
 
 pub mod error;
 pub mod geo;
 pub mod ingest;
+pub mod receiver_history;
 pub mod sbs_parser;
 pub mod share;
 pub mod storage;
@@ -17,6 +19,10 @@ pub mod types;
 pub use error::StorageError;
 pub use ingest::{
     BatchSink, IngestConfig, IngestPipeline, NoopSink, SharedStorage, merge_into_buffer,
+};
+pub use receiver_history::{
+    ChangeStamp, HistoryError, LocationChange, LocationOrigin, LocationPeriod, ReceiverPosition,
+    ReceiverSummary,
 };
 pub use sbs_parser::{
     AircraftPosition, extract_sbs_timestamp, parse_sbs_message, parse_sbs_raw_fields,
