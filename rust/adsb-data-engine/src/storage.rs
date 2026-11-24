@@ -26,6 +26,8 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
+mod receivers;
+
 mod flight_cache;
 
 /// Write Arrow RecordBatches to an IPC stream, returning the raw bytes.
@@ -105,6 +107,26 @@ pub const MAX_RECEPTION_RANGE_NM: f64 = 500.0;
 /// fixes either side are all the speed test reads; ten minutes covers them
 /// for anything still being tracked.
 const QUARANTINE_NEIGHBOUR_MARGIN_MS: i64 = 600_000;
+
+/// `positions` with `rx_lat`/`rx_lon`: where the fix's own receiver was when
+/// it was heard, from the `receiver_locations` period covering its timestamp
+/// (`[valid_from_ms, valid_to_ms)`), else the given fallback expressions.
+///
+/// At most one period covers any instant, so the LEFT JOIN never multiplies
+/// rows. Fixes with no `source_id` (rows older than multi-receiver support)
+/// match no period and use the fallback.
+fn located_positions_sql(fallback_lat: &str, fallback_lon: &str) -> String {
+    format!(
+        "SELECT pos.*, \
+                COALESCE(rl.latitude, {fallback_lat}) AS rx_lat, \
+                COALESCE(rl.longitude, {fallback_lon}) AS rx_lon \
+         FROM positions pos \
+         LEFT JOIN receiver_locations rl \
+           ON rl.source_id = pos.source_id \
+          AND pos.timestamp_ms >= rl.valid_from_ms \
+          AND (rl.valid_to_ms IS NULL OR pos.timestamp_ms < rl.valid_to_ms)"
+    )
+}
 
 /// Great-circle distance in NM between two SQL lat/lon expression pairs.
 fn haversine_nm_sql(lat1: &str, lon1: &str, lat2: &str, lon2: &str) -> String {
@@ -298,6 +320,28 @@ const SCHEMA_OBSERVED_SQL: &str = r#"
 
     CREATE INDEX IF NOT EXISTS idx_weather_snapshots_src_valid
         ON weather_snapshots (source_id, valid_time_ms);
+
+    -- Receivers seen by this database, and where each one was when (SCD2).
+    -- See receiver_history.rs for the period rules; storage/receivers.rs
+    -- for how they are written.
+    CREATE TABLE IF NOT EXISTS receivers (
+        source_id       TEXT    PRIMARY KEY,
+        name            TEXT,
+        first_seen_ms   BIGINT  NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS receiver_locations (
+        source_id       TEXT    NOT NULL,
+        valid_from_ms   BIGINT  NOT NULL,
+        valid_to_ms     BIGINT,
+        latitude        DOUBLE  NOT NULL,
+        longitude       DOUBLE  NOT NULL,
+        altitude_ft     DOUBLE,
+        origin          TEXT    NOT NULL,
+        recorded_at_ms  BIGINT  NOT NULL,
+        note            TEXT,
+        PRIMARY KEY (source_id, valid_from_ms)
+    );
 
 "#;
 
@@ -706,6 +750,26 @@ impl StorageHandle {
         positions: &[AircraftPosition],
         tz: &str,
     ) -> Result<(), StorageError> {
+        self.insert_batch_impl(None, positions, tz)
+    }
+
+    /// As [`Self::insert_batch_sync`], stamping `source_id` instead of the
+    /// handle's own: one recorder writing several receivers' data.
+    pub fn insert_batch_for_sync(
+        &self,
+        source_id: &str,
+        positions: &[AircraftPosition],
+        tz: &str,
+    ) -> Result<(), StorageError> {
+        self.insert_batch_impl(Some(source_id), positions, tz)
+    }
+
+    fn insert_batch_impl(
+        &self,
+        source_id: Option<&str>,
+        positions: &[AircraftPosition],
+        tz: &str,
+    ) -> Result<(), StorageError> {
         if positions.is_empty() {
             return Ok(());
         }
@@ -714,6 +778,7 @@ impl StorageHandle {
             .inner
             .lock()
             .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+        let source_id = source_id.map_or_else(|| storage.source_id.clone(), str::to_string);
 
         // Phase 1: Insert positions via appender (existing logic)
         // Collect (pos, timestamp_ms) for flight updates in phase 2
@@ -737,7 +802,7 @@ impl StorageHandle {
                     pos.squawk,
                     pos.is_on_ground,
                     timestamp_ms,
-                    storage.source_id,
+                    source_id,
                 ])?;
 
                 batch_with_ts.push((pos, timestamp_ms));
@@ -1526,7 +1591,9 @@ impl StorageHandle {
     /// `positions` into `rejected_positions` (synchronous). Returns how many.
     ///
     /// A fix is rejected as `out_of_range` when it is farther than
-    /// [`MAX_RECEPTION_RANGE_NM`] from `receiver` (skipped without one), else as
+    /// [`MAX_RECEPTION_RANGE_NM`] from where its receiver was when it was heard:
+    /// the `receiver_locations` period covering it, else `receiver` (skipped
+    /// when neither is known). Otherwise it is rejected as
     /// `implausible_speed` when [`plausible_fix_sql`] fails. Neighbours up to
     /// [`QUARANTINE_NEIGHBOUR_MARGIN_MS`] outside the window are consulted, so
     /// a caller sweeping in slices judges the edges as a full sweep would.
@@ -1556,15 +1623,19 @@ impl StorageHandle {
             return Ok(0);
         }
 
-        let distance = match receiver {
-            Some((lat, lon)) => haversine_nm_sql(
-                &format!("({lat:?})"),
-                &format!("({lon:?})"),
-                "latitude",
-                "longitude",
+        // Each fix is measured from where its own receiver was at that moment
+        // (`receiver_locations`), and from the configured receiver only where
+        // no period covers it. Without either, the distance is NULL and only
+        // the speed test applies.
+        let (fallback_lat, fallback_lon) = match receiver {
+            Some((lat, lon)) => (format!("({lat:?})"), format!("({lon:?})")),
+            None => (
+                "CAST(NULL AS DOUBLE)".to_string(),
+                "CAST(NULL AS DOUBLE)".to_string(),
             ),
-            None => "CAST(NULL AS DOUBLE)".to_string(),
         };
+        let located = located_positions_sql(&fallback_lat, &fallback_lon);
+        let distance = haversine_nm_sql("rx_lat", "rx_lon", "latitude", "longitude");
         let rejected_at_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
@@ -1585,7 +1656,7 @@ impl StorageHandle {
               WITH base AS (
                 SELECT {COLS}, {DISTANCE} AS distance_nm,
                        COALESCE({DISTANCE} > {MAX_RANGE_NM:?}, FALSE) AS far
-                FROM positions
+                FROM ({LOCATED})
                 WHERE latitude IS NOT NULL AND longitude IS NOT NULL
                   AND timestamp_ms >= ? AND timestamp_ms <= ?
               )
@@ -1605,6 +1676,7 @@ impl StorageHandle {
             )
             "#,
             DISTANCE = distance,
+            LOCATED = located,
             MAX_RANGE_NM = MAX_RECEPTION_RANGE_NM,
             PLAUSIBLE = plausible_fix_sql("p"),
             NEIGHBOURS = NEIGHBOUR_COLUMNS_SQL,
@@ -1832,6 +1904,10 @@ impl StorageHandle {
 
     /// Compute detection range by 10° azimuth sectors (synchronous).
     ///
+    /// Each fix is measured from where its own receiver was when it was heard
+    /// (`receiver_locations`), else from the query's fallback position; a fix
+    /// with neither is left out. `source_id` restricts it to one receiver.
+    ///
     /// Positions no neighbouring fix of the same aircraft could have reached
     /// (`PLAUSIBLE_MAX_SPEED_KT`) are left out: one decode glitch thousands of
     /// NM away would otherwise set its sector's maximum.
@@ -1890,23 +1966,24 @@ impl StorageHandle {
                 -- Integer sector 0..35. NOTE: DuckDB `/` is floating-point division,
                 -- so the outer FLOOR(... / 10.0) + CAST are required to avoid ~360
                 -- fractional sub-sectors that would collapse/overwrite in Rust.
+                -- Bearing and distance from where this fix's receiver was
+                -- when it heard it (rx_lat/rx_lon, see located_positions_sql).
                 CAST(FLOOR((CAST(FLOOR(DEGREES(ATAN2(
-                  SIN(RADIANS(p.longitude - ?)) * COS(RADIANS(p.latitude)),
-                  COS(RADIANS(?)) * SIN(RADIANS(p.latitude))
-                    - SIN(RADIANS(?)) * COS(RADIANS(p.latitude)) * COS(RADIANS(p.longitude - ?))
+                  SIN(RADIANS(p.longitude - p.rx_lon)) * COS(RADIANS(p.latitude)),
+                  COS(RADIANS(p.rx_lat)) * SIN(RADIANS(p.latitude))
+                    - SIN(RADIANS(p.rx_lat)) * COS(RADIANS(p.latitude))
+                      * COS(RADIANS(p.longitude - p.rx_lon))
                 )) + 365) AS INTEGER) % 360) / 10.0) AS INTEGER) AS sector,
-                2 * 3440.065 * ASIN(SQRT(
-                  POWER(SIN(RADIANS((p.latitude - ?) / 2)), 2) +
-                  COS(RADIANS(?)) * COS(RADIANS(p.latitude)) * POWER(SIN(RADIANS((p.longitude - ?) / 2)), 2)
-                )) AS distance_nm,
+                {DISTANCE} AS distance_nm,
                 p.altitude,
                 f.flight_id
               FROM (
                 -- Each position with its own aircraft's two fixes before and after.
                 SELECT *, {NEIGHBOURS}
-                FROM positions
+                FROM ({LOCATED})
                 WHERE latitude IS NOT NULL AND longitude IS NOT NULL
                   AND timestamp_ms >= ? AND timestamp_ms <= ?
+                  AND (CAST(? AS TEXT) IS NULL OR source_id = ?)
                 WINDOW w AS (PARTITION BY hex_ident ORDER BY timestamp_ms)
               ) p
               LEFT JOIN flights f ON p.hex_ident = f.hex_ident
@@ -1914,10 +1991,13 @@ impl StorageHandle {
               WHERE {PLAUSIBLE}
               ) pts
               -- Beyond reception range: a glitch burst that vouches for itself.
+              -- Also drops fixes with no known receiver location (NULL).
               WHERE pts.distance_nm <= {MAX_RANGE_NM}
             ) sub GROUP BY {GROUPING} ORDER BY sector
         "#,
             NEIGHBOURS = NEIGHBOUR_COLUMNS_SQL,
+            LOCATED = located_positions_sql("CAST(? AS DOUBLE)", "CAST(? AS DOUBLE)"),
+            DISTANCE = haversine_nm_sql("p.rx_lat", "p.rx_lon", "p.latitude", "p.longitude"),
             PLAUSIBLE = plausible_fix_sql("p"),
             MAX_RANGE_NM = MAX_RECEPTION_RANGE_NM,
             IS_SECTOR_ROW = is_sector_row,
@@ -1928,20 +2008,22 @@ impl StorageHandle {
 
         let start_ms = query.start_ms.unwrap_or(0);
         let end_ms = query.end_ms.unwrap_or(i64::MAX);
+        // Half a fallback is no fallback.
+        let (fallback_lat, fallback_lon) = match (query.receiver_lat, query.receiver_lon) {
+            (Some(lat), Some(lon)) => (Some(lat), Some(lon)),
+            _ => (None, None),
+        };
 
         let mut stmt = storage.conn.prepare(&sql)?;
         let rows = stmt
             .query_map(
                 params![
-                    query.receiver_lon, // bearing: longitude - ?
-                    query.receiver_lat, // bearing: COS(RADIANS(?))
-                    query.receiver_lat, // bearing: SIN(RADIANS(?))
-                    query.receiver_lon, // bearing: COS(RADIANS(longitude - ?))
-                    query.receiver_lat, // haversine: (latitude - ?) / 2
-                    query.receiver_lat, // haversine: COS(RADIANS(?))
-                    query.receiver_lon, // haversine: (longitude - ?) / 2
+                    fallback_lat, // located: rx_lat fallback
+                    fallback_lon, // located: rx_lon fallback
                     start_ms,
                     end_ms,
+                    query.source_id, // filter: ? IS NULL
+                    query.source_id, // filter: source_id = ?
                 ],
                 |row| {
                     let sector: i32 = row.get(0)?;
@@ -2121,9 +2203,29 @@ impl StorageHandle {
     /// Batch insert raw SBS messages (synchronous).
     ///
     /// Converts `RawSbsRecord.timestamp` (string) to epoch milliseconds using `tz`.
-    /// The `source_id` is taken from the storage config, not the record.
+    /// The `source_id` is taken from the storage config, not the record (see
+    /// [`Self::insert_raw_batch_for_sync`] to name it).
     pub fn insert_raw_batch_sync(
         &self,
+        records: &[RawSbsRecord],
+        tz: &str,
+    ) -> Result<(), StorageError> {
+        self.insert_raw_batch_impl(None, records, tz)
+    }
+
+    /// As [`Self::insert_raw_batch_sync`], stamping `source_id`.
+    pub fn insert_raw_batch_for_sync(
+        &self,
+        source_id: &str,
+        records: &[RawSbsRecord],
+        tz: &str,
+    ) -> Result<(), StorageError> {
+        self.insert_raw_batch_impl(Some(source_id), records, tz)
+    }
+
+    fn insert_raw_batch_impl(
+        &self,
+        source_id: Option<&str>,
         records: &[RawSbsRecord],
         tz: &str,
     ) -> Result<(), StorageError> {
@@ -2135,6 +2237,7 @@ impl StorageHandle {
             .inner
             .lock()
             .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
+        let source_id = source_id.unwrap_or(&storage.source_id);
 
         let mut appender = storage.conn.appender("raw_messages")?;
 
@@ -2147,7 +2250,7 @@ impl StorageHandle {
                 rec.transmission_type.map(|t| t as i32),
                 timestamp_ms,
                 rec.raw_message,
-                storage.source_id,
+                source_id,
             ])?;
         }
 
@@ -2280,14 +2383,33 @@ impl StorageHandle {
         &self,
         record: &WeatherSnapshotRecord,
     ) -> Result<bool, StorageError> {
+        self.insert_weather_snapshot_impl(None, record)
+    }
+
+    /// As [`Self::insert_weather_snapshot_sync`], stored under `source_id`:
+    /// another receiver's grid, published by a weather service that follows
+    /// several.
+    pub fn insert_weather_snapshot_for_sync(
+        &self,
+        source_id: &str,
+        record: &WeatherSnapshotRecord,
+    ) -> Result<bool, StorageError> {
+        self.insert_weather_snapshot_impl(Some(source_id), record)
+    }
+
+    fn insert_weather_snapshot_impl(
+        &self,
+        source_id: Option<&str>,
+        record: &WeatherSnapshotRecord,
+    ) -> Result<bool, StorageError> {
         let storage = self
             .inner
             .lock()
             .map_err(|e| StorageError::Query(format!("Lock poisoned: {e}")))?;
 
         // A recorder writes its own identity, exactly as `insert_raw_batch_sync`
-        // does. Rows carrying another receiver's id arrive through import.
-        let source_id = storage.source_id.clone();
+        // does, unless told whose grid this is.
+        let source_id = source_id.map_or_else(|| storage.source_id.clone(), str::to_string);
 
         // 17 placeholders: DuckDB parameters are positional only, so the two
         // key values are bound a second time for the NOT EXISTS clause.
@@ -3302,6 +3424,21 @@ impl StorageHandle {
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
 
+    /// Store one receiver's weather snapshot under `source_id` (async via
+    /// spawn_blocking).
+    pub async fn insert_weather_snapshot_for(
+        &self,
+        source_id: String,
+        record: WeatherSnapshotRecord,
+    ) -> Result<bool, StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || {
+            handle.insert_weather_snapshot_for_sync(&source_id, &record)
+        })
+        .await
+        .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
     /// Fetch one stored snapshot with its payload (async via spawn_blocking).
     pub async fn get_weather_snapshot(
         &self,
@@ -3322,6 +3459,21 @@ impl StorageHandle {
         tokio::task::spawn_blocking(move || handle.query_weather_snapshots_sync(&query))
             .await
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
+    /// Batch insert parsed positions for `source_id` (async via spawn_blocking).
+    pub async fn insert_batch_for(
+        &self,
+        source_id: String,
+        positions: Vec<AircraftPosition>,
+        tz: String,
+    ) -> Result<(), StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || {
+            handle.insert_batch_for_sync(&source_id, &positions, &tz)
+        })
+        .await
+        .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
 
     /// Batch insert parsed positions (async via spawn_blocking).
@@ -3508,6 +3660,21 @@ impl StorageHandle {
             .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
     }
 
+    /// Batch insert raw SBS messages for `source_id` (async via spawn_blocking).
+    pub async fn insert_raw_batch_for(
+        &self,
+        source_id: String,
+        records: Vec<RawSbsRecord>,
+        tz: String,
+    ) -> Result<(), StorageError> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || {
+            handle.insert_raw_batch_for_sync(&source_id, &records, &tz)
+        })
+        .await
+        .map_err(|e| StorageError::Query(format!("Task join error: {e}")))?
+    }
+
     /// Batch insert raw SBS messages (async via spawn_blocking).
     pub async fn insert_raw_batch(
         &self,
@@ -3605,6 +3772,8 @@ impl StorageHandle {
              CREATE TABLE export_db.raw_messages AS SELECT * FROM raw_messages;
              CREATE TABLE export_db.weather_snapshots AS SELECT * FROM weather_snapshots;
              CREATE TABLE export_db.rejected_positions AS SELECT * FROM rejected_positions;
+             CREATE TABLE export_db.receivers AS SELECT * FROM receivers;
+             CREATE TABLE export_db.receiver_locations AS SELECT * FROM receiver_locations;
              DETACH export_db;",
             path_str
         ))?;
@@ -3730,9 +3899,15 @@ impl StorageHandle {
                     0
                 };
 
+            let receiver_periods_imported = Self::import_receivers(conn)?;
+
             info!(
-                "Database imported: {} positions, {} raw messages, {} weather snapshots",
-                positions_imported, raw_messages_imported, weather_snapshots_imported
+                "Database imported: {} positions, {} raw messages, {} weather snapshots, \
+                 {} receiver location periods",
+                positions_imported,
+                raw_messages_imported,
+                weather_snapshots_imported,
+                receiver_periods_imported
             );
 
             Ok(ImportResult {
@@ -4506,7 +4681,12 @@ mod tests {
 
         assert_eq!(
             skipped,
-            vec!["weather_snapshots", "rejected_positions"],
+            vec![
+                "weather_snapshots",
+                "rejected_positions",
+                "receivers",
+                "receiver_locations"
+            ],
             "only the tables the daemon lacks should be skipped"
         );
         assert_eq!(
@@ -5424,8 +5604,9 @@ mod tests {
         let handle = StorageHandle::open(test_config()).unwrap();
         let sectors = handle
             .get_detection_range_sync(crate::types::DetectionRangeQuery {
-                receiver_lat: 45.5,
-                receiver_lon: -73.5,
+                receiver_lat: Some(45.5),
+                receiver_lon: Some(-73.5),
+                source_id: None,
                 start_ms: Some(0),
                 end_ms: Some(i64::MAX),
                 band_width_nm: None,
@@ -5451,8 +5632,9 @@ mod tests {
 
         let sectors = handle
             .get_detection_range_sync(crate::types::DetectionRangeQuery {
-                receiver_lat: 45.5,
-                receiver_lon: -73.5,
+                receiver_lat: Some(45.5),
+                receiver_lon: Some(-73.5),
+                source_id: None,
                 start_ms: None,
                 end_ms: None,
                 band_width_nm: None,
@@ -5484,8 +5666,9 @@ mod tests {
 
         let sectors = handle
             .get_detection_range_sync(crate::types::DetectionRangeQuery {
-                receiver_lat: rx_lat,
-                receiver_lon: rx_lon,
+                receiver_lat: Some(rx_lat),
+                receiver_lon: Some(rx_lon),
+                source_id: None,
                 start_ms: None,
                 end_ms: None,
                 band_width_nm: None,
@@ -5526,8 +5709,9 @@ mod tests {
 
         let sectors = handle
             .get_detection_range_sync(crate::types::DetectionRangeQuery {
-                receiver_lat: rx_lat,
-                receiver_lon: rx_lon,
+                receiver_lat: Some(rx_lat),
+                receiver_lon: Some(rx_lon),
+                source_id: None,
                 start_ms: None,
                 end_ms: None,
                 band_width_nm: None,
@@ -5583,8 +5767,9 @@ mod tests {
 
         let sectors = handle
             .get_detection_range_sync(crate::types::DetectionRangeQuery {
-                receiver_lat: rx_lat,
-                receiver_lon: rx_lon,
+                receiver_lat: Some(rx_lat),
+                receiver_lon: Some(rx_lon),
+                source_id: None,
                 start_ms: None,
                 end_ms: None,
                 band_width_nm: None,
@@ -5625,8 +5810,9 @@ mod tests {
 
         let sectors = handle
             .get_detection_range_sync(crate::types::DetectionRangeQuery {
-                receiver_lat: 45.0,
-                receiver_lon: -73.0,
+                receiver_lat: Some(45.0),
+                receiver_lon: Some(-73.0),
+                source_id: None,
                 start_ms: Some(mid),
                 end_ms: Some(end),
                 band_width_nm: None,
@@ -5643,8 +5829,9 @@ mod tests {
         handle.insert_batch_sync(positions, "UTC").unwrap();
         handle
             .get_detection_range_sync(crate::types::DetectionRangeQuery {
-                receiver_lat: 45.0,
-                receiver_lon: -73.0,
+                receiver_lat: Some(45.0),
+                receiver_lon: Some(-73.0),
+                source_id: None,
                 start_ms: None,
                 end_ms: None,
                 band_width_nm: None,
@@ -6011,6 +6198,194 @@ mod tests {
         );
     }
 
+    /// 2024-01-15T10:30:00Z, between the 10:00 and 11:00 sample fixes.
+    const MOVED_AT_MS: i64 = 1_705_314_600_000;
+    /// Where the glitch pair of [`track_with_glitches`] sits: over 2000 NM
+    /// from (45, -73).
+    const FAR_SITE: (f64, f64) = (83.72, 58.22);
+
+    /// The "test" receiver at (45, -73) from `from_ms`, then at
+    /// [`FAR_SITE`] from [`MOVED_AT_MS`].
+    fn receiver_that_moved(handle: &StorageHandle, from_ms: i64) {
+        use crate::receiver_history::{ChangeStamp, LocationChange, LocationOrigin};
+        let stamp = ChangeStamp {
+            origin: LocationOrigin::Cli,
+            recorded_at_ms: 0,
+            note: None,
+        };
+        for (lat, lon, at_ms) in [
+            (45.0, -73.0, from_ms),
+            (FAR_SITE.0, FAR_SITE.1, MOVED_AT_MS),
+        ] {
+            handle
+                .apply_receiver_change_sync(
+                    "test",
+                    &LocationChange::Observe {
+                        position: crate::receiver_history::ReceiverPosition::new(lat, lon, None),
+                        at_ms,
+                    },
+                    &stamp,
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn test_quarantine_judges_each_fix_from_the_location_in_force() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_sync(
+                &[
+                    // Near the first site, heard while the receiver was there.
+                    sample_position("A1", Some(45.5), Some(-73.0), "2024/01/15 10:00:00.000"),
+                    // Same place, heard after the move: 2000+ NM from the new site.
+                    sample_position("B1", Some(45.5), Some(-73.0), "2024/01/15 11:00:00.000"),
+                    // Next to the new site, after the move.
+                    sample_position("C1", Some(83.7), Some(58.2), "2024/01/15 11:00:00.000"),
+                ],
+                "UTC",
+            )
+            .unwrap();
+        receiver_that_moved(&handle, 0);
+
+        // No configured receiver: the history alone decides.
+        let moved = handle.quarantine_positions_sync(None, 0, i64::MAX).unwrap();
+        assert_eq!(moved, 1);
+        assert_eq!(
+            count_sql(
+                &handle,
+                "SELECT COUNT(*) FROM rejected_positions WHERE hex_ident = 'B1' \
+                 AND reason = 'out_of_range' AND distance_nm > 2000"
+            ),
+            1
+        );
+        assert_eq!(
+            count_sql(
+                &handle,
+                "SELECT COUNT(*) FROM positions WHERE hex_ident IN ('A1', 'C1')"
+            ),
+            2
+        );
+    }
+
+    #[test]
+    fn test_quarantine_falls_back_to_the_configured_receiver_outside_the_history() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_sync(
+                // Before the history starts, and far from the configured
+                // receiver at (45, -73).
+                &[sample_position(
+                    "D1",
+                    Some(83.7),
+                    Some(58.2),
+                    "2024/01/15 09:00:00.000",
+                )],
+                "UTC",
+            )
+            .unwrap();
+        // The history begins at 10:00, so 09:00 is not covered.
+        receiver_that_moved(&handle, 1_705_312_800_000);
+
+        let moved = handle
+            .quarantine_positions_sync(Some((45.0, -73.0)), 0, i64::MAX)
+            .unwrap();
+        assert_eq!(moved, 1, "judged against the configured receiver");
+    }
+
+    fn detection_range(
+        handle: &StorageHandle,
+        source_id: Option<&str>,
+        fallback: Option<(f64, f64)>,
+    ) -> Vec<DetectionRangeSector> {
+        handle
+            .get_detection_range_sync(crate::types::DetectionRangeQuery {
+                source_id: source_id.map(str::to_string),
+                receiver_lat: fallback.map(|f| f.0),
+                receiver_lon: fallback.map(|f| f.1),
+                start_ms: None,
+                end_ms: None,
+                band_width_nm: None,
+            })
+            .unwrap()
+    }
+
+    fn counted(sectors: &[DetectionRangeSector]) -> u64 {
+        sectors.iter().map(|s| s.position_count).sum()
+    }
+
+    #[test]
+    fn test_detection_range_measures_each_fix_from_the_location_in_force() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_sync(
+                &[
+                    // ~30 NM north of the first site, before the move.
+                    sample_position("A1", Some(45.5), Some(-73.0), "2024/01/15 10:00:00.000"),
+                    // ~18 NM north of the far site, after it.
+                    sample_position("B1", Some(84.02), Some(58.22), "2024/01/15 11:00:00.000"),
+                ],
+                "UTC",
+            )
+            .unwrap();
+        receiver_that_moved(&handle, 0);
+
+        // A fallback at the first site would put B1 2000+ NM out and drop it.
+        let sectors = detection_range(&handle, Some("test"), Some((45.0, -73.0)));
+        assert_eq!(counted(&sectors), 2);
+        assert!(farthest_nm(&sectors) < 31.0, "{} NM", farthest_nm(&sectors));
+        assert_eq!(sectors[0].position_count, 2, "both due north of their site");
+    }
+
+    #[test]
+    fn test_detection_range_counts_only_the_requested_receiver() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_sync(
+                &[
+                    sample_position("A1", Some(45.5), Some(-73.0), "2024/01/15 10:00:00.000"),
+                    sample_position("X1", Some(45.6), Some(-73.0), "2024/01/15 10:00:00.000"),
+                ],
+                "UTC",
+            )
+            .unwrap();
+        {
+            let s = handle.inner.lock().unwrap();
+            s.conn
+                .execute_batch("UPDATE positions SET source_id = 'other' WHERE hex_ident = 'X1'")
+                .unwrap();
+        }
+        let fallback = Some((45.0, -73.0));
+        assert_eq!(
+            counted(&detection_range(&handle, Some("test"), fallback)),
+            1
+        );
+        assert_eq!(
+            counted(&detection_range(&handle, Some("other"), fallback)),
+            1
+        );
+        assert_eq!(counted(&detection_range(&handle, None, fallback)), 2);
+    }
+
+    #[test]
+    fn test_detection_range_leaves_out_fixes_with_no_known_location() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_sync(
+                &[sample_position(
+                    "A1",
+                    Some(45.5),
+                    Some(-73.0),
+                    "2024/01/15 10:00:00.000",
+                )],
+                "UTC",
+            )
+            .unwrap();
+        let sectors = detection_range(&handle, None, None);
+        assert_eq!(sectors.len(), 36, "still a full radar");
+        assert_eq!(counted(&sectors), 0);
+    }
+
     #[test]
     fn test_get_rejected_positions_newest_first_with_total() {
         let handle = StorageHandle::open(test_config()).unwrap();
@@ -6088,8 +6463,9 @@ mod tests {
         let handle = StorageHandle::open(test_config()).unwrap();
         handle.insert_batch_sync(positions, "UTC").unwrap();
         handle.get_detection_range_sync(crate::types::DetectionRangeQuery {
-            receiver_lat: 45.0,
-            receiver_lon: -73.0,
+            receiver_lat: Some(45.0),
+            receiver_lon: Some(-73.0),
+            source_id: None,
             start_ms: None,
             end_ms: None,
             band_width_nm,
@@ -6175,8 +6551,9 @@ mod tests {
 
         let sectors = handle
             .get_detection_range_sync(crate::types::DetectionRangeQuery {
-                receiver_lat: 45.0,
-                receiver_lon: -73.0,
+                receiver_lat: Some(45.0),
+                receiver_lon: Some(-73.0),
+                source_id: None,
                 start_ms: None,
                 end_ms: None,
                 band_width_nm: None,
@@ -6213,8 +6590,9 @@ mod tests {
 
         let sectors = handle
             .get_detection_range_sync(crate::types::DetectionRangeQuery {
-                receiver_lat: 45.0,
-                receiver_lon: -73.0,
+                receiver_lat: Some(45.0),
+                receiver_lon: Some(-73.0),
+                source_id: None,
                 start_ms: None,
                 end_ms: None,
                 band_width_nm: None,
@@ -6251,8 +6629,9 @@ mod tests {
 
         let sectors = handle
             .get_detection_range_sync(crate::types::DetectionRangeQuery {
-                receiver_lat: 45.0,
-                receiver_lon: -73.0,
+                receiver_lat: Some(45.0),
+                receiver_lon: Some(-73.0),
+                source_id: None,
                 start_ms: None,
                 end_ms: None,
                 band_width_nm: None,
@@ -6280,8 +6659,9 @@ mod tests {
 
         let sectors = handle
             .get_detection_range_sync(crate::types::DetectionRangeQuery {
-                receiver_lat: 45.0,
-                receiver_lon: -73.0,
+                receiver_lat: Some(45.0),
+                receiver_lon: Some(-73.0),
+                source_id: None,
                 start_ms: None,
                 end_ms: None,
                 band_width_nm: None,
@@ -6299,8 +6679,9 @@ mod tests {
         let handle = StorageHandle::open(test_config()).unwrap();
         let sectors = handle
             .get_detection_range_sync(crate::types::DetectionRangeQuery {
-                receiver_lat: 45.0,
-                receiver_lon: -73.0,
+                receiver_lat: Some(45.0),
+                receiver_lon: Some(-73.0),
+                source_id: None,
                 start_ms: None,
                 end_ms: None,
                 band_width_nm: None,
@@ -6348,8 +6729,9 @@ mod tests {
 
         let sectors = handle
             .get_detection_range_sync(crate::types::DetectionRangeQuery {
-                receiver_lat: rx_lat,
-                receiver_lon: rx_lon,
+                receiver_lat: Some(rx_lat),
+                receiver_lon: Some(rx_lon),
+                source_id: None,
                 start_ms: None,
                 end_ms: None,
                 band_width_nm: None,
@@ -6415,8 +6797,9 @@ mod tests {
 
         let sectors = handle
             .get_detection_range(crate::types::DetectionRangeQuery {
-                receiver_lat: 45.0,
-                receiver_lon: -73.0,
+                receiver_lat: Some(45.0),
+                receiver_lon: Some(-73.0),
+                source_id: None,
                 start_ms: None,
                 end_ms: None,
                 band_width_nm: None,
@@ -6578,6 +6961,61 @@ mod tests {
             raw_message: format!("MSG,{},{}", trans.unwrap_or(0), hex),
             source_id: String::new(),
         }
+    }
+
+    #[test]
+    fn a_batch_can_be_stamped_with_another_receiver_s_id() {
+        // A central recorder writes several receivers' data through one handle.
+        let handle = StorageHandle::open(test_config()).unwrap();
+        handle
+            .insert_batch_for_sync(
+                "pi-garden",
+                &[sample_position(
+                    "A1",
+                    Some(45.5),
+                    Some(-73.0),
+                    "2024/01/15 10:00:00.000",
+                )],
+                "UTC",
+            )
+            .unwrap();
+        handle
+            .insert_raw_batch_for_sync(
+                "pi-garden",
+                &[sample_raw_record(
+                    "A1",
+                    "MSG",
+                    Some(3),
+                    "2024/01/15 10:00:00.000",
+                )],
+                "UTC",
+            )
+            .unwrap();
+        handle
+            .insert_batch_sync(
+                &[sample_position(
+                    "B1",
+                    Some(45.5),
+                    Some(-73.0),
+                    "2024/01/15 10:00:00.000",
+                )],
+                "UTC",
+            )
+            .unwrap();
+        let ids = |sql| count_sql(&handle, sql);
+        assert_eq!(
+            ids("SELECT COUNT(*) FROM positions WHERE source_id = 'pi-garden'"),
+            1
+        );
+        assert_eq!(
+            ids("SELECT COUNT(*) FROM raw_messages WHERE source_id = 'pi-garden'"),
+            1
+        );
+        assert_eq!(
+            ids("SELECT COUNT(*) FROM positions WHERE source_id = 'test'"),
+            1,
+            "the plain insert still stamps the handle's own id"
+        );
     }
 
     #[test]
@@ -7817,8 +8255,9 @@ mod tests {
 
         let sectors = handle
             .get_detection_range_sync(crate::types::DetectionRangeQuery {
-                receiver_lat: 45.0,
-                receiver_lon: -73.0,
+                receiver_lat: Some(45.0),
+                receiver_lon: Some(-73.0),
+                source_id: None,
                 start_ms: None,
                 end_ms: None,
                 band_width_nm: None,
@@ -9059,6 +9498,64 @@ mod tests {
             parse_timestamp_to_ms("2024/01/15 10:00:00.000", "UTC"),
             1_705_312_800_000
         );
+    }
+
+    #[test]
+    fn a_remote_client_edits_the_daemon_s_receiver_history_over_quack() {
+        // The path the `receiver` CLI takes while the recorder holds the file
+        // lock, and the desktop editor in remote mode: the local names are
+        // read-only views, so writes must name the attached catalog.
+        use crate::receiver_history::{
+            ChangeStamp, LocationChange, LocationOrigin, ReceiverPosition,
+        };
+        use crate::types::RemoteConfig;
+
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let daemon = StorageHandle::open(share_config_on(port)).unwrap();
+        let Ok(info) = daemon.start_sharing_sync() else {
+            assert!(!quack_available(), "sharing failed with quack available");
+            return;
+        };
+        let client = StorageHandle::open(StorageConfig {
+            remote: Some(RemoteConfig {
+                uri: format!("quack:localhost:{port}"),
+                token: Some(info.token),
+                disable_ssl: None,
+            }),
+            ..test_config()
+        })
+        .expect("attach to the daemon");
+
+        let stamp = ChangeStamp {
+            origin: LocationOrigin::Desktop,
+            recorded_at_ms: 9_000,
+            note: None,
+        };
+        for (lat, at_ms) in [(46.7, 1_000), (47.2, 5_000)] {
+            client
+                .apply_receiver_change_sync(
+                    "pi-a",
+                    &LocationChange::Observe {
+                        position: ReceiverPosition::new(lat, -2.3, None),
+                        at_ms,
+                    },
+                    &stamp,
+                )
+                .expect("remote write");
+        }
+
+        let seen_by_daemon = daemon.receiver_locations_sync("pi-a").unwrap();
+        assert_eq!(seen_by_daemon.len(), 2);
+        assert_eq!(seen_by_daemon[0].valid_to_ms, Some(5_000));
+        assert_eq!(
+            client.receiver_locations_sync("pi-a").unwrap(),
+            seen_by_daemon
+        );
+        assert_eq!(daemon.list_receivers_sync().unwrap()[0].source_id, "pi-a");
     }
 
     #[test]

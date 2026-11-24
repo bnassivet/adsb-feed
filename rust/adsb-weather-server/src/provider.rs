@@ -22,36 +22,48 @@ fn nearest_hour(now_ms: i64) -> i64 {
     (now_ms + HOUR_MS / 2).div_euclid(HOUR_MS)
 }
 
-/// Chunks that a fetch which failed part-way had already paid for.
+/// Grid points already paid for in this refresh cycle, with their responses.
 ///
-/// Keyed by request URL, which encodes the coordinates, the variables and the
-/// model, and valid for one model hour: a retry in a later hour wants newer
-/// data, so it fetches everything again.
+/// Keyed by the point itself, so two receivers' grids -- snapped to the same
+/// lattice -- share what they overlap, and a retry after a fetch that failed
+/// part-way buys only what is missing. Valid for one model hour and one set of
+/// levels; cleared when a cycle completes ([`WeatherProvider::end_cycle`]),
+/// because the next refresh wants fresh data even within the same hour.
 #[derive(Debug, Default)]
-struct PartialFetch {
+struct PointCache {
     hour: i64,
-    chunks: HashMap<String, Vec<LocationResponse>>,
+    levels: Vec<u16>,
+    points: HashMap<PointKey, LocationResponse>,
 }
 
-impl PartialFetch {
-    fn get(&self, hour: i64, url: &str) -> Option<Vec<LocationResponse>> {
-        if self.hour == hour {
-            self.chunks.get(url).cloned()
-        } else {
-            None
+/// A grid point to the micro-degree: grids round their coordinates to six
+/// decimals, so equal points compare equal.
+type PointKey = (i64, i64);
+
+fn point_key((lat, lon): (f64, f64)) -> PointKey {
+    ((lat * 1e6).round() as i64, (lon * 1e6).round() as i64)
+}
+
+impl PointCache {
+    /// Drops everything held for another hour or other levels.
+    fn align(&mut self, hour: i64, levels: &[u16]) {
+        if self.hour != hour || self.levels != levels {
+            self.points.clear();
+            self.hour = hour;
+            self.levels = levels.to_vec();
         }
     }
 
-    fn insert(&mut self, hour: i64, url: &str, locations: Vec<LocationResponse>) {
-        if self.hour != hour {
-            self.chunks.clear();
-            self.hour = hour;
-        }
-        self.chunks.insert(url.to_string(), locations);
+    fn get(&self, point: (f64, f64)) -> Option<&LocationResponse> {
+        self.points.get(&point_key(point))
+    }
+
+    fn insert(&mut self, point: (f64, f64), location: LocationResponse) {
+        self.points.insert(point_key(point), location);
     }
 
     fn clear(&mut self) {
-        self.chunks.clear();
+        self.points.clear();
     }
 }
 
@@ -151,7 +163,13 @@ pub trait WeatherProvider: Send + Sync {
     /// Short identifier for logs.
     fn name(&self) -> &str;
 
+    /// A refresh cycle completed: whatever was held for it is spent, and the
+    /// next cycle fetches afresh. Called once per cycle, after every grid.
+    fn end_cycle(&self) {}
+
     /// Fetches the snapshot for `grid` at the model hour nearest `now_ms`.
+    /// Within one cycle, points already fetched for another grid may be
+    /// reused.
     async fn fetch(
         &self,
         grid: GridSpec,
@@ -170,7 +188,7 @@ pub struct OpenMeteoProvider {
     /// whole life: successive refreshes and retries share the same minutes.
     pacer: Mutex<TokenBucket>,
     started: tokio::time::Instant,
-    partial: Mutex<PartialFetch>,
+    cache: Mutex<PointCache>,
 }
 
 impl OpenMeteoProvider {
@@ -196,13 +214,13 @@ impl OpenMeteoProvider {
             chunk: open_meteo::MAX_LOCATIONS_PER_REQUEST,
             pacer: Mutex::new(TokenBucket::open_meteo_minutely()),
             started: tokio::time::Instant::now(),
-            partial: Mutex::default(),
+            cache: Mutex::default(),
         })
     }
 
     /// Never held across an await.
-    fn partial(&self) -> MutexGuard<'_, PartialFetch> {
-        self.partial.lock().unwrap_or_else(|e| e.into_inner())
+    fn cache(&self) -> MutexGuard<'_, PointCache> {
+        self.cache.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Overrides the number of locations per request.
@@ -278,6 +296,10 @@ impl WeatherProvider for OpenMeteoProvider {
         open_meteo::SOURCE
     }
 
+    fn end_cycle(&self) {
+        self.cache().clear();
+    }
+
     async fn fetch(
         &self,
         grid: GridSpec,
@@ -285,29 +307,53 @@ impl WeatherProvider for OpenMeteoProvider {
         now_ms: i64,
     ) -> Result<WeatherSnapshot, ProviderError> {
         let points = grid.points();
-        let urls = open_meteo::build_urls(&self.base_url, &self.model, levels, &points, self.chunk);
+        let hour = nearest_hour(now_ms);
+        let missing: Vec<(f64, f64)> = {
+            let mut cache = self.cache();
+            cache.align(hour, levels);
+            let mut seen = std::collections::HashSet::new();
+            points
+                .iter()
+                .copied()
+                .filter(|&p| cache.get(p).is_none() && seen.insert(point_key(p)))
+                .collect()
+        };
 
         // Sequential on purpose: the per-minute limit is shared by every
         // location in every request, and a few requests an hour gain nothing
         // from concurrency but a 429. Each chunk is paced by what it costs.
         let calls_per_location = budget::call_weight(budget::variables_per_location(levels.len()));
-        let hour = nearest_hour(now_ms);
-        let mut locations = Vec::with_capacity(points.len());
-        for (chunk, url) in points.chunks(self.chunk).zip(&urls) {
-            // A retry within the same model hour reuses what an attempt that
-            // failed part-way already paid for, instead of buying it again.
-            let held = self.partial().get(hour, url);
-            if let Some(held) = held {
-                locations.extend(held);
-                continue;
-            }
+        for chunk in missing.chunks(self.chunk) {
+            let url =
+                open_meteo::build_urls(&self.base_url, &self.model, levels, chunk, chunk.len())
+                    .remove(0);
             self.pace(chunk.len() as f64 * calls_per_location).await;
-            let fetched = self.get(url).await?;
-            self.partial().insert(hour, url, fetched.clone());
-            locations.extend(fetched);
+            let fetched = self.get(&url).await?;
+            if fetched.len() != chunk.len() {
+                return Err(OpenMeteoError::LocationCount {
+                    got: fetched.len(),
+                    expected: chunk.len(),
+                }
+                .into());
+            }
+            // Kept as soon as paid for: a later chunk failing must not lose it.
+            let mut cache = self.cache();
+            for (&point, location) in chunk.iter().zip(fetched) {
+                cache.insert(point, location);
+            }
         }
-        // Every chunk is in hand: nothing is left to resume.
-        self.partial().clear();
+
+        let locations: Vec<LocationResponse> = {
+            let cache = self.cache();
+            points
+                .iter()
+                .map(|&p| cache.get(p).cloned())
+                .collect::<Option<_>>()
+                .ok_or(OpenMeteoError::LocationCount {
+                    got: 0,
+                    expected: points.len(),
+                })?
+        };
 
         Ok(open_meteo::assemble_snapshot(
             grid,
@@ -366,28 +412,26 @@ mod tests {
     }
 
     #[test]
-    fn a_chunk_is_reused_within_the_same_hour() {
-        let mut partial = PartialFetch::default();
-        partial.insert(12, "a", location(7));
-        let held = partial.get(12, "a").expect("held");
-        assert_eq!(held[0].hourly.time, vec![7]);
-        assert!(partial.get(12, "b").is_none());
+    fn a_point_is_reused_within_the_same_hour_and_levels() {
+        let mut cache = PointCache::default();
+        cache.align(12, &[250]);
+        cache.insert((47.0, -3.0), location(7).remove(0));
+        assert_eq!(cache.get((47.0, -3.0)).unwrap().hourly.time, vec![7]);
+        assert!(cache.get((48.0, -3.0)).is_none());
+        // The same point however it was computed.
+        assert!(cache.get((47.000_000_000_1, -3.0)).is_some());
     }
 
     #[test]
-    fn a_chunk_from_another_hour_is_not_reused() {
-        let mut partial = PartialFetch::default();
-        partial.insert(12, "a", location(7));
-        assert!(partial.get(13, "a").is_none());
-    }
-
-    #[test]
-    fn a_new_hour_discards_the_old_chunks() {
-        let mut partial = PartialFetch::default();
-        partial.insert(12, "a", location(7));
-        partial.insert(13, "b", location(8));
-        assert!(partial.get(13, "a").is_none());
-        assert!(partial.get(13, "b").is_some());
+    fn another_hour_or_other_levels_start_afresh() {
+        let mut cache = PointCache::default();
+        cache.align(12, &[250]);
+        cache.insert((47.0, -3.0), location(7).remove(0));
+        cache.align(12, &[250, 500]);
+        assert!(cache.get((47.0, -3.0)).is_none(), "other levels");
+        cache.insert((47.0, -3.0), location(7).remove(0));
+        cache.align(13, &[250, 500]);
+        assert!(cache.get((47.0, -3.0)).is_none(), "another hour");
     }
 
     #[test]

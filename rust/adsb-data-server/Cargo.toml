@@ -27,6 +27,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+chrono = { workspace = true }
 
 # CLI + layered config (optional, for the binary)
 clap = { version = "4.5", features = ["derive", "env"], optional = true }

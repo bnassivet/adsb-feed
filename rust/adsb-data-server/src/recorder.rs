@@ -1,10 +1,11 @@
 //! Wires a live SBS-1 source to the shared ingest pipeline.
 
 use adsb_data_engine::{
-    IngestConfig, IngestPipeline, NoopSink, QuarantineCursor, SharedStorage, StorageConfig,
-    StorageHandle,
+    IngestConfig, IngestPipeline, LocationOrigin, NoopSink, QuarantineCursor, ReceiverPosition,
+    SharedStorage, StorageConfig, StorageHandle,
 };
 use adsb_pulsar_client::source::MessageSource;
+use adsb_pulsar_client::source::mqtt_source::{Announcement, KeyedPayloads, SourcedLine};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -26,6 +27,8 @@ pub struct RecorderConfig {
     /// Receiver antenna (lat, lon). Each maintenance tick quarantines fixes
     /// beyond reception range of it; without one, only the speed test runs.
     pub receiver: Option<(f64, f64)>,
+    /// Receiver antenna altitude in feet, stored with its location.
+    pub receiver_altitude_ft: Option<f64>,
 }
 
 impl Default for RecorderConfig {
@@ -36,6 +39,7 @@ impl Default for RecorderConfig {
             checkpoint_interval: Some(Duration::from_secs(300)),
             retention: None,
             receiver: None,
+            receiver_altitude_ft: None,
         }
     }
 }
@@ -63,6 +67,13 @@ impl Recorder {
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "<in-memory>".to_string())
         );
+        if let Some((latitude, longitude)) = config.receiver {
+            record_receiver_location(
+                &handle,
+                &config.storage.source_id,
+                ReceiverPosition::new(latitude, longitude, config.receiver_altitude_ft),
+            );
+        }
         Ok(Self {
             storage: Arc::new(RwLock::new(Some(handle))),
             config,
@@ -103,15 +114,63 @@ impl Recorder {
             self.storage(),
             IngestConfig {
                 source_id: self.config.storage.source_id.clone(),
+                attribute_source_id: false,
                 dump1090_tz: self.config.dump1090_tz.clone(),
                 flush_interval: Duration::from_millis(500),
             },
         );
 
-        let name = source.name().to_string();
-        info!("Recording from '{}' source", name);
-
         let ingest = tokio::spawn(async move { pipeline.run(rx, NoopSink).await });
+        self.drive(source, vec![ingest], weather).await
+    }
+
+    /// Records several receivers through one source: each line is stored
+    /// under the receiver whose topic it came on (see [`crate::receivers`]),
+    /// and feeds' location announcements, when given, go into their
+    /// receivers' location history.
+    ///
+    /// The plain [`run`](Self::run) path is untouched: a source that cannot
+    /// attribute lines still records everything under this recorder's id.
+    pub async fn run_attributed(
+        &self,
+        source: impl MessageSource + 'static,
+        lines: tokio::sync::broadcast::Receiver<SourcedLine>,
+        announcements: Option<tokio::sync::broadcast::Receiver<Announcement>>,
+        weather: Option<tokio::sync::watch::Receiver<Option<Vec<u8>>>>,
+        weather_grids: Option<tokio::sync::watch::Receiver<KeyedPayloads>>,
+    ) -> anyhow::Result<()> {
+        let mut tasks = vec![tokio::spawn(crate::receivers::demux(
+            self.storage(),
+            self.config.storage.source_id.clone(),
+            self.config.dump1090_tz.clone(),
+            lines,
+        ))];
+        if let Some(rx) = announcements {
+            tasks.push(tokio::spawn(crate::receivers::record_announcements(
+                self.storage(),
+                rx,
+            )));
+        }
+        // Every receiver's grid, from a weather service following several.
+        if let Some(rx) = weather_grids {
+            tasks.push(tokio::spawn(crate::weather::persist_weather_grids(
+                self.storage(),
+                rx,
+            )));
+        }
+        self.drive(source, tasks, weather).await
+    }
+
+    /// Runs `source` to its end alongside `tasks`, maintenance and the
+    /// weather recorder, then stops them all.
+    async fn drive(
+        &self,
+        mut source: impl MessageSource + 'static,
+        tasks: Vec<tokio::task::JoinHandle<()>>,
+        weather: Option<tokio::sync::watch::Receiver<Option<Vec<u8>>>>,
+    ) -> anyhow::Result<()> {
+        info!("Recording from '{}' source", source.name());
+
         let maintenance = self.spawn_maintenance();
         // Rides the source's own MQTT connection, so this task only drains a
         // channel: it opens nothing and cannot take the feed down.
@@ -119,7 +178,9 @@ impl Recorder {
             weather.map(|rx| tokio::spawn(crate::weather::persist_weather(self.storage(), rx)));
 
         let result = source.run().await;
-        ingest.abort();
+        for task in tasks {
+            task.abort();
+        }
         maintenance.abort();
         if let Some(task) = weather_task {
             task.abort();
@@ -169,6 +230,35 @@ impl Recorder {
                 }
             }
         })
+    }
+}
+
+/// Adds the configured location to this receiver's history (see
+/// `StorageHandle::bootstrap_receiver_location_sync`).
+///
+/// Never fatal: a recorder with a mistyped location must still record. The
+/// quarantine sweep keeps using the configured position as its fallback.
+fn record_receiver_location(handle: &StorageHandle, source_id: &str, position: ReceiverPosition) {
+    match handle.bootstrap_receiver_location_sync(source_id, position, chrono_now_ms()) {
+        Ok(Some(history)) => {
+            if let Some(first) = history
+                .first()
+                .filter(|p| p.origin == LocationOrigin::Backfill)
+            {
+                info!(
+                    "Receiver '{source_id}' location recorded, back-filled to its oldest fix \
+                     ({} ms); correct it with `receiver move` if it was elsewhere then",
+                    first.valid_from_ms
+                );
+            } else {
+                info!(
+                    "Receiver '{source_id}' location recorded ({} period(s))",
+                    history.len()
+                );
+            }
+        }
+        Ok(None) => {}
+        Err(e) => warn!("Receiver location not recorded: {e}"),
     }
 }
 
@@ -250,6 +340,7 @@ mod tests {
             checkpoint_interval: None,
             retention: None,
             receiver: None,
+            receiver_altitude_ft: None,
         }
     }
 
@@ -307,6 +398,99 @@ mod tests {
             .unwrap();
         assert_eq!(page.total, 2, "the glitch pair, once each");
         assert!(page.rows.iter().all(|p| p.reason == "out_of_range"));
+    }
+
+    #[tokio::test]
+    async fn an_attributed_run_records_each_receiver_and_its_announcement() {
+        use adsb_pulsar_client::receiver_location::ReceiverLocationMessage;
+        use adsb_pulsar_client::source::mqtt_source::{Announcement, SourcedLine};
+
+        let r = Recorder::open(in_memory()).expect("open");
+        let (lines_tx, lines_rx) = broadcast::channel(16);
+        let (ann_tx, ann_rx) = broadcast::channel(16);
+        lines_tx
+            .send(SourcedLine {
+                receiver: Some("pi-garden".into()),
+                line: MSG3.as_bytes().to_vec(),
+            })
+            .unwrap();
+        ann_tx
+            .send(Announcement {
+                receiver: "pi-garden".into(),
+                payload: ReceiverLocationMessage {
+                    latitude: 46.7,
+                    longitude: -2.3,
+                    altitude_ft: None,
+                    since_ms: 1_000,
+                }
+                .to_json(),
+            })
+            .unwrap();
+
+        // The scripted source idles ~700 ms, past the 500 ms flush.
+        r.run_attributed(
+            ScriptedSource::new(vec![]),
+            lines_rx,
+            Some(ann_rx),
+            None,
+            None,
+        )
+        .await
+        .expect("run");
+
+        let storage = r.storage();
+        let guard = storage.read().await;
+        let s = guard.as_ref().unwrap();
+        let rx = s.list_receivers_sync().unwrap();
+        assert_eq!(rx.len(), 1);
+        assert_eq!(rx[0].source_id, "pi-garden");
+        assert_eq!(rx[0].current.as_ref().unwrap().position.latitude, 46.7);
+        let raw = s
+            .query_raw_messages_sync(RawMessageQuery {
+                hex_ident: "A1B2C3".to_string(),
+                start_ms: 0,
+                end_ms: i64::MAX,
+            })
+            .unwrap();
+        assert_eq!(raw[0].source_id, "pi-garden");
+        drop((lines_tx, ann_tx));
+    }
+
+    #[tokio::test]
+    async fn opening_records_the_configured_receiver_location() {
+        let r = Recorder::open(RecorderConfig {
+            receiver: Some((46.7, -2.3)),
+            receiver_altitude_ft: Some(20.0),
+            ..in_memory()
+        })
+        .expect("open");
+        let storage = r.storage();
+        let guard = storage.read().await;
+        let receivers = guard.as_ref().unwrap().list_receivers_sync().unwrap();
+        assert_eq!(receivers.len(), 1);
+        assert_eq!(receivers[0].source_id, in_memory().storage.source_id);
+        let current = receivers[0].current.as_ref().expect("an open period");
+        assert_eq!(current.position.latitude, 46.7);
+        assert_eq!(current.position.altitude_ft, Some(20.0));
+    }
+
+    #[tokio::test]
+    async fn an_unusable_receiver_location_does_not_stop_the_recorder() {
+        let r = Recorder::open(RecorderConfig {
+            receiver: Some((123.0, -2.3)),
+            ..in_memory()
+        })
+        .expect("a bad location is logged, not fatal");
+        let storage = r.storage();
+        let guard = storage.read().await;
+        assert!(
+            guard
+                .as_ref()
+                .unwrap()
+                .list_receivers_sync()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]

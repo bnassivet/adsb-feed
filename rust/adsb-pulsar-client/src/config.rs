@@ -564,6 +564,24 @@ pub struct Config {
     #[serde(default)]
     pub mqtt_client_id: String,
 
+    /// Publish to `<mqtt_topic>/<source_id>` instead of `mqtt_topic`.
+    ///
+    /// The receiver's identity then travels in the topic, which is what lets
+    /// one recorder ingest several receivers and attribute every line. Off by
+    /// default because a recorder older than this subscribes to `mqtt_topic`
+    /// exactly and would see nothing; subscribers listen on both, so turning
+    /// it on is safe once they are updated. See [`Config::publish_topic`].
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "mqtt-per-receiver-topic",
+            env = "ADSB_MQTT_PER_RECEIVER_TOPIC",
+            help = "Publish to <mqtt_topic>/<source_id> so a recorder can tell receivers apart"
+        )
+    )]
+    #[serde(default)]
+    pub mqtt_per_receiver_topic: bool,
+
     /// MQTT quality of service: 0, 1 or 2.
     ///
     /// Defaults to 0. This is a LAN hop feeding a recorder and a UI, and the
@@ -595,6 +613,14 @@ pub struct Config {
     #[cfg_attr(feature = "cli", arg(skip))]
     #[serde(default)]
     pub receiver_altitude: Option<f64>,
+}
+
+/// The receiver a publish on `topic` came from, when `topic` is exactly one
+/// level below `base` (`<base>/<source_id>`). `None` for `base` itself and for
+/// anything else. Allocation-free: this runs for every SBS line.
+pub fn receiver_from_topic<'a>(topic: &'a str, base: &str) -> Option<&'a str> {
+    let id = topic.strip_prefix(base)?.strip_prefix('/')?;
+    (!id.is_empty() && !id.contains('/')).then_some(id)
 }
 
 // Default value functions for serde
@@ -723,6 +749,7 @@ impl Default for Config {
             mqtt_weather_topic: String::new(),
             weather_api_url: String::new(),
             mqtt_client_id: String::new(),
+            mqtt_per_receiver_topic: false,
             mqtt_qos: 0,
             heartbeat_timeout_secs: default_heartbeat_timeout_secs(),
             heartbeat_pattern: default_heartbeat_pattern(),
@@ -790,6 +817,18 @@ impl Config {
 
             if self.mqtt_qos > 2 {
                 return Err(ClientError::Config("mqtt_qos must be 0, 1 or 2".into()));
+            }
+
+            // The id becomes one topic level: a '/' would push it out of the
+            // subscribers' `<topic>/+` filter, and wildcards cannot be published.
+            if self.mqtt_per_receiver_topic
+                && (self.source_id.is_empty() || self.source_id.contains(['/', '+', '#']))
+            {
+                return Err(ClientError::Config(format!(
+                    "source_id '{}' cannot name an MQTT topic level: \
+                     no '/', '+' or '#' with mqtt_per_receiver_topic",
+                    self.source_id
+                )));
             }
         }
 
@@ -884,6 +923,11 @@ impl Config {
         overlay!("mqtt_weather_topic", mqtt_weather_topic, as_string);
         overlay!("weather_api_url", weather_api_url, as_string);
         overlay!("mqtt_client_id", mqtt_client_id, as_string);
+        overlay!(
+            "mqtt_per_receiver_topic",
+            mqtt_per_receiver_topic,
+            |v: &toml::Value| v.as_bool()
+        );
         overlay!("mqtt_qos", mqtt_qos, |v: &toml::Value| v
             .as_integer()
             .map(|i| i as u8));
@@ -990,6 +1034,58 @@ impl Config {
         match self.mqtt_topic.strip_suffix("/sbs/raw") {
             Some(prefix) => format!("{prefix}/weather/grid"),
             None => format!("{}/weather", self.mqtt_topic),
+        }
+    }
+
+    /// The topic this feed publishes SBS-1 lines to: `<mqtt_topic>/<source_id>`
+    /// with [`mqtt_per_receiver_topic`](Self::mqtt_per_receiver_topic), else
+    /// `mqtt_topic` itself.
+    pub fn publish_topic(&self) -> String {
+        if self.mqtt_per_receiver_topic {
+            format!("{}/{}", self.mqtt_topic, self.source_id)
+        } else {
+            self.mqtt_topic.clone()
+        }
+    }
+
+    /// The topic filters a subscriber listens on for SBS-1 lines: the base
+    /// topic (feeds that do not name themselves) and one level below it
+    /// (feeds that do). See [`receiver_from_topic`].
+    pub fn sbs_subscriptions(&self) -> [String; 2] {
+        [self.mqtt_topic.clone(), format!("{}/+", self.mqtt_topic)]
+    }
+
+    /// Where a feed announces its own location, retained:
+    /// `adsb/<stage>/receiver/<source_id>` for the usual `adsb/<stage>/sbs/raw`,
+    /// else `<mqtt_topic>/receiver/<source_id>` -- two levels below the base,
+    /// so the `<mqtt_topic>/+` SBS filter never matches it.
+    pub fn receiver_announce_topic(&self) -> String {
+        format!("{}/{}", self.receiver_announce_prefix(), self.source_id)
+    }
+
+    /// Where a feed says whether it is up: `online` (retained, on connect) or
+    /// `offline` (its last will). One level below its announcement, so the
+    /// announcement filter `.../receiver/+` never matches it.
+    pub fn receiver_availability_topic(&self) -> String {
+        format!("{}/availability", self.receiver_announce_topic())
+    }
+
+    /// The filter matching every feed's [`receiver_availability_topic`](Self::receiver_availability_topic).
+    pub fn receiver_availability_filter(&self) -> String {
+        format!("{}/+/availability", self.receiver_announce_prefix())
+    }
+
+    /// The filter matching every feed's [`receiver_announce_topic`](Self::receiver_announce_topic).
+    pub fn receiver_announce_filter(&self) -> String {
+        format!("{}/+", self.receiver_announce_prefix())
+    }
+
+    /// `adsb/<stage>/receiver` beside `adsb/<stage>/sbs/raw` (the same rule as
+    /// [`weather_topic`](Self::weather_topic)), else `<mqtt_topic>/receiver`.
+    fn receiver_announce_prefix(&self) -> String {
+        match self.mqtt_topic.strip_suffix("/sbs/raw") {
+            Some(prefix) => format!("{prefix}/receiver"),
+            None => format!("{}/receiver", self.mqtt_topic),
         }
     }
 
@@ -1743,6 +1839,111 @@ mod layering_tests {
             &all_defaulted,
         );
         assert_eq!(cfg.weather_api_url, "http://pi-roof:8789");
+    }
+
+    fn per_receiver(source_id: &str, topic: &str) -> Config {
+        let mut cfg = defaults();
+        cfg.source_id = source_id.into();
+        cfg.mqtt_topic = topic.into();
+        cfg.mqtt_per_receiver_topic = true;
+        cfg
+    }
+
+    #[test]
+    fn the_publish_topic_is_the_base_unless_per_receiver() {
+        let mut cfg = per_receiver("pi-roof-prod", "adsb/prod/sbs/raw");
+        assert_eq!(cfg.publish_topic(), "adsb/prod/sbs/raw/pi-roof-prod");
+        cfg.mqtt_per_receiver_topic = false;
+        assert_eq!(cfg.publish_topic(), "adsb/prod/sbs/raw");
+    }
+
+    #[test]
+    fn subscribers_listen_on_the_base_and_one_level_below() {
+        let cfg = defaults();
+        assert_eq!(
+            cfg.sbs_subscriptions(),
+            ["adsb/sbs/raw".to_string(), "adsb/sbs/raw/+".to_string()]
+        );
+    }
+
+    #[test]
+    fn announcements_sit_beside_the_feed_topic() {
+        let cfg = per_receiver("pi-roof-prod", "adsb/prod/sbs/raw");
+        assert_eq!(
+            cfg.receiver_announce_topic(),
+            "adsb/prod/receiver/pi-roof-prod"
+        );
+        assert_eq!(cfg.receiver_announce_filter(), "adsb/prod/receiver/+");
+    }
+
+    #[test]
+    fn availability_sits_one_level_below_the_announcement() {
+        let cfg = per_receiver("pi-roof-prod", "adsb/prod/sbs/raw");
+        assert_eq!(
+            cfg.receiver_availability_topic(),
+            "adsb/prod/receiver/pi-roof-prod/availability"
+        );
+        assert_eq!(
+            cfg.receiver_availability_filter(),
+            "adsb/prod/receiver/+/availability"
+        );
+        // The announcement filter is one level: it must not see availability.
+        assert_eq!(
+            receiver_from_topic(&cfg.receiver_availability_topic(), "adsb/prod/receiver"),
+            None
+        );
+    }
+
+    #[test]
+    fn announcements_for_an_unusual_topic_stay_out_of_the_sbs_filter() {
+        let cfg = per_receiver("rx", "lab/feed");
+        assert_eq!(cfg.receiver_announce_topic(), "lab/feed/receiver/rx");
+        assert_eq!(
+            receiver_from_topic(&cfg.receiver_announce_topic(), "lab/feed"),
+            None
+        );
+    }
+
+    #[test]
+    fn the_weather_topic_ignores_per_receiver_publishing() {
+        // Weather derives from the BASE topic: turning per-receiver topics on
+        // must not move the grid away from where the desktop looks for it.
+        let cfg = per_receiver("pi-roof-prod", "adsb/prod/sbs/raw");
+        assert_eq!(cfg.weather_topic(), "adsb/prod/weather/grid");
+    }
+
+    #[test]
+    fn per_receiver_topic_layers_from_the_file() {
+        let mut cfg = defaults();
+        assert!(!cfg.mqtt_per_receiver_topic, "off unless asked for");
+        cfg.overlay_file(&file("mqtt_per_receiver_topic = true"), &all_defaulted);
+        assert!(cfg.mqtt_per_receiver_topic);
+    }
+
+    #[test]
+    fn a_per_receiver_source_id_must_be_one_topic_level() {
+        for bad in ["a/b", "a+", "a#", ""] {
+            let mut cfg = per_receiver(bad, "adsb/dev/sbs/raw");
+            cfg.forwarders = vec![ForwarderKind::Mqtt];
+            assert!(cfg.validate().is_err(), "{bad:?} accepted");
+        }
+        let mut ok = per_receiver("pi-roof-prod", "adsb/dev/sbs/raw");
+        ok.forwarders = vec![ForwarderKind::Mqtt];
+        assert!(ok.validate().is_ok());
+    }
+
+    #[test]
+    fn the_receiver_is_read_from_one_level_below_the_base() {
+        let base = "adsb/dev/sbs/raw";
+        assert_eq!(
+            receiver_from_topic("adsb/dev/sbs/raw/pi-a", base),
+            Some("pi-a")
+        );
+        assert_eq!(receiver_from_topic("adsb/dev/sbs/raw", base), None);
+        assert_eq!(receiver_from_topic("adsb/dev/sbs/raw/", base), None);
+        assert_eq!(receiver_from_topic("adsb/dev/sbs/raw/a/b", base), None);
+        assert_eq!(receiver_from_topic("adsb/dev/sbs/rawx", base), None);
+        assert_eq!(receiver_from_topic("other/pi-a", base), None);
     }
 
     #[test]

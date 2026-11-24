@@ -16,14 +16,16 @@
 //!   process dies. A graceful shutdown sends `offline` itself, because a clean
 //!   disconnect does not fire the will.
 
+use crate::receivers::{ReceiverEvent, parse_event};
 use crate::snapshot::WeatherSnapshot;
 use crate::status::{AVAILABILITY_OFFLINE, AVAILABILITY_ONLINE, WeatherStatus, WeatherTopics};
 use adsb_pulsar_client::backoff::{
     Backoff, looks_like_id_collision, should_log, should_reset, was_short_lived,
 };
 use rumqttc::{AsyncClient, Event, EventLoop, Incoming, LastWill, MqttOptions, Outgoing, QoS};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tracing::{debug, info, warn};
 
 /// Packet size limit for the publisher, both directions.
@@ -86,6 +88,19 @@ pub fn mqtt_options(config: &PublisherConfig) -> MqttOptions {
 /// Derived from the receiver's `source_id` but never equal to it or to
 /// `<id>-sub`: those belong to the feed client and the recorder, and a broker
 /// evicts an existing session when a second client arrives with the same id.
+/// The receivers whose grid is new since it was last published, given the
+/// valid time last published for each. Ids are sorted; the unnamed grid of a
+/// service that follows no receivers (`""`) has no topic of its own.
+pub fn grids_to_publish(
+    all: &crate::refresh::GridSnapshots,
+    published: &std::collections::HashMap<String, i64>,
+) -> Vec<String> {
+    all.iter()
+        .filter(|(id, snap)| !id.is_empty() && published.get(*id) != Some(&snap.valid_time_ms))
+        .map(|(id, _)| id.clone())
+        .collect()
+}
+
 pub fn client_id(source_id: &str) -> String {
     format!("{source_id}-weather")
 }
@@ -125,13 +140,27 @@ pub fn should_publish_status(trigger: Trigger, connected: bool) -> bool {
 
 /// Runs the publisher until `shutdown` turns true or the snapshot channel
 /// closes.
+/// What the publisher carries for the receivers this service follows.
+pub struct Following {
+    /// Every receiver's latest snapshot, published to `<grid>/<id>`.
+    pub grids: watch::Receiver<crate::refresh::GridSnapshots>,
+    /// `.../receiver`: where feeds announce their position and availability.
+    pub receiver_prefix: String,
+    /// Where those announcements go, parsed.
+    pub events: mpsc::UnboundedSender<ReceiverEvent>,
+}
+
 pub async fn run(
     config: PublisherConfig,
     mut snapshots: watch::Receiver<Option<WeatherSnapshot>>,
     mut status: watch::Receiver<WeatherStatus>,
     mut shutdown: watch::Receiver<bool>,
+    mut following: Option<Following>,
 ) {
     let topics = config.topics();
+    // Valid time last published per receiver; cleared on every connect, so a
+    // broker that lost its retained store gets every grid again.
+    let mut published: HashMap<String, i64> = HashMap::new();
     let (client, mut eventloop) = AsyncClient::new(mqtt_options(&config), 16);
     let broker = format!("{}:{}", config.broker, config.port);
     let backoff = Backoff::default();
@@ -160,6 +189,19 @@ pub async fn run(
                     publish_latest(&client, &config.topic, &snapshots).await;
                 }
             }
+            changed = async {
+                match following.as_mut() {
+                    Some(f) => f.grids.changed().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if changed.is_err() {
+                    // The refresher is gone; the snapshot branch ends the loop.
+                    following = None;
+                } else if connected && let Some(f) = &following {
+                    publish_grids(&client, &topics, &f.grids, &mut published).await;
+                }
+            }
             changed = status.changed(), if status_open => {
                 if changed.is_err() {
                     // The projection is gone. The retained status stays as the
@@ -183,6 +225,28 @@ pub async fn run(
                     let have = snapshots.borrow().is_some();
                     if should_publish(Trigger::ConnAck, connected, have) {
                         publish_latest(&client, &config.topic, &snapshots).await;
+                    }
+                    if let Some(f) = &following {
+                        // Subscribing on every ConnAck: the broker forgets
+                        // subscriptions with the session. The retained
+                        // announcements replay at once.
+                        for filter in [
+                            format!("{}/+", f.receiver_prefix),
+                            format!("{}/+/availability", f.receiver_prefix),
+                        ] {
+                            if let Err(e) = client.subscribe(&filter, QoS::AtLeastOnce).await {
+                                warn!("Could not subscribe to '{filter}': {e}");
+                            }
+                        }
+                        published.clear();
+                        publish_grids(&client, &topics, &f.grids, &mut published).await;
+                    }
+                }
+                Ok(Event::Incoming(Incoming::Publish(p))) => {
+                    if let Some(f) = &following
+                        && let Some(event) = parse_event(&p.topic, &p.payload, &f.receiver_prefix)
+                    {
+                        let _ = f.events.send(event);
                     }
                 }
                 Ok(_) => {}
@@ -218,6 +282,40 @@ pub async fn run(
                     attempt = attempt.saturating_add(1);
                 }
             }
+        }
+    }
+}
+
+/// Publishes, retained, every receiver's grid that is new since last time.
+async fn publish_grids(
+    client: &AsyncClient,
+    topics: &WeatherTopics,
+    grids: &watch::Receiver<crate::refresh::GridSnapshots>,
+    published: &mut HashMap<String, i64>,
+) {
+    // Encode inside the borrow, publish outside it.
+    let encoded: Vec<(String, i64, Result<Vec<u8>, serde_json::Error>)> = {
+        let all = grids.borrow();
+        grids_to_publish(&all, published)
+            .into_iter()
+            .map(|id| {
+                let snap = &all[&id];
+                (id, snap.valid_time_ms, encode(snap))
+            })
+            .collect()
+    };
+    for (id, valid_time_ms, payload) in encoded {
+        match payload {
+            Ok(bytes) => {
+                let topic = topics.grid_for(&id);
+                debug!("Publishing weather grid for '{id}' to '{topic}'");
+                if let Err(e) = client.publish(&topic, QoS::AtLeastOnce, true, bytes).await {
+                    warn!("Could not publish to '{topic}': {e}");
+                } else {
+                    published.insert(id, valid_time_ms);
+                }
+            }
+            Err(e) => warn!("Could not encode the weather grid for '{id}': {e}"),
         }
     }
 }
@@ -416,6 +514,55 @@ mod tests {
             client_id: client_id("pi-roof-dev"),
             keep_alive: Duration::from_secs(30),
         }
+    }
+
+    fn sample_snapshot() -> WeatherSnapshot {
+        WeatherSnapshot {
+            version: crate::snapshot::SNAPSHOT_VERSION,
+            source: "open-meteo".into(),
+            attribution: String::new(),
+            model: "best_match".into(),
+            fetched_at_ms: 0,
+            valid_time_ms: 0,
+            grid: crate::grid::GridSpec {
+                lat0: 47.0,
+                lon0: -2.0,
+                dlat: 1.0,
+                dlon: 1.0,
+                nlat: 1,
+                nlon: 1,
+            },
+            surface: crate::snapshot::SurfaceFields {
+                mslp_hpa: vec![None],
+                wind_speed_kt: vec![None],
+                wind_dir_deg: vec![None],
+            },
+            levels: Default::default(),
+        }
+    }
+
+    #[test]
+    fn each_receiver_s_grid_is_one_level_below_the_grid_topic() {
+        let topics = config().topics();
+        assert_eq!(topics.grid_for("pi-a"), format!("{}/pi-a", config().topic));
+        assert_eq!(topics.grid_filter(), format!("{}/+", config().topic));
+    }
+
+    #[test]
+    fn only_new_or_newer_grids_are_republished() {
+        use crate::refresh::GridSnapshots;
+        use std::collections::HashMap;
+        let snap = |valid: i64| WeatherSnapshot {
+            valid_time_ms: valid,
+            ..sample_snapshot()
+        };
+        let mut all = GridSnapshots::new();
+        all.insert("pi-b".into(), snap(2));
+        all.insert("pi-a".into(), snap(1));
+        all.insert(String::new(), snap(1));
+        assert_eq!(grids_to_publish(&all, &HashMap::new()), ["pi-a", "pi-b"]);
+        let published = HashMap::from([("pi-a".to_string(), 1), ("pi-b".to_string(), 1)]);
+        assert_eq!(grids_to_publish(&all, &published), ["pi-b"]);
     }
 
     #[test]

@@ -88,8 +88,25 @@ pub struct WeatherStatus {
     /// Valid time of the grid being published, epoch ms.
     #[serde(default)]
     pub snapshot_valid_time_ms: Option<i64>,
+    /// Every receiver's grid this service holds, its own first. Absent from
+    /// a service older than per-receiver grids.
+    #[serde(default)]
+    pub grids: Vec<GridStatus>,
     /// When this status was produced, epoch ms.
     pub updated_at_ms: i64,
+}
+
+/// One receiver's grid, as the status reports it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct GridStatus {
+    /// The receiver's `source_id`; published on `.../weather/grid/<receiver>`.
+    pub receiver: String,
+    /// Grid points, each one Open-Meteo location.
+    pub points: usize,
+    /// Valid time of its latest snapshot, epoch ms.
+    #[serde(default)]
+    pub valid_time_ms: Option<i64>,
 }
 
 /// Why a status payload was rejected.
@@ -156,6 +173,17 @@ pub struct WeatherTopics {
 }
 
 impl WeatherTopics {
+    /// One receiver's grid: `<grid>/<source_id>`, one level below the
+    /// grid topic, so `<grid>/+` subscribes to every receiver's.
+    pub fn grid_for(&self, source_id: &str) -> String {
+        format!("{}/{source_id}", self.grid)
+    }
+
+    /// The filter matching every [`grid_for`](Self::grid_for) topic.
+    pub fn grid_filter(&self) -> String {
+        format!("{}/+", self.grid)
+    }
+
     pub fn from_grid_topic(grid: &str) -> Self {
         let base = grid.strip_suffix("/grid").unwrap_or(grid);
         Self {
@@ -182,6 +210,7 @@ mod tests {
             next_fetch_ms: Some(3),
             snapshot_valid_time_ms: Some(2),
             updated_at_ms: 4,
+            grids: Vec::new(),
         }
     }
 

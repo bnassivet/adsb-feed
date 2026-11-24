@@ -171,6 +171,12 @@ export function WeatherControls({
           {serviceLine && (
             <p className={`text-[11px] ${TONE_CLASS[serviceLine.tone]}`}>{serviceLine.text}</p>
           )}
+          {(service.status?.grids?.length ?? 0) > 1 && (
+            // Several receivers followed: say which, each one costs calls.
+            <p className="text-[11px] text-slate-500">
+              Grids: {service.status!.grids!.map((g) => g.receiver).join(", ")}
+            </p>
+          )}
           {!serviceLine && toggle.reason && (
             <p className="text-[11px] text-slate-500">{toggle.reason}</p>
           )}

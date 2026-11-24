@@ -6,11 +6,12 @@ use adsb_weather_server::control::Control;
 use adsb_weather_server::projection;
 use adsb_weather_server::provider::OpenMeteoProvider;
 use adsb_weather_server::publisher::{self, PublisherConfig};
-use adsb_weather_server::refresh::{self, Refresher, ReportedState};
+use adsb_weather_server::receivers::{self, ActiveReceivers};
+use adsb_weather_server::refresh::{self, GridSnapshots, ReceiverGrid, Refresher, ReportedState};
 use adsb_weather_server::state_file::StateStore;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -93,6 +94,53 @@ async fn run(cfg: WeatherConfig) -> anyhow::Result<()> {
         refresher = refresher.with_cache(path);
     }
 
+    // Following the other receivers on the bus: their grids are kept by the
+    // follow task, fetched by the same refresher, published by the same
+    // connection. Off, this service fetches its configured grid alone.
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let mut following = None;
+    let mut follow_task = None;
+    if cfg.follow_receivers {
+        let own = cfg.own_site().expect("receiver position was validated");
+        let (grids_tx, grids_rx) = watch::channel(vec![ReceiverGrid {
+            id: own.id.clone(),
+            grid,
+        }]);
+        let (all_tx, all_rx) = watch::channel(GridSnapshots::new());
+        let (events_tx, events_rx) = mpsc::unbounded_channel();
+        refresher = refresher
+            .with_grids(own.id.clone(), grids_rx)
+            .with_all_snapshots(all_tx);
+        following = Some(publisher::Following {
+            grids: all_rx,
+            receiver_prefix: cfg.receiver_topic_prefix(),
+            events: events_tx,
+        });
+        let grace_ms = i64::from(cfg.offline_grace_minutes) * 60_000;
+        let set = ActiveReceivers::new(Some(own), grace_ms, cfg.max_receivers);
+        let for_grids = cfg.clone();
+        let for_budget = cfg.clone();
+        info!(
+            "Following receivers on '{}/+' (at most {}, offline grace {} min)",
+            cfg.receiver_topic_prefix(),
+            cfg.max_receivers,
+            cfg.offline_grace_minutes
+        );
+        follow_task = Some(tokio::spawn(receivers::follow(
+            set,
+            events_rx,
+            move |lat, lon| for_grids.grid_for(lat, lon).ok(),
+            grids_tx,
+            refresh::system_clock_ms,
+            move |grids| {
+                let ids: Vec<&str> = grids.iter().map(|g| g.id.as_str()).collect();
+                info!("Weather grids for: {}", ids.join(", "));
+                report_budget(&for_budget, receivers::unique_points(grids));
+            },
+            shutdown_rx.clone(),
+        )));
+    }
+
     let (snapshot_tx, snapshot_rx) = watch::channel(None);
     let (reported_tx, reported_rx) = watch::channel(ReportedState::default());
     let (status_tx, status_rx) = watch::channel(projection::project(
@@ -100,8 +148,6 @@ async fn run(cfg: WeatherConfig) -> anyhow::Result<()> {
         &ReportedState::default(),
         refresh::system_clock_ms(),
     ));
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
     let projection = tokio::spawn(projection::run(
         control.subscribe(),
         reported_rx,
@@ -137,6 +183,7 @@ async fn run(cfg: WeatherConfig) -> anyhow::Result<()> {
         snapshot_rx,
         status_rx,
         shutdown_rx.clone(),
+        following,
     ));
     let refresh = tokio::spawn(refresher.run(snapshot_tx, reported_tx, shutdown_rx));
 
@@ -147,6 +194,9 @@ async fn run(cfg: WeatherConfig) -> anyhow::Result<()> {
     let _ = tokio::join!(refresh, projection, publisher);
     if let Some(api) = api {
         let _ = api.await;
+    }
+    if let Some(task) = follow_task {
+        let _ = task.await;
     }
     Ok(())
 }

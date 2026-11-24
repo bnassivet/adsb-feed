@@ -205,3 +205,51 @@ describe("useHistoricalWeather", () => {
     expect(payloadFetches).toBeLessThanOrEqual(1);
   });
 });
+
+describe("useHistoricalWeather — per receiver", () => {
+  beforeEach(() => {
+    clearMockResponses();
+    mockInvokeResponse("get_weather_history", [meta(BASE)]);
+  });
+
+  function sourceOf(args: unknown): string | null {
+    return (args as { key: { source_id: string | null } }).key.source_id;
+  }
+
+  it("asks for the receiver's own recorded grid", async () => {
+    const asked: (string | null)[] = [];
+    mockInvokeResponse("get_weather_at", (args: unknown) => {
+      asked.push(sourceOf(args));
+      return record(keyOf(args), 90);
+    });
+    const { result } = renderHook(() => useHistoricalWeather(BASE, null, "pi-a"));
+    await waitFor(() => expect(result.current.map.status).toBe("found"));
+    expect(asked).toEqual(["pi-a"]);
+  });
+
+  it("falls back to any grid for that hour when the receiver has none", async () => {
+    const asked: (string | null)[] = [];
+    mockInvokeResponse("get_weather_at", (args: unknown) => {
+      asked.push(sourceOf(args));
+      return sourceOf(args) === null ? record(keyOf(args)) : null;
+    });
+    const { result } = renderHook(() => useHistoricalWeather(BASE, null, "pi-none"));
+    await waitFor(() => expect(result.current.map.status).toBe("found"));
+    expect(asked).toEqual(["pi-none", null]);
+  });
+
+  it("does not serve one receiver's cached grid for another", async () => {
+    const asked: (string | null)[] = [];
+    mockInvokeResponse("get_weather_at", (args: unknown) => {
+      asked.push(sourceOf(args));
+      return record(keyOf(args));
+    });
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string }) => useHistoricalWeather(BASE, null, id),
+      { initialProps: { id: "pi-a" } },
+    );
+    await waitFor(() => expect(result.current.map.status).toBe("found"));
+    rerender({ id: "pi-b" });
+    await waitFor(() => expect(asked).toEqual(["pi-a", "pi-b"]));
+  });
+});

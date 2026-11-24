@@ -408,10 +408,57 @@ export interface TimeDistributionQuery {
   metric?: TimeDistributionMetric;
 }
 
+/** A receiver antenna's position (`adsb_data_engine::ReceiverPosition`). */
+export interface ReceiverPosition {
+  latitude: number;
+  longitude: number;
+  altitude_ft: number | null;
+}
+
+/** Who recorded a location period. */
+export type LocationOrigin = "config" | "mqtt" | "cli" | "desktop" | "backfill";
+
+/**
+ * Where a receiver was during `[valid_from_ms, valid_to_ms)`; a null end
+ * means it is still there. A receiver's history is a list of these (SCD2).
+ */
+export interface LocationPeriod {
+  valid_from_ms: number;
+  valid_to_ms: number | null;
+  position: ReceiverPosition;
+  origin: LocationOrigin;
+  /** When this row was last written, not when it became valid. */
+  recorded_at_ms: number;
+  note: string | null;
+}
+
+/** A receiver the database knows, with where it is now. */
+export interface ReceiverSummary {
+  source_id: string;
+  name: string | null;
+  first_seen_ms: number;
+  /** The open period, when the current location is known. */
+  current: LocationPeriod | null;
+  period_count: number;
+}
+
+/** An edit to one receiver's history (serde tag `kind`). */
+export type LocationChange =
+  | { kind: "observe"; position: ReceiverPosition; at_ms: number }
+  | { kind: "move"; position: ReceiverPosition; at_ms: number }
+  | { kind: "correct"; valid_from_ms: number; position: ReceiverPosition }
+  | { kind: "remove"; valid_from_ms: number };
+
 /** Query parameters for detection range analysis. */
 export interface DetectionRangeQuery {
-  receiver_lat: number;
-  receiver_lon: number;
+  /** Only this receiver's fixes; omitted = every receiver's. */
+  source_id?: string | null;
+  /**
+   * Fallback position. Each fix is measured from its receiver's stored
+   * location at the time; this is used only where no stored period covers it.
+   */
+  receiver_lat?: number | null;
+  receiver_lon?: number | null;
   start_ms?: number | null;
   end_ms?: number | null;
   /** When set, each sector carries `band_counts` in bins of this width (NM). */

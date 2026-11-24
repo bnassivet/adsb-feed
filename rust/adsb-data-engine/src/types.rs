@@ -215,8 +215,17 @@ pub struct TimeDistributionQuery {
 /// Query parameters for detection range analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectionRangeQuery {
-    pub receiver_lat: f64,
-    pub receiver_lon: f64,
+    /// Only this receiver's fixes. `None` counts every receiver's, each
+    /// measured from its own location.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    /// Fallback receiver position, used only for fixes no
+    /// `receiver_locations` period covers. A fix with neither is left out:
+    /// its range is unknown.
+    #[serde(default)]
+    pub receiver_lat: Option<f64>,
+    #[serde(default)]
+    pub receiver_lon: Option<f64>,
     pub start_ms: Option<i64>,
     pub end_ms: Option<i64>,
     /// When set, each sector also carries `band_counts`: a histogram of its

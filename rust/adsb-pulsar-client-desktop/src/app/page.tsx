@@ -93,6 +93,9 @@ import type { SelectEvent } from "@/components/AircraftTable";
 import { ModeTabs } from "@/components/ModeTabs";
 import Link from "next/link";
 import { resolveStage } from "@/lib/stage";
+import { resolveReceiverLocation } from "@/lib/receivers";
+import { useReceivers } from "@/hooks/useReceivers";
+import { ReceiverSelector } from "@/components/ReceiverSelector";
 import { rangeLineTargets } from "@/lib/range-line";
 
 /** Base window/header title. `tauri.conf.json` sets the same string. */
@@ -319,12 +322,38 @@ export default function Dashboard() {
     [stackName, appConfig?.source_id],
   );
 
-  const receiverLocation = useMemo(() => {
+  // The receiver everything is measured from. The database's location
+  // history wins (it is what the recorder measured stored fixes from, and the
+  // only location a remote desktop shares with the daemon); Settings are the
+  // fallback. See lib/receivers.ts.
+  const settingsReceiverLocation = useMemo(() => {
     if (appConfig?.receiver_latitude != null && appConfig?.receiver_longitude != null) {
-      return { lat: appConfig.receiver_latitude, lng: appConfig.receiver_longitude, alt: appConfig.receiver_altitude };
+      return { lat: appConfig.receiver_latitude, lng: appConfig.receiver_longitude, alt: appConfig.receiver_altitude ?? null };
     }
     return undefined;
   }, [appConfig]);
+  const { receivers, refresh: refreshReceivers } = useReceivers();
+  const [selectedReceiverId, setSelectedReceiverId] = useLocalStorage<string | null>("adsb-selected-receiver", null);
+  const resolvedReceiver = useMemo(
+    () => resolveReceiverLocation(receivers, selectedReceiverId, appConfig?.source_id ?? null, settingsReceiverLocation),
+    [receivers, selectedReceiverId, appConfig?.source_id, settingsReceiverLocation],
+  );
+  const receiverLocation = resolvedReceiver.location;
+  // The live weather of the receiver being shown: its own grid when the
+  // weather service follows several receivers, else the shared one.
+  const liveWeather = weather.snapshotFor(resolvedReceiver.sourceId);
+  // Only a receiver the database knows can filter a query: an embedded
+  // desktop stamps its rows with its storage id, not its configured one.
+  const dbReceiverId = receivers.some((r) => r.source_id === resolvedReceiver.sourceId)
+    ? resolvedReceiver.sourceId
+    : null;
+  const otherReceivers = useMemo(
+    () =>
+      receivers
+        .filter((r) => r.current != null && r.source_id !== resolvedReceiver.sourceId)
+        .map((r) => ({ id: r.source_id, lat: r.current!.position.latitude, lng: r.current!.position.longitude })),
+    [receivers, resolvedReceiver.sourceId],
+  );
 
   const [selectedHexIdents, setSelectedHexIdents] = useState<Set<string>>(new Set());
   const [lastSelectedHexIdent, setLastSelectedHexIdent] = useState<string | null>(null);
@@ -644,6 +673,12 @@ export default function Dashboard() {
     });
     return () => { unlisten.then(fn => fn()); };
   }, []);
+
+  // Receivers live in the database: re-read them whenever it (re)opens --
+  // a storage-mode switch, a reclaim, a daemon that came up after the app.
+  useEffect(() => {
+    if (storageStatus === "available") void refreshReceivers();
+  }, [storageStatus, refreshReceivers]);
 
   // Sharing can also be started by config at startup (auto_start), so the
   // initial state has to be fetched rather than assumed to be "off".
@@ -986,7 +1021,7 @@ export default function Dashboard() {
     isDbHistorySelection,
     isImportedSelection,
   });
-  const recordedWeather = useHistoricalWeather(weatherTimes.mapTimeMs, weatherTimes.aircraftTimeMs);
+  const recordedWeather = useHistoricalWeather(weatherTimes.mapTimeMs, weatherTimes.aircraftTimeMs, dbReceiverId);
   /* Selects on MODE, never on "whichever snapshot happens to be non-null":
    * the MQTT subscription keeps delivering while history is on screen, and a
    * retained republish must not repaint week-old tracks with today's winds. */
@@ -994,7 +1029,7 @@ export default function Dashboard() {
     isLive,
     show: showWeather,
     availability: weather.availability,
-    live: weather.snapshot,
+    live: liveWeather,
     liveNowMs: weatherClockMs,
     recorded: recordedWeather.map.entry,
     viewTimeMs: weatherTimes.mapTimeMs,
@@ -1036,7 +1071,7 @@ export default function Dashboard() {
     ? selectAircraftWind({
         track: selectedTrack,
         isHistoricalSelection: !isLive || isDbHistorySelection || isImportedSelection,
-        live: weather.snapshot,
+        live: liveWeather,
         liveNowMs: weatherClockMs,
         recorded: recordedWeather.aircraft.entry,
       })
@@ -1059,7 +1094,7 @@ export default function Dashboard() {
      tools must keep answering wind questions with the layer hidden -- they do
      today, and tying them to the drawn snapshot would quietly break that. */
   const viewWeatherSnapshot = isLive
-    ? weather.snapshot
+    ? liveWeather
     : (recordedWeather.map.entry?.snapshot ?? null);
 
   /* CopilotKit — register frontend tools and publish ambient state.
@@ -1494,6 +1529,11 @@ export default function Dashboard() {
               {stage}
             </span>
           )}
+          <ReceiverSelector
+            receivers={receivers}
+            selectedId={resolvedReceiver.sourceId}
+            onSelect={setSelectedReceiverId}
+          />
           <ConnectionStatusIndicator
             label="Socket"
             status={status.socket_status}
@@ -1677,8 +1717,8 @@ export default function Dashboard() {
                which in history mode is a recorded hour rather than the live one. */
             levels: mapWeather.snapshot ? availableLevels(mapWeather.snapshot) : [],
             availability: weather.availability,
-            validTimeMs: weather.snapshot?.valid_time_ms ?? null,
-            stale: weather.snapshot ? isStale(weather.snapshot, weatherClockMs) : false,
+            validTimeMs: liveWeather?.valid_time_ms ?? null,
+            stale: liveWeather ? isStale(liveWeather, weatherClockMs) : false,
             nowMs: weatherClockMs,
             attribution: mapWeather.snapshot?.attribution ?? null,
             history: weatherHistoryView,
@@ -1791,7 +1831,7 @@ export default function Dashboard() {
                   />
                 </div>
               )}
-              <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={visibleMetars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={weatherClockMs} radar={radarView} radarOpacity={radarOpacity} sea={sea} relief={relief} seamarkItems={seamarkDetails.items} onSeamarkCells={seamarkDescriptions ? setSeamarkCells : undefined} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} rejectedPositions={rejectedOnMap} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
+              <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={visibleMetars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={weatherClockMs} radar={radarView} radarOpacity={radarOpacity} sea={sea} relief={relief} seamarkItems={seamarkDetails.items} onSeamarkCells={seamarkDescriptions ? setSeamarkCells : undefined} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} otherReceivers={showReceiver ? otherReceivers : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} rejectedPositions={rejectedOnMap} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel
@@ -1838,7 +1878,8 @@ export default function Dashboard() {
                   onLoadTracks={loadDbHistoryTracks}
                   onClearTracks={clearDbHistory}
                   dbHistoryCount={dbHistory.length}
-                  receiverLat={receiverLocation?.lat}
+                  receiverSourceId={dbReceiverId}
+            receiverLat={receiverLocation?.lat}
                   receiverLon={receiverLocation?.lng}
                   onAddToAnalysis={addAnalysisTracks}
                   onSwitchToAnalysis={() => setActiveMode("analysis")}
@@ -1990,6 +2031,7 @@ export default function Dashboard() {
             onLoadTracks={loadDbHistoryTracks}
             onClearTracks={clearDbHistory}
             dbHistoryCount={dbHistory.length}
+            receiverSourceId={dbReceiverId}
             receiverLat={receiverLocation?.lat}
             receiverLon={receiverLocation?.lng}
             onBrowse={handleBrowse}

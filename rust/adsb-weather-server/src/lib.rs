@@ -29,6 +29,8 @@ pub mod provider;
 #[cfg(feature = "service")]
 pub mod publisher;
 #[cfg(feature = "service")]
+pub mod receivers;
+#[cfg(feature = "service")]
 pub mod refresh;
 pub mod snapshot;
 #[cfg(feature = "service")]

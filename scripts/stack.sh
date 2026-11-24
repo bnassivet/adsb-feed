@@ -494,6 +494,16 @@ PY
 
 render) require_config; render ;;
 
+receiver)
+  # Read or edit receivers' location history through this stack's recorder
+  # config. Works while the recorder runs: it goes through the Quack share.
+  #   stack.sh receiver list | history [--receiver ID] | move --lat .. --lon .. --at ..
+  require_config
+  render >/dev/null
+  shift
+  exec "$BIN/adsb-data-server" --config "$RUN/data-server.toml" receiver "$@"
+  ;;
+
 doctor)
   rc=0
   echo "Stack: $STACK_NAME ($(basename "$STACK"), state in ${RUN#"$REPO"/})"

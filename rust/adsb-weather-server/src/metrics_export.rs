@@ -149,6 +149,7 @@ mod tests {
             next_fetch_ms: None,
             snapshot_valid_time_ms: None,
             updated_at_ms: 1_789_412_400_000,
+            grids: Vec::new(),
         }
     }
 

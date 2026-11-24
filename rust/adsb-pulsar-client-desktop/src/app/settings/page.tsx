@@ -15,10 +15,21 @@ import { TRACK_HISTORY_HOURS_KEY, DEFAULT_TRACK_HISTORY_HOURS } from "@/contexts
 import type { Config } from "@/lib/types";
 import { CARTO_API_KEY } from "@/lib/basemap";
 import { TileCacheSection } from "@/components/TileCacheSection";
+import { ReceiverHistoryTable } from "@/components/ReceiverHistoryTable";
+import { useReceivers } from "@/hooks/useReceivers";
+import { pickReceiver } from "@/lib/receivers";
 import Link from "next/link";
 
 export default function SettingsPage() {
   const [config, setConfig] = useState<Config | null>(null);
+  // The receiver whose history to edit: the one picked in the header, else
+  // this app's own -- but only one the database knows (see lib/receivers.ts).
+  // Unlike the map, an unlocated receiver still qualifies: it is the one that
+  // most needs a history started.
+  const { receivers, refresh: refreshReceivers } = useReceivers();
+  const [selectedReceiverId] = useLocalStorage<string | null>("adsb-selected-receiver", null);
+  const historyReceiver =
+    pickReceiver(receivers, selectedReceiverId, config?.source_id ?? null) ?? receivers[0] ?? null;
   // The receiver location as last loaded or saved. The tile cache prunes
   // around it, so it must never see a half-typed, unsaved value.
   const [savedReceiver, setSavedReceiver] = useState<{ lat: number; lon: number } | null>(null);
@@ -222,8 +233,30 @@ export default function SettingsPage() {
               />
             </div>
             <p className="text-xs text-slate-500 mt-2">
-              Physical location of your ADS-B receiver antenna. Used as map center and for distance calculations.
+              Physical location of your ADS-B receiver antenna. Used as map center and for distance
+              calculations when the database has no location for it; once it has one (see Location
+              History), the database wins.
             </p>
+          </section>
+
+          {/* Location History (SCD2), kept in the database */}
+          <section className="bg-slate-900 rounded-lg p-4 border border-slate-800">
+            <h2 className="text-sm font-semibold text-slate-300 mb-4">
+              Location History{historyReceiver ? ` — ${historyReceiver.source_id}` : ""}
+            </h2>
+            {historyReceiver ? (
+              <ReceiverHistoryTable
+                key={historyReceiver.source_id}
+                sourceId={historyReceiver.source_id}
+                onChanged={() => void refreshReceivers()}
+              />
+            ) : (
+              <p className="text-xs text-slate-500">
+                Where each receiver was, and since when, is kept by the recorder
+                (adsb-data-server) in its database. None is recorded in the database this app has
+                open, so the location above applies.
+              </p>
+            )}
           </section>
 
           <section className="bg-slate-900 rounded-lg p-4 border border-slate-800">

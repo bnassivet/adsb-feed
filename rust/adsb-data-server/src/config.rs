@@ -33,6 +33,11 @@ pub struct ServerConfig {
     #[serde(skip)]
     pub print_config: bool,
 
+    /// A one-off command to run instead of recording (see [`Command`]).
+    #[command(subcommand)]
+    #[serde(skip)]
+    pub command: Option<Command>,
+
     /// Identifier for this receiver, stamped onto every stored record.
     #[arg(long, env = "ADSB_SOURCE_ID", default_value = "adsb-edge")]
     #[serde(default = "default_source_id")]
@@ -129,6 +134,11 @@ pub struct ServerConfig {
     #[arg(long, env = "ADSB_RECEIVER_LONGITUDE", allow_hyphen_values = true)]
     #[serde(default)]
     pub receiver_longitude: Option<f64>,
+
+    /// Receiver antenna altitude in feet. Stored with the location history.
+    #[arg(long, env = "ADSB_RECEIVER_ALTITUDE_FT", allow_hyphen_values = true)]
+    #[serde(default)]
+    pub receiver_altitude_ft: Option<f64>,
 
     /// Log level.
     #[arg(long, env = "ADSB_LOG_LEVEL", default_value = "info")]
@@ -274,6 +284,9 @@ impl ServerConfig {
         if self.receiver_longitude.is_none() {
             self.receiver_longitude = file.get("receiver_longitude").and_then(degrees);
         }
+        if self.receiver_altitude_ft.is_none() {
+            self.receiver_altitude_ft = file.get("receiver_altitude_ft").and_then(degrees);
+        }
     }
 
     /// The receiver's (latitude, longitude), when both are configured.
@@ -329,6 +342,130 @@ impl ServerConfig {
     }
 }
 
+/// One-off commands: run, print, exit -- the recorder does not start.
+#[derive(Debug, Clone, clap::Subcommand)]
+pub enum Command {
+    /// Read or edit receivers' location history (SCD2).
+    ///
+    /// Works while the recorder runs: when the database file is locked, the
+    /// change goes through the recorder's Quack share instead.
+    Receiver {
+        #[command(subcommand)]
+        action: ReceiverAction,
+    },
+}
+
+/// `adsb-data-server receiver <action>`.
+///
+/// `--receiver` defaults to this node's `source_id`. Instants accept `now`,
+/// epoch milliseconds, `2026-10-01` (midnight UTC) or RFC 3339.
+#[derive(Debug, Clone, clap::Subcommand)]
+pub enum ReceiverAction {
+    /// Every known receiver and its current location.
+    List,
+    /// One receiver's location periods, oldest first.
+    History {
+        #[arg(long)]
+        receiver: Option<String>,
+    },
+    /// The receiver moved to a new position at `--at` (may be in the past):
+    /// the period covering that instant is split there.
+    Move {
+        #[arg(long)]
+        receiver: Option<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        lat: f64,
+        #[arg(long, allow_hyphen_values = true)]
+        lon: f64,
+        #[arg(long, allow_hyphen_values = true)]
+        alt_ft: Option<f64>,
+        #[arg(long, default_value = "now")]
+        at: String,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// The period starting at `--from` was really at this position.
+    Correct {
+        #[arg(long)]
+        receiver: Option<String>,
+        #[arg(long)]
+        from: String,
+        #[arg(long, allow_hyphen_values = true)]
+        lat: f64,
+        #[arg(long, allow_hyphen_values = true)]
+        lon: f64,
+        #[arg(long, allow_hyphen_values = true)]
+        alt_ft: Option<f64>,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Delete the period starting at `--from`; the one before absorbs it.
+    Remove {
+        #[arg(long)]
+        receiver: Option<String>,
+        #[arg(long)]
+        from: String,
+    },
+}
+
+impl ReceiverAction {
+    /// The command to run, with `--receiver` defaulted to `source_id` and
+    /// instants resolved against `now_ms`.
+    pub fn to_command(
+        &self,
+        source_id: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<adsb_data_server::receiver_cli::ReceiverCommand> {
+        use adsb_data_engine::{LocationChange, ReceiverPosition};
+        use adsb_data_server::receiver_cli::{ReceiverCommand, parse_instant};
+
+        let who = |r: &Option<String>| r.clone().unwrap_or_else(|| source_id.to_string());
+        Ok(match self {
+            Self::List => ReceiverCommand::List,
+            Self::History { receiver } => ReceiverCommand::History {
+                receiver: who(receiver),
+            },
+            Self::Move {
+                receiver,
+                lat,
+                lon,
+                alt_ft,
+                at,
+                note,
+            } => ReceiverCommand::Change {
+                receiver: who(receiver),
+                change: LocationChange::Move {
+                    position: ReceiverPosition::new(*lat, *lon, *alt_ft),
+                    at_ms: parse_instant(at, now_ms)?,
+                },
+                note: note.clone(),
+            },
+            Self::Correct {
+                receiver,
+                from,
+                lat,
+                lon,
+                alt_ft,
+                note,
+            } => ReceiverCommand::Change {
+                receiver: who(receiver),
+                change: LocationChange::Correct {
+                    valid_from_ms: parse_instant(from, now_ms)?,
+                    position: ReceiverPosition::new(*lat, *lon, *alt_ft),
+                },
+                note: note.clone(),
+            },
+            Self::Remove { receiver, from } => ReceiverCommand::Change {
+                receiver: who(receiver),
+                change: LocationChange::Remove {
+                    valid_from_ms: parse_instant(from, now_ms)?,
+                },
+                note: None,
+            },
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,6 +476,75 @@ mod tests {
 
     fn file(text: &str) -> toml::Value {
         toml::from_str(text).unwrap()
+    }
+
+    fn receiver_action(args: &[&str]) -> ReceiverAction {
+        let argv = ["adsb-data-server", "receiver"].iter().chain(args).copied();
+        match ServerConfig::parse_from(argv).command {
+            Some(Command::Receiver { action }) => action,
+            other => panic!("not a receiver command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_subcommand_means_record() {
+        assert!(defaults().command.is_none());
+    }
+
+    #[test]
+    fn a_move_defaults_to_this_node_and_takes_negative_coordinates() {
+        use adsb_data_engine::{LocationChange, ReceiverPosition};
+        use adsb_data_server::receiver_cli::ReceiverCommand;
+        let cmd = receiver_action(&[
+            "move",
+            "--lat",
+            "46.7",
+            "--lon",
+            "-2.3",
+            "--at",
+            "2026-10-01",
+        ])
+        .to_command("pi-roof-prod", 0)
+        .unwrap();
+        assert_eq!(
+            cmd,
+            ReceiverCommand::Change {
+                receiver: "pi-roof-prod".into(),
+                change: LocationChange::Move {
+                    position: ReceiverPosition::new(46.7, -2.3, None),
+                    at_ms: 1_790_812_800_000,
+                },
+                note: None,
+            }
+        );
+    }
+
+    #[test]
+    fn remove_names_its_receiver_and_period() {
+        use adsb_data_engine::LocationChange;
+        use adsb_data_server::receiver_cli::ReceiverCommand;
+        let cmd = receiver_action(&["remove", "--receiver", "pi-a", "--from", "1000"])
+            .to_command("ignored", 0)
+            .unwrap();
+        assert_eq!(
+            cmd,
+            ReceiverCommand::Change {
+                receiver: "pi-a".into(),
+                change: LocationChange::Remove {
+                    valid_from_ms: 1_000
+                },
+                note: None,
+            }
+        );
+    }
+
+    #[test]
+    fn a_bad_instant_is_an_error_not_a_panic() {
+        assert!(
+            receiver_action(&["remove", "--from", "yesterday-ish"])
+                .to_command("x", 0)
+                .is_err()
+        );
     }
 
     #[test]
@@ -423,6 +629,13 @@ mod tests {
             &all_defaulted,
         );
         assert_eq!(cfg.receiver(), Some((46.0, -2.5)));
+    }
+
+    #[test]
+    fn receiver_altitude_layers_from_the_file() {
+        let mut cfg = defaults();
+        cfg.overlay_file(&file("receiver_altitude_ft = 20"), &all_defaulted);
+        assert_eq!(cfg.receiver_altitude_ft, Some(20.0));
     }
 
     #[test]

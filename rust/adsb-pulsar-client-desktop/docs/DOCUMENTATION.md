@@ -862,6 +862,40 @@ reported as a failure. The guard is duck-typed on `.name`, not `instanceof Error
 `DOMException` is not an `Error` instance under jsdom, so an instanceof check silently
 misses it and every deliberate cancel surfaces as "agent unreachable".
 
+### Pattern 15: Dated History as Pure Rules plus a Whole-Set Swap
+
+**Use case**: data with a validity period that people edit after the fact: a
+receiver's location history (`receiver_locations`, SCD2). Moves can be
+back-dated, periods corrected or removed, and the result must never overlap.
+
+**Shape**:
+
+```rust
+// adsb-data-engine/src/receiver_history.rs -- no DuckDB, no I/O
+pub fn apply(periods: &[LocationPeriod], change: &LocationChange, stamp: &ChangeStamp)
+    -> Result<Option<Vec<LocationPeriod>>, HistoryError>;   // None = no-op
+
+// adsb-data-engine/src/storage/receivers.rs
+let current = read_periods(storage, id)?;
+let Some(next) = apply(&current, change, stamp)? else { return Ok(None) };
+swap(storage, id, &next)?;   // DELETE + INSERT in one transaction
+```
+
+**Why**:
+
+- The invariants (sorted, no overlap, one open period, half-open intervals)
+  live in one place and are tested on plain vectors: back-dated moves, moves
+  into gaps, boundaries, removals of the first, middle and last period.
+- No `UPDATE ... SET valid_to` sequences to get right in SQL, and no half-applied
+  edit if one of them fails.
+- A no-op (`None`) writes nothing, so idempotent sources (a retained MQTT message
+  replayed on every reconnect, a recorder restart) cost nothing.
+- The same swap runs locally and, built as a script, on a remote daemon over
+  Quack, where only server-side DML works.
+
+**Pitfall**: an "equal position" test must tolerate float round-trips
+(`SAME_POSITION_NM`), or every reconnect opens a new period.
+
 ---
 
 ## Performance Guidelines

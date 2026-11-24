@@ -17,8 +17,9 @@ use crate::grid::GridSpec;
 use crate::provider::{ErrorClass, WeatherProvider};
 use crate::snapshot::WeatherSnapshot;
 use crate::state_file::StateStore;
-use crate::status::{RateLimitScope, ServiceState};
+use crate::status::{GridStatus, RateLimitScope, ServiceState};
 use adsb_pulsar_client::backoff::{Backoff, should_log};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -143,6 +144,8 @@ fn until_next(now_ms: i64, period_ms: i64) -> Duration {
 /// What the refresh loop reports about itself.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReportedState {
+    /// Every grid currently held, primary first.
+    pub grids: Vec<GridStatus>,
     pub state: ServiceState,
     pub consecutive_failures: u32,
     pub rate_limit: Option<RateLimitScope>,
@@ -155,6 +158,7 @@ pub struct ReportedState {
 impl Default for ReportedState {
     fn default() -> Self {
         Self {
+            grids: Vec::new(),
             state: ServiceState::Idle,
             consecutive_failures: 0,
             rate_limit: None,
@@ -165,6 +169,16 @@ impl Default for ReportedState {
         }
     }
 }
+
+/// One receiver's grid: what to fetch, and under which id to publish it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReceiverGrid {
+    pub id: String,
+    pub grid: GridSpec,
+}
+
+/// The latest snapshot of every receiver's grid, by receiver id.
+pub type GridSnapshots = BTreeMap<String, WeatherSnapshot>;
 
 /// What the loop is doing while it waits after `outcome`.
 pub fn waiting_state(outcome: Outcome) -> ServiceState {
@@ -235,6 +249,14 @@ pub struct Refresher<P> {
     jitter: Jitter,
     desired: watch::Receiver<bool>,
     store: Arc<StateStore>,
+    /// Every receiver's grid to fetch. A fixed set of one (`grid`) unless
+    /// [`with_grids`](Self::with_grids) says otherwise.
+    grids: watch::Receiver<Vec<ReceiverGrid>>,
+    /// The grid whose snapshot goes on the `snapshots` channel and in the
+    /// cache file: this service's own receiver's.
+    primary: String,
+    /// Where every receiver's latest snapshot goes, when anyone listens.
+    all: Option<watch::Sender<GridSnapshots>>,
 }
 
 impl<P: WeatherProvider> Refresher<P> {
@@ -253,7 +275,73 @@ impl<P: WeatherProvider> Refresher<P> {
             // "no more commands", never "stop", so this stays enabled.
             desired: watch::channel(true).1,
             store: Arc::new(StateStore::in_memory()),
+            grids: watch::channel(vec![ReceiverGrid {
+                id: String::new(),
+                grid,
+            }])
+            .1,
+            primary: String::new(),
+            all: None,
         }
+    }
+
+    /// Fetches every grid `grids` holds, following its changes. `primary`
+    /// names the one published on the `snapshots` channel and cached.
+    ///
+    /// A receiver joining after a successful fetch is fetched at once (a
+    /// top-up of just the missing grids) without moving the next full
+    /// refresh. A refresher waiting out a failure or a rate limit does not
+    /// wake for it: the next cycle fetches it anyway.
+    pub fn with_grids(
+        mut self,
+        primary: impl Into<String>,
+        grids: watch::Receiver<Vec<ReceiverGrid>>,
+    ) -> Self {
+        self.primary = primary.into();
+        self.grids = grids;
+        self
+    }
+
+    /// Also publishes every receiver's latest snapshot, by id.
+    pub fn with_all_snapshots(mut self, all: watch::Sender<GridSnapshots>) -> Self {
+        self.all = Some(all);
+        self
+    }
+
+    /// Publishes `held` (only the grids still in the set) and records it in
+    /// the report, primary first.
+    fn publish_held(&self, held: &mut GridSnapshots, report: &mut ReportedState) {
+        let set = self.grids.borrow();
+        held.retain(|id, _| set.iter().any(|g| &g.id == id));
+        drop(set);
+        if let Some(all) = &self.all {
+            all.send_replace(held.clone());
+        }
+        let status = |(id, snap): (&String, &WeatherSnapshot)| GridStatus {
+            receiver: if id.is_empty() {
+                "self".to_string()
+            } else {
+                id.clone()
+            },
+            points: snap.grid.len(),
+            valid_time_ms: Some(snap.valid_time_ms),
+        };
+        report.grids = held
+            .iter()
+            .filter(|(id, _)| **id == self.primary)
+            .chain(held.iter().filter(|(id, _)| **id != self.primary))
+            .map(status)
+            .collect();
+    }
+
+    /// Grids in the set with no snapshot yet, or a moved one.
+    fn missing(&self, held: &GridSnapshots) -> Vec<ReceiverGrid> {
+        self.grids
+            .borrow()
+            .iter()
+            .filter(|g| held.get(&g.id).map(|s| s.grid) != Some(g.grid))
+            .cloned()
+            .collect()
     }
 
     pub fn with_jitter(mut self, jitter: Jitter) -> Self {
@@ -332,7 +420,9 @@ impl<P: WeatherProvider> Refresher<P> {
         mut shutdown: watch::Receiver<bool>,
     ) {
         let mut report = ReportedState::default();
+        let mut held = GridSnapshots::new();
         if let Some(cached) = self.cached() {
+            held.insert(self.primary.clone(), cached.clone());
             info!(
                 "Replaying cached weather snapshot (valid at {} ms) until the first fetch",
                 cached.valid_time_ms
@@ -343,8 +433,19 @@ impl<P: WeatherProvider> Refresher<P> {
             snapshots.send_replace(Some(cached));
         }
 
+        if !held.is_empty() {
+            self.publish_held(&mut held, &mut report);
+        }
+
         let mut desired = self.desired.clone();
         let mut commands_open = true;
+        let mut grids = self.grids.clone();
+        grids.borrow_and_update();
+        let mut grids_open = true;
+        // Set when a receiver joined during a wait: fetch only what is
+        // missing, then go back to `resume`, the full refresh still due.
+        let mut top_up = false;
+        let mut resume: Option<Pending> = None;
         let mut failures: u32 = 0;
         let mut last_outcome: Option<Outcome> = None;
 
@@ -425,6 +526,25 @@ impl<P: WeatherProvider> Refresher<P> {
                                 break;
                             }
                         }
+                        changed = grids.changed(), if grids_open => {
+                            if changed.is_err() {
+                                grids_open = false;
+                                continue;
+                            }
+                            grids.borrow_and_update();
+                            // A receiver that left costs nothing: drop it now.
+                            self.publish_held(&mut held, &mut report);
+                            publish(&reported, &report);
+                            // Only after a success: a failure or a rate limit
+                            // is waited out, never cut short.
+                            if last_outcome == Some(Outcome::Fetched)
+                                && !self.missing(&held).is_empty()
+                            {
+                                top_up = true;
+                                resume = Some(due);
+                                break;
+                            }
+                        }
                     }
                 }
                 if disabled {
@@ -433,42 +553,96 @@ impl<P: WeatherProvider> Refresher<P> {
                 pending = None;
             }
 
+            // A full cycle fetches every grid; a top-up only what is missing.
+            let targets = if top_up {
+                self.missing(&held)
+            } else {
+                self.grids.borrow().clone()
+            };
+            let resume_after = if top_up { resume.take() } else { None };
+            top_up = false;
+
             report.state = ServiceState::Fetching;
             report.next_fetch_ms = None;
             publish(&reported, &report);
 
             let now_ms = (self.clock)();
-            let result = {
-                let fetch = self.provider.fetch(self.grid, &self.levels, now_ms);
-                tokio::pin!(fetch);
-                loop {
-                    tokio::select! {
-                        result = &mut fetch => break Some(result),
-                        changed = shutdown.changed() => {
-                            if changed.is_err() || *shutdown.borrow() {
-                                return;
+            let mut error = None;
+            let mut cancelled = false;
+            for target in &targets {
+                let result = {
+                    let fetch = self.provider.fetch(target.grid, &self.levels, now_ms);
+                    tokio::pin!(fetch);
+                    loop {
+                        tokio::select! {
+                            result = &mut fetch => break Some(result),
+                            changed = shutdown.changed() => {
+                                if changed.is_err() || *shutdown.borrow() {
+                                    return;
+                                }
                             }
-                        }
-                        changed = desired.changed(), if commands_open => {
-                            if changed.is_err() {
-                                commands_open = false;
-                            } else if !*desired.borrow() {
-                                // Dropping the future abandons the request. The
-                                // chunks already fetched stay with the provider
-                                // for the next attempt in the same hour.
-                                info!("Weather fetch cancelled: fetching was disabled");
-                                break None;
+                            changed = desired.changed(), if commands_open => {
+                                if changed.is_err() {
+                                    commands_open = false;
+                                } else if !*desired.borrow() {
+                                    // Dropping the future abandons the request.
+                                    // The points already fetched stay with the
+                                    // provider for the next attempt in the hour.
+                                    info!("Weather fetch cancelled: fetching was disabled");
+                                    break None;
+                                }
                             }
                         }
                     }
+                };
+                match result {
+                    None => {
+                        cancelled = true;
+                        break;
+                    }
+                    Some(Ok(snapshot)) => {
+                        if target.id == self.primary {
+                            report.snapshot_valid_time_ms = Some(snapshot.valid_time_ms);
+                            if let Some(path) = &self.cache_path
+                                && let Err(e) = cache::save(path, &snapshot)
+                            {
+                                // Non-fatal: the snapshot is still published,
+                                // it just will not survive a restart.
+                                warn!("Could not write weather cache {}: {e}", path.display());
+                            }
+                            snapshots.send_replace(Some(snapshot.clone()));
+                        }
+                        info!(
+                            "Fetched weather{} from {}: {} points, valid at {} ms",
+                            if target.id.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" for '{}'", target.id)
+                            },
+                            self.provider.name(),
+                            snapshot.grid.len(),
+                            snapshot.valid_time_ms
+                        );
+                        held.insert(target.id.clone(), snapshot);
+                        self.publish_held(&mut held, &mut report);
+                    }
+                    Some(Err(e)) => {
+                        // Stop the cycle: whatever failed here would most
+                        // likely fail for the next grid too. The grids
+                        // already fetched are kept and published.
+                        error = Some(e);
+                        break;
+                    }
                 }
-            };
-            let Some(result) = result else {
+            }
+            if cancelled {
                 continue;
-            };
+            }
 
-            let outcome = match result {
-                Ok(snapshot) => {
+            let outcome = match error {
+                None => {
+                    // The cycle is done: the next one fetches afresh.
+                    self.provider.end_cycle();
                     if failures > 0 {
                         info!("Weather fetch recovered after {failures} failure(s)");
                     }
@@ -477,29 +651,14 @@ impl<P: WeatherProvider> Refresher<P> {
                     report.rate_limit = None;
                     report.last_error = None;
                     report.last_success_ms = Some(now_ms);
-                    report.snapshot_valid_time_ms = Some(snapshot.valid_time_ms);
-                    if let Some(path) = &self.cache_path
-                        && let Err(e) = cache::save(path, &snapshot)
-                    {
-                        // Non-fatal: the snapshot is still published, it just
-                        // will not survive a restart.
-                        warn!("Could not write weather cache {}: {e}", path.display());
-                    }
-                    info!(
-                        "Fetched weather from {}: {} points, valid at {} ms",
-                        self.provider.name(),
-                        snapshot.grid.len(),
-                        snapshot.valid_time_ms
-                    );
-                    snapshots.send_replace(Some(snapshot));
                     Outcome::Fetched
                 }
-                Err(e) => {
+                Some(e) => {
                     failures = failures.saturating_add(1);
                     if should_log(failures - 1) {
                         warn!(
                             "Weather fetch from {} failed ({failures} in a row); \
-                             keeping the last good snapshot: {e}",
+                             keeping the last good snapshots: {e}",
                             self.provider.name()
                         );
                     }
@@ -513,6 +672,15 @@ impl<P: WeatherProvider> Refresher<P> {
                     Outcome::Failed { failures, class }
                 }
             };
+
+            // A successful top-up keeps the full refresh where it was.
+            if outcome == Outcome::Fetched
+                && let Some(due) = resume_after
+            {
+                last_outcome = Some(outcome);
+                pending = Some(due);
+                continue;
+            }
 
             let now_ms = (self.clock)();
             let delay = next_delay(outcome, self.refresh, self.retry, now_ms, (self.jitter)());
@@ -633,6 +801,8 @@ mod tests {
         calls: Mutex<Vec<(Instant, i64)>>,
         /// How long each fetch takes, in (paused) virtual time.
         latency: Duration,
+        cycles_ended: std::sync::atomic::AtomicUsize,
+        grids: Mutex<Vec<GridSpec>>,
     }
 
     impl Fake {
@@ -648,7 +818,13 @@ mod tests {
                 script: Mutex::new(results.into()),
                 calls: Mutex::default(),
                 latency,
+                cycles_ended: Default::default(),
+                grids: Mutex::default(),
             })
+        }
+
+        fn grids_seen(&self) -> Vec<GridSpec> {
+            self.grids.lock().unwrap().clone()
         }
 
         fn call_count(&self) -> usize {
@@ -667,13 +843,19 @@ mod tests {
             "fake"
         }
 
+        fn end_cycle(&self) {
+            self.cycles_ended
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+
         async fn fetch(
             &self,
-            _grid: GridSpec,
+            grid: GridSpec,
             _levels: &[u16],
             now_ms: i64,
         ) -> Result<WeatherSnapshot, ProviderError> {
             self.calls.lock().unwrap().push((Instant::now(), now_ms));
+            self.grids.lock().unwrap().push(grid);
             if !self.latency.is_zero() {
                 tokio::time::sleep(self.latency).await;
             }
@@ -734,6 +916,155 @@ mod tests {
         })
         .await
         .unwrap_or_else(|_| panic!("provider called {} times, expected {n}", fake.call_count()));
+    }
+
+    // --- several receivers' grids ------------------------------------------
+
+    fn other_grid() -> GridSpec {
+        GridSpec {
+            lat0: 50.0,
+            lon0: 2.0,
+            dlat: 1.0,
+            dlon: 1.0,
+            nlat: 1,
+            nlon: 2,
+        }
+    }
+
+    fn grids(list: &[(&str, GridSpec)]) -> Vec<ReceiverGrid> {
+        list.iter()
+            .map(|(id, grid)| ReceiverGrid {
+                id: id.to_string(),
+                grid: *grid,
+            })
+            .collect()
+    }
+
+    fn ok_for(grid: GridSpec) -> Result<WeatherSnapshot, ProviderError> {
+        Ok(snapshot_for(grid, &[250], 1013.0))
+    }
+
+    struct Fleet {
+        running: Running,
+        set: watch::Sender<Vec<ReceiverGrid>>,
+        all: watch::Receiver<GridSnapshots>,
+    }
+
+    fn start_fleet(fake: &Arc<Fake>, initial: &[(&str, GridSpec)]) -> Fleet {
+        let (set, set_rx) = watch::channel(grids(initial));
+        let (all_tx, all) = watch::channel(GridSnapshots::new());
+        let running = start(
+            Refresher::new(fake.clone(), grid(), vec![250], REFRESH)
+                .with_grids("home", set_rx)
+                .with_all_snapshots(all_tx),
+        );
+        Fleet { running, set, all }
+    }
+
+    fn keys(all: &watch::Receiver<GridSnapshots>) -> Vec<String> {
+        all.borrow().keys().cloned().collect()
+    }
+
+    fn cycles(fake: &Fake) -> usize {
+        fake.cycles_ended.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn every_receiver_grid_is_fetched_each_cycle() {
+        let fake = Fake::scripted(vec![ok_for(grid()), ok_for(other_grid())]);
+        let fleet = start_fleet(&fake, &[("home", grid()), ("pi-a", other_grid())]);
+
+        until_calls(&fake, 2).await;
+        settle().await;
+        assert_eq!(fake.grids_seen(), vec![grid(), other_grid()]);
+        assert_eq!(keys(&fleet.all), ["home", "pi-a"]);
+        assert_eq!(fleet.all.borrow()["pi-a"].grid, other_grid());
+        // The primary channel (legacy topic, cache file) carries home's.
+        assert_eq!(
+            fleet.running.snapshots.borrow().as_ref().map(|s| s.grid),
+            Some(grid())
+        );
+        assert_eq!(cycles(&fake), 1, "one cycle for both grids");
+        let report = fleet.running.reported.borrow().clone();
+        let ids: Vec<_> = report.grids.iter().map(|g| g.receiver.as_str()).collect();
+        assert_eq!(ids, ["home", "pi-a"]);
+        assert_eq!(report.grids[1].points, 2);
+        fleet.running.task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failure_mid_cycle_keeps_the_grids_already_fetched() {
+        let fake = Fake::scripted(vec![ok_for(grid()), Err(http_error())]);
+        let fleet = start_fleet(&fake, &[("home", grid()), ("pi-a", other_grid())]);
+
+        until_calls(&fake, 2).await;
+        settle().await;
+        assert_eq!(keys(&fleet.all), ["home"]);
+        assert_eq!(cycles(&fake), 0, "the retry may reuse what was paid for");
+        assert_eq!(fleet.running.reported.borrow().consecutive_failures, 1);
+        fleet.running.task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_new_receiver_is_topped_up_at_once_without_moving_the_schedule() {
+        let fake = Fake::scripted(vec![
+            ok_for(grid()),
+            ok_for(other_grid()), // the top-up
+            ok_for(grid()),       // the next full cycle...
+            ok_for(other_grid()),
+        ]);
+        let fleet = start_fleet(&fake, &[("home", grid())]);
+        until_calls(&fake, 1).await;
+        settle().await;
+
+        tokio::time::sleep(Duration::from_secs(600)).await;
+        fleet
+            .set
+            .send(grids(&[("home", grid()), ("pi-a", other_grid())]))
+            .unwrap();
+        until_calls(&fake, 2).await;
+        settle().await;
+        assert_eq!(fake.grids_seen()[1], other_grid(), "only the new grid");
+        assert_eq!(keys(&fleet.all), ["home", "pi-a"]);
+
+        until_calls(&fake, 4).await;
+        let calls = fake.calls.lock().unwrap();
+        // The full cycle is still a refresh after the first fetch, not after
+        // the top-up.
+        assert_eq!(calls[2].0 - calls[0].0, REFRESH);
+        drop(calls);
+        fleet.running.task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_rate_limited_refresher_does_not_wake_for_a_new_receiver() {
+        let fake = Fake::scripted(vec![Err(rate_limited())]);
+        let fleet = start_fleet(&fake, &[("home", grid())]);
+        until_calls(&fake, 1).await;
+        settle().await;
+
+        fleet
+            .set
+            .send(grids(&[("home", grid()), ("pi-a", other_grid())]))
+            .unwrap();
+        tokio::time::sleep(Duration::from_secs(600)).await;
+        assert_eq!(fake.call_count(), 1, "the limit stands");
+        fleet.running.task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_receiver_that_leaves_the_set_leaves_the_map() {
+        let fake = Fake::scripted(vec![ok_for(grid()), ok_for(other_grid())]);
+        let fleet = start_fleet(&fake, &[("home", grid()), ("pi-a", other_grid())]);
+        until_calls(&fake, 2).await;
+        settle().await;
+
+        fleet.set.send(grids(&[("home", grid())])).unwrap();
+        settle().await;
+        assert_eq!(keys(&fleet.all), ["home"]);
+        assert_eq!(fleet.running.reported.borrow().grids.len(), 1);
+        assert_eq!(fake.call_count(), 2, "dropping a grid costs nothing");
+        fleet.running.task.abort();
     }
 
     // --- next_delay ---------------------------------------------------------
@@ -908,6 +1239,28 @@ mod tests {
 
         running.snapshots.changed().await.unwrap();
         assert_eq!(*running.snapshots.borrow(), Some(snapshot(1013.0)));
+        running.task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_cycle_ends_after_success_but_not_after_a_failure() {
+        // Ending the cycle releases what the provider held for it: after a
+        // success the next refresh must fetch afresh, after a failure the
+        // retry should reuse what was already paid for.
+        let fake = Fake::scripted(vec![Err(http_error()), Ok(snapshot(1013.0))]);
+        let mut running = start(Refresher::new(fake.clone(), grid(), vec![250], REFRESH));
+
+        until_calls(&fake, 1).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            fake.cycles_ended.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        running.snapshots.changed().await.unwrap();
+        assert_eq!(
+            fake.cycles_ended.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
         running.task.abort();
     }
 

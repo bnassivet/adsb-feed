@@ -81,6 +81,10 @@ def render_feed(cfg: dict, out: Path = OUT) -> str:
         ("mqtt_port", m["port"]),
         ("mqtt_topic", m["topic"]),
         ("mqtt_qos", m.get("qos", 0)),
+        # Publish to <topic>/<id> so one recorder can tell receivers apart.
+        # Absent means false: a stack file older than the setting keeps
+        # publishing where an older recorder still listens.
+        ("mqtt_per_receiver_topic", bool(m.get("per_receiver_topic", False))),
     ])
     if p.get("enabled"):
         body += "\n" + emit([
@@ -137,9 +141,11 @@ def render_server(cfg: dict, out: Path = OUT) -> str:
     pairs = [
         ("source_id", rx["id"]),
         ("db_path", str(db_path)),
-        # The recorder quarantines fixes beyond reception range of this antenna.
+        # The recorder quarantines fixes beyond reception range of this antenna,
+        # and records it in the database's receiver location history.
         ("receiver_latitude", rx.get("latitude")),
         ("receiver_longitude", rx.get("longitude")),
+        ("receiver_altitude_ft", rx.get("altitude_ft")),
         ("mqtt_broker", m["host"]),
         ("mqtt_port", m["port"]),
         ("mqtt_topic", m["topic"]),
@@ -197,6 +203,11 @@ def render_weather(cfg: dict, out: Path = OUT) -> str:
         ("spacing_deg", w.get("spacing_deg", 1.0)),
         ("refresh_minutes", w.get("refresh_minutes", 60)),
         ("model", w.get("model", "best_match")),
+        # A grid around every other receiver online on the bus, as well as
+        # this one. Each grid costs Open-Meteo calls: max_receivers caps them.
+        ("follow_receivers", bool(w.get("follow_receivers", True))),
+        ("max_receivers", w.get("max_receivers", 4)),
+        ("offline_grace_minutes", w.get("offline_grace_minutes", 30)),
         ("cache_path",
          str(run_scoped(w.get("cache_path", ".run/weather-cache.json"), out))),
         # The control API. Loopback unless the operator opens it: no auth.
@@ -283,6 +294,8 @@ def render_fleet_feed(fleet: dict) -> str:
         ("mqtt_port", broker.get("port", 1883)),
         ("mqtt_topic", fleet_topic(fleet)),
         ("mqtt_qos", broker.get("qos", 0)),
+        # Off unless the fleet says so: every recorder must be updated first.
+        ("mqtt_per_receiver_topic", bool(broker.get("per_receiver_topic", False))),
     ])
     if pulsar.get("enabled"):
         body += "\n" + emit([
@@ -321,6 +334,7 @@ def render_fleet_server(fleet: dict) -> str:
         ("db_path", node.get("db_path", "/var/lib/adsb/adsb.db")),
         ("receiver_latitude", site.get("latitude")),
         ("receiver_longitude", site.get("longitude")),
+        ("receiver_altitude_ft", site.get("altitude_ft")),
         ("mqtt_broker", mqtt_broker),
         ("mqtt_port", broker.get("port", 1883)),
         ("mqtt_topic", fleet_topic(fleet)),

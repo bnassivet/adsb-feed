@@ -38,6 +38,9 @@ help:
 	@echo "  make up-weather   start just the weather service ([weather] enabled = true)"
 	@echo "  make down-weather stop just the weather service"
 	@echo "  make restart-weather  pick up an edited [weather]"
+	@echo "  make receivers        receivers recorded, and where each one is now"
+	@echo "  make receiver-history [R=id]  one receiver's dated locations"
+	@echo "  make receiver ARGS=\"move --lat .. --lon .. --at ..\"  record a (back-dated) move"
 	@echo "  make weather-status   what the weather service is doing (control API)"
 	@echo "  make weather-enable   resume fetching weather (persisted)"
 	@echo "  make weather-disable  pause fetching; the last grid stays on the map"
@@ -116,6 +119,14 @@ restart-weather: ; @$(SH) stop-weather && $(SH) weather
 
 # Runtime control of a running weather service, through its control API. A
 # disable is persisted (state_path) and survives restart-weather.
+# Receivers and their location history (SCD2). R=<id> picks a receiver
+# (default: this stack's own); anything else goes through ARGS, e.g.
+#   make receiver ARGS="move --lat 46.7 --lon -2.3 --at 2026-10-01"
+.PHONY: receivers receiver-history receiver
+receivers:        ; @$(SH) receiver list
+receiver-history: ; @$(SH) receiver history $(if $(R),--receiver $(R))
+receiver:         ; @$(SH) receiver $(ARGS)
+
 .PHONY: weather-status weather-enable weather-disable
 weather-status:  ; @$(SH) weather-status
 weather-enable:  ; @$(SH) weather-enable

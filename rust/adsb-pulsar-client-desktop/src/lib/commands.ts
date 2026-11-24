@@ -8,6 +8,9 @@ import type {
   CreateScenario,
   CreateScenarioTrack,
   DetectionRangeQuery,
+  LocationChange,
+  LocationPeriod,
+  ReceiverSummary,
   DetectionRangeSector,
   RejectedPositionPage,
   RejectedPositionQuery,
@@ -90,6 +93,11 @@ export async function locateTileCache(dbName: string): Promise<DatabaseLocation>
 }
 
 /** The last good weather snapshot, or null before one has arrived. */
+/** Every receiver's latest grid, by receiver id (empty before any arrives). */
+export async function getReceiverWeatherSnapshots(): Promise<Record<string, WeatherSnapshot>> {
+  return invoke("get_receiver_weather_snapshots");
+}
+
 export async function getWeatherSnapshot(): Promise<WeatherSnapshot | null> {
   return invoke("get_weather_snapshot");
 }
@@ -221,6 +229,28 @@ export async function getDetectionRange(
   query: DetectionRangeQuery
 ): Promise<DetectionRangeSector[]> {
   return invoke("get_detection_range", { query });
+}
+
+/** Every receiver the database knows, with its current location. */
+export async function listReceivers(): Promise<ReceiverSummary[]> {
+  return invoke("list_receivers");
+}
+
+/** One receiver's location history, oldest first. */
+export async function getReceiverLocations(sourceId: string): Promise<LocationPeriod[]> {
+  return invoke("get_receiver_locations", { sourceId });
+}
+
+/**
+ * Edits one receiver's location history. Resolves to the new history, or
+ * null when the edit changed nothing; rejects with the rule it broke.
+ */
+export async function applyReceiverChange(
+  sourceId: string,
+  change: LocationChange,
+  note?: string
+): Promise<LocationPeriod[] | null> {
+  return invoke("apply_receiver_change", { sourceId, change, note: note ?? null });
 }
 
 /** Positions quarantined as decode glitches, newest first, with the range total. */

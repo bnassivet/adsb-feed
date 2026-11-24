@@ -13,6 +13,10 @@ pub enum StorageError {
     #[error("Query error: {0}")]
     Query(String),
 
+    /// A receiver location change broke the history's rules.
+    #[error(transparent)]
+    History(#[from] crate::receiver_history::HistoryError),
+
     /// I/O error (e.g., creating DB directory).
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

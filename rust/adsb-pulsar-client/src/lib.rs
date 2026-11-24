@@ -64,6 +64,7 @@ pub mod metrics;
 pub mod metrics_export;
 #[cfg(feature = "metrics")]
 pub mod metrics_server;
+pub mod receiver_location;
 pub mod source;
 
 // Re-export main types for convenience

@@ -65,6 +65,7 @@ pub async fn start_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
         Arc::clone(&state.connection_status),
         Arc::clone(&state.weather),
         Arc::clone(&state.weather_service),
+        Arc::clone(&state.receiver_weather),
         // Cloned out of the mutex rather than held across the call: the mode is
         // a small value and start_feed does real work.
         state
@@ -213,6 +214,16 @@ pub fn get_weather_availability(state: State<'_, AppState>) -> Result<WeatherAva
 
 /// What the weather service last reported over MQTT: its status, and whether
 /// it is online. The query side -- the "Fetch weather" switch reads this.
+/// Every receiver's latest grid, by receiver id. Pushed as
+/// `adsb:weather-receiver` events; this answers a late-mounting UI.
+#[tauri::command]
+pub fn get_receiver_weather_snapshots(
+    state: State<'_, AppState>,
+) -> Result<std::collections::BTreeMap<String, WeatherSnapshot>, String> {
+    let held = state.receiver_weather.read().map_err(|e| e.to_string())?;
+    Ok(held.clone())
+}
+
 #[tauri::command]
 pub fn get_weather_service(state: State<'_, AppState>) -> Result<WeatherServiceView, String> {
     let view = state.weather_service.read().map_err(|e| e.to_string())?;
@@ -500,6 +511,59 @@ pub async fn get_detection_range(
         .ok_or_else(|| "Storage not available".to_string())?;
     storage
         .get_detection_range(query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Every receiver the database knows, with its current location.
+#[tauri::command]
+pub async fn list_receivers(
+    state: State<'_, AppState>,
+) -> Result<Vec<adsb_data_engine::ReceiverSummary>, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage.list_receivers().await.map_err(|e| e.to_string())
+}
+
+/// One receiver's location history, oldest first.
+#[tauri::command]
+pub async fn get_receiver_locations(
+    source_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<adsb_data_engine::LocationPeriod>, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    storage
+        .receiver_locations(source_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Applies an edit from the location-history editor. Returns the new
+/// history, or `None` when the edit changed nothing. In remote mode it is
+/// written on the daemon.
+#[tauri::command]
+pub async fn apply_receiver_change(
+    source_id: String,
+    change: adsb_data_engine::LocationChange,
+    note: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Option<Vec<adsb_data_engine::LocationPeriod>>, String> {
+    let guard = state.storage.read().await;
+    let storage = guard
+        .as_ref()
+        .ok_or_else(|| "Storage not available".to_string())?;
+    let stamp = adsb_data_engine::ChangeStamp {
+        origin: adsb_data_engine::LocationOrigin::Desktop,
+        recorded_at_ms: chrono::Utc::now().timestamp_millis(),
+        note: note.filter(|n| !n.trim().is_empty()),
+    };
+    storage
+        .apply_receiver_change(source_id, change, stamp)
         .await
         .map_err(|e| e.to_string())
 }
