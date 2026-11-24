@@ -29,9 +29,13 @@ function state(over: Partial<UseFlightInfo> = {}): UseFlightInfo {
   return { status: "idle", info: null, photo: null, error: null, request: vi.fn(), ...over };
 }
 
-function renderPanel(flightInfo: UseFlightInfo | undefined, isSimulated = false) {
+function renderPanel(
+  flightInfo: UseFlightInfo | undefined,
+  isSimulated = false,
+  extra: Partial<React.ComponentProps<typeof AircraftDetailsPanel>> = {},
+) {
   render(
-    <AircraftDetailsPanel track={TRACK} isOpen width={280} onToggle={vi.fn()} onWidthChange={vi.fn()} flightInfo={flightInfo} isSimulated={isSimulated} />,
+    <AircraftDetailsPanel track={TRACK} isOpen width={280} onToggle={vi.fn()} onWidthChange={vi.fn()} flightInfo={flightInfo} isSimulated={isSimulated} {...extra} />,
   );
 }
 
@@ -88,6 +92,68 @@ describe("AircraftDetailsPanel flight info", () => {
   it("marks cached answers shown after a failed refresh", () => {
     renderPanel(state({ status: "loaded", info: { ...INFO, source: "cache", stale: true, error: "offline" } }));
     expect(screen.getByText(/offline \(cached\)/i)).toBeInTheDocument();
+  });
+
+  it("names adsbdb as the source of an adsbdb answer", () => {
+    renderPanel(state({ status: "loaded", info: INFO }));
+    expect(screen.getByRole("region", { name: /flight info/i })).toHaveTextContent("Source: adsbdb.com · not a filed flight plan");
+  });
+
+  it("credits hexdb.io for an airframe from the fallback", () => {
+    const thumb = "https://hexdb.io/static/aircraft-images/D-AIBD-thumb.jpg";
+    const hexdb: FlightInfo = {
+      ...INFO,
+      aircraft: { ...INFO.aircraft!, provider: "hexdb", owner_country: null, photo_url: null, photo_thumb_url: thumb },
+      route: { ...INFO.route!, provider: "hexdb", airline_name: null, airline_icao: null, airline_iata: null },
+    };
+    renderPanel(state({ status: "loaded", info: hexdb, photo: "data:image/jpeg;base64,AAA" }));
+    expect(screen.getByRole("region", { name: /flight info/i })).toHaveTextContent("Source: hexdb.io · not a filed flight plan");
+    expect(screen.getByRole("link", { name: "hexdb.io" })).toHaveAttribute("href", thumb);
+  });
+
+  it("shows every stop of a multi-stop route and the route's date", () => {
+    const sin = { icao: "WSSS", iata: "SIN", name: "Singapore Changi Airport", city: null, country: "SG", latitude: 1.35, longitude: 103.99 };
+    const info: FlightInfo = { ...INFO, route: { ...INFO.route!, provider: "hexdb", stops: [sin], updated_at: "2026-08-30T17:07:13Z" } };
+    renderPanel(state({ status: "loaded", info }));
+    const section = screen.getByRole("region", { name: /flight info/i });
+    expect(section).toHaveTextContent("EDDF → WSSS → KJFK");
+    expect(screen.getByTitle("Singapore Changi Airport — SG")).toHaveTextContent("WSSS");
+    expect(section).toHaveTextContent("Route data of 2026-08-30");
+  });
+
+  it("names both sources when both were asked, even if only one knew", () => {
+    const info: FlightInfo = {
+      ...INFO,
+      aircraft: { ...INFO.aircraft!, found: false },
+      route: { ...INFO.route!, provider: "adsbdb", airline_name: null },
+      sources: ["adsbdb", "hexdb"],
+    };
+    renderPanel(state({ status: "loaded", info }));
+    expect(screen.getByText("Aircraft not in the database")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: /flight info/i })).toHaveTextContent("Source: adsbdb.com + hexdb.io · not a filed flight plan");
+  });
+
+  it("toggles the route path on the map", async () => {
+    const onToggleFlightPath = vi.fn();
+    renderPanel(state({ status: "loaded", info: INFO }), false, { flightPathShown: true, onToggleFlightPath });
+    const button = screen.getByRole("button", { name: "Hide route on map" });
+    expect(button.querySelector("[data-icon='eye-open']")).not.toBeNull();
+    await userEvent.click(button);
+    expect(onToggleFlightPath).toHaveBeenCalledOnce();
+  });
+
+  it("offers to show a hidden route path", () => {
+    renderPanel(state({ status: "loaded", info: INFO }), false, { flightPathShown: false, onToggleFlightPath: vi.fn() });
+    const button = screen.getByRole("button", { name: "Show route on map" });
+    expect(button.querySelector("[data-icon='eye-closed']")).not.toBeNull();
+  });
+
+  it("has no route toggle when there is nothing to draw", () => {
+    const noPosition = { ...INFO, route: { ...INFO.route!, destination: { ...INFO.route!.destination!, latitude: null, longitude: null } } };
+    renderPanel(state({ status: "loaded", info: noPosition }), false, { flightPathShown: true, onToggleFlightPath: vi.fn() });
+    expect(screen.queryByRole("button", { name: /route on map/i })).toBeNull();
+    renderPanel(state({ status: "loaded", info: INFO }));
+    expect(screen.queryByRole("button", { name: /route on map/i })).toBeNull();
   });
 
   it("shows the error and lets the user retry", async () => {

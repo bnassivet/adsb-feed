@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useCallback, useRef, useState } from "react";
-import { MapContainer, Marker, Polyline, GeoJSON, Tooltip, useMap, useMapEvents } from "react-leaflet";
+import { MapContainer, Marker, Polyline, CircleMarker, GeoJSON, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import { routeLegs, type AgentTrajectory } from "@/lib/simulation-data";
 import L from "leaflet";
 import type { AircraftTrack, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventOfInterest, MapPickResult, Positions, RejectedPosition } from "@/lib/types";
@@ -50,6 +50,8 @@ import { MapTileToggle } from "./MapTileToggle";
 import { CenterOnAntennaButton } from "./CenterOnAntennaButton";
 import { RangeLineButton, RANGE_LINE_COLOR } from "./RangeLineButton";
 import { greatCirclePoints, midpoint, rangeLineLabel } from "@/lib/range-line";
+import { airportTitle, type FlightPath } from "@/lib/flight-info";
+import { FLIGHT_PATH_COLOR, FlightPathButton } from "./FlightPathButton";
 import type { ReceiverPoint } from "@/lib/aircraft-details";
 import { AltitudeLegend } from "./AltitudeLegend";
 import { WindSpeedLegend } from "./WindSpeedLegend";
@@ -1115,6 +1117,11 @@ interface Props {
   otherReceivers?: OtherReceiver[];
   /** Planned routes of agent-generated trajectories currently on the map. */
   simulatedRoutes?: AgentTrajectory[];
+  /** The selected flight's route from the web (Show Flight Infos), or null (also when hidden). */
+  flightPath?: FlightPath | null;
+  /** Whether routes are shown; the map button is drawn only with `onToggleFlightPath`. */
+  flightPathShown?: boolean;
+  onToggleFlightPath?: () => void;
   eventsOfInterest?: EventOfInterest[];
   /** Rejected positions to draw: point, label and H3 cell. */
   rejectedPositions?: RejectedPosition[];
@@ -1411,7 +1418,43 @@ export interface OtherReceiver {
 
 const NO_OTHER_RECEIVERS: OtherReceiver[] = [];
 
-export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, sea = NO_SEA, seamarkItems = NO_SEAMARKS, onSeamarkCells, relief = NO_RELIEF, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, otherReceivers = NO_OTHER_RECEIVERS, simulatedRoutes, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false, rejectedPositions = NO_REJECTED }: Props) {
+/** The selected flight's scheduled route: legs and airports, all interactive-free but for tooltips. */
+function FlightPathLayer({ path }: { path: FlightPath }) {
+  const last = path.airports.length - 1;
+  return (
+    <>
+      {path.legs.map((leg, i) => (
+        <Polyline
+          key={`flight-path-leg-${i}`}
+          positions={leg}
+          interactive={false}
+          pathOptions={{ color: FLIGHT_PATH_COLOR, weight: 1.5, opacity: 0.8, dashArray: "6 6" }}
+        />
+      ))}
+      {path.airports.map(({ airport, position }, i) => (
+        <CircleMarker
+          key={`flight-path-airport-${i}-${airport.icao}`}
+          center={position}
+          radius={i === 0 || i === last ? 5 : 4}
+          pathOptions={{ color: FLIGHT_PATH_COLOR, weight: 2, fillColor: "#0f172a", fillOpacity: 1 }}
+        >
+          <Tooltip direction="top" offset={[0, -6]}>
+            <div style={{ fontSize: 11 }}>
+              <div style={{ fontWeight: 600 }}>
+                {airport.icao}
+                {airport.iata ? ` / ${airport.iata}` : ""}
+                {i === 0 ? " · origin" : i === last ? " · destination" : " · stop"}
+              </div>
+              <div>{airportTitle(airport)}</div>
+            </div>
+          </Tooltip>
+        </CircleMarker>
+      ))}
+    </>
+  );
+}
+
+export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, sea = NO_SEA, seamarkItems = NO_SEAMARKS, onSeamarkCells, relief = NO_RELIEF, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, otherReceivers = NO_OTHER_RECEIVERS, simulatedRoutes, flightPath = null, flightPathShown = true, onToggleFlightPath, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false, rejectedPositions = NO_REJECTED }: Props) {
   // Memoised: the basemap layer is rebuilt (and every tile reloaded) when this changes.
   const tile = useMemo(() => tileConfig(mapTheme, CARTO_API_KEY), [mapTheme]);
   const [airspaceStack, setAirspaceStack] = useState<Airspace[]>(NO_AIRSPACES);
@@ -1652,6 +1695,11 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
           });
         })}
 
+        {/* The selected flight's route from the web: dashed great-circle legs
+            through every stop, an airport marker at each end. It is the
+            scheduled route, not a flown track, so it stays thin and dashed. */}
+        {flightPath && <FlightPathLayer path={flightPath} />}
+
         {/* The other receivers in the database, dimmer than the selected one */}
         {otherReceivers.map((r) => (
           <Marker
@@ -1771,6 +1819,9 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
           disabled={!rangeLineOrigin}
           hasTargets={rangeLineTargets.length > 0}
         />
+      )}
+      {onToggleFlightPath && (
+        <FlightPathButton active={flightPathShown} onToggle={onToggleFlightPath} hasRoute={flightPath != null} />
       )}
       <AltitudeLegend theme={mapTheme} />
       {/* Hover readouts, stacked bottom-left: the station first, then the airspaces above the point */}

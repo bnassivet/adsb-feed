@@ -1696,7 +1696,8 @@ pub async fn get_ground_elevation(
     ground_elevation(&app, lat, lng).await
 }
 
-/// Airframe and route of one aircraft from the web (adsbdb), cached in DuckDB.
+/// Airframe and route of one aircraft from the web (adsbdb, hexdb.io as the
+/// fallback for what adsbdb does not know), cached in DuckDB.
 /// Asked only when the user clicks "Show Flight Infos". Scenario aircraft are
 /// refused before any request; the frontend also never asks for simulated ones.
 #[tauri::command]

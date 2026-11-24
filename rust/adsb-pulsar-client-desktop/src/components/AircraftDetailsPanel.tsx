@@ -72,6 +72,10 @@ interface Props {
   flightInfo?: UseFlightInfo;
   /** A simulated aircraft: the lookup button is disabled, nothing is sent to the web. */
   isSimulated?: boolean;
+  /** Whether the looked-up route is drawn on the map. */
+  flightPathShown?: boolean;
+  /** Show/hide the looked-up route on the map; no toggle without it. */
+  onToggleFlightPath?: () => void;
 }
 
 export function AircraftDetailsPanel({
@@ -92,6 +96,8 @@ export function AircraftDetailsPanel({
   airspaces,
   flightInfo,
   isSimulated = false,
+  flightPathShown = true,
+  onToggleFlightPath,
 }: Props) {
   if (track === null) return null;
 
@@ -113,6 +119,8 @@ export function AircraftDetailsPanel({
       airspaces={airspaces}
       flightInfo={flightInfo}
       isSimulated={isSimulated}
+      flightPathShown={flightPathShown}
+      onToggleFlightPath={onToggleFlightPath}
     />
   ) : (
     <CollapsedStrip onToggle={onToggle} />
@@ -153,6 +161,8 @@ function ExpandedPanel({
   airspaces,
   flightInfo,
   isSimulated = false,
+  flightPathShown = true,
+  onToggleFlightPath,
 }: {
   track: AircraftTrack;
   width: number;
@@ -170,6 +180,8 @@ function ExpandedPanel({
   airspaces?: Airspace[];
   flightInfo?: UseFlightInfo;
   isSimulated?: boolean;
+  flightPathShown?: boolean;
+  onToggleFlightPath?: () => void;
 }) {
   const { resolvedTzName } = useDisplayTz();
   // Self-contained drag: listeners created on mousedown capture the start width/x and are removed
@@ -271,7 +283,14 @@ function ExpandedPanel({
           </div>
         </div>
 
-        {flightInfo && <FlightInfoSection flightInfo={flightInfo} isSimulated={isSimulated} />}
+        {flightInfo && (
+          <FlightInfoSection
+            flightInfo={flightInfo}
+            isSimulated={isSimulated}
+            flightPathShown={flightPathShown}
+            onToggleFlightPath={onToggleFlightPath}
+          />
+        )}
 
         {/* Altitude, Speed, Heading */}
         <div className="px-3 py-2 border-b border-slate-800 space-y-1">

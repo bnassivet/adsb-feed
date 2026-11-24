@@ -5975,7 +5975,9 @@ clickable underneath.
 | Ground height | `s3.amazonaws.com/elevation-tiles-prod/terrarium` | Rust | — | disk, for good |
 | Weather (winds, pressure) | `api.open-meteo.com/v1/forecast` | weather service, via MQTT | — | retained MQTT message |
 | Flight info (route, airline, airframe) | `api.adsbdb.com/v0/aircraft/{hex}`, `/v0/callsign/{cs}` | Rust (`adsb-data-server`, `web-lookup`) | — | DuckDB `aircraft_info` 30 d, `flight_routes` 1 d, "unknown" 1 d |
-| Aircraft photo | `airport-data.com` (link from adsbdb) | Rust | — | disk, for good |
+| Flight info, second source (airframes) / first source (routes) | `hexdb.io/api/v2/aircraft/{hex}`, `/api/v2/routes/{cs}` | Rust (`adsb-data-server`, `web-lookup`) | — | same rows, `provider = 'hexdb'` |
+| Airport position (only for a route stop given without one) | `hexdb.io/api/v2/airports/{icao}` | Rust (`adsb-data-server`, `web-lookup`) | — | DuckDB `airports` 30 d |
+| Aircraft photo | `airport-data.com` (link from adsbdb), `hexdb.io` (link from hexdb) | Rust | — | disk, for good |
 
 Two rules decide which side calls an endpoint:
 - **Rust**, when there is a key, a cache on disk, decoding, or fair use to
@@ -6418,7 +6420,7 @@ are pictures and cannot give a value at a point; the data behind them can.
   every 45 s.
 - No CSP change: Rust makes the requests.
 
-## Flight info from the web (adsbdb)
+## Flight info from the web (adsbdb, hexdb)
 
 Plan: `docs/plans/2026-11-20-flight-info.md`. The receiver hears a hex and a
 callsign; where the flight is going, the airline and the airframe come from the
@@ -6460,6 +6462,92 @@ callsign, **not a filed flight plan**, which is not public.
   The panel credits *airport-data.com* with a link to the full photo.
 - Identifiers are validated (6 hex digits; callsign ≤ 8 letters/digits) before
   they go in a URL path.
+
+### Second source: hexdb.io
+
+Plans: `docs/plans/2026-11-24-hexdb-fallback.md`, `2026-11-24-flight-path.md`.
+**hexdb.io** is keyless. Its data is courtesy of PlaneBase/PlanePlotter, Jim
+Mason, Steve Hibberd, ip2location and Airport-Data. Each part has its own
+source order:
+
+| Part | Asked first | Then, only if the first says "unknown" (404) |
+|---|---|---|
+| Airframe | adsbdb | hexdb |
+| Route | hexdb | adsbdb |
+
+Routes start at hexdb because its routes are richer. They list every stop
+(QFA1: YSSY → WSSS → EGLL, where adsbdb has only YSSY → WSSS) and carry an
+`updated_at` date. adsbdb's routes can be out of date (QFA9).
+
+- **Only "unknown" moves on.** An error from the first source (timeout, 429,
+  5xx) is reported, with the stale cache or as an error. The second source is
+  not asked: it is there for coverage, not availability.
+- **One loop for both parts.** `ask_in_turn` asks the sources in order. When
+  none knows the part, the last "unknown" is stored, tagged with the *last*
+  source of the order, which records that every source has said so.
+  `fetch_adsbdb` is a plain GET used for every URL, and it names the source in
+  its errors (`source_name`).
+- **Cache.** Rows carry `provider` (`adsbdb` | `hexdb`), added with `ALTER
+  TABLE … ADD COLUMN IF NOT EXISTS`. A known row keeps its TTL. A cached
+  "unknown" counts as fresh only if every source has given it. Otherwise the
+  next click asks the sources that have not answered yet, at once, and skips
+  those whose unknown is under a day old (`sources_to_ask`). An untagged row
+  predates hexdb and came from adsbdb alone. An *error* is never cached as
+  "unknown".
+- **API v2.** `/api/v2/aircraft/{hex}` includes `images.full` /
+  `images.thumbnail` and `operator_flag_code`. `/api/v2/routes/{cs}` includes
+  `origin`, `destination` and `airports` (all airports in order; the ones in
+  between become `stops`), each with its position. A 404 body is `{"error":
+  {"code": "..._not_found", ...}}`. adsbdb's `midpoint` is also kept as a
+  stop.
+- **Airline.** hexdb routes have none. When the route has no airline and the
+  callsign starts with the airframe's operator code (`EZY12AB` on an `EZY`
+  airframe), the airframe owner is shown as the airline (`borrow_airline`).
+  It is derived for each answer and never stored, because the two parts are
+  cached separately.
+- **What hexdb lacks.** It has no owner country. Airport `country` is an ISO
+  code (adsbdb gives a name). Its `region` is a state or province, so `city`
+  stays empty.
+- **Photo.** Image links are kept only if they are https on `hexdb.io`, which is
+  also on the photo loader's allow-list.
+- **Credit.** The footer names every source *asked*, whether or not it knew
+  anything (`FlightInfo.sources`, `sourceLabel`). The backend builds the list
+  from the rows (`sources_behind`), so cached answers get it too. ECC602 is
+  routed by adsbdb after a hexdb 404, and its airframe is unknown to both, so
+  the footer reads *adsbdb.com + hexdb.io*. The panel shows every stop and "Route data of
+  <date>" when the source gives one.
+
+### Flight path on the map
+
+Once "Show Flight Infos" has loaded a route for the selected aircraft, the map
+draws it as a dashed amber great-circle line through origin → stops →
+destination. Each airport gets a marker with a tooltip (`FlightPathLayer` in
+`MapInner`). The path is derived in `page.tsx` from `useFlightInfo`, so it
+disappears when the selection changes, because the hook resets.
+
+- **Geometry is pure** (`flightPath` in `lib/flight-info.ts`, tested). It
+  makes one leg per pair of placeable airports with `greatCirclePoints` (the
+  helper the range lines use), and skips an airport without a position.
+- **Antimeridian.** Longitudes are unwrapped along the whole path, so they can
+  leave [-180, 180]. Sydney → Los Angeles is then drawn across the Pacific,
+  not around the world. The markers use the same unwrapped longitudes as the
+  line.
+- **Positions for every stop.** A route airport without coordinates is looked
+  up through `/api/v2/airports/{icao}` (`place_airport`) and cached in the
+  DuckDB `airports` table for 30 days. If that fails, the airport keeps only
+  its code and is not drawn. That is not an error.
+- It is the scheduled route, not a flown track: thin and dashed, with no
+  hit-testing on the line.
+- **Show/hide.** Two controls share one setting. One is an eye at the end of
+  the route line in the details panel. The other is a map button
+  (`FlightPathButton`) placed between the range-line button and the
+  light/dark toggle; it moved that toggle and the legends below it down one
+  slot (2.25rem). The map button is always there, so routes can be turned
+  back on before any is looked up. Both use `flightPathTitle` for their
+  tooltip. The choice is kept across restarts
+  (`adsb-show-flight-path`, on by default). The eye appears only when the
+  route can be drawn (`canDrawRoute`), and hiding it means `page.tsx` passes
+  the map no path at all.
 
 ## Observability (Prometheus)
 

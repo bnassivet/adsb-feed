@@ -45,7 +45,7 @@ import { MapContextMenu } from "@/components/MapContextMenu";
 import { WhatIsHere } from "@/components/WhatIsHere";
 import { useGroundElevation } from "@/hooks/useGroundElevation";
 import { useFlightInfo } from "@/hooks/useFlightInfo";
-import { isSimulatedTrack } from "@/lib/flight-info";
+import { flightPath, isSimulatedTrack } from "@/lib/flight-info";
 import { whatIsHere } from "@/lib/commands";
 import type { WhatIsHereResult } from "@/lib/terrain";
 import { countMatching, useAircraftTracks } from "@/hooks/useAircraftTracks";
@@ -126,6 +126,8 @@ export default function Dashboard() {
   const [detailsPanelOpen, setDetailsPanelOpen] = useLocalStorage<boolean>("adsb-details-panel-open", true);
   const [detailsPanelWidth, setDetailsPanelWidth] = useLocalStorage<number>("adsb-details-panel-width", 280);
   const [showHistory, setShowHistory] = useLocalStorage<boolean>("adsb-show-history", false);
+  // The looked-up route's path on the map; the details panel's eye toggles it.
+  const [showFlightPath, setShowFlightPath] = useLocalStorage<boolean>("adsb-show-flight-path", true);
   const [showDensity, setShowDensity] = useLocalStorage<boolean>("adsb-show-density", false);
   // Weather layer: winds aloft from the MQTT weather topic.
   const [showWeather, setShowWeather] = useLocalStorage<boolean>("adsb-show-weather", false);
@@ -1063,6 +1065,9 @@ export default function Dashboard() {
     selectedTrack ? { hex_ident: selectedTrack.hex_ident, callsign: selectedTrack.callsign?.trim() || null } : null,
     selectedIsSimulated,
   );
+  // Its route on the map once looked up; gone with the selection (the hook resets).
+  const selectedRoute = selectedFlightInfo.status === "loaded" ? (selectedFlightInfo.info?.route ?? null) : null;
+  const selectedFlightPath = useMemo(() => flightPath(selectedRoute), [selectedRoute]);
   const selectedAirspaces = useMemo(
     () => (selLat != null && selLng != null && visibleAirspaces.length > 0 ? airspacesAt(visibleAirspaces, selLat, selLng) : []),
     [visibleAirspaces, selLat, selLng],
@@ -1278,6 +1283,10 @@ export default function Dashboard() {
 
   function handleToggleRangeLines() {
     setShowRangeLines((prev: boolean) => !prev);
+  }
+
+  function handleToggleFlightPath() {
+    setShowFlightPath((prev: boolean) => !prev);
   }
 
   function handleToggleEvents() {
@@ -1831,7 +1840,7 @@ export default function Dashboard() {
                   />
                 </div>
               )}
-              <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={visibleMetars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={weatherClockMs} radar={radarView} radarOpacity={radarOpacity} sea={sea} relief={relief} seamarkItems={seamarkDetails.items} onSeamarkCells={seamarkDescriptions ? setSeamarkCells : undefined} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} otherReceivers={showReceiver ? otherReceivers : undefined} simulatedRoutes={visibleRoutes} eventsOfInterest={filteredEvents} rejectedPositions={rejectedOnMap} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
+              <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={visibleMetars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={weatherClockMs} radar={radarView} radarOpacity={radarOpacity} sea={sea} relief={relief} seamarkItems={seamarkDetails.items} onSeamarkCells={seamarkDescriptions ? setSeamarkCells : undefined} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} otherReceivers={showReceiver ? otherReceivers : undefined} simulatedRoutes={visibleRoutes} flightPath={showFlightPath ? selectedFlightPath : null} flightPathShown={showFlightPath} onToggleFlightPath={handleToggleFlightPath} eventsOfInterest={filteredEvents} rejectedPositions={rejectedOnMap} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel
@@ -1852,6 +1861,8 @@ export default function Dashboard() {
                 airspaces={selectedAirspaces}
                 flightInfo={selectedFlightInfo}
                 isSimulated={selectedIsSimulated}
+                flightPathShown={showFlightPath}
+                onToggleFlightPath={handleToggleFlightPath}
                 rangeLineOn={showRangeLines}
                 onToggleRangeLine={handleToggleRangeLines}
               />

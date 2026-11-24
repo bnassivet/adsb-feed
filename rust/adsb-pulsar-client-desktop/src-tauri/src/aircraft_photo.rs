@@ -1,6 +1,7 @@
 //! Aircraft photo thumbnails for the details panel.
 //!
-//! The link comes from the flight-info cache (adsbdb → airport-data.com). The
+//! The link comes from the flight-info cache (adsbdb → airport-data.com, or
+//! hexdb.io when the airframe came from the hexdb fallback). The
 //! bytes are fetched here, kept on disk one file per hex, and handed to the
 //! webview as a `data:` URL: it works offline once fetched, and the webview's
 //! CSP needs no new image host.
@@ -12,8 +13,8 @@ use base64::Engine;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
-/// Hosts adsbdb links photos on. Anything else is refused.
-const ALLOWED_HOSTS: &[&str] = &["airport-data.com", "image.airport-data.com"];
+/// Hosts the flight-info sources link photos on. Anything else is refused.
+const ALLOWED_HOSTS: &[&str] = &["airport-data.com", "image.airport-data.com", "hexdb.io"];
 
 /// A thumbnail is a few KB; anything this large is not one.
 pub const MAX_PHOTO_BYTES: usize = 2 * 1024 * 1024;
@@ -159,6 +160,8 @@ mod tests {
         assert!(check_url("https://evil.test/airport-data.com/x.jpg").is_err());
         assert!(check_url("https://airport-data.com.evil.test/x.jpg").is_err());
         assert!(check_url("https://localhost:8787/tools/x").is_err());
+        assert!(check_url("https://hexdb.io/static/aircraft-images/EI-DCL-thumb.jpg").is_ok());
+        assert!(check_url("https://hexdb.io.evil.test/x.jpg").is_err());
     }
 
     #[test]

@@ -62,7 +62,7 @@ class TestServerToolDefinitions:
         say what it is not (a filed flight plan, or history)."""
         tool = next(t for t in SERVER_TOOLS if t.name == "lookupFlightInfo")
         d = tool.description.lower()
-        for phrase in ("origin", "destination", "airline", "aircraft type", "registration", "adsbdb"):
+        for phrase in ("origin", "destination", "airline", "aircraft type", "registration", "adsbdb", "hexdb", "stops"):
             assert phrase in d, phrase
         assert "not a filed flight plan" in d
         assert "live" in d and "simulated" in d
