@@ -30,6 +30,9 @@ mod receivers;
 
 mod flight_cache;
 
+mod opensky;
+pub use opensky::OPENSKY_TRACK_SETTLED_S;
+
 /// Write Arrow RecordBatches to an IPC stream, returning the raw bytes.
 fn write_arrow_ipc(batches: impl Iterator<Item = RecordBatch>) -> Result<Vec<u8>, StorageError> {
     let mut buf = Vec::new();
@@ -341,6 +344,40 @@ const SCHEMA_OBSERVED_SQL: &str = r#"
         recorded_at_ms  BIGINT  NOT NULL,
         note            TEXT,
         PRIMARY KEY (source_id, valid_from_ms)
+    );
+
+    -- What OpenSky returned, recorded beside -- never into -- the receiver's
+    -- own positions. See storage/opensky.rs.
+    CREATE TABLE IF NOT EXISTS opensky_states (
+        icao24            TEXT    NOT NULL,
+        time_position_s   BIGINT  NOT NULL,
+        fetched_ms        BIGINT  NOT NULL,
+        data_time_s       BIGINT  NOT NULL,
+        callsign          TEXT,
+        latitude          DOUBLE  NOT NULL,
+        longitude         DOUBLE  NOT NULL,
+        altitude_ft       DOUBLE,
+        ground_speed_kt   DOUBLE,
+        track_deg         DOUBLE,
+        vertical_rate_fpm DOUBLE,
+        on_ground         BOOLEAN,
+        matched           TEXT    NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_opensky_states_icao_time
+        ON opensky_states (icao24, time_position_s);
+    CREATE INDEX IF NOT EXISTS idx_opensky_states_time
+        ON opensky_states (time_position_s);
+
+    CREATE TABLE IF NOT EXISTS opensky_tracks (
+        icao24          TEXT    NOT NULL,
+        start_time_s    BIGINT  NOT NULL,
+        end_time_s      BIGINT  NOT NULL,
+        callsign        TEXT,
+        fetched_ms      BIGINT  NOT NULL,
+        waypoint_count  INTEGER NOT NULL,
+        path_json       TEXT    NOT NULL,
+        PRIMARY KEY (icao24, start_time_s)
     );
 
 "#;
@@ -1601,6 +1638,13 @@ impl StorageHandle {
         storage.conn.execute(
             "DELETE FROM rejected_positions WHERE timestamp_ms < ?",
             params![older_than_ms],
+        )?;
+
+        // OpenSky's states age out with the receiver's positions. Its tracks
+        // are kept: they are small, were paid for, and serve as the cache.
+        storage.conn.execute(
+            "DELETE FROM opensky_states WHERE time_position_s < ?",
+            params![older_than_ms / 1_000],
         )?;
 
         info!(
@@ -3796,6 +3840,8 @@ impl StorageHandle {
              CREATE TABLE export_db.rejected_positions AS SELECT * FROM rejected_positions;
              CREATE TABLE export_db.receivers AS SELECT * FROM receivers;
              CREATE TABLE export_db.receiver_locations AS SELECT * FROM receiver_locations;
+             CREATE TABLE export_db.opensky_states AS SELECT * FROM opensky_states;
+             CREATE TABLE export_db.opensky_tracks AS SELECT * FROM opensky_tracks;
              DETACH export_db;",
             path_str
         ))?;
@@ -4707,7 +4753,9 @@ mod tests {
                 "weather_snapshots",
                 "rejected_positions",
                 "receivers",
-                "receiver_locations"
+                "receiver_locations",
+                "opensky_states",
+                "opensky_tracks"
             ],
             "only the tables the daemon lacks should be skipped"
         );

@@ -1,6 +1,7 @@
 //! ADS-B data server — headless recorder entry point.
 
 use adsb_data_server::{Recorder, RecorderConfig};
+use adsb_opensky_server::status::OpenSkyTopics;
 use adsb_pulsar_client::source::mqtt_source::MqttSource;
 use std::time::Duration;
 use tracing::{error, info};
@@ -180,6 +181,20 @@ async fn run(cfg: ServerConfig) -> anyhow::Result<()> {
     let weather_grids_rx = source.with_keyed_aux(&weather_topic);
     info!("Recording weather snapshots from '{weather_topic}' and '{weather_topic}/+'");
 
+    // OpenSky polls and fetched tracks: not retained, each one a record, so a
+    // stream rather than latest-wins. Kept apart from the receiver's positions.
+    let opensky = cfg.record_opensky.then(|| {
+        let topics = OpenSkyTopics::from_states_topic(&feed.opensky_topic());
+        info!(
+            "Recording OpenSky polls from '{}' and tracks from '{}'",
+            topics.states, topics.tracks
+        );
+        adsb_data_server::opensky::OpenSkyStreams {
+            states: source.with_aux_stream(topics.states, 64),
+            tracks: source.with_aux_stream(topics.tracks, 64),
+        }
+    });
+
     // Lines are attributed to the receiver whose topic they came on: feeds on
     // `<topic>/<source_id>` are recorded under their own id, the base topic
     // under ours. Feeds' retained location announcements go into the
@@ -200,6 +215,7 @@ async fn run(cfg: ServerConfig) -> anyhow::Result<()> {
             Some(announcements_rx),
             Some(weather_rx),
             Some(weather_grids_rx),
+            opensky,
         ) => result,
         _ = shutdown_signal() => {
             info!("Shutdown signal received, stopping gracefully...");

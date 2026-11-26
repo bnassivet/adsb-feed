@@ -30,6 +30,7 @@ make paths  STACK=prod     # which files does this resolve to?
 | `make up-agents` | ...and the AI agents |
 | `make restart-agents` | just the two AI agents, without touching the stack (also starts them if down); `down-agents` stops them |
 | `make client` | desktop + agents ONLY — for a machine whose data lives elsewhere |
+| `make up-opensky` | the OpenSky gap filler alone (`[opensky] enabled = true`); `down-opensky`, `restart-opensky`, `opensky-status`, `opensky-credits` |
 | `make receivers` | receivers in the database and where each one is (`receiver-history R=id`, `receiver ARGS=...` to edit) |
 
 Keyed by the stack name: rendered configs, PIDs, logs, the DuckDB file, the
@@ -87,6 +88,25 @@ the weather service uses it to fetch a grid around each active receiver, on
 `adsb/<stage>/weather/grid/<id>` (its own grid stays on the shared topic too). Writes over Quack
 must run server-side (`quack_query_by_name`): through the attached catalog only a
 plain INSERT works. DESIGN.md → Receivers & Location History.
+
+**OpenSky gap filling** (`[opensky]`, off by default) is a third service on the
+bus: `adsb-opensky-server` polls OpenSky for what desktops ask (aircraft
+the user *follows* -- explicitly, never by selecting -- once the receiver has
+lost them, and drawn areas) and publishes each poll, **not
+retained**, to `adsb/<stage>/opensky/states`, beside retained `status` and
+`availability`. Topic rule `Config::opensky_topic` / `opensky_topic()` in
+`render-config.py` — change both or neither. The watch list is a **lease**
+(`PUT /v1/watch/{client_id}`, 60 s, renewed every 20 s), held in memory only;
+the 24 h credit ledger is persisted (`state_path`). Credentials reach the
+process as environment variables from a subshell in `stack.sh` — never in
+`.run/opensky.toml`, argv or `--print-config`. What it fetches is recorded
+(`[opensky] record`, on by default) in `opensky_states` / `opensky_tracks` only,
+never in `positions`: each fetched track is published non-retained on
+`<base>/opensky/tracks`, and the recorder and an embedded desktop store both
+topics through `adsb_data_server::opensky`. They read them with
+`with_aux_stream`, not `with_aux_topic`, whose latest-wins drops records. A
+stored, settled past flight is served without spending credits. DESIGN.md →
+OpenSky Gap Filling → Storage.
 
 Design detail:
 `rust/adsb-pulsar-client-desktop/docs/DESIGN.md` §27 (Message Sources & the MQTT

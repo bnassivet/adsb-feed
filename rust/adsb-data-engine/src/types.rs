@@ -94,6 +94,46 @@ pub struct RawMessageQuery {
 /// a replay is byte-identical — no serde round-trip is allowed to reorder or
 /// reformat it. Everything above it is metadata lifted out of that payload so
 /// it can be filtered on in SQL without parsing 16 KB of grid per row.
+/// One OpenSky state vector as stored in `opensky_states`: OpenSky's view of
+/// an aircraft, kept apart from the receiver's own `positions`. Identity is
+/// `(icao24, time_position_s)`: OpenSky repeats a frozen position across polls.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OpenSkyStateRow {
+    /// Lowercase hex, as OpenSky sends it.
+    pub icao24: String,
+    /// When the position was measured, epoch seconds.
+    pub time_position_s: i64,
+    /// When the poll that carried it finished, epoch ms.
+    pub fetched_ms: i64,
+    /// OpenSky's timestamp for the poll, epoch seconds.
+    pub data_time_s: i64,
+    pub callsign: Option<String>,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub altitude_ft: Option<f64>,
+    pub ground_speed_kt: Option<f64>,
+    pub track_deg: Option<f64>,
+    pub vertical_rate_fpm: Option<f64>,
+    pub on_ground: Option<bool>,
+    /// Why it was polled: `icao24` and/or `area:<id>`, comma-separated.
+    pub matched: String,
+}
+
+/// One OpenSky flight as stored in `opensky_tracks`, keyed by
+/// `(icao24, start_time_s)`. `path_json` is OpenSky's waypoint list, verbatim.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OpenSkyTrackRecord {
+    pub icao24: String,
+    pub callsign: Option<String>,
+    pub start_time_s: i64,
+    pub end_time_s: i64,
+    /// When OpenSky answered, epoch ms. A flight fetched mid-flight ends at
+    /// that moment and is not yet complete.
+    pub fetched_ms: i64,
+    pub waypoint_count: i32,
+    pub path_json: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WeatherSnapshotRecord {
     pub source_id: String,

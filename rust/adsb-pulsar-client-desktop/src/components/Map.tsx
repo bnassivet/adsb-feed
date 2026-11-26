@@ -1,10 +1,12 @@
 "use client";
 import dynamic from "next/dynamic";
+import type { OpenSkyMapData } from "@/lib/opensky";
 import type { AircraftTrack, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventOfInterest, MapPickResult, RejectedPosition } from "@/lib/types";
 import type { AgentTrajectory } from "@/lib/simulation-data";
 import type { WeatherLevel, WeatherSnapshot } from "@/lib/weather";
 import type { ReceiverPoint } from "@/lib/aircraft-details";
 import type { OtherReceiver } from "./MapInner";
+import type { TrackMenuOpener } from "@/lib/selectable-path";
 import type { Airspace } from "@/lib/airspace";
 import type { Metar } from "@/lib/metar";
 import type { RadarView } from "@/lib/radar";
@@ -74,6 +76,10 @@ interface Props {
   /** The database's other receivers, drawn dimmer than the selected one. */
   otherReceivers?: OtherReceiver[];
   simulatedRoutes?: AgentTrajectory[];
+  openSky?: OpenSkyMapData | null;
+  openSkyNowMs?: number;
+  /** Opens a track's context menu (right-click on its aircraft or line). */
+  onTrackContextMenu?: TrackMenuOpener;
   /** The selected flight's route from the web (Show Flight Infos), or null. */
   flightPath?: FlightPath | null;
   flightPathShown?: boolean;
@@ -95,6 +101,6 @@ interface Props {
   rejectedPositions?: RejectedPosition[];
 }
 
-export function Map({ airspaces, airspaceOpacity, airspaceHoverInfo, metars, metarOpacity, metarHoverInfo, metarNowMs, radar, radarOpacity, sea, seamarkItems, onSeamarkCells, relief, tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showPositions, showLabels, rangeLineOrigin, tileCacheOrigin, rangeLineTargets, showRangeLines, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, importedTracks, dbHistoryTracks, selectedHexIdents, onSelectTrack, receiverLocation, otherReceivers, simulatedRoutes, flightPath, flightPathShown, onToggleFlightPath, eventsOfInterest, onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather, weatherLevel, weatherBarbs, weatherParticles, rejectedPositions }: Props) {
-  return <MapInner airspaces={airspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={metars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={metarNowMs} radar={radar} radarOpacity={radarOpacity} sea={sea} seamarkItems={seamarkItems} onSeamarkCells={onSeamarkCells} relief={relief} tracks={tracks} historyTracks={historyTracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={rangeLineOrigin} tileCacheOrigin={tileCacheOrigin} rangeLineTargets={rangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={onToggleRangeLines} showDensity={showDensity} densityMetric={densityMetric} densityTracks={densityTracks} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} liveColorMode={liveColorMode} historyColorMode={historyColorMode} importedTracks={importedTracks} dbHistoryTracks={dbHistoryTracks} selectedHexIdents={selectedHexIdents} onSelectTrack={onSelectTrack} receiverLocation={receiverLocation} otherReceivers={otherReceivers} simulatedRoutes={simulatedRoutes} flightPath={flightPath} flightPathShown={flightPathShown} onToggleFlightPath={onToggleFlightPath} eventsOfInterest={eventsOfInterest} onContextMenu={onContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={onMapPickComplete} onMapPickCancel={onMapPickCancel} onFlyToReady={onFlyToReady} weather={weather} weatherLevel={weatherLevel} weatherBarbs={weatherBarbs} weatherParticles={weatherParticles} rejectedPositions={rejectedPositions} />;
+export function Map({ airspaces, airspaceOpacity, airspaceHoverInfo, metars, metarOpacity, metarHoverInfo, metarNowMs, radar, radarOpacity, sea, seamarkItems, onSeamarkCells, relief, tracks, historyTracks, mapTheme, onToggleTheme, trajectoryStyle, showPositions, showLabels, rangeLineOrigin, tileCacheOrigin, rangeLineTargets, showRangeLines, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, importedTracks, dbHistoryTracks, selectedHexIdents, onSelectTrack, receiverLocation, otherReceivers, simulatedRoutes, flightPath, flightPathShown, onToggleFlightPath, eventsOfInterest, onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather, weatherLevel, weatherBarbs, weatherParticles, rejectedPositions, openSky, openSkyNowMs, onTrackContextMenu }: Props) {
+  return <MapInner airspaces={airspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={metars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={metarNowMs} radar={radar} radarOpacity={radarOpacity} sea={sea} seamarkItems={seamarkItems} onSeamarkCells={onSeamarkCells} relief={relief} tracks={tracks} historyTracks={historyTracks} mapTheme={mapTheme} onToggleTheme={onToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={rangeLineOrigin} tileCacheOrigin={tileCacheOrigin} rangeLineTargets={rangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={onToggleRangeLines} showDensity={showDensity} densityMetric={densityMetric} densityTracks={densityTracks} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} liveColorMode={liveColorMode} historyColorMode={historyColorMode} importedTracks={importedTracks} dbHistoryTracks={dbHistoryTracks} selectedHexIdents={selectedHexIdents} onSelectTrack={onSelectTrack} receiverLocation={receiverLocation} otherReceivers={otherReceivers} simulatedRoutes={simulatedRoutes} flightPath={flightPath} flightPathShown={flightPathShown} onToggleFlightPath={onToggleFlightPath} eventsOfInterest={eventsOfInterest} onContextMenu={onContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={onMapPickComplete} onMapPickCancel={onMapPickCancel} onFlyToReady={onFlyToReady} weather={weather} weatherLevel={weatherLevel} weatherBarbs={weatherBarbs} weatherParticles={weatherParticles} rejectedPositions={rejectedPositions} openSky={openSky} openSkyNowMs={openSkyNowMs} onTrackContextMenu={onTrackContextMenu} />;
 }

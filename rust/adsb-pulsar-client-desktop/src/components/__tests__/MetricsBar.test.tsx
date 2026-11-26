@@ -378,3 +378,56 @@ describe("MetricsBar", () => {
     expect(onImport).toHaveBeenCalledOnce();
   });
 });
+
+describe("MetricsBar — OpenSky credits", () => {
+  const status = (used: number, over: Record<string, unknown> = {}) => ({
+    version: 1,
+    enabled: true,
+    authenticated: true,
+    state: "waiting" as const,
+    watch: { icao24: 1, areas: 0, clients: 1 },
+    interval_seconds: 24,
+    cycle_cost: 1,
+    credits: { daily_limit: 4000, states_used_24h: used, tracks_used_24h: 8, states_remaining: 3790 },
+    consecutive_failures: 0,
+    updated_at_ms: 1,
+    ...over,
+  });
+
+  it("is absent while no OpenSky service has reported", () => {
+    render(<MetricsBar metrics={makeMetrics()} />);
+    expect(screen.queryByTestId("opensky-credits")).toBeNull();
+  });
+
+  it("shows the last 24 h against the daily limit", () => {
+    render(<MetricsBar metrics={makeMetrics()} openSky={status(1234)} />);
+    const counter = screen.getByTestId("opensky-credits");
+    expect(counter).toHaveTextContent("OpenSky: 1,234 / 4,000 (24h)");
+    expect(counter.title).toContain("OpenSky's own count: 3790 left");
+    expect(counter.title).toContain("tracks: 8");
+  });
+
+  it("shows OpenSky's latest X-Rate-Limit-Remaining beside the count", () => {
+    render(<MetricsBar metrics={makeMetrics()} openSky={status(192, { credits: { daily_limit: 8000, states_used_24h: 192, tracks_used_24h: 76, states_remaining: 7240, tracks_remaining: 7904 } })} />);
+    expect(screen.getByTestId("opensky-credits")).toHaveTextContent("OpenSky: 192 / 8,000 (24h) · 7,240 left");
+    expect(screen.getByTestId("opensky-credits-remaining")).toHaveAttribute(
+      "title",
+      expect.stringContaining("X-Rate-Limit-Remaining"),
+    );
+  });
+
+  it("shows no remaining count before OpenSky has replied", () => {
+    render(<MetricsBar metrics={makeMetrics()} openSky={status(5, { credits: { daily_limit: 8000, states_used_24h: 5, tracks_used_24h: 0, states_remaining: null } })} />);
+    expect(screen.queryByTestId("opensky-credits-remaining")).toBeNull();
+    expect(screen.getByTestId("opensky-credits")).not.toHaveTextContent(/left/);
+  });
+
+  it("turns amber from 70 % and red from 90 % or when rate limited", () => {
+    const { rerender } = render(<MetricsBar metrics={makeMetrics()} openSky={status(2900)} />);
+    expect(screen.getByTestId("opensky-credits-value")).toHaveClass("text-amber-400");
+    rerender(<MetricsBar metrics={makeMetrics()} openSky={status(3700)} />);
+    expect(screen.getByTestId("opensky-credits-value")).toHaveClass("text-red-400");
+    rerender(<MetricsBar metrics={makeMetrics()} openSky={status(10, { state: "rate_limited" })} />);
+    expect(screen.getByTestId("opensky-credits-value")).toHaveClass("text-red-400");
+  });
+});

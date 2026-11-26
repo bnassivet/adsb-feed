@@ -120,6 +120,9 @@ pub struct AppState {
     /// Every receiver's latest grid, from a weather service following
     /// several. Outlives a feed restart like `weather`.
     pub receiver_weather: crate::weather::SharedReceiverWeather,
+    /// The last OpenSky poll and what the OpenSky service last reported.
+    /// Outlives a feed restart like `weather`. Never recorded.
+    pub opensky: crate::opensky::OpenSkyShared,
 }
 
 impl AppState {
@@ -155,6 +158,7 @@ impl AppState {
             weather: Arc::new(std::sync::RwLock::new(None)),
             weather_service: Arc::new(std::sync::RwLock::new(Default::default())),
             receiver_weather: Arc::new(std::sync::RwLock::new(Default::default())),
+            opensky: Default::default(),
         }
     }
 }

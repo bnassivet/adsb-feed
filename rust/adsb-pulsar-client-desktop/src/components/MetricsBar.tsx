@@ -2,6 +2,7 @@
 import type { MetricsWithRates } from "@/hooks/useMetrics";
 import type { ShareStatus, StorageAvailability } from "@/lib/types";
 import { formatBytes } from "@/lib/format";
+import { creditLevel, type OpenSkyStatus } from "@/lib/opensky";
 
 interface Props {
   metrics: MetricsWithRates;
@@ -21,13 +22,56 @@ interface Props {
   shareStatus?: ShareStatus;
   onStartSharing?: () => void;
   onStopSharing?: () => void;
+  /** The OpenSky service's status: its 24 h credit count. Absent hides it. */
+  openSky?: OpenSkyStatus | null;
+}
+
+const CREDIT_CLASS = { ok: "text-slate-200", warn: "text-amber-400", high: "text-red-400" };
+
+/** The OpenSky credit counter: last 24 h against the daily allowance. */
+function OpenSkyCredits({ status }: { status: OpenSkyStatus }) {
+  const c = status.credits;
+  const level = creditLevel(c.states_used_24h, c.daily_limit, status.state === "rate_limited");
+  const lines = [
+    `/states: ${c.states_used_24h} of ${c.daily_limit} in the last 24 h`,
+    `/tracks: ${c.tracks_used_24h} (track backfills)`,
+  ];
+  if (c.states_remaining != null) lines.push(`OpenSky's own count: ${c.states_remaining} left`);
+  if (status.interval_seconds) lines.push(`Polling every ${Math.round(status.interval_seconds)} s`);
+  if (status.state === "rate_limited" && status.rate_limited_until_ms) {
+    lines.push(`Rate limited until ${new Date(status.rate_limited_until_ms).toLocaleTimeString()}`);
+  }
+  return (
+    <span data-testid="opensky-credits" title={lines.join("\n")}>
+      <span className="text-slate-500">OpenSky:</span>{" "}
+      <span data-testid="opensky-credits-value" className={`font-mono ${CREDIT_CLASS[level]}`}>
+        {c.states_used_24h.toLocaleString("en-US")} / {c.daily_limit.toLocaleString("en-US")}
+      </span>{" "}
+      <span className="text-slate-500">(24h)</span>
+      {/* OpenSky's own count, from the X-Rate-Limit-Remaining of its last
+          reply: the whole account, so it can be lower than limit − used. */}
+      {c.states_remaining != null && (
+        <span
+          data-testid="opensky-credits-remaining"
+          title={`OpenSky's X-Rate-Limit-Remaining from its last /states reply${
+            c.tracks_remaining != null ? `\n/tracks: ${c.tracks_remaining.toLocaleString("en-US")} left` : ""
+          }`}
+        >
+          {" "}
+          <span className="text-slate-500">·</span>{" "}
+          <span className="font-mono text-violet-300">{c.states_remaining.toLocaleString("en-US")}</span>{" "}
+          <span className="text-slate-500">left</span>
+        </span>
+      )}
+    </span>
+  );
 }
 
 export function MetricsBar({
   metrics, recordPositions, recordRaw, onToggleRecordPositions, onToggleRecordRaw,
   storageStatus, onReleaseStorage, onReclaimStorage, onSwapDatabase, isSwapping, onExportDatabase, isExporting,
   onImportDatabase, isImporting,
-  shareStatus, onStartSharing, onStopSharing,
+  shareStatus, onStartSharing, onStopSharing, openSky,
 }: Props) {
   return (
     <div className="flex items-center gap-6 px-4 py-2 bg-slate-900 border-t border-slate-700 text-xs text-slate-400">
@@ -91,6 +135,7 @@ export function MetricsBar({
           {formatUptime(metrics.elapsed_secs)}
         </span>
       </span>
+      {openSky && <OpenSkyCredits status={openSky} />}
       {recordPositions !== undefined && (
         <button
           onClick={onToggleRecordPositions}

@@ -137,6 +137,11 @@ def render_server(cfg: dict, out: Path = OUT) -> str:
     # [weather] is disabled: it costs nothing, and a later `make up-weather`
     # then needs no re-render.
     w = cfg.get("weather", {})
+    # It also records what the OpenSky service publishes (polls, fetched
+    # tracks) into its own tables, unless [opensky] record = false. The topic
+    # only when explicit: unset, the recorder derives it by the rule the
+    # service and the desktop share (Config::opensky_topic / opensky_topic()).
+    o = cfg.get("opensky", {})
 
     pairs = [
         ("source_id", rx["id"]),
@@ -157,7 +162,10 @@ def render_server(cfg: dict, out: Path = OUT) -> str:
         ("http_bind", s.get("http_bind", "127.0.0.1")),
         ("share", s.get("share", False)),
         ("share_uri", s.get("share_uri", "quack:0.0.0.0:9494")),
+        ("record_opensky", o.get("record", True)),
     ]
+    if o.get("topic"):
+        pairs.append(("mqtt_opensky_topic", o["topic"]))
     token = s.get("share_token")
     if s.get("share") and token:
         pairs.append(("share_token", token))
@@ -223,6 +231,54 @@ def render_weather(cfg: dict, out: Path = OUT) -> str:
     levels = w.get("levels", WEATHER_LEVELS)
     body += "levels = [{}]\n".format(", ".join(str(int(l)) for l in levels))
     return HEADER + "\n" + body
+
+
+def opensky_topic(mqtt_topic: str) -> str:
+    """The OpenSky states topic that goes with a feed topic.
+
+    `adsb/<stage>/sbs/raw` becomes `adsb/<stage>/opensky/states`; any other
+    topic gets an `/opensky` sibling. The desktop subscribes with the SAME rule
+    (`Config::opensky_topic` in adsb-pulsar-client). Change both or neither.
+    """
+    suffix = "/sbs/raw"
+    if mqtt_topic.endswith(suffix):
+        return mqtt_topic[: -len(suffix)] + "/opensky/states"
+    return mqtt_topic + "/opensky"
+
+
+def render_opensky(cfg: dict, out: Path = OUT) -> str:
+    """The OpenSky service's config, WITHOUT its credentials.
+
+    client_id / client_secret / credentials_file stay in adsb-stack.toml and
+    reach the process as environment variables (scripts/stack.sh), so the
+    rendered file -- which `make paths` points people at and which gets pasted
+    into issues -- never holds a secret.
+    """
+    rx, m = cfg["receiver"], cfg["mqtt"]
+    o = cfg.get("opensky", {})
+    pairs = [
+        ("source_id", rx["id"]),
+        ("mqtt_broker", m["host"]),
+        ("mqtt_port", m["port"]),
+        ("mqtt_topic", o.get("topic") or opensky_topic(m["topic"])),
+        # OpenSky never says which allowance an account has, only what is
+        # left: `feeder` picks 8000 or 4000, and daily_credits, when set,
+        # overrides both. Unset, it is not rendered at all.
+        ("feeder", o.get("feeder", True)),
+        ("daily_credits", o.get("daily_credits")),
+        ("min_interval_s", o.get("min_interval_s", 10)),
+        ("lease_seconds", o.get("lease_seconds", 60)),
+        ("max_icao", o.get("max_icao", 20)),
+        ("max_areas", o.get("max_areas", 4)),
+        ("max_area_sq_deg", o.get("max_area_sq_deg", 100)),
+        ("http_port", o.get("http_port", 8791)),
+        ("http_bind", o.get("http_bind", "127.0.0.1")),
+        # The 24 h credit ledger. Stack-scoped: two stacks on one account each
+        # count only their own spending, which is what each one budgets.
+        ("state_path",
+         str(run_scoped(o.get("state_path", ".run/opensky-state.json"), out))),
+    ]
+    return HEADER + "\n" + emit(pairs)
 
 
 # --- fleet mode -------------------------------------------------------------
@@ -397,6 +453,7 @@ def render_stack(stack: Path, out: Path) -> int:
         ("feed.toml", render_feed(cfg, out)),
         ("data-server.toml", render_server(cfg, out)),
         ("weather.toml", render_weather(cfg, out)),
+        ("opensky.toml", render_opensky(cfg, out)),
     ):
         (out / name).write_text(text)
         try:

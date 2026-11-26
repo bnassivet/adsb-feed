@@ -547,6 +547,35 @@ pub struct Config {
     #[serde(default)]
     pub weather_api_url: String,
 
+    /// MQTT topic carrying OpenSky polls. Empty derives it from `mqtt_topic`;
+    /// see [`Config::opensky_topic`].
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "mqtt-opensky-topic",
+            default_value = "",
+            env = "ADSB_MQTT_OPENSKY_TOPIC",
+            help = "MQTT topic carrying OpenSky polls (derived from mqtt_topic when empty)"
+        )
+    )]
+    #[serde(default)]
+    pub mqtt_opensky_topic: String,
+
+    /// Base URL of the OpenSky service's control API, e.g.
+    /// `http://127.0.0.1:8791`. Empty means the MQTT broker's host on the
+    /// service's default port, derived by the consumer.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "opensky-api-url",
+            default_value = "",
+            env = "ADSB_OPENSKY_API_URL",
+            help = "OpenSky service control API (derived from mqtt_broker when empty)"
+        )
+    )]
+    #[serde(default)]
+    pub opensky_api_url: String,
+
     /// MQTT client identifier. Empty derives it from `source_id`.
     ///
     /// Brokers disconnect an existing session when a second client connects
@@ -748,6 +777,8 @@ impl Default for Config {
             mqtt_topic: default_mqtt_topic(),
             mqtt_weather_topic: String::new(),
             weather_api_url: String::new(),
+            mqtt_opensky_topic: String::new(),
+            opensky_api_url: String::new(),
             mqtt_client_id: String::new(),
             mqtt_per_receiver_topic: false,
             mqtt_qos: 0,
@@ -922,6 +953,8 @@ impl Config {
         overlay!("mqtt_topic", mqtt_topic, as_string);
         overlay!("mqtt_weather_topic", mqtt_weather_topic, as_string);
         overlay!("weather_api_url", weather_api_url, as_string);
+        overlay!("mqtt_opensky_topic", mqtt_opensky_topic, as_string);
+        overlay!("opensky_api_url", opensky_api_url, as_string);
         overlay!("mqtt_client_id", mqtt_client_id, as_string);
         overlay!(
             "mqtt_per_receiver_topic",
@@ -1034,6 +1067,24 @@ impl Config {
         match self.mqtt_topic.strip_suffix("/sbs/raw") {
             Some(prefix) => format!("{prefix}/weather/grid"),
             None => format!("{}/weather", self.mqtt_topic),
+        }
+    }
+
+    /// The OpenSky service's states topic, to subscribe to alongside the feed.
+    ///
+    /// An explicit `mqtt_opensky_topic` wins. Otherwise `adsb/<stage>/sbs/raw`
+    /// becomes `adsb/<stage>/opensky/states`, and any other topic gets a
+    /// `<topic>/opensky` sibling. `scripts/render-config.py`
+    /// (`opensky_topic`) applies the SAME rule for the service: change both or
+    /// neither, or the desktop listens where nobody publishes.
+    pub fn opensky_topic(&self) -> String {
+        let explicit = self.mqtt_opensky_topic.trim();
+        if !explicit.is_empty() {
+            return explicit.to_string();
+        }
+        match self.mqtt_topic.strip_suffix("/sbs/raw") {
+            Some(prefix) => format!("{prefix}/opensky/states"),
+            None => format!("{}/opensky", self.mqtt_topic),
         }
     }
 
@@ -1617,6 +1668,41 @@ mod tests {
         };
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("mqtt_qos"), "got: {}", err);
+    }
+
+    // --- OpenSky topic ---
+    //
+    // Same cases as `OpenSkyContent` in scripts/tests/test_render_config.py.
+
+    #[test]
+    fn test_opensky_topic_is_derived_from_a_staged_sbs_topic() {
+        assert_eq!(
+            with_topic("adsb/prod/sbs/raw").opensky_topic(),
+            "adsb/prod/opensky/states"
+        );
+        assert_eq!(Config::default().opensky_topic(), "adsb/opensky/states");
+    }
+
+    #[test]
+    fn test_opensky_topic_without_the_sbs_suffix_is_a_sibling() {
+        assert_eq!(
+            with_topic("legacy/raw").opensky_topic(),
+            "legacy/raw/opensky"
+        );
+    }
+
+    #[test]
+    fn test_explicit_opensky_topic_wins_and_blank_derives() {
+        let explicit = Config {
+            mqtt_opensky_topic: "lab/osky".into(),
+            ..with_topic("adsb/dev/sbs/raw")
+        };
+        assert_eq!(explicit.opensky_topic(), "lab/osky");
+        let blank = Config {
+            mqtt_opensky_topic: " ".into(),
+            ..with_topic("adsb/dev/sbs/raw")
+        };
+        assert_eq!(blank.opensky_topic(), "adsb/dev/opensky/states");
     }
 
     // --- Weather topic ---

@@ -30,6 +30,7 @@ name = "adsb-data-server"
 version = "0.1.0"
 dependencies = [
  "adsb-data-engine",
+ "adsb-opensky-server",
  "adsb-pulsar-client",
  "adsb-weather-server",
  "anyhow",
@@ -47,6 +48,30 @@ dependencies = [
  "toml 0.8.2",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "adsb-opensky-server"
+version = "0.1.0"
+dependencies = [
+ "adsb-pulsar-client",
+ "anyhow",
+ "async-trait",
+ "axum",
+ "clap",
+ "reqwest",
+ "rumqttc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 0.8.2",
+ "tracing",
+ "tracing-subscriber",
+ "utoipa",
+ "utoipa-axum",
+ "utoipa-swagger-ui",
 ]
 
 [[package]]
@@ -78,6 +103,7 @@ version = "0.1.0"
 dependencies = [
  "adsb-data-engine",
  "adsb-data-server",
+ "adsb-opensky-server",
  "adsb-pulsar-client",
  "adsb-weather-server",
  "axum",
@@ -4280,6 +4306,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

@@ -9,6 +9,7 @@ mod airspace;
 mod bridge;
 mod commands;
 mod metar;
+mod opensky;
 mod quarantine;
 mod radar;
 mod radar_grid;
@@ -252,6 +253,13 @@ pub fn run() {
             commands::set_weather_service_enabled,
             commands::get_weather_history,
             commands::get_weather_at,
+            commands::get_opensky_service,
+            commands::get_opensky_states,
+            commands::set_opensky_watch,
+            commands::clear_opensky_watch,
+            commands::set_opensky_enabled,
+            commands::get_opensky_credits,
+            commands::get_opensky_track,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -341,6 +349,13 @@ fn apply_env_overrides(mut config: Config, get: &dyn Fn(&str) -> Option<String>)
     // `make up-desktop` and `make client` export it from this stack's config.
     if let Some(v) = var("ADSB_WEATHER_API_URL") {
         config.weather_api_url = v;
+    }
+    // The OpenSky service: its topic only when explicit, and its control API.
+    if let Some(v) = var("ADSB_MQTT_OPENSKY_TOPIC") {
+        config.mqtt_opensky_topic = v;
+    }
+    if let Some(v) = var("ADSB_OPENSKY_API_URL") {
+        config.opensky_api_url = v;
     }
 
     config
@@ -854,6 +869,25 @@ mod env_override_tests {
             &env(&[("ADSB_WEATHER_API_URL", "http://pi-roof:8789")]),
         );
         assert_eq!(out.weather_api_url, "http://pi-roof:8789");
+    }
+
+    #[test]
+    fn opensky_settings_layer_from_the_environment() {
+        let out = apply_env_overrides(
+            Config::default(),
+            &env(&[
+                ("ADSB_MQTT_TOPIC", "adsb/dev/sbs/raw"),
+                ("ADSB_OPENSKY_API_URL", "http://127.0.0.1:8791"),
+            ]),
+        );
+        assert_eq!(out.opensky_api_url, "http://127.0.0.1:8791");
+        // Derived, as render-config.py derives it for the service.
+        assert_eq!(out.opensky_topic(), "adsb/dev/opensky/states");
+        let explicit = apply_env_overrides(
+            Config::default(),
+            &env(&[("ADSB_MQTT_OPENSKY_TOPIC", "lab/osky")]),
+        );
+        assert_eq!(explicit.opensky_topic(), "lab/osky");
     }
 
     #[test]

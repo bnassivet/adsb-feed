@@ -12,6 +12,7 @@ use adsb_data_engine::{
     AircraftPosition, BatchSink, IngestConfig, IngestPipeline, StatusEvent, StatusEventStatus,
     StatusEventType,
 };
+use adsb_opensky_server::status::OpenSkyTopics;
 use adsb_pulsar_client::forwarder::NoopForwarder;
 use adsb_pulsar_client::source::mqtt_source::MqttSource;
 use adsb_pulsar_client::source::socket_source::SocketSource;
@@ -66,6 +67,7 @@ pub fn start_feed(
     weather_state: SharedWeather,
     weather_service: SharedWeatherService,
     receiver_weather: crate::weather::SharedReceiverWeather,
+    opensky: crate::opensky::OpenSkyShared,
     storage_mode: crate::storage_mode::StorageMode,
 ) -> Result<FeedHandle, String> {
     let test_mode = config.test_mode;
@@ -84,6 +86,8 @@ pub fn start_feed(
     let mut weather_rx = None;
     let mut service_rx = None;
     let mut receiver_weather_rx = None;
+    let mut opensky_rx = None;
+    let mut opensky_streams = None;
     let (mut source, metrics): (Box<dyn MessageSource>, Metrics) = match source_kind {
         SourceKind::Socket => {
             let s = SocketSource::with_forwarders(config, vec![Box::new(NoopForwarder)])
@@ -105,6 +109,25 @@ pub fn start_feed(
                 s.with_aux_topic(topics.status),
                 s.with_aux_topic(topics.availability),
             ));
+            // OpenSky polls and the service's status ride the same connection.
+            // Shown only: the relay never reaches the ingest pipeline.
+            let os = OpenSkyTopics::from_states_topic(&config.opensky_topic());
+            // Recorded too, with this app's own database: every poll and
+            // fetched track, as streams so none is lost to "latest wins".
+            if crate::opensky::records_opensky(
+                &storage_mode,
+                std::env::var("ADSB_OPENSKY_RECORD").ok().as_deref(),
+            ) {
+                opensky_streams = Some(adsb_data_server::opensky::OpenSkyStreams {
+                    states: s.with_aux_stream(os.states.clone(), 64),
+                    tracks: s.with_aux_stream(os.tracks.clone(), 64),
+                });
+            }
+            opensky_rx = Some(crate::opensky::OpenSkyReceivers {
+                states: s.with_aux_topic(os.states),
+                status: s.with_aux_topic(os.status),
+                availability: s.with_aux_topic(os.availability),
+            });
             (Box::new(s), Metrics::new())
         }
     };
@@ -146,6 +169,8 @@ pub fn start_feed(
     let alive_rx_weather = alive_tx.subscribe();
     let alive_rx_service = alive_tx.subscribe();
     let alive_rx_receiver_weather = alive_tx.subscribe();
+    let alive_rx_opensky = alive_tx.subscribe();
+    let app_for_opensky = app.clone();
     let app_for_receiver_weather = app.clone();
 
     let app_for_weather = app.clone();
@@ -248,6 +273,8 @@ pub fn start_feed(
     // Cloned before Task 2 takes ownership: the weather relay records to the
     // same database in embedded mode, and `relay_messages` keeps the original.
     let storage_for_weather = Arc::clone(&storage);
+    // And OpenSky's polls and tracks, in their own tables, when recorded.
+    let storage_for_opensky = Arc::clone(&storage);
 
     // Task 2: Relay messages to frontend (throttled) + persist to DuckDB
     let message_task = tokio::spawn(async move {
@@ -339,7 +366,22 @@ pub fn start_feed(
         ))
     });
 
+    // Task 8 (MQTT only): OpenSky polls and service status. Display only.
+    let opensky_task = opensky_rx.map(|rx| {
+        tokio::spawn(crate::opensky::relay(
+            app_for_opensky,
+            rx,
+            opensky,
+            alive_rx_opensky,
+        ))
+    });
+
     let mut task_handles = vec![client_task, message_task, metrics_task, watchdog_task];
+    task_handles.extend(opensky_task);
+    if let Some(streams) = opensky_streams {
+        info!("Recording OpenSky polls and tracks into this app's database");
+        task_handles.extend(streams.spawn(Arc::clone(&storage_for_opensky)));
+    }
     task_handles.extend(receiver_weather_task);
     task_handles.extend(weather_task);
     task_handles.extend(service_task);

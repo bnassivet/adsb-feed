@@ -3,6 +3,7 @@ import { useCallback, type ReactNode } from "react";
 import { FiltersPanel, type SavedFiltersProps } from "@/components/Filters";
 import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventFilterMode } from "@/lib/types";
 import type { WeatherControlsProps } from "@/components/WeatherControls";
+import type { OpenSkyControlsProps } from "@/components/OpenSkyControls";
 import type { AirspaceControlsProps } from "./AirspaceControls";
 import type { MetarControlsProps } from "./MetarControls";
 import type { RadarControlsProps } from "./RadarControls";
@@ -68,6 +69,8 @@ interface LeftPanelProps {
   onEventTimeRangeChange: (startMs: number, endMs: number) => void;
   /** Weather layer controls. Optional: without them the panel has no weather section. */
   weather?: WeatherControlsProps;
+  /** OpenSky gap-filling controls. Optional: no OpenSky section without them. */
+  openSky?: OpenSkyControlsProps;
   /** Airspace layer controls. Optional: without them the panel has no airspace section. */
   airspaces?: AirspaceControlsProps;
   /** METAR layer controls. Optional: without them the panel has no METAR section. */

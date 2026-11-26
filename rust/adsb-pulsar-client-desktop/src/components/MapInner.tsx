@@ -48,6 +48,9 @@ import { useTileCacheSettings } from "@/hooks/useTileCacheSettings";
 import { MapTileToggle } from "./MapTileToggle";
 
 import { CenterOnAntennaButton } from "./CenterOnAntennaButton";
+import { OpenSkyLayer } from "./OpenSkyLayer";
+import { selectingPath, type TrackMenuOpener } from "@/lib/selectable-path";
+import type { OpenSkyMapData } from "@/lib/opensky";
 import { RangeLineButton, RANGE_LINE_COLOR } from "./RangeLineButton";
 import { greatCirclePoints, midpoint, rangeLineLabel } from "@/lib/range-line";
 import { airportTitle, type FlightPath } from "@/lib/flight-info";
@@ -1112,6 +1115,8 @@ interface Props {
   historyColorMode: AltitudeColorMode;
   selectedHexIdents: Set<string>;
   onSelectTrack: (hex: string | null) => void;
+  /** Opens a track's context menu (right-click on its aircraft or line). */
+  onTrackContextMenu?: TrackMenuOpener;
   receiverLocation?: { lat: number; lng: number; alt: number | null };
   /** The database's other receivers, drawn dimmer than the selected one. */
   otherReceivers?: OtherReceiver[];
@@ -1127,6 +1132,10 @@ interface Props {
   rejectedPositions?: RejectedPosition[];
   onContextMenu?: (lat: number, lng: number, x: number, y: number) => void;
   mapPickingMode?: "point" | "area" | null;
+  /** OpenSky gap filling: aircraft, areas, gap connectors, backfills. */
+  openSky?: OpenSkyMapData | null;
+  /** Clock for the OpenSky tooltip's "position N s old". */
+  openSkyNowMs?: number;
   onMapPickComplete?: (result: MapPickResult) => void;
   onMapPickCancel?: () => void;
   onFlyToReady?: (fn: (lat: number, lng: number, zoom: number) => void) => void;
@@ -1454,7 +1463,7 @@ function FlightPathLayer({ path }: { path: FlightPath }) {
   );
 }
 
-export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, sea = NO_SEA, seamarkItems = NO_SEAMARKS, onSeamarkCells, relief = NO_RELIEF, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, otherReceivers = NO_OTHER_RECEIVERS, simulatedRoutes, flightPath = null, flightPathShown = true, onToggleFlightPath, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false, rejectedPositions = NO_REJECTED }: Props) {
+export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_AIRSPACE_OPACITY, airspaceHoverInfo = true, metars = NO_METARS, metarOpacity = DEFAULT_METAR_OPACITY, metarHoverInfo = true, metarNowMs = 0, radar = null, radarOpacity = DEFAULT_RADAR_OPACITY, sea = NO_SEA, seamarkItems = NO_SEAMARKS, onSeamarkCells, relief = NO_RELIEF, tracks, historyTracks, dbHistoryTracks = [], importedTracks = [], mapTheme, onToggleTheme, trajectoryStyle, showPositions = true, showLabels = false, rangeLineOrigin, tileCacheOrigin, rangeLineTargets = [], showRangeLines = false, onToggleRangeLines, showDensity, densityMetric, densityTracks, densityAltitudeMin, densityAltitudeMax, densityTooltipMode, liveColorMode, historyColorMode, selectedHexIdents, onSelectTrack, receiverLocation, otherReceivers = NO_OTHER_RECEIVERS, simulatedRoutes, flightPath = null, flightPathShown = true, onToggleFlightPath, eventsOfInterest = [], onContextMenu, mapPickingMode, onMapPickComplete, onMapPickCancel, onFlyToReady, weather = null, weatherLevel = 250, weatherBarbs = true, weatherParticles = false, rejectedPositions = NO_REJECTED, openSky = null, openSkyNowMs = 0, onTrackContextMenu }: Props) {
   // Memoised: the basemap layer is rebuilt (and every tile reloaded) when this changes.
   const tile = useMemo(() => tileConfig(mapTheme, CARTO_API_KEY), [mapTheme]);
   const [airspaceStack, setAirspaceStack] = useState<Airspace[]>(NO_AIRSPACES);
@@ -1576,6 +1585,7 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
             <Polyline
               key={`hist-${trackKey(t)}`}
               positions={toLatLngs(t.positions)}
+              {...selectingPath(trackKey(t), onSelectTrack, onTrackContextMenu)}
               pathOptions={{
                 color: trackColor,
                 weight: isSelected ? 3 : 1,
@@ -1609,7 +1619,7 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
                 weight: isSelected ? 3 : 2,
                 opacity: isSelected ? 0.8 : 0.5,
               }}
-              eventHandlers={{ click: () => onSelectTrack(trackKey(t)) }}
+              {...selectingPath(trackKey(t), onSelectTrack, onTrackContextMenu)}
             >
               <Tooltip sticky>
                 <div style={{ fontSize: 11 }}>
@@ -1639,7 +1649,7 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
                 opacity: isSelected ? 0.8 : 0.5,
                 dashArray: isSelected ? undefined : "6 4",
               }}
-              eventHandlers={{ click: () => onSelectTrack(trackKey(t)) }}
+              {...selectingPath(trackKey(t), onSelectTrack, onTrackContextMenu)}
             >
               <Tooltip sticky>
                 <div style={{ fontSize: 11 }}>
@@ -1763,6 +1773,18 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
           <TrackLabelsLayer tracks={tracks} selectedHexIdents={selectedHexIdents} theme={mapTheme} />
         )}
 
+        {/* OpenSky gap filling: under the receiver's own aircraft. */}
+        {openSky && (
+          <OpenSkyLayer
+            data={openSky}
+            selectedHexIdents={selectedHexIdents}
+            onSelectTrack={onSelectTrack}
+            onTrackContextMenu={onTrackContextMenu}
+            theme={mapTheme}
+            nowMs={openSkyNowMs}
+          />
+        )}
+
         {/* Active tracks — aircraft markers and line trajectories */}
         {orderedTracks.map((t) => {
           if (t.latitude === null || t.longitude === null) return null;
@@ -1775,7 +1797,7 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
               <Marker
                 position={[t.latitude, t.longitude]}
                 icon={icon}
-                eventHandlers={{ click: () => onSelectTrack(trackKey(t)) }}
+                eventHandlers={selectingPath(trackKey(t), onSelectTrack, onTrackContextMenu).eventHandlers}
               >
                 <Tooltip direction="top" offset={[0, -12]}>
                   <div style={{ fontSize: 11 }}>
@@ -1798,6 +1820,7 @@ export function MapInner({ airspaces = NO_AIRSPACES, airspaceOpacity = DEFAULT_A
               {t.positions.length > 1 && trajectoryStyle === "line" && showPositions && (
                 <Polyline
                   positions={toLatLngs(t.positions)}
+                  {...selectingPath(trackKey(t), onSelectTrack, onTrackContextMenu)}
                   pathOptions={{
                     color: trackColor,
                     weight: isSelected ? 4 : 2,

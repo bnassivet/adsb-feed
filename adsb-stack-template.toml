@@ -153,6 +153,64 @@ http_bind = "127.0.0.1"
 # node disabled before a reboot stays disabled. Stack-scoped, like cache_path.
 state_path = ".run/weather-state.json"
 
+[opensky]
+# Fills the receiver's blind spots from the OpenSky Network: the desktop sends
+# the aircraft you select and the areas you draw, this service polls OpenSky for
+# them and publishes the results over MQTT, and the map shows them beside your
+# own tracks (hollow, dashed). What it fetches is recorded (see `record`), but
+# never into the receiver's own positions: coverage and statistics stay yours.
+#
+# Off by default: it needs outbound internet and an OpenSky account's daily
+# credits. It polls nothing until a desktop asks, and stops within lease_seconds
+# of the desktop going away.
+enabled = false
+# Record every poll (opensky_states) and every fetched flight (opensky_tracks),
+# in the data server's database and in an embedded desktop's own. A stored past
+# flight is shown again without spending credits. Polls age out with
+# [storage] retention_hours; flights are kept. false = display only.
+record = true
+# Leave unset to derive it from mqtt.topic: adsb/<stage>/sbs/raw becomes
+# adsb/<stage>/opensky/states (fetched tracks go to .../opensky/tracks). The
+# desktop and the recorder apply the same rule.
+# topic = "adsb/dev/opensky/states"
+#
+# Credentials: an API client from your OpenSky account page. Either the pair
+# below, or the credentials.json the page downloads. They are NEVER written to
+# .run/opensky.toml: `make up` hands them to the process as environment
+# variables. ADSB_OPENSKY_CLIENT_ID / ADSB_OPENSKY_CLIENT_SECRET /
+# ADSB_OPENSKY_CREDENTIALS_FILE exported in your shell work too. None at all
+# means anonymous: 400 credits a day and no track backfill.
+client_id = ""
+client_secret = ""
+credentials_file = ""
+# OpenSky's daily /states allowance: 8000 for an active feeder (a receiver
+# feeding OpenSky with >= 30% uptime), 4000 for a registered user who does not
+# feed. OpenSky's replies say how many credits are left, never which allowance
+# the account has, so it is set here. The poll interval is computed from it: one
+# small area (<= 25 square degrees) or any number of followed aircraft costs 1
+# credit a poll, so a feeder's 8000 a day means one poll every ~12 s; 4000,
+# every ~24 s.
+feeder = true
+# Any other allowance, overriding feeder:
+# daily_credits = 6000
+# Never poll faster than this, seconds (OpenSky's own resolution is 5 s).
+min_interval_s = 10
+# A desktop renews its watch list every 20 s; one not renewed for this long
+# lapses and stops costing credits.
+lease_seconds = 60
+# Caps per client and overall, whatever a client asks for.
+max_icao = 20
+max_areas = 4
+# An area of 100 square degrees costs 2 credits a poll; larger ones are refused.
+max_area_sq_deg = 100
+# Control API (watch lists, status, credits, track backfill). Browse it at
+# http://127.0.0.1:8791/swagger-ui/ . `make opensky-status | opensky-credits`.
+http_port = 8791
+# No authentication: loopback keeps it on this machine.
+http_bind = "127.0.0.1"
+# The 24 h credit ledger survives restarts here. Stack-scoped.
+state_path = ".run/opensky-state.json"
+
 [metrics]
 # Prometheus scrape endpoints. The recorder, the weather service and the two
 # agents serve /metrics on ports they already have (storage.http_port 8787,

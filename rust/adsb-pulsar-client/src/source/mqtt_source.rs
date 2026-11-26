@@ -113,10 +113,12 @@ struct KeyedAux {
     tx: watch::Sender<KeyedPayloads>,
 }
 
-/// An auxiliary topic and the channel its latest payload is kept in.
+/// An auxiliary topic and the channel its latest payload is kept in, plus,
+/// when asked for, a queue of every payload.
 struct AuxTopic {
     topic: String,
     tx: watch::Sender<Option<Vec<u8>>>,
+    stream: Option<broadcast::Sender<Vec<u8>>>,
 }
 
 /// A [`MessageSource`] backed by an MQTT subscription.
@@ -206,8 +208,50 @@ impl MqttSource {
             return existing.tx.subscribe();
         }
         let (tx, rx) = watch::channel(None);
-        self.aux.push(AuxTopic { topic, tx });
+        self.aux.push(AuxTopic {
+            topic,
+            tx,
+            stream: None,
+        });
         rx
+    }
+
+    /// Also subscribes to `topic`, delivering **every** payload whole, in
+    /// order, through the returned broadcast channel.
+    ///
+    /// For non-retained records that must each be kept (fetched OpenSky
+    /// tracks, polls): `with_aux_topic`'s "latest wins" would drop one
+    /// arriving before the previous was read. Shares the topic's subscription
+    /// with `with_aux_topic`; a reader lagging by more than `capacity` loses
+    /// the oldest, as any live feed would.
+    pub fn with_aux_stream(
+        &mut self,
+        topic: impl Into<String>,
+        capacity: usize,
+    ) -> broadcast::Receiver<Vec<u8>> {
+        let topic = topic.into();
+        let index = match self.aux.iter().position(|aux| aux.topic == topic) {
+            Some(index) => index,
+            None => {
+                let _ = self.with_aux_topic(topic);
+                self.aux.len() - 1
+            }
+        };
+        self.aux[index]
+            .stream
+            .get_or_insert_with(|| broadcast::channel(capacity).0)
+            .subscribe()
+    }
+
+    /// Hands one aux publish to its readers: the latest-wins watch (which
+    /// stores it even before anyone is watching) and the stream, if any.
+    fn deliver_aux(&self, index: usize, payload: &[u8]) {
+        let aux = &self.aux[index];
+        aux.tx.send_replace(Some(payload.to_vec()));
+        if let Some(stream) = &aux.stream {
+            // No reader yet, or none left: nothing to keep it for.
+            let _ = stream.send(payload.to_vec());
+        }
     }
 
     /// Also subscribes to `<prefix>/+`, keeping the latest payload of each
@@ -399,11 +443,7 @@ impl MessageSource for MqttSource {
                                     }
                                 }
                                 Route::Aux(index) => {
-                                    // Latest wins; send_replace stores it
-                                    // even before anyone is watching.
-                                    self.aux[index]
-                                        .tx
-                                        .send_replace(Some(publish.payload.to_vec()));
+                                    self.deliver_aux(index, &publish.payload);
                                 }
                                 Route::Ignore => {
                                     self.deliver_keyed(&publish.topic, &publish.payload);
@@ -593,6 +633,24 @@ mod tests {
         source.aux[1].tx.send_replace(Some(b"status".to_vec()));
         assert_eq!(status.borrow().as_deref(), Some(&b"status"[..]));
         assert!(weather.borrow().is_none());
+    }
+
+    const TRACKS: &str = "adsb/dev/opensky/tracks";
+
+    #[test]
+    fn test_an_aux_stream_delivers_every_payload_in_order() {
+        // Non-retained records (fetched OpenSky tracks) must not be lost to
+        // "latest wins": two in quick succession are both delivered.
+        let mut source = MqttSource::new(&mqtt_config());
+        let mut stream = source.with_aux_stream(TRACKS, 8);
+        let latest = source.with_aux_topic(TRACKS);
+        source.deliver_aux(0, b"one");
+        source.deliver_aux(0, b"two");
+        assert_eq!(stream.try_recv().unwrap(), b"one".to_vec());
+        assert_eq!(stream.try_recv().unwrap(), b"two".to_vec());
+        // The same topic's watch still holds the latest, and it is subscribed once.
+        assert_eq!(latest.borrow().as_deref(), Some(&b"two"[..]));
+        assert_eq!(source.topics().iter().filter(|t| *t == TRACKS).count(), 1);
     }
 
     #[test]

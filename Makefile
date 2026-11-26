@@ -44,6 +44,12 @@ help:
 	@echo "  make weather-status   what the weather service is doing (control API)"
 	@echo "  make weather-enable   resume fetching weather (persisted)"
 	@echo "  make weather-disable  pause fetching; the last grid stays on the map"
+	@echo "  make up-opensky   start just the OpenSky gap filler ([opensky] enabled = true)"
+	@echo "  make down-opensky stop just the OpenSky service"
+	@echo "  make restart-opensky  pick up an edited [opensky]"
+	@echo "  make opensky-status   what the OpenSky service is doing and spending"
+	@echo "  make opensky-credits  OpenSky credits spent per hour, last 24 h"
+	@echo "  make opensky-enable / opensky-disable  resume / pause polling"
 	@echo "  make reap         kill orphans still holding the stack's ports"
 	@echo "  make status       what is running"
 	@echo "  make logs         tail all logs (make logs N=feed for one)"
@@ -132,6 +138,20 @@ weather-status:  ; @$(SH) weather-status
 weather-enable:  ; @$(SH) weather-enable
 weather-disable: ; @$(SH) weather-disable
 
+# The OpenSky gap filler, on its own. `make up` starts it when [opensky].enabled
+# is true and `make down` always stops it. It polls nothing until a desktop
+# sends a watch list, so running it costs no credits by itself.
+.PHONY: up-opensky down-opensky restart-opensky
+up-opensky:      ; @$(SH) opensky
+down-opensky:    ; @$(SH) stop-opensky
+restart-opensky: ; @$(SH) stop-opensky && $(SH) opensky
+
+.PHONY: opensky-status opensky-credits opensky-enable opensky-disable
+opensky-status:  ; @$(SH) opensky-status
+opensky-credits: ; @$(SH) opensky-credits
+opensky-enable:  ; @$(SH) opensky-enable
+opensky-disable: ; @$(SH) opensky-disable
+
 .PHONY: reap
 reap: ; @$(SH) reap
 
@@ -193,6 +213,7 @@ test-scripts:
 	@python3 scripts/tests/test_render_config.py
 	@bash scripts/tests/test_stack_paths.sh
 	@bash scripts/tests/test_stack_weather.sh
+	@bash scripts/tests/test_stack_opensky.sh
 	@bash scripts/tests/test_stack_agents.sh
 	@bash scripts/tests/test_stack_inspector.sh
 	@bash scripts/tests/test_stack_metrics.sh

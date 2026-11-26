@@ -114,3 +114,20 @@ describe("trackKey", () => {
     expect(map.get("A1B2C3")?.callsign).toBe("FLT2"); // last write wins
   });
 });
+
+describe("mergePositionInto — last_position_ms", () => {
+  // The OpenSky gap rule measures how long a track has gone without a POSITION.
+  // last_seen moves on every message (callsign, speed...), so it cannot.
+  it("is stamped by a message carrying a position", () => {
+    const track = makeTrack();
+    mergePositionInto(track, makePosition("A1B2C3", { latitude: 47, longitude: -2 }), 1_000);
+    expect(track.last_position_ms).toBe(1_000);
+  });
+
+  it("is left alone by a message without one", () => {
+    const track = makeTrack({ last_position_ms: 1_000 });
+    mergePositionInto(track, makePosition("A1B2C3", { latitude: null, longitude: null }), 5_000);
+    expect(track.last_position_ms).toBe(1_000);
+    expect(track.last_seen).toBe(5_000);
+  });
+});

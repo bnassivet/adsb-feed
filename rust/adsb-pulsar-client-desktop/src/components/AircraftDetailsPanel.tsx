@@ -1,4 +1,6 @@
 "use client";
+import { OpenSkyGapSection, type OpenSkyDetails } from "./OpenSkyGapSection";
+import { OpenSkyHistorySection, type OpenSkyHistoryDetails } from "./OpenSkyHistorySection";
 import { useCallback } from "react";
 import type { AircraftTrack } from "@/lib/types";
 import {
@@ -76,6 +78,10 @@ interface Props {
   flightPathShown?: boolean;
   /** Show/hide the looked-up route on the map; no toggle without it. */
   onToggleFlightPath?: () => void;
+  /** OpenSky gap filling for this aircraft; the section is omitted without it. */
+  openSky?: OpenSkyDetails;
+  /** OpenSky's version of this recorded flight; the section is omitted without it. */
+  openSkyHistory?: OpenSkyHistoryDetails;
 }
 
 export function AircraftDetailsPanel({
@@ -98,6 +104,8 @@ export function AircraftDetailsPanel({
   isSimulated = false,
   flightPathShown = true,
   onToggleFlightPath,
+  openSky,
+  openSkyHistory,
 }: Props) {
   if (track === null) return null;
 
@@ -121,6 +129,8 @@ export function AircraftDetailsPanel({
       isSimulated={isSimulated}
       flightPathShown={flightPathShown}
       onToggleFlightPath={onToggleFlightPath}
+      openSky={openSky}
+      openSkyHistory={openSkyHistory}
     />
   ) : (
     <CollapsedStrip onToggle={onToggle} />
@@ -163,6 +173,8 @@ function ExpandedPanel({
   isSimulated = false,
   flightPathShown = true,
   onToggleFlightPath,
+  openSky,
+  openSkyHistory,
 }: {
   track: AircraftTrack;
   width: number;
@@ -182,6 +194,8 @@ function ExpandedPanel({
   isSimulated?: boolean;
   flightPathShown?: boolean;
   onToggleFlightPath?: () => void;
+  openSky?: OpenSkyDetails;
+  openSkyHistory?: OpenSkyHistoryDetails;
 }) {
   const { resolvedTzName } = useDisplayTz();
   // Self-contained drag: listeners created on mousedown capture the start width/x and are removed
@@ -290,6 +304,18 @@ function ExpandedPanel({
             flightPathShown={flightPathShown}
             onToggleFlightPath={onToggleFlightPath}
           />
+        )}
+
+        {openSky && (
+          <div className="px-3 pb-2">
+            <OpenSkyGapSection {...openSky} />
+          </div>
+        )}
+
+        {openSkyHistory && (
+          <div className="px-3 pb-2">
+            <OpenSkyHistorySection {...openSkyHistory} />
+          </div>
         )}
 
         {/* Altitude, Speed, Heading */}

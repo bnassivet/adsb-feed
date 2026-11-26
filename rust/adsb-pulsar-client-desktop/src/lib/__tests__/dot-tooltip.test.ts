@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dotTooltipHtml, formatAlt, rejectedTooltipHtml, timeAgo } from "../dot-tooltip";
+import { dotTooltipHtml, formatAlt, openSkyWaypointTooltipHtml, rejectedTooltipHtml, timeAgo } from "../dot-tooltip";
 import type { AircraftTrack, RejectedPosition } from "../types";
 
 const t = (extra: Partial<AircraftTrack> = {}) =>
@@ -78,5 +78,23 @@ describe("rejectedTooltipHtml", () => {
   it("escapes the callsign (it comes off the air)", () => {
     const html = rejectedTooltipHtml(r({ callsign: "<img src=x>" }));
     expect(html).not.toContain("<img");
+  });
+});
+
+describe("openSkyWaypointTooltipHtml", () => {
+  it("lays out like a DB History dot, with the waypoint's time and OpenSky as the source", () => {
+    const html = openSkyWaypointTooltipHtml({ hex: "3C6444", callsign: "DLH9LF" }, 31_000, 1_764_000_000);
+    const dot = dotTooltipHtml("dbHistory", t({ hex_ident: "3C6444", callsign: "DLH9LF" }), 31_000, false);
+    // Same head as a regular point: callsign, hex, altitude.
+    expect(html.startsWith(dot.split('<div style="color:#22d3ee')[0])).toBe(true);
+    expect(html).toContain(`Time: <span style="color:#fff">${new Date(1_764_000_000 * 1000).toLocaleTimeString()}</span>`);
+    expect(html).toContain(">OpenSky</div>");
+    expect(html).not.toContain("DB History");
+  });
+
+  it("falls back to the hex, shows a missing altitude, and escapes the callsign", () => {
+    expect(openSkyWaypointTooltipHtml({ hex: "3C6444", callsign: null }, null, 1)).toContain(">3C6444<");
+    expect(openSkyWaypointTooltipHtml({ hex: "3C6444", callsign: null }, null, 1)).toContain("N/A");
+    expect(openSkyWaypointTooltipHtml({ hex: "3C6444", callsign: "<b>" }, 1, 1)).toContain("&lt;b&gt;");
   });
 });
