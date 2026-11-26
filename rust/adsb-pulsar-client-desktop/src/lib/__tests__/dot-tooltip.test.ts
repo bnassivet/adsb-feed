@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dotTooltipHtml, formatAlt, openSkyWaypointTooltipHtml, rejectedTooltipHtml, timeAgo } from "../dot-tooltip";
+import { dotTooltipHtml, formatAlt, formatPositionTime, openSkyWaypointTooltipHtml, rejectedTooltipHtml, timeAgo } from "../dot-tooltip";
 import type { AircraftTrack, RejectedPosition } from "../types";
 
 const t = (extra: Partial<AircraftTrack> = {}) =>
@@ -30,7 +30,7 @@ describe("dotTooltipHtml", () => {
 
   it("adds the per-type details", () => {
     const now = 1_000_000;
-    const hist = dotTooltipHtml("history", t({ last_seen: now - 30_000 }), 1000, true, now);
+    const hist = dotTooltipHtml("history", t({ last_seen: now - 30_000 }), 1000, true, null, now);
     expect(hist).toContain("Hex: ABC123");
     expect(hist).toContain("Last seen: 30s ago");
     expect(dotTooltipHtml("history", t(), 1000, false)).not.toContain("Last seen");
@@ -40,10 +40,39 @@ describe("dotTooltipHtml", () => {
     expect(dotTooltipHtml("live", t(), null, false)).toContain("N/A");
   });
 
+  it("shows the position's time under the altitude, and nothing when it is unknown", () => {
+    const now = new Date(2026, 10, 27, 15, 0, 0).getTime();
+    const at = new Date(2026, 10, 27, 14, 2, 11).getTime();
+    for (const type of ["live", "history", "dbHistory"] as const) {
+      const html = dotTooltipHtml(type, t(), 1000, false, at, now);
+      expect(html).toContain(`Time: <span style="color:#fff">${formatPositionTime(at, now)}</span>`);
+      expect(html.indexOf("Time:")).toBeGreaterThan(html.indexOf("Alt:"));
+    }
+    expect(dotTooltipHtml("imported", t(), 1000, false, null, now)).not.toContain("Time:");
+  });
+
   it("escapes the callsign (it comes off the air)", () => {
     const html = dotTooltipHtml("dbHistory", t({ callsign: "<img src=x>" }), 1000, false);
     expect(html).not.toContain("<img");
     expect(html).toContain("&lt;img src=x&gt;");
+  });
+});
+
+describe("formatPositionTime", () => {
+  const now = new Date(2026, 10, 27, 15, 0, 0).getTime();
+
+  it("gives the time alone, to the millisecond, for a position from today", () => {
+    const at = new Date(2026, 10, 27, 9, 5, 7, 42);
+    const text = formatPositionTime(at.getTime(), now);
+    expect(text).toMatch(/0?9\D05\D07[.,]042/); // whatever the locale: h, m, s and the milliseconds
+    expect(text).not.toContain(at.toLocaleDateString());
+  });
+
+  it("adds the date for an earlier day (history spans 24 h, DB History any range)", () => {
+    const at = new Date(2026, 10, 26, 23, 59, 0, 5);
+    const text = formatPositionTime(at.getTime(), now);
+    expect(text.startsWith(`${at.toLocaleDateString()} `)).toBe(true);
+    expect(text).toMatch(/\D59\D00[.,]005/);
   });
 });
 

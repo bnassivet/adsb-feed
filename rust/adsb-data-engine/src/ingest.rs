@@ -289,9 +289,16 @@ impl IngestPipeline {
     ) {
         if !buffer.is_empty() {
             let mut batch: Vec<AircraftPosition> = buffer.drain().map(|(_, v)| v).collect();
+            let tz = &self.config.dump1090_tz;
             for pos in &mut batch {
                 if let Some(count) = message_counts.remove(&pos.hex_ident) {
                     pos.message_count = count;
+                }
+                if pos.position_time_ms.is_none() {
+                    pos.position_time_ms = pos
+                        .position_timestamp
+                        .as_deref()
+                        .map(|ts| crate::storage::parse_timestamp_to_ms(ts, tz));
                 }
             }
             if self.record_positions.load(Ordering::Relaxed) {
@@ -386,6 +393,11 @@ pub fn merge_into_buffer(buffer: &mut HashMap<String, AircraftPosition>, new: Ai
             existing.squawk = new.squawk.or(existing.squawk.take());
             existing.is_on_ground = new.is_on_ground.or(existing.is_on_ground);
             existing.timestamp = new.timestamp;
+            // Paired with lat/lon by the same rule, so the time stays the fix's own.
+            if new.position_timestamp.is_some() {
+                existing.position_timestamp = new.position_timestamp;
+                existing.position_time_ms = new.position_time_ms;
+            }
         }
         None => {
             buffer.insert(new.hex_ident.clone(), new);
@@ -417,6 +429,8 @@ mod tests {
             is_on_ground: None,
             timestamp: "2024-01-01 00:00:00".to_string(),
             message_count: 0,
+            position_timestamp: None,
+            position_time_ms: None,
         }
     }
 
@@ -467,6 +481,53 @@ mod tests {
             "callsign from MSG1"
         );
         assert_eq!(entry.timestamp, "2024-01-01 00:00:01", "timestamp updated");
+    }
+
+    #[test]
+    fn merge_keeps_the_position_message_time_when_a_later_message_has_none() {
+        // MSG3 (position) then MSG4 (velocity) in one flush window: the row's
+        // `timestamp` moves to the MSG4, but the fix was received at the MSG3.
+        let mut buffer = HashMap::new();
+        merge_into_buffer(
+            &mut buffer,
+            AircraftPosition {
+                latitude: Some(48.8),
+                longitude: Some(2.3),
+                timestamp: "2024/01/15 10:30:00.100".to_string(),
+                position_timestamp: Some("2024/01/15 10:30:00.100".to_string()),
+                ..make_pos("ABC123")
+            },
+        );
+        merge_into_buffer(
+            &mut buffer,
+            AircraftPosition {
+                ground_speed: Some(450.0),
+                timestamp: "2024/01/15 10:30:00.400".to_string(),
+                ..make_pos("ABC123")
+            },
+        );
+        let entry = &buffer["ABC123"];
+        assert_eq!(entry.timestamp, "2024/01/15 10:30:00.400");
+        assert_eq!(
+            entry.position_timestamp.as_deref(),
+            Some("2024/01/15 10:30:00.100")
+        );
+
+        merge_into_buffer(
+            &mut buffer,
+            AircraftPosition {
+                latitude: Some(48.9),
+                longitude: Some(2.4),
+                timestamp: "2024/01/15 10:30:00.450".to_string(),
+                position_timestamp: Some("2024/01/15 10:30:00.450".to_string()),
+                ..make_pos("ABC123")
+            },
+        );
+        assert_eq!(
+            buffer["ABC123"].position_timestamp.as_deref(),
+            Some("2024/01/15 10:30:00.450"),
+            "a newer fix brings its own time"
+        );
     }
 
     #[test]
@@ -613,6 +674,37 @@ mod tests {
         assert_eq!(flat.len(), 1, "two subtypes must merge into one aircraft");
         assert!(flat[0].latitude.is_some(), "MSG1 erased the MSG3 position");
         assert!(flat[0].callsign.is_some(), "callsign was lost");
+    }
+
+    #[tokio::test]
+    async fn pipeline_resolves_the_position_time_to_epoch_ms_with_the_dump1090_zone() {
+        let (tx, rx) = broadcast::channel(64);
+        let sink = RecordingSink::default();
+        let sink_for_assert = sink.clone();
+        // Position at .123, then a velocity message 300 ms later.
+        tx.send(b"MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.123,2024/01/15,10:30:00.200,,35000,,,45.5,-73.5,,,,,,0".to_vec()).unwrap();
+        tx.send(b"MSG,4,1,1,A1B2C3,1,2024/01/15,10:30:00.423,2024/01/15,10:30:00.500,,,450,90,,,0,,,,,0".to_vec()).unwrap();
+        drop(tx);
+
+        test_pipeline(no_storage()).run(rx, sink).await;
+
+        let flat: Vec<_> = sink_for_assert.batches().into_iter().flatten().collect();
+        // test_pipeline's zone is UTC.
+        assert_eq!(flat[0].position_time_ms, Some(1_705_314_600_123));
+    }
+
+    #[tokio::test]
+    async fn pipeline_leaves_the_position_time_empty_without_a_position() {
+        let (tx, rx) = broadcast::channel(64);
+        let sink = RecordingSink::default();
+        let sink_for_assert = sink.clone();
+        tx.send(SAMPLE_MSG1.as_bytes().to_vec()).unwrap();
+        drop(tx);
+
+        test_pipeline(no_storage()).run(rx, sink).await;
+
+        let flat: Vec<_> = sink_for_assert.batches().into_iter().flatten().collect();
+        assert_eq!(flat[0].position_time_ms, None);
     }
 
     #[tokio::test]

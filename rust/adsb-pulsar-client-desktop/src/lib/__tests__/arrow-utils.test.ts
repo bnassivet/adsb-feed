@@ -146,6 +146,17 @@ describe("arrowToTracks", () => {
     expect(t.longitude).toBe(-73.4);
   });
 
+  it("keeps each flight's per-position timestamps", () => {
+    const ipc = buildIPC([
+      makeRow("A1B2C3", "A1B2C3_0", 45.5, -73.5, 1000),
+      makeRow("A1B2C3", "A1B2C3_0", 45.6, -73.4, 2000),
+      makeRow("D4E5F6", "D4E5F6_0", 40.7, -74.0, 3000, 20000),
+    ]);
+    const [a, b] = arrowToTracks(ipc, [flight1, flight2]);
+    expect(Array.from(a.position_times!)).toEqual([1000, 2000]);
+    expect(Array.from(b.position_times!)).toEqual([3000]);
+  });
+
   it("partitions multiple flights correctly with ColumnarPositions", () => {
     const ipc = buildIPC([
       // Flight A1B2C3_0 (2 positions)

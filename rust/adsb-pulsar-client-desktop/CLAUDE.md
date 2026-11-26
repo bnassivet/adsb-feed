@@ -195,7 +195,8 @@ npm test && npm run lint
 ### AircraftTrack type (src/lib/types.ts)
 - `first_seen: number` — ms epoch of first detection; set once in `AircraftTrackingContext`, never updated by `mergePositionInto`
 - `last_seen: number` — ms epoch of most recent update
-- `positions: [lat, lng, altitude | null][]` — capped at 100 entries; no per-position timestamps
+- `positions: [lat, lng, altitude | null][]` — capped at 100 entries; times live beside it, not in the tuple
+- `position_times?: number[] | Float64Array` — ms epoch per position, index-aligned with `positions`: the SBS-1 *generated* time of the message that carried the fix (`AircraftPosition.position_time_ms`, NaN if absent — never the flush time) for live tracks, `timestamp_ms` for history and DB History; absent for imported GeoJSON and simulated tracks. `appendPosition` writes it only while it is in step, so it is never started on a track that already has positions
 - GeoJSON export/import (`src/lib/geojson.ts`) serialises both `first_seen` and `last_seen` in feature properties; `first_seen` falls back to `last_seen` for legacy files
 
 ### AircraftDetailsPanel (src/components/AircraftDetailsPanel.tsx)

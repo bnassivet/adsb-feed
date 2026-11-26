@@ -124,7 +124,7 @@ export function DeckDotsOverlay({ sets, selected, theme }: { sets: DotSet[]; sel
       if (id === shown) return;
       tooltip
         .setLatLng([dot.lat, dot.lng])
-        .setContent(dotTooltipHtml(owner.type, dot.track, dot.alt, dot.isLast));
+        .setContent(dotTooltipHtml(owner.type, dot.track, dot.alt, dot.isLast, dot.time));
       if (shown === null) {
         tooltip.addTo(map);
         arbiter.setDotActive(true);

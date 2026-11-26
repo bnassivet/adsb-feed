@@ -76,6 +76,7 @@ export function recordsToTrack(records: PositionRecord[]): AircraftTrack {
     positions: records.map(
       (r) => [r.latitude, r.longitude, r.altitude] as [number, number, number | null]
     ),
+    position_times: records.map((r) => r.timestamp_ms),
     first_seen: records[0].timestamp_ms,
     last_seen: last.timestamp_ms,
     message_count: records.length,

@@ -1809,6 +1809,8 @@ mod tests {
             is_on_ground: Some(false),
             timestamp: "2026/11/20 10:30:00.000".into(),
             message_count: 0,
+            position_timestamp: None,
+            position_time_ms: None,
         };
         let guard = storage.try_read().unwrap();
         guard
