@@ -69,3 +69,22 @@ describe("aircraftIconHtml", () => {
     });
   });
 });
+
+describe("aircraftIconHtml — hollow (OpenSky)", () => {
+  it("outlines in the altitude colour, dashed, with no fill", () => {
+    const result = aircraftIconHtml(90, "#ff0000", false, { hollow: true });
+    expect(result.html).toContain('fill="none"');
+    expect(result.html).toContain('stroke="#ff0000"');
+    expect(result.html).toContain("stroke-dasharray");
+  });
+
+  it("keeps the selection ring and size", () => {
+    const result = aircraftIconHtml(0, "#ff0000", true, { hollow: true });
+    expect(result.iconSize).toEqual([36, 36]);
+    expect(result.html).toContain("selected-ring");
+  });
+
+  it("leaves the filled icon unchanged without the option", () => {
+    expect(aircraftIconHtml(0, "#ff0000", false, {})).toEqual(aircraftIconHtml(0, "#ff0000", false));
+  });
+});

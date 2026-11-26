@@ -5709,6 +5709,268 @@ Incidentally confirming the two legs are independent: the SBS feed was down thro
 
 ---
 
+## OpenSky Gap Filling
+
+The local receiver has blind spots: terrain, range, a low antenna. An aircraft
+selected on the map can drop out of local reception, and some sectors are never
+covered. The OpenSky Network sees much of the same sky through thousands of
+receivers. This feature asks OpenSky for **exactly what the user asks for** --
+followed aircraft that the receiver has lost, and areas drawn over blind
+sectors -- and draws the answer beside the local tracks.
+
+Plan: `docs/plans/2026-11-25-opensky-gaps.md`.
+
+### Principles
+
+- **Never mixed into the receiver's data.** OpenSky data is recorded, but only
+  in its own tables (`opensky_states`, `opensky_tracks`; see *Storage*). The
+  desktop relay never reaches `IngestPipeline`, and nothing goes into
+  `positions`. That table stays "what my antenna heard", so coverage, range and
+  detection statistics stay honest.
+- **A dedicated service holds the credentials.** `adsb-opensky-server` is the
+  only process that talks to OpenSky. The desktop only says what it wants, over
+  the service's control API, and reads what the service publishes.
+- **The budget sets the pace.** OpenSky allows 4,000 `/states` credits a day to a
+  registered user (8,000 to an active feeder, 400 anonymous). A fixed 10 s poll
+  of one small area is 8,640 a day. The interval is computed from what one poll
+  cycle costs and what is left; there is no interval setting.
+- **The allowance is configured, not discovered.** OpenSky's replies carry
+  `X-Rate-Limit-Remaining` (what is left) but nothing says which allowance the
+  account has. `[opensky] feeder` (true by default) budgets 8,000, `false`
+  4,000; `daily_credits`, when set, overrides both. Anonymous access is capped
+  at 400 whatever is set. The remaining count is served beside it, in
+  `GET /v1/credits` (`states_remaining`, `tracks_remaining`) and in the status.
+- **Nothing watched, nothing spent.** The service polls the union of its
+  clients' watch leases; with none, it idles.
+
+### Flow
+
+```mermaid
+flowchart LR
+  UI[Desktop UI: selection, areas] -->|set_opensky_watch every 20 s| TAURI[Tauri commands]
+  TAURI -->|PUT /v1/watch/client, 60 s lease| SVC[adsb-opensky-server]
+  SVC -->|OAuth2 bearer, GET /states/all| OS[OpenSky REST]
+  SVC -->|adsb/stage/opensky/states, not retained| MQ[MQTT broker]
+  SVC -->|status + availability, retained| MQ
+  MQ --> RELAY[bridge.rs aux topics, opensky.rs relay]
+  RELAY -->|adsb:opensky, adsb:opensky-service| UI
+```
+
+### What is asked for
+
+`computeWatch` (`src/lib/opensky.ts`) turns the **followed** aircraft into
+icao24s. Following is explicit: **Follow on OpenSky** in the details panel or
+the track's context menu (`useOpenSkyFollow`, session state). Selecting an
+aircraft spends nothing -- it used to follow it, and since a click on a History
+line selects it, every click on a recently lost flight started polling. An
+aircraft known nowhere any more (neither the receiver's tracks nor OpenSky's)
+is unfollowed.
+
+| Rule | Value |
+|---|---|
+| A followed aircraft enters the gap after | 20 s without a local **position** (`last_position_ms`, not `last_seen`, which any message moves) |
+| ...in **Always** mode | at once, while followed |
+| Followed until | 5 min after the last local position, **or** 250 NM from the receiver, whichever first |
+| Never asked | simulated aircraft (`SIM-…`, renamed hexes): only six hex digits pass |
+| Per client | 20 aircraft, 4 areas, areas up to 100 sq° |
+
+Areas are drawn with the existing map picker (`MapPickerLayer`, area mode),
+tagged with a purpose so a pick never reaches the event form. They live in the
+desktop's localStorage: the service keeps no list. An aircraft is shown while a
+poll of its area names it, and dropped once polls stop doing so (2.5 × the
+interval, at least a minute) -- "until it leaves the area".
+
+A track is also dropped once its **position** is older than 2 minutes
+(`POSITION_MAX_AGE_MS`), even if polls still name it: OpenSky keeps reporting
+an aircraft it has lost, at its last position, and a followed aircraft is
+polled by name, so without this rule a frozen aircraft stayed on the map for as
+long as it was followed. `mergeStates` applies the same rule, so the next poll
+does not bring it back. A dropped track takes its traces with it: the trail,
+the gap connector and its **backfilled path** (`pruneOpenSky`). Only a backfill
+for an aircraft OpenSky never followed stays until hidden.
+
+All aircraft share **one** `/states/all?icao24=…&icao24=…` call (1 credit
+however many); each area is one call costing 1 credit up to 25 sq°, 2 up to 100.
+
+### The lease
+
+`PUT /v1/watch/{client_id}` replaces the client's list and leases it for 60 s.
+The desktop (`useOpenSkyWatch`) sends on every change of content, renews every
+20 s, re-sends when the service's availability turns `online` (a restarted
+service has lost every lease), and `DELETE`s when the layer goes off. Renewing
+an identical list does not wake the poller (`Control::put_watch` compares the
+union before and after). A crashed desktop costs nothing after one lease.
+
+### Scheduling (`budget.rs`, `credits.rs`, `poller.rs`)
+
+- Steady interval: `cycle_cost × 86,400 / (daily allowance × 0.9)`, never under
+  `min_interval_s` (10 s; OpenSky's own resolution is 5 s authenticated, 10 s
+  anonymous). 1 credit on 4,000 a day → 24 s; on 8,000 → 12 s.
+- Over the allowance by our own **24 h ledger**, wait until enough of the oldest
+  spending ages out. The ledger is 5-minute slots per bucket, persisted in
+  `state_path`, so a restart does not reset the count.
+- OpenSky's `X-Rate-Limit-Remaining` is kept beside it. It counts the whole
+  account -- another app on the same login spends it too -- so when it is lower
+  the rest is spread over a day; below one cycle, wait an hour.
+- A new target (the union grows) is polled after `min_interval`, not the full
+  interval; a shrinking union waits for its schedule.
+- 429: wait `X-Rate-Limit-Retry-After-Seconds` (an hour if absent). Transient:
+  30 s doubling to 10 min. Refused credentials: stop until re-enabled.
+
+### Authentication
+
+OAuth2 client credentials only: Basic auth no longer works at OpenSky. The token
+(30 min) is cached until a minute before expiry; a 401 drops it and the request
+is retried once with a fresh one. Credentials: `--client-id`/`--client-secret`
+(env `ADSB_OPENSKY_CLIENT_ID`/`_SECRET`) or the `credentials.json` OpenSky's
+account page downloads (`--credentials-file`). One without the other is an error,
+not a silent fall back to anonymous. The secret is never serialised
+(`--print-config`), echoed (`--help`), rendered (`.run/opensky.toml`) or passed
+on a command line (`stack.sh` exports it inside a subshell).
+
+### Display
+
+| Where | What |
+|---|---|
+| Filters | Its own top-level **OpenSky Gap Filler** section, between Display Layers and Map Layers: it adds traffic rather than a background layer, so it is not nested under Map Layers |
+| Map | Hollow dashed aircraft in the altitude colour, dashed trails, violet dashed areas, a violet dashed connector from where the receiver lost a selected aircraft to OpenSky's first fix, backfilled tracks |
+| Table | An **OpenSky** section, rows badged `OSKY`, keyed `osky:<HEX>` so they never collide with the live row of the same aircraft; they select like any track |
+| Details panel | Last OpenSky fix age; **Fill gaps (OpenSky)** → `GET /v1/track/{icao24}` (OpenSky `/tracks/all?time=0`, 4 `/tracks` credits, documented as experimental; sparse waypoints) |
+| Bottom bar | `OpenSky: used / limit (24h) · N left`, amber from 70 %, red from 90 % or while rate limited. `limit` is the service's configured allowance (`feeder` → 8,000); `N left` is OpenSky's latest `X-Rate-Limit-Remaining` for `/states` (the whole account), shown once OpenSky has replied, with `/tracks` in its tooltip. Tooltip with the interval |
+| DB History panel | A foldable **OpenSky Credits** section between DB Stats and Time Range, folded by default with the 24 h total in its title; open, it charts credits per hour over the last 24 h, both buckets stacked, with the hourly allowance as a reference line -- always the last 24 h, whatever range the panel shows. Absent when no OpenSky service answers |
+
+**Gaps only** hides an OpenSky aircraft while the receiver has a fresh position
+for it; **Always** draws both.
+
+**Every position OpenSky filled in is a dot**: live trails, backfills and
+flight histories alike, filled by altitude like the receiver's points, ringed
+in violet, with the receiver's dot tooltip and *OpenSky* as its source.
+
+**Showing, hiding, selecting.** A click on any OpenSky line or dot selects the
+flight it belongs to: a flight history its recorded track, a backfill the
+receiver's aircraft (OpenSky's when the receiver has none), a live trail its
+`osky:` aircraft. The selected one is drawn thicker. Every selecting line
+and dot on the map -- these and the receiver's own History, DB History,
+imported and live lines -- goes through `selectingPath` (`src/lib/selectable-path.ts`),
+which sets `bubblingMouseEvents: false`: a Leaflet path passes its click on to
+the map, whose handler deselects in the same click. Backfills and flight histories
+each get a **violet eye** on the row that owns them -- a flight history on its
+recorded row, a backfill on both the live and the `osky:` row of its aircraft,
+one switch -- and a Hide/Show in the details panel. Hiding keeps what was
+fetched; **Discard** forgets it, so drawing it again means fetching again (from
+storage when settled). The owner is looked up by section as well as key
+(`openSkyTraceOwners`), since a live row may share a recorded flight's key.
+Hidden traces (`openSkyTraceKey`, `withoutHiddenTraces`) are session state, like
+the table's own eyes.
+
+**The track context menu.** A right-click on an aircraft, a track line, an
+OpenSky line or dot, or a table row opens `TrackContextMenu` with every OpenSky
+action for that track (`openSkyMenuItems`, `src/lib/opensky-menu.ts`): Follow /
+Stop following, Fill gaps then Hide/Show and Discard, Fetch flight then
+Hide/Show and Discard, and *Turn on OpenSky* while the layer is off. It is built
+from the same objects the details panel's OpenSky lines take
+(`openSkyGapFor` / `openSkyHistoryFor` in `page.tsx`), so both offer the same
+actions under the same rules; what cannot be done is greyed out, its reason as
+the tooltip. It acts on the right-clicked track without selecting it. The
+right-click goes through `selectingPath`, so it never also opens the map's own
+menu.
+
+### Flight history (Analysis, History, DB History)
+
+A recorded flight can be fetched from OpenSky as OpenSky saw it: same aircraft,
+same callsign, same flight. That is a flight selected in **Analysis** mode, or a
+**History** or **DB History** track in Live mode, but never a live aircraft,
+whose flight is not over. It works independently of the live *Fill gaps*
+switch. The details panel's **Fetch from OpenSky** button shows the
+estimated cost and calls `GET /v1/track/{icao24}?time=T`, which uses OpenSky's
+`/tracks/all`. `T` can be any moment of the flight, and OpenSky returns the whole
+flight: callsign, start, end and sparse waypoints.
+
+| Endpoint | Why or why not |
+|---|---|
+| `/tracks/all?time=T` | **Used.** Covers the last 30 days. The server answers 422 beyond that, or for a time in the future |
+| `/flights/aircraft` | Only lists a flight after OpenSky's nightly batch, so not today's, and returns no path |
+| `/states/all?time=` | Goes back one hour only, one snapshot per call |
+| Trino | Full-resolution history, but needs research access |
+
+- **Same flight.** The first call is at the middle of the local
+  `[first_seen, last_seen]` span. The answer is kept only if its times overlap
+  that span and the callsigns match, ignoring case and padding, when both have
+  one (`sameFlight`). If OpenSky's flight ends before the local one does, the DB
+  track joined two flights. One more call, at `last_seen`, fetches the second
+  flight and the two are merged. There are never more than two calls.
+- **Cost.** OpenSky's credit table is ambiguous for one past flight. The server
+  checks the budget against a conservative estimate: 4 credits within a day,
+  30 beyond (`track_cost`). It then records what `X-Rate-Limit-Remaining` says
+  the call actually cost, when the drop is a plausible single charge
+  (`observed_cost`).
+- **Gaps are measured spatially.** Local positions carry no timestamps. An
+  OpenSky waypoint more than 5 NM from every local position is one the receiver
+  missed (`historyGaps`). The waypoints' own times give how long each gap lasted,
+  e.g. "3 gaps filled, 14 min".
+- **The map** draws the path dashed, the gaps solid violet over it, and each
+  waypoint as a dot filled by altitude (the receiver's colour scale) with a
+  violet ring. Its tooltip is the receiver's dot tooltip with the waypoint's
+  time and *OpenSky* as the source (`openSkyWaypointTooltipHtml`).
+- **Scope** (`openSkyHistoryScope`). Two sets. *Held* is every Analysis,
+  History and DB History track, in either mode, so switching between Live and
+  Analysis discards nothing. *Selectable* is what the current mode offers the
+  button on: History and DB History in Live, Analysis otherwise.
+- **Lifetime.** Entries are keyed by the track key, not the hex, because one
+  aircraft can fly several recorded flights. An entry lives while its track is
+  held (`useOpenSkyHistory`). Removing the track from Analysis, clearing Analysis
+  or DB History, or the track ageing out of History removes its OpenSky path,
+  and a fetch still running at that moment is discarded. The drawing is not
+  persisted; the fetched flight itself is recorded (see *Storage*).
+
+### Storage
+
+Everything OpenSky returns is recorded beside the receiver's data, never in it.
+That makes two things possible: a past flight is shown again without spending
+credits, and the gap-fill positions can be analysed later.
+
+| Table | Rows | Key | Kept |
+|---|---|---|---|
+| `opensky_states` | one per state vector with a position and a position time | `(icao24, time_position_s)`: OpenSky repeats a frozen position across polls, and it is stored once | Pruned with `retention_hours`, like `positions` |
+| `opensky_tracks` | one per fetched flight; `path_json` holds OpenSky's waypoints verbatim | `(icao24, start_time_s)` | Indefinitely: small, paid for, and the cache |
+
+- **One ingest path: the bus.** The service publishes each poll on
+  `<base>/opensky/states`, and each fetched track as a `TrackMessage`
+  (`version`, `fetched_ms`, `track`) on `<base>/opensky/tracks`. Neither is
+  retained. A fetch made by any desktop is therefore recorded by every writer
+  listening. A writer that is down misses messages, the same as SBS lines.
+- **Two writers, one rule.** The data server's recorder writes when
+  `record_opensky` is set, and an embedded desktop writes when it is fed over
+  MQTT (`records_opensky`). Both go through `adsb_data_server::opensky`, so they
+  store identically. A desktop in remote mode never writes: the data server
+  does, and a write through the Quack views would fail. `[opensky] record =
+  false` turns off both writers (`ADSB_OPENSKY_RECORD=false` for the desktop).
+- **Every message is kept.** Both topics arrive through
+  `MqttSource::with_aux_stream`, a broadcast of every payload. The existing
+  `with_aux_topic` is latest-wins, which suits a retained document, but would
+  drop a track that arrives before the previous one was read.
+- **A more complete track wins.** A flight fetched while it was still in the
+  air ends at the fetch. The stored copy is replaced only by one with a later
+  end, or the same end fetched later.
+- **The cache.** `get_opensky_track` with a `time` first looks for a stored
+  flight covering that time (`find_stored_track`). It uses only a *settled* one,
+  fetched at least `OPENSKY_TRACK_SETTLED_S` (30 min) after its end. On a hit,
+  the reply says `stored: true` and the panel shows "From storage: no credits
+  spent". A live flight (`time` unset) is never served from storage, and a
+  storage error falls through to OpenSky.
+- **Remote mode** reads both tables through the views (`OBSERVED_TABLES`).
+  **Export** copies them.
+- **Exposure.** OpenSky's data is for personal, non-commercial use. A Quack token
+  holder can read these tables, the same as every other table. The Pulsar leg
+  never carries them.
+
+### Control API
+
+`GET /v1/status`, `PUT /v1/enabled` (in memory), `PUT|DELETE
+/v1/watch/{client_id}`, `GET /v1/credits`, `GET /v1/track/{icao24}[?time=]`; OpenAPI at
+`/v1/openapi.json`, Swagger UI at `/swagger-ui/`, Prometheus at `/metrics`
+(outside the document). Loopback by default, no authentication. Port 8791.
+
 ## Map Tile Cache
 
 Basemap tiles within a footprint around the receiver (default **500 NM**) are
@@ -5940,7 +6202,8 @@ section (`Filters.tsx`, `Section nested`):
 | Relief | layer, opacity | `adsb-show-relief`, `adsb-relief-opacity` |
 
 Every layer is off by default. The Map Layers parent is shown only when at
-least one layer is wired.
+least one layer is wired. OpenSky is not one of them: it has its own top-level
+**OpenSky Gap Filler** section just above (see OpenSky Gap Filling → Display).
 
 ### Drawing order (Leaflet panes)
 

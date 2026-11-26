@@ -74,6 +74,10 @@ export interface AircraftTrack {
   last_seen: number;
   /** Total SBS-1 messages received for this aircraft (pre-throttle cumulative count). */
   message_count: number;
+  /** When the last message carrying a POSITION arrived (ms since epoch). Unlike
+   *  `last_seen`, which any message moves, this measures a reception gap: the
+   *  OpenSky gap filler keys on it. Absent on tracks not built from the feed. */
+  last_position_ms?: number;
   /** Optional unique track identifier. Used as Map key instead of hex_ident when set.
    *  Set to flight_id when loaded from DB history flight segmentation. */
   track_id?: string;
@@ -231,7 +235,7 @@ export function cornersToBox(
 export type ActiveMode = "live" | "analysis";
 
 /** Identifies a table section for per-section map visibility control. */
-export type TrackSection = "live" | "history" | "dbHistory" | "imported" | "analysis";
+export type TrackSection = "live" | "history" | "dbHistory" | "imported" | "analysis" | "opensky";
 
 /** Maps a Leaflet zoom level to the appropriate H3 resolution. */
 export function zoomToH3Resolution(zoom: number): number {

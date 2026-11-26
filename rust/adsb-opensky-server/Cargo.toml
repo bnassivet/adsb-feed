@@ -1,0 +1,83 @@
+[package]
+name = "adsb-opensky-server"
+version = "0.1.0"
+edition = "2024"
+authors = ["bruno.nassivet@gmail.com"]
+description = "OpenSky gap filler: aircraft states for selected aircraft and areas, polled within the OpenSky credit budget and published over MQTT"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+# Service side (optional). The desktop depends on this crate with
+# `default-features = false, features = ["client"]` and never builds the poller,
+# the MQTT publisher or the OAuth2 token source.
+async-trait = { version = "0.1", optional = true }
+# rustls only: no OpenSSL to find on a Raspberry Pi image. Same version and
+# features as adsb-weather-server, so one copy in the build.
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "form", "query", "json"], optional = true }
+tokio = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+# Reconnect pacing and the metrics exporter, shared with the feed client.
+# `default-features = false` drops clap and pulsar, so no protoc.
+adsb-pulsar-client = { path = "../adsb-pulsar-client", default-features = false, features = ["mqtt"], optional = true }
+rumqttc = { version = "0.25", default-features = false, optional = true }
+axum = { version = "0.8", optional = true }
+utoipa = { version = "5", optional = true }
+utoipa-axum = { version = "0.2", optional = true }
+utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"], optional = true }
+
+# CLI + layered config (optional, for the binary)
+clap = { version = "4.5", features = ["derive", "env"], optional = true }
+toml = { version = "0.8", optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+
+[dev-dependencies]
+axum = "0.8"
+tempfile = "3"
+tokio = { workspace = true, features = ["test-util"] }
+
+[features]
+# `client` is a default so `cargo test --workspace` runs the control-API
+# integration tests, which drive the server through it.
+default = ["cli", "client"]
+service = [
+    "dep:async-trait",
+    "dep:reqwest",
+    "dep:tokio",
+    "dep:tracing",
+    "dep:adsb-pulsar-client",
+    "dep:rumqttc",
+]
+openapi = ["dep:utoipa"]
+http-api = ["service", "openapi", "dep:axum", "dep:utoipa-axum"]
+swagger-ui = ["http-api", "dep:utoipa-swagger-ui"]
+metrics = ["http-api", "adsb-pulsar-client/metrics"]
+# The control-API client alone: what the desktop builds.
+client = ["dep:reqwest"]
+cli = ["service", "http-api", "swagger-ui", "metrics", "dep:clap", "dep:toml", "dep:tracing-subscriber", "dep:anyhow"]
+
+[lib]
+name = "adsb_opensky_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "adsb-opensky-server"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[[test]]
+name = "opensky_provider"
+required-features = ["service"]
+
+[[test]]
+name = "control_api"
+required-features = ["http-api", "client"]
+
+[[test]]
+name = "openapi"
+required-features = ["swagger-ui", "client", "metrics"]

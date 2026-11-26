@@ -342,6 +342,54 @@ History.
 recorder (`make restart`, or `systemctl restart adsb-data-server`). A new period
 opens from that moment, and data recorded before keeps the old position.
 
+## 9. OpenSky gap filling
+
+The receiver has blind spots. `adsb-opensky-server` fills them from the OpenSky
+Network: select an aircraft the receiver is losing, or draw an area over a blind
+sector, and OpenSky's positions appear beside your own tracks — hollow, dashed,
+violet. **Nothing from OpenSky is recorded**: the database stays what your
+antenna heard. Design detail in `DESIGN.md` → OpenSky Gap Filling.
+
+```toml
+[opensky]
+enabled = true
+client_id = "you-api-client"      # OpenSky account page -> API client
+client_secret = "..."             # or: credentials_file = "credentials.json"
+feeder = true                     # 8000 credits a day; false = 4000 (not feeding)
+# daily_credits = 6000            # any other allowance, overriding feeder
+```
+
+```bash
+make up                  # ... starts adsb-opensky-server (it polls nothing yet)
+make opensky-status      # what it is doing, credits used in the last 24 h
+make opensky-credits     # credits per hour, last 24 h
+make restart-opensky     # after editing [opensky]
+```
+
+The credentials never reach `.run/opensky.toml`: `make up` passes them to the
+process as environment variables (`ADSB_OPENSKY_CLIENT_ID`,
+`ADSB_OPENSKY_CLIENT_SECRET`, `ADSB_OPENSKY_CREDENTIALS_FILE`, which also work
+exported in your shell). Without any it runs anonymously: 400 credits a day and
+no track backfill.
+
+In the desktop (MQTT source, like weather): **Map Layers → OpenSky → Fill gaps
+from OpenSky**.
+- **Gaps only** (default): a selected aircraft is asked of OpenSky once the
+  receiver has had no position for it for 20 s, and followed until 5 minutes
+  after the loss or 250 NM from the receiver. **Always** shows both side by side.
+- **Draw area**: two clicks on the map. Aircraft show while they are inside it.
+  An area up to 25 square degrees costs 1 credit a poll; up to 100, 2.
+- **Fill gaps (OpenSky)** in the details panel draws OpenSky's track of the
+  flight since departure (4 credits; needs credentials).
+
+The poll interval follows the budget, not a setting: one credit a poll on a
+feeder's 8,000 credits a day is one poll every ~12 s (4,000: ~24 s). OpenSky's
+replies say how many credits are left, never which allowance the account has,
+which is why `feeder` exists. The bottom bar counts the credits spent in the
+last 24 h (amber from 70 %, red from 90 %); the DB History panel's OpenSky
+Credits section charts them per hour, with OpenSky's own remaining count. Close the desktop and the service stops
+polling within a minute: the watch list is a lease the desktop renews.
+
 ## Where things are
 
 | Path | What |
@@ -370,6 +418,8 @@ opens from that moment, and data recorded before keeps the old position.
 | 3200 | Desktop dev server (`[desktop].dev_port`) |
 | 3000 | Grafana (`make monitoring`) |
 | 8790 | Feed client `/metrics` (`[metrics].feed_port`) |
+| 8789 | Weather service control API (`[weather].http_port`) |
+| 8791 | OpenSky service control API (`[opensky].http_port`) |
 | 9090 | Prometheus (`make monitoring`) |
 | 8000 / 8300 | adsb-agent / adsb-simulation-agent |
 

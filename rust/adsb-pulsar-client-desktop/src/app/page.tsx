@@ -8,6 +8,29 @@ import { ResizeHandle } from "@/components/ResizeHandle";
 import { LeftPanel } from "@/components/LeftPanel";
 import { AircraftDetailsPanel } from "@/components/AircraftDetailsPanel";
 import { useWeatherSnapshot } from "@/hooks/useWeatherSnapshot";
+import { useOpenSky } from "@/hooks/useOpenSky";
+import { useOpenSkyWatch } from "@/hooks/useOpenSkyWatch";
+import { useOpenSkyHistory } from "@/hooks/useOpenSkyHistory";
+import { useOpenSkyFollow } from "@/hooks/useOpenSkyFollow";
+import { openSkyMenuItems } from "@/lib/opensky-menu";
+import { TrackContextMenu } from "@/components/TrackContextMenu";
+import type { OpenSkyDetails } from "@/components/OpenSkyGapSection";
+import type { OpenSkyHistoryDetails } from "@/components/OpenSkyHistorySection";
+import { historyCost, openSkyHistoryScope, historyMapData, historyUnavailable } from "@/lib/opensky-history";
+import {
+  EMPTY_OPENSKY_MAP,
+  hexKey,
+  isIcao24,
+  openSkyMapData,
+  openSkyTraceKey,
+  openSkyTraceOwners,
+  selectionHex,
+  visibleExternal,
+  withoutHiddenTraces,
+  type OpenSkyArea,
+  type OpenSkyMode,
+  type OpenSkyTrack,
+} from "@/lib/opensky";
 import { useAirspaces } from "@/hooks/useAirspaces";
 import { DEFAULT_AIRSPACE_OPACITY, airspacesAt, airspaceTypes, filterByType } from "@/lib/airspace";
 import { DEFAULT_METAR_OPACITY, filterByCategory, metarCategories, type CategoryKey } from "@/lib/metar";
@@ -172,6 +195,12 @@ export default function Dashboard() {
   const [showWeatherBarbs, setShowWeatherBarbs] = useLocalStorage<boolean>("adsb-weather-barbs", true);
   const [showWeatherParticles, setShowWeatherParticles] = useLocalStorage<boolean>("adsb-weather-particles", false);
   const weather = useWeatherSnapshot();
+  // OpenSky gap filling: off by default, as it spends an account's credits.
+  const [showOpenSky, setShowOpenSky] = useLocalStorage<boolean>("adsb-show-opensky", false);
+  const [openSkyMode, setOpenSkyMode] = useLocalStorage<OpenSkyMode>("adsb-opensky-mode", "gaps");
+  // The areas are the client's (the service keeps no list): kept here.
+  const [openSkyAreas, setOpenSkyAreas] = useLocalStorage<OpenSkyArea[]>("adsb-opensky-areas", []);
+  const openSky = useOpenSky(showOpenSky);
   // Minute-resolution clock for staleness: the snapshot updates hourly, so
   // re-rendering the page every second for this would be wasted work.
   const [weatherClockMs, setWeatherClockMs] = useState(() => Date.now());
@@ -245,8 +274,13 @@ export default function Dashboard() {
   const [eventFormInitialLat, setEventFormInitialLat] = useState<number | null>(null);
   const [eventFormInitialLng, setEventFormInitialLng] = useState<number | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; lat: number; lng: number } | null>(null);
+  // A track's own context menu (right-click on its aircraft, line or row), by track key.
+  const [trackMenu, setTrackMenu] = useState<{ key: string; x: number; y: number } | null>(null);
   const [mapPickingMode, setMapPickingMode] = useState<"point" | "area" | null>(null);
   const [mapPickResult, setMapPickResult] = useState<MapPickResult | null>(null);
+  // Who asked for the pick: the event form reads mapPickResult, an OpenSky
+  // area must never land there.
+  const [mapPickPurpose, setMapPickPurpose] = useState<"event" | "opensky">("event");
   // AI Chat Panel state
   const [aiChatOpen, setAiChatOpen] = useLocalStorage<boolean>("adsb-aichat-open", false);
   const { threadId: chatThreadId, resetThread: resetChatThread } = useChatThreadId(aiChatOpen);
@@ -360,6 +394,25 @@ export default function Dashboard() {
   const [selectedHexIdents, setSelectedHexIdents] = useState<Set<string>>(new Set());
   const [lastSelectedHexIdent, setLastSelectedHexIdent] = useState<string | null>(null);
   const [hiddenSections, setHiddenSections] = useState<Map<TrackSection, Set<string>>>(new Map());
+  // OpenSky traces (flight histories, backfills) hidden from the map but kept,
+  // by openSkyTraceKey. Session state, like hiddenSections.
+  const [hiddenOpenSkyTraces, setHiddenOpenSkyTraces] = useState<Set<string>>(() => new Set());
+  const toggleOpenSkyTrace = useCallback((traceKey: string) => {
+    setHiddenOpenSkyTraces((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(traceKey)) next.add(traceKey);
+      return next;
+    });
+  }, [setHiddenOpenSkyTraces]);
+  // A discarded trace is shown again when it is fetched again.
+  const unhideOpenSkyTrace = useCallback((traceKey: string) => {
+    setHiddenOpenSkyTraces((prev) => {
+      if (!prev.has(traceKey)) return prev;
+      const next = new Set(prev);
+      next.delete(traceKey);
+      return next;
+    });
+  }, [setHiddenOpenSkyTraces]);
   // Rejected positions drawn on the map, chosen in DB History. Held here so
   // they stay up when that panel or its section is closed.
   const [rejectedOnMap, setRejectedOnMap] = useState<RejectedPosition[]>([]);
@@ -915,14 +968,100 @@ export default function Dashboard() {
     [isLive, visibleDbHistory, EMPTY_TRACKS],
   );
 
+  // ── OpenSky gap filling ──
+  // Live mode only. The receiver's own view of each aircraft -- history first,
+  // so the live track wins -- measures the gap; the OpenSky tracks are kept
+  // apart from the live store and keyed `osky:<HEX>`.
+  const openSkyActive = showOpenSky && isLive;
+  const localTracks = useMemo(() => [...history, ...allLive], [history, allLive]);
+  const localByHex = useMemo(
+    () => new Map(localTracks.map((t) => [hexKey(t.hex_ident), t])),
+    [localTracks],
+  );
+  const openSkyReceiver = useMemo(
+    () => (receiverLocation ? { lat: receiverLocation.lat, lng: receiverLocation.lng } : null),
+    [receiverLocation],
+  );
+  // What OpenSky is asked for: only aircraft followed on request, never the selection.
+  const openSkyKnownHexes = useMemo(
+    () => [...localByHex.keys(), ...openSky.external.keys()],
+    [localByHex, openSky.external],
+  );
+  const openSkyFollow = useOpenSkyFollow(openSkyKnownHexes);
+  const openSkyWatch = useOpenSkyWatch({
+    active: openSkyActive,
+    followed: openSkyFollow.followed,
+    live: localTracks,
+    external: openSky.external,
+    receiver: openSkyReceiver,
+    mode: openSkyMode,
+    areas: openSkyAreas,
+    online: openSky.service.availability !== "offline",
+  });
+  const openSkyTracks = useMemo(
+    () =>
+      openSkyActive
+        ? filterBySection("opensky", visibleExternal(openSky.external, localByHex, openSkyMode, openSkyWatch.now))
+        : EMPTY_TRACKS,
+    [openSkyActive, filterBySection, openSky.external, localByHex, openSkyMode, openSkyWatch.now, EMPTY_TRACKS],
+  );
+  // OpenSky's version of recorded flights -- Analysis, or History / DB History
+  // in Live mode -- fetched from the details panel. Held while the track is in
+  // its list (unfiltered, so a filter does not discard it), drawn while it is
+  // on the map, i.e. not filtered or hidden.
+  const openSkyHistoryScopes = useMemo(
+    () => openSkyHistoryScope(isLive, allAnalysis, history, dbHistory),
+    [isLive, allAnalysis, history, dbHistory],
+  );
+  const openSkyHistory = useOpenSkyHistory(openSkyHistoryScopes.held);
+  const openSkyHistoryMap = useMemo(() => {
+    if (openSkyHistory.entries.size === 0) return [];
+    const onMap = new Set([...mapHistory, ...mapDbHistory].map(trackKey));
+    return historyMapData(openSkyHistory.entries).filter((h) => onMap.has(h.key));
+  }, [openSkyHistory.entries, mapHistory, mapDbHistory]);
+  const drawnOpenSkyMap = useMemo(() => {
+    if (!openSkyActive) {
+      return openSkyHistoryMap.length > 0 ? { ...EMPTY_OPENSKY_MAP, history: openSkyHistoryMap } : null;
+    }
+    const backfills = new Map<string, OpenSkyTrack>();
+    for (const [hex, b] of openSky.backfill) if (b.kind === "done") backfills.set(hex, b.track);
+    const selected = new Set([...selectedHexIdents].map(selectionHex));
+    return {
+      ...openSkyMapData(
+        openSkyTracks as Parameters<typeof openSkyMapData>[0],
+        localByHex,
+        selected,
+        openSkyAreas,
+        backfills,
+      ),
+      history: openSkyHistoryMap,
+    };
+  }, [openSkyActive, openSkyHistoryMap, openSky.backfill, selectedHexIdents, openSkyTracks, localByHex, openSkyAreas]);
+  const openSkyMap = useMemo(
+    () => (drawnOpenSkyMap ? withoutHiddenTraces(drawnOpenSkyMap, hiddenOpenSkyTraces) : null),
+    [drawnOpenSkyMap, hiddenOpenSkyTraces],
+  );
+  // The table's violet eyes: one per row whose OpenSky trace is drawn.
+  const openSkyTraceTable = useMemo(
+    () => ({
+      ownerOf: openSkyTraceOwners({
+        history: drawnOpenSkyMap?.history.map((h) => h.key) ?? [],
+        backfill: drawnOpenSkyMap?.backfills.map((b) => b.hex) ?? [],
+      }),
+      hidden: hiddenOpenSkyTraces,
+      onToggle: toggleOpenSkyTrace,
+    }),
+    [drawnOpenSkyMap, hiddenOpenSkyTraces, toggleOpenSkyTrace],
+  );
+
   // O(1) lookup map for all visible tracks — replaces chained .find() and Set rebuilding
   const allMapTracksMap = useMemo(() => {
     const m = new Map<string, AircraftTrack>();
-    for (const arr of [mapTracks, mapHistory, mapDbHistory, mapImported]) {
+    for (const arr of [mapTracks, mapHistory, mapDbHistory, mapImported, openSkyTracks]) {
       for (const t of arr) m.set(trackKey(t), t);
     }
     return m;
-  }, [mapTracks, mapHistory, mapDbHistory, mapImported]);
+  }, [mapTracks, mapHistory, mapDbHistory, mapImported, openSkyTracks]);
 
   const selectedTrack = useMemo(
     () => (lastSelectedHexIdent ? allMapTracksMap.get(lastSelectedHexIdent) ?? null : null),
@@ -940,11 +1079,12 @@ export default function Dashboard() {
   const sortedTableHistory = useMemo(() => sortTracks(tableHistory, sortKey, sortAsc), [tableHistory, sortKey, sortAsc]);
   const sortedTableDbHistory = useMemo(() => sortTracks(tableDbHistory, sortKey, sortAsc), [tableDbHistory, sortKey, sortAsc]);
   const sortedTableImported = useMemo(() => sortTracks(tableImported, sortKey, sortAsc), [tableImported, sortKey, sortAsc]);
+  const sortedTableOpenSky = useMemo(() => sortTracks(openSkyTracks, sortKey, sortAsc), [openSkyTracks, sortKey, sortAsc]);
 
   // Flat visible order for shift-range selection — mirrors table section order
   const flatVisibleOrder = useMemo(
-    () => [...sortedTableTracks, ...sortedTableHistory, ...sortedTableDbHistory, ...sortedTableImported].map(t => trackKey(t)),
-    [sortedTableTracks, sortedTableHistory, sortedTableDbHistory, sortedTableImported],
+    () => [...sortedTableTracks, ...sortedTableHistory, ...sortedTableDbHistory, ...sortedTableImported, ...sortedTableOpenSky].map(t => trackKey(t)),
+    [sortedTableTracks, sortedTableHistory, sortedTableDbHistory, sortedTableImported, sortedTableOpenSky],
   );
 
   // Multi-select handler: plain click = single, ctrl/cmd = toggle, shift = range
@@ -1061,6 +1201,85 @@ export default function Dashboard() {
   // Web flight info, asked only from the panel's "Show Flight Infos" button.
   // Simulated aircraft (demo flights, agent trajectories) are never looked up.
   const selectedIsSimulated = isSimulatedTrack(selectedTrack?.hex_ident, simulatedTracks, agentSimulatedTracks);
+
+  // The OpenSky actions of one track, for the details panel (the selected
+  // track) and the track's context menu (the right-clicked one) alike.
+  const openSkyReachable = openSky.service.status !== null && openSky.service.availability !== "offline";
+  // Gap filling, for a real aircraft while the layer is on.
+  const openSkyGapFor = (track: AircraftTrack | null): OpenSkyDetails | undefined => {
+    const hex = track ? selectionHex(trackKey(track)) : null;
+    if (!track || !openSkyActive || !hex || !isIcao24(hex)) return undefined;
+    const simulated = isSimulatedTrack(track.hex_ident, simulatedTracks, agentSimulatedTracks);
+    const traceKey = openSkyTraceKey("backfill", hex);
+    return {
+      lastOpenSkyMs: openSky.external.get(hex)?.last_seen ?? null,
+      watched: openSkyWatch.watched.includes(hex.toLowerCase()),
+      followed: openSkyFollow.isFollowed(hex),
+      onToggleFollow: () => openSkyFollow.toggle(hex),
+      followUnavailable: simulated
+        ? "Simulated aircraft: nothing is sent to OpenSky"
+        : !openSkyReachable
+          ? "OpenSky service not reachable"
+          : null,
+      backfill: openSky.backfill.get(hex) ?? null,
+      disabledReason: simulated
+        ? "Simulated aircraft: nothing is sent to OpenSky"
+        : !openSky.service.status
+          ? "OpenSky service not reachable"
+          : !openSky.service.status.authenticated
+            ? "Track backfill needs OpenSky credentials"
+            : null,
+      onBackfill: () => openSky.requestBackfill(hex),
+      onClearBackfill: () => {
+        openSky.clearBackfill(hex);
+        unhideOpenSkyTrace(traceKey);
+      },
+      hidden: hiddenOpenSkyTraces.has(traceKey),
+      onToggleHidden: () => toggleOpenSkyTrace(traceKey),
+      nowMs: openSkyWatch.now,
+    };
+  };
+  // OpenSky's version of a recorded flight.
+  const openSkyHistoryFor = (track: AircraftTrack | null): OpenSkyHistoryDetails | undefined => {
+    const key = track ? trackKey(track) : null;
+    if (!track || !key || !openSkyHistoryScopes.selectable.has(key)) return undefined;
+    const traceKey = openSkyTraceKey("history", key);
+    return {
+      entry: openSkyHistory.entries.get(key) ?? null,
+      unavailable: isSimulatedTrack(track.hex_ident, simulatedTracks, agentSimulatedTracks)
+        ? "Simulated aircraft: nothing is sent to OpenSky"
+        : historyUnavailable(track, weatherClockMs, {
+            reachable: openSkyReachable,
+            authenticated: openSky.service.status?.authenticated ?? false,
+          }),
+      cost: historyCost(track, weatherClockMs),
+      onFetch: () => openSkyHistory.fetch(track),
+      hidden: hiddenOpenSkyTraces.has(traceKey),
+      onToggleHidden: () => toggleOpenSkyTrace(traceKey),
+      onDiscard: () => {
+        openSkyHistory.discard(key);
+        unhideOpenSkyTrace(traceKey);
+      },
+    };
+  };
+  const selectedOpenSky = openSkyGapFor(selectedTrack);
+  const selectedOpenSkyHistory = openSkyHistoryFor(selectedTrack);
+
+  // A track's context menu (right-click on its aircraft, line or table row).
+  // A hidden track's row has no map entry: look in the full lists too.
+  const menuTrack = trackMenu
+    ? allMapTracksMap.get(trackMenu.key) ??
+      [...allLive, ...history, ...dbHistory, ...allAnalysis].find((t) => trackKey(t) === trackMenu.key) ??
+      null
+    : null;
+  const menuItems = menuTrack
+    ? openSkyMenuItems({
+        gap: openSkyGapFor(menuTrack) ?? null,
+        history: openSkyHistoryFor(menuTrack) ?? null,
+        onTurnOn: isLive && !showOpenSky ? () => setShowOpenSky(true) : undefined,
+      })
+    : [];
+
   const selectedFlightInfo = useFlightInfo(
     selectedTrack ? { hex_ident: selectedTrack.hex_ident, callsign: selectedTrack.callsign?.trim() || null } : null,
     selectedIsSimulated,
@@ -1352,8 +1571,16 @@ export default function Dashboard() {
 
   const handleMapContextMenu = useCallback((lat: number, lng: number, x: number, y: number) => {
     if (mapPickingMode) return;
+    setTrackMenu(null);
     setContextMenu({ x, y, lat, lng });
   }, [mapPickingMode]);
+
+  const handleTrackContextMenu = useCallback((key: string, x: number, y: number) => {
+    if (mapPickingMode) return;
+    setContextMenu(null);
+    setTrackMenu({ key, x, y });
+  }, [mapPickingMode]);
+  const handleCloseTrackMenu = useCallback(() => setTrackMenu(null), []);
 
   const handleCreateEventFromMap = useCallback((lat: number, lng: number) => {
     setEditingEvent(undefined);
@@ -1393,18 +1620,40 @@ export default function Dashboard() {
   }, []);
 
   const handleStartMapPick = useCallback((mode: "point" | "area") => {
+    setMapPickPurpose("event");
     setMapPickResult(null);
     setMapPickingMode(mode);
   }, []);
 
-  const handleMapPickComplete = useCallback((result: MapPickResult) => {
-    setMapPickResult(result);
-    setMapPickingMode(null);
+  const handleDrawOpenSkyArea = useCallback(() => {
+    setMapPickPurpose("opensky");
+    setMapPickingMode("area");
   }, []);
+
+  const handleMapPickComplete = useCallback((result: MapPickResult) => {
+    setMapPickingMode(null);
+    if (mapPickPurpose === "opensky") {
+      setMapPickPurpose("event");
+      if (result.type !== "area") return;
+      setOpenSkyAreas((prev: OpenSkyArea[]) => {
+        let n = prev.length + 1;
+        while (prev.some((a) => a.id === `A${n}`)) n++;
+        const { north, south, east, west } = result;
+        return [...prev, { id: `A${n}`, north, south, east, west }];
+      });
+      return;
+    }
+    setMapPickResult(result);
+  }, [mapPickPurpose, setOpenSkyAreas]);
 
   const handleMapPickCancel = useCallback(() => {
     setMapPickingMode(null);
+    setMapPickPurpose("event");
   }, []);
+
+  const handleRemoveOpenSkyArea = useCallback((id: string) => {
+    setOpenSkyAreas((prev: OpenSkyArea[]) => prev.filter((a) => a.id !== id));
+  }, [setOpenSkyAreas]);
 
   const handleToggleMapVisibility = useCallback((hexIdent: string, section: TrackSection) => {
     setHiddenSections(prev => {
@@ -1713,6 +1962,23 @@ export default function Dashboard() {
           eventTimeRangeStart={eventTimeRangeStart}
           eventTimeRangeEnd={eventTimeRangeEnd}
           onEventTimeRangeChange={handleEventTimeRangeChange}
+          openSky={{
+            show: showOpenSky,
+            onToggle: () => setShowOpenSky((prev: boolean) => !prev),
+            mode: openSkyMode,
+            onModeChange: setOpenSkyMode,
+            areas: openSkyAreas,
+            onDrawArea: handleDrawOpenSkyArea,
+            onRemoveArea: handleRemoveOpenSkyArea,
+            watched: openSkyWatch.watched,
+            shownCount: openSkyTracks.length,
+            service: openSky.service,
+            pendingEnabled: openSky.pendingEnabled,
+            serviceError: openSky.serviceError,
+            watchError: openSkyWatch.error,
+            onServiceToggle: openSky.setServiceEnabled,
+            nowMs: openSkyWatch.now,
+          }}
           weather={{
             show: showWeather,
             onToggle: () => setShowWeather((prev: boolean) => !prev),
@@ -1840,7 +2106,7 @@ export default function Dashboard() {
                   />
                 </div>
               )}
-              <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={visibleMetars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={weatherClockMs} radar={radarView} radarOpacity={radarOpacity} sea={sea} relief={relief} seamarkItems={seamarkDetails.items} onSeamarkCells={seamarkDescriptions ? setSeamarkCells : undefined} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} otherReceivers={showReceiver ? otherReceivers : undefined} simulatedRoutes={visibleRoutes} flightPath={showFlightPath ? selectedFlightPath : null} flightPathShown={showFlightPath} onToggleFlightPath={handleToggleFlightPath} eventsOfInterest={filteredEvents} rejectedPositions={rejectedOnMap} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} />
+              <AircraftMap airspaces={visibleAirspaces} airspaceOpacity={airspaceOpacity} airspaceHoverInfo={airspaceHoverInfo} metars={visibleMetars} metarOpacity={metarOpacity} metarHoverInfo={metarHoverInfo} metarNowMs={weatherClockMs} radar={radarView} radarOpacity={radarOpacity} sea={sea} relief={relief} seamarkItems={seamarkDetails.items} onSeamarkCells={seamarkDescriptions ? setSeamarkCells : undefined} tracks={mapTracks} historyTracks={mapHistory} importedTracks={mapImported} dbHistoryTracks={mapDbHistory} mapTheme={mapTheme} onToggleTheme={handleToggleTheme} trajectoryStyle={trajectoryStyle} showPositions={showPositions} showLabels={showLabels} rangeLineOrigin={receiverLocation} tileCacheOrigin={receiverLocation} rangeLineTargets={selectedRangeLineTargets} showRangeLines={showRangeLines} onToggleRangeLines={handleToggleRangeLines} densityTracks={densityTracks} densityMetric={densityMetric} densityAltitudeMin={densityAltitudeMin} densityAltitudeMax={densityAltitudeMax} densityTooltipMode={densityTooltipMode} showDensity={showDensity} liveColorMode={liveColorMode} historyColorMode={historyColorMode} selectedHexIdents={selectedHexIdents} onSelectTrack={handleSelectTrack} receiverLocation={showReceiver ? receiverLocation : undefined} otherReceivers={showReceiver ? otherReceivers : undefined} simulatedRoutes={visibleRoutes} flightPath={showFlightPath ? selectedFlightPath : null} flightPathShown={showFlightPath} onToggleFlightPath={handleToggleFlightPath} eventsOfInterest={filteredEvents} rejectedPositions={rejectedOnMap} onContextMenu={handleMapContextMenu} mapPickingMode={mapPickingMode} onMapPickComplete={handleMapPickComplete} onMapPickCancel={handleMapPickCancel} onFlyToReady={(fn) => { flyToRef.current = fn; }} weather={mapWeather.snapshot} weatherLevel={weatherLevel} weatherBarbs={showWeatherBarbs} weatherParticles={showWeatherParticles} openSky={openSkyMap} openSkyNowMs={openSkyWatch.now} onTrackContextMenu={handleTrackContextMenu} />
             </div>
             {selectedTrack && (
               <AircraftDetailsPanel
@@ -1865,6 +2131,8 @@ export default function Dashboard() {
                 onToggleFlightPath={handleToggleFlightPath}
                 rangeLineOn={showRangeLines}
                 onToggleRangeLine={handleToggleRangeLines}
+                openSky={selectedOpenSky}
+                openSkyHistory={selectedOpenSkyHistory}
               />
             )}
             {/* DB History panel — docked mode (in flex row) */}
@@ -1983,6 +2251,7 @@ export default function Dashboard() {
               historyTracks={sortedTableHistory}
               importedTracks={sortedTableImported}
               dbHistoryTracks={sortedTableDbHistory}
+              openSkyTracks={sortedTableOpenSky}
               sortKey={sortKey}
               sortAsc={sortAsc}
               onSort={handleSort}
@@ -1994,6 +2263,8 @@ export default function Dashboard() {
               hiddenSections={hiddenSections}
               onToggleGroupVisibility={handleToggleGroupVisibility}
               liveSectionKey={isLive ? "live" : "analysis"}
+              openSkyTraces={openSkyTraceTable}
+              onTrackContextMenu={handleTrackContextMenu}
             />
           </div>
         </main>
@@ -2018,6 +2289,7 @@ export default function Dashboard() {
         isExporting={isExporting}
         onImportDatabase={handleImportDatabase}
         isImporting={isImporting}
+        openSky={openSky.service.status}
       />
 
       {/* DB History panel — floating mode (portal-like, fixed position) */}
@@ -2119,6 +2391,17 @@ export default function Dashboard() {
           isPickingFromMap={mapPickingMode !== null}
           onStartMapPick={handleStartMapPick}
           mapPickResult={mapPickResult}
+        />
+      )}
+
+      {/* Track context menu: every OpenSky action for the right-clicked track */}
+      {trackMenu && menuTrack && (
+        <TrackContextMenu
+          x={trackMenu.x}
+          y={trackMenu.y}
+          title={`${menuTrack.callsign?.trim() || menuTrack.hex_ident} · ${menuTrack.hex_ident}`}
+          items={menuItems}
+          onClose={handleCloseTrackMenu}
         />
       )}
 

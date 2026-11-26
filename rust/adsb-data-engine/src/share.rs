@@ -42,7 +42,7 @@ fn sql_quote(value: &str) -> String {
 /// The complement -- `events_of_interest`, `scenarios`, `scenario_tracks` --
 /// are *authored* by whoever is using the app, so they stay in the local
 /// database even in remote mode.
-pub const OBSERVED_TABLES: [&str; 8] = [
+pub const OBSERVED_TABLES: [&str; 10] = [
     "positions",
     "raw_messages",
     "flights",
@@ -54,6 +54,11 @@ pub const OBSERVED_TABLES: [&str; 8] = [
     // attached catalog, never through these views.
     "receivers",
     "receiver_locations",
+    // Recorded from the OpenSky service's topics, beside the receiver's own
+    // data. A remote desktop reads the daemon's copy: it is the cache that
+    // saves re-fetching a flight.
+    "opensky_states",
+    "opensky_tracks",
 ];
 
 /// Whether a Quack URI names a local host.

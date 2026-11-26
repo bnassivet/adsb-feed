@@ -42,6 +42,30 @@ export function dotTooltipHtml(
   return parts.join("");
 }
 
+/** The colour that marks OpenSky as a point's source (OpenSkyLayer's violet). */
+const OPENSKY_TAG_COLOR = "#a78bfa";
+
+/**
+ * Hover tooltip for an OpenSky flight-history waypoint. Same layout as a DB
+ * History dot -- callsign, hex, altitude -- then the waypoint's time, and
+ * OpenSky as the source tag.
+ */
+export function openSkyWaypointTooltipHtml(
+  flight: { hex: string; callsign: string | null },
+  alt: number | null,
+  timeS: number,
+): string {
+  const label = escapeHtml(flight.callsign ?? flight.hex);
+  const hex = escapeHtml(flight.hex);
+  return [
+    `<div style="font-weight:600;color:#fff">${label}</div>`,
+    `<div>Hex: ${hex}</div>`,
+    `<div>Alt: <span style="color:#fff">${formatAlt(alt)}</span></div>`,
+    `<div>Time: <span style="color:#fff">${new Date(timeS * 1000).toLocaleTimeString()}</span></div>`,
+    `<div style="color:${OPENSKY_TAG_COLOR};margin-top:2px">OpenSky</div>`,
+  ].join("");
+}
+
 /**
  * Hover tooltip for a rejected position shown from DB History. Same layout as
  * a DB History dot -- callsign, hex, altitude -- then the reason as the tag,

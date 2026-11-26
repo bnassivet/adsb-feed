@@ -11,6 +11,7 @@ import { granularityToNumBuckets } from "@/lib/db-history-analytics";
 import { DBHistoryAnalytics } from "./DBHistoryAnalytics";
 import { StatusTimeline } from "./StatusTimeline";
 import { RejectedPositions } from "./RejectedPositions";
+import { OpenSkyCreditsChart } from "./OpenSkyCreditsChart";
 import { browseReducer, initialBrowseState } from "@/lib/browse-reducer";
 
 interface Props {
@@ -388,6 +389,10 @@ export function DBHistoryContent({
           </div>
         </div>
       </details>
+
+      {/* OpenSky credits: always the last 24 h, whatever range is loaded.
+          Renders nothing when no OpenSky service answers. */}
+      <OpenSkyCreditsChart />
 
       {/* Preset time range pills */}
       <div className="px-3 py-1">

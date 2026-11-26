@@ -375,6 +375,74 @@ class WeatherContent(unittest.TestCase):
             self.assertEqual(weather["source_id"], "dev-laptop-dev")
 
 
+OPENSKY_STACK = dict(
+    STACK,
+    opensky={"enabled": True, "daily_credits": 8000, "client_id": "me-api",
+             "client_secret": "s3cr3t-value", "credentials_file": "/x/c.json"},
+)
+
+
+class OpenSkyContent(unittest.TestCase):
+    """The OpenSky service: identity and broker from the feed, no secrets."""
+
+    def render(self, cfg=OPENSKY_STACK, out=REPO / ".run"):
+        return parse(rc.render_opensky(cfg, out))
+
+    def test_topic_follows_the_feed_topic_with_the_same_rule_as_rust(self):
+        # Same cases as the opensky_topic tests in adsb-pulsar-client config.rs.
+        self.assertEqual(rc.opensky_topic("adsb/prod/sbs/raw"),
+                         "adsb/prod/opensky/states")
+        self.assertEqual(rc.opensky_topic("adsb/sbs/raw"), "adsb/opensky/states")
+        self.assertEqual(rc.opensky_topic("legacy/raw"), "legacy/raw/opensky")
+        self.assertEqual(self.render()["mqtt_topic"], "adsb/dev/opensky/states")
+
+    def test_an_explicit_topic_wins(self):
+        cfg = dict(OPENSKY_STACK,
+                   opensky=dict(OPENSKY_STACK["opensky"], topic="lab/osky"))
+        self.assertEqual(self.render(cfg)["mqtt_topic"], "lab/osky")
+
+    def test_credentials_are_never_rendered(self):
+        text = rc.render_opensky(OPENSKY_STACK, REPO / ".run")
+        for leaked in ("s3cr3t-value", "client_secret", "client_id", "credentials_file"):
+            self.assertNotIn(leaked, text)
+
+    def test_identity_broker_and_budget(self):
+        o = self.render()
+        self.assertEqual(o["source_id"], "dev-laptop-dev")
+        self.assertEqual(o["mqtt_broker"], STACK["mqtt"]["host"])
+        self.assertEqual(o["daily_credits"], 8000)
+        self.assertEqual(o["http_port"], 8791)
+        self.assertEqual(o["http_bind"], "127.0.0.1")
+
+    def test_the_ledger_is_stack_scoped(self):
+        self.assertEqual(self.render()["state_path"],
+                         str(REPO / ".run" / "opensky-state.json"))
+        self.assertEqual(self.render(out=REPO / ".run" / "prod")["state_path"],
+                         str(REPO / ".run" / "prod" / "opensky-state.json"))
+
+    def test_a_config_from_before_opensky_still_renders(self):
+        o = parse(rc.render_opensky(STACK, REPO / ".run"))
+        self.assertEqual(o["lease_seconds"], 60)
+
+    def test_a_feeder_by_default_with_no_fixed_allowance(self):
+        # OpenSky never says which allowance the account has: the service
+        # budgets 8000 for a feeder, 4000 otherwise, unless daily_credits is set.
+        o = parse(rc.render_opensky(STACK, REPO / ".run"))
+        self.assertIs(o["feeder"], True)
+        self.assertNotIn("daily_credits", o)
+
+    def test_feeder_can_be_turned_off(self):
+        cfg = dict(STACK, opensky={"enabled": True, "feeder": False})
+        o = self.render(cfg)
+        self.assertIs(o["feeder"], False)
+        self.assertNotIn("daily_credits", o)
+
+    def test_the_template_leaves_the_allowance_to_feeder(self):
+        template = tomllib.loads((REPO / "adsb-stack-template.toml").read_text())
+        self.assertIs(template["opensky"]["feeder"], True)
+        self.assertNotIn("daily_credits", template["opensky"])
+
+
 class ServerBind(unittest.TestCase):
     """The query API's bind address, which used to be hardcoded in Rust."""
 
@@ -393,6 +461,22 @@ class ServerBind(unittest.TestCase):
         storage = {k: v for k, v in STACK["storage"].items() if k != "http_bind"}
         recorder = parse(rc.render_server(dict(STACK, storage=storage), REPO / ".run"))
         self.assertEqual(recorder["http_bind"], "127.0.0.1")
+
+
+class ServerRecordsOpenSky(unittest.TestCase):
+    """The recorder stores what the OpenSky service publishes, on its topic."""
+
+    def test_recorded_by_default_on_the_derived_topic(self):
+        recorder = parse(rc.render_server(STACK, REPO / ".run"))
+        self.assertIs(recorder["record_opensky"], True)
+        # Unset: the recorder derives it by Config::opensky_topic, like the desktop.
+        self.assertNotIn("mqtt_opensky_topic", recorder)
+
+    def test_record_false_and_an_explicit_topic_reach_the_recorder(self):
+        cfg = dict(STACK, opensky={"record": False, "topic": "lab/osky"})
+        recorder = parse(rc.render_server(cfg, REPO / ".run"))
+        self.assertIs(recorder["record_opensky"], False)
+        self.assertEqual(recorder["mqtt_opensky_topic"], "lab/osky")
 
 
 class MetricsContent(unittest.TestCase):

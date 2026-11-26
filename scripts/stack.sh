@@ -179,6 +179,9 @@ stack_ports() {
   # The weather control API exists only while the service does.
   weather_enabled && [ "$(cfg weather http_port 8789)" != "0" ] && \
     echo "$(cfg weather http_port 8789)"
+  # Same for the OpenSky service.
+  opensky_enabled && [ "$(cfg opensky http_port 8791)" != "0" ] && \
+    echo "$(cfg opensky http_port 8791)"
 }
 
 render() { python3 "$REPO/scripts/render-config.py" "$STACK" "$RUN"; }
@@ -395,6 +398,38 @@ owns_broker() {
 # rate-limited third-party quota. See [weather] in the template.
 weather_enabled() { [ "$(cfg weather enabled false)" = "true" ]; }
 
+# The OpenSky gap filler is opt-in too: outbound internet, and a daily credit
+# allowance tied to an OpenSky account. See [opensky] in the template.
+opensky_enabled() { [ "$(cfg opensky enabled false)" = "true" ]; }
+
+# Starts the OpenSky service with its credentials in the ENVIRONMENT, never on
+# a command line (where `ps` shows them) nor in the rendered .run/opensky.toml.
+# A subshell, so the exports end with it. Empty values are not exported: an
+# empty export would mask credentials set in the caller's shell.
+start_opensky() {
+  (
+    id="$(cfg opensky client_id "")"
+    secret="$(cfg opensky client_secret "")"
+    file="$(cfg opensky credentials_file "")"
+    [ -z "$id" ] || export ADSB_OPENSKY_CLIENT_ID="$id"
+    [ -z "$secret" ] || export ADSB_OPENSKY_CLIENT_SECRET="$secret"
+    if [ -n "$file" ]; then
+      case "$file" in /*) ;; *) file="$REPO/$file" ;; esac
+      export ADSB_OPENSKY_CREDENTIALS_FILE="$file"
+    fi
+    start opensky "$BIN/adsb-opensky-server" --config "$RUN/opensky.toml"
+  )
+}
+
+# Whether this stack gives the OpenSky service any credentials, from the stack
+# file or the caller's environment. Anonymous works, at a tenth of the budget.
+opensky_has_credentials() {
+  [ -n "$(cfg opensky credentials_file "")" ] && return 0
+  [ -n "$(cfg opensky client_id "")" ] && [ -n "$(cfg opensky client_secret "")" ] && return 0
+  [ -n "${ADSB_OPENSKY_CREDENTIALS_FILE-}" ] && return 0
+  [ -n "${ADSB_OPENSKY_CLIENT_ID-}" ] && [ -n "${ADSB_OPENSKY_CLIENT_SECRET-}" ]
+}
+
 # The desktop's live-plane broker and topic, from THIS stack, one VAR=value per
 # line. Env beats the app's stored settings on every launch; without these a
 # desktop keeps whatever topic it stored last -- one from before topics carried
@@ -415,6 +450,13 @@ desktop_live_env() {
   # switch. Same host as the broker: the service runs beside it. A desktop on
   # another machine also needs [weather] http_bind opened on that host.
   echo "ADSB_WEATHER_API_URL=http://$(cfg mqtt host localhost):$(cfg weather http_port 8789)"
+  # The OpenSky service, likewise: its topic only when explicit, and its
+  # control API, which the desktop sends its watch list to.
+  local ot; ot="$(cfg opensky topic "")"
+  [ -z "$ot" ] || echo "ADSB_MQTT_OPENSKY_TOPIC=$ot"
+  echo "ADSB_OPENSKY_API_URL=http://$(cfg mqtt host localhost):$(cfg opensky http_port 8791)"
+  # An embedded desktop records OpenSky too; only "off" is worth exporting.
+  [ "$(cfg opensky record true)" != "false" ] || echo "ADSB_OPENSKY_RECORD=false"
 }
 
 # ---------------------------------------------------------------------------
@@ -558,6 +600,7 @@ doctor)
   # built before it existed must not start failing doctor.
   bins="adsb-pulsar-client adsb-data-server"
   weather_enabled && bins="$bins adsb-weather-server"
+  opensky_enabled && bins="$bins adsb-opensky-server"
   for b in $bins; do
     if [ -x "$BIN/$b" ]; then echo "  ok      $b"
     else echo "  MISSING $b -- run: make build"; rc=1; fi
@@ -598,7 +641,7 @@ doctor)
   # That storm produced 567k reconnects and a 144 MB log before it was noticed,
   # so it is worth naming rather than leaving to be discovered.
   echo "Duplicates:"
-  for proc in adsb-pulsar-client adsb-data-server adsb-weather-server; do
+  for proc in adsb-pulsar-client adsb-data-server adsb-weather-server adsb-opensky-server; do
     # macOS pgrep has no -c; count lines instead.
     n=$(pgrep -f "target/release/$proc " 2>/dev/null | wc -l | tr -d " ")
     if [ "$n" -gt 1 ]; then
@@ -639,6 +682,24 @@ doctor)
       echo "          cached grid, if any, and keep retrying"
     fi
     echo "  info    estimated Open-Meteo calls/day are logged at startup: make logs N=weather"
+  fi
+
+  if [ -f "$STACK" ] && opensky_enabled; then
+    echo "OpenSky:"
+    if opensky_has_credentials; then
+      echo "  ok      credentials configured (never rendered; passed as environment)"
+    else
+      echo "  WARN    no credentials: anonymous access, 400 credits a day and no"
+      echo "          track backfill. Set [opensky] client_id + client_secret, or"
+      echo "          credentials_file (OpenSky account page -> API client)"
+    fi
+    # Reachability only: the token endpoint's realm page, which costs nothing.
+    if curl -s -m 5 -o /dev/null https://auth.opensky-network.org/ 2>/dev/null; then
+      echo "  ok      auth.opensky-network.org reachable"
+    else
+      echo "  WARN    no route to auth.opensky-network.org -- polls will fail and retry"
+    fi
+    echo "  info    the poll interval follows the credit budget: make logs N=opensky"
   fi
 
   echo "Skills:"
@@ -745,6 +806,13 @@ up)
     start weather "$BIN/adsb-weather-server" --config "$RUN/weather.toml"
   fi
 
+  if opensky_enabled; then
+    echo "OpenSky:"
+    # It polls nothing until a desktop sends a watch list, so starting it
+    # costs no credits.
+    start_opensky
+  fi
+
   if [ "${2-}" = "--agents" ] || [ "$(cfg agents enabled false)" = "true" ]; then
     start_agents
   fi
@@ -847,6 +915,63 @@ weather)
   echo "  watch it with: make logs N=weather"
   ;;
 
+opensky)
+  # The OpenSky service on its own, e.g. after editing [opensky].
+  require_config
+  if ! opensky_enabled; then
+    echo "error: [opensky] enabled = false in ${STACK#"$REPO"/}." >&2
+    echo "  Off by default: it needs outbound internet and spends an OpenSky" >&2
+    echo "  account's daily credits. Set enabled = true there, then run this again." >&2
+    exit 1
+  fi
+  if [ ! -x "$BIN/adsb-opensky-server" ]; then
+    echo "error: $BIN/adsb-opensky-server is not built -- run: make build" >&2
+    exit 1
+  fi
+  render
+  echo "OpenSky:"
+  if owns_broker && ! port_busy "$(cfg mqtt port 1883)"; then
+    echo "  note: no broker on :$(cfg mqtt port 1883) yet -- it will retry until one is up (make up)"
+  fi
+  start_opensky
+  echo "  watch it with: make logs N=opensky"
+  ;;
+
+stop-opensky)
+  echo "OpenSky:"
+  stop opensky
+  ;;
+
+opensky-status|opensky-credits|opensky-enable|opensky-disable)
+  require_config
+  port="$(cfg opensky http_port 8791)"
+  if [ "$port" = "0" ]; then
+    echo "error: the OpenSky control API is disabled ([opensky] http_port = 0)." >&2
+    exit 1
+  fi
+  url="http://127.0.0.1:$port"
+  json='content-type: application/json'
+  case "$1" in
+    opensky-status)  args=("$url/v1/status") ;;
+    opensky-credits) args=("$url/v1/credits") ;;
+    opensky-enable)  args=(-X PUT -H "$json" -d '{"enabled":true}' "$url/v1/enabled") ;;
+    opensky-disable) args=(-X PUT -H "$json" -d '{"enabled":false}' "$url/v1/enabled") ;;
+  esac
+  if ! reply="$("$CURL" -sS --max-time 5 -w '\n%{http_code}' "${args[@]}" 2>&1)"; then
+    echo "error: no OpenSky control API on $url -- is the service running? (make up-opensky)" >&2
+    echo "  $reply" >&2
+    exit 1
+  fi
+  code="${reply##*$'\n'}"
+  body="${reply%$'\n'*}"
+  printf '%s\n' "$body" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$body"
+  case "$code" in
+    2??) case "$1" in opensky-enable|opensky-disable)
+           echo "accepted -- the service reports what it did in: make opensky-status" ;; esac ;;
+    *)   echo "error: HTTP $code from $url" >&2; exit 1 ;;
+  esac
+  ;;
+
 stop-weather)
   # Whether or not [weather] is enabled now: it may have been started before
   # enabled was turned off -- the same reason `down` always stops it.
@@ -892,7 +1017,7 @@ down)
   # Reverse of start order: producers first, so the recorder sees the tail.
   # weather is stopped whether or not it is enabled now: it may have been
   # started before [weather].enabled was turned off.
-  for n in desktop agent sim-agent weather feed mock data-server; do stop "$n"; done
+  for n in desktop agent sim-agent weather opensky feed mock data-server; do stop "$n"; done
   echo "Broker:"
   if owns_broker; then
     compose down 2>&1 | sed 's/^/  /'
@@ -936,7 +1061,7 @@ reap)
 status)
   require_config
   http="$(cfg storage http_port 8787)"
-  for n in data-server feed mock weather desktop agent sim-agent; do
+  for n in data-server feed mock weather opensky desktop agent sim-agent; do
     if running "$n"; then
       printf "  %-12s running (pid %s)\n" "$n" "$(cat "$(pidfile "$n")")"
     else
@@ -996,6 +1121,12 @@ usage: stack.sh <command>
   weather-status   what the weather service is doing (its control API)
   weather-enable   resume fetching weather (persisted)
   weather-disable  pause fetching; the last grid stays published
+  opensky      start just the OpenSky gap filler (needs [opensky] enabled = true)
+  stop-opensky stop just the OpenSky service
+  opensky-status   what the OpenSky service is doing and spending
+  opensky-credits  OpenSky credits spent per hour, last 24 h
+  opensky-enable   resume polling OpenSky (in memory only)
+  opensky-disable  pause polling OpenSky
   down      stop everything this script started
   reap      kill whatever still holds the stack's ports (orphans)
   status    what is running

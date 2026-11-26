@@ -52,6 +52,14 @@ import type {
   WeatherSnapshotRecord,
 } from "./types";
 import type { WeatherAvailability, WeatherServiceView, WeatherSnapshot } from "./weather";
+import type {
+  CreditsReport,
+  OpenSkyArea,
+  OpenSkyServiceView,
+  OpenSkyTrack,
+  StatesMessage,
+  WatchAccepted,
+} from "./opensky";
 import type { CountryAirspaces } from "./airspace";
 import type { MetarSnapshot } from "./metar";
 import type { RadarFrames, RadarSnapshot } from "./radar";
@@ -534,4 +542,58 @@ export async function getAircraftPhoto(hexIdent: string): Promise<string | null>
 /** Ground height and sea depth at a point, each with its own error. */
 export async function whatIsHere(lat: number, lng: number): Promise<WhatIsHereResult> {
   return invoke("what_is_here", { lat, lng });
+}
+
+// ── OpenSky gap filler ──────────────────────────────────────────────────────
+// Every call goes through Rust to the OpenSky service's control API, so the
+// webview needs no CSP entry for it. What the service then does arrives as
+// `adsb:opensky` (polls) and `adsb:opensky-service` (status) events.
+
+/** What the OpenSky service last reported over MQTT. */
+export async function getOpenSkyService(): Promise<OpenSkyServiceView> {
+  return invoke("get_opensky_service");
+}
+
+/** The last OpenSky poll the backend holds, or null. */
+export async function getOpenSkyStates(): Promise<StatesMessage | null> {
+  return invoke("get_opensky_states");
+}
+
+/** Sets and renews this desktop's watch list (a 60 s lease at the service). */
+export async function setOpenSkyWatch(
+  icao24: string[],
+  areas: OpenSkyArea[],
+): Promise<WatchAccepted> {
+  return invoke("set_opensky_watch", { icao24, areas });
+}
+
+/** Drops this desktop's watch list at once. */
+export async function clearOpenSkyWatch(): Promise<void> {
+  return invoke("clear_opensky_watch");
+}
+
+/** Pauses or resumes the service's polling; confirmed by its status. */
+export async function setOpenSkyEnabled(enabled: boolean): Promise<void> {
+  return invoke("set_opensky_enabled", { enabled });
+}
+
+/** OpenSky credits spent per hour, last 24 h. */
+export async function getOpenSkyCredits(): Promise<CreditsReport> {
+  return invoke("get_opensky_credits");
+}
+
+export interface OpenSkyTrackReply {
+  /** null when OpenSky has no such flight. */
+  track: OpenSkyTrack | null;
+  /** Served from storage (a settled past flight already recorded): no credits spent. */
+  stored: boolean;
+}
+
+/**
+ * An aircraft's OpenSky track: its live flight (4 credits), or with `time`
+ * (epoch s, last 30 days) the flight it was on then (4 credits within a day,
+ * about 30 beyond) -- or nothing, when that past flight is already stored.
+ */
+export async function getOpenSkyTrack(icao24: string, time?: number): Promise<OpenSkyTrackReply> {
+  return invoke("get_opensky_track", time === undefined ? { icao24 } : { icao24, time });
 }

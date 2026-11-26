@@ -478,3 +478,16 @@ describe("AircraftDetailsPanel range-line toggle", () => {
     expect(screen.queryByRole("button", { name: /range lines to receiver/i })).not.toBeInTheDocument();
   });
 });
+
+describe("AircraftDetailsPanel OpenSky flight history", () => {
+  const panel = (extra: object) => (
+    <AircraftDetailsPanel track={makeTrack()} isOpen={true} width={280} onToggle={vi.fn()} onWidthChange={vi.fn()} {...extra} />
+  );
+
+  it("shows the flight-history section only when given one", () => {
+    const { rerender } = render(panel({}));
+    expect(screen.queryByTestId("opensky-history-section")).toBeNull();
+    rerender(panel({ openSkyHistory: { entry: null, unavailable: null, cost: 4, onFetch: vi.fn(), onHide: vi.fn() } }));
+    expect(screen.getByTestId("opensky-history-section")).toBeInTheDocument();
+  });
+});

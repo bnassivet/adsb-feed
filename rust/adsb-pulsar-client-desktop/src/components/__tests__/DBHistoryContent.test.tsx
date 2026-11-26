@@ -153,6 +153,28 @@ describe("DBHistoryContent", () => {
     expect(btn24h).toHaveClass("bg-cyan-900/60");
   });
 
+  it("OpenSky Credits sits between DB Stats and the time range, folded", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    mockInvokeResponse("get_opensky_credits", { daily_limit: 4000, generated_ms: 0, hours: [] });
+    render(<DBHistoryContent {...baseProps} />);
+    const credits = await screen.findByTestId("dbhist-opensky-credits");
+    const stats = screen.getByTestId("dbhist-stats-section");
+    const range = screen.getByText("Time Range");
+    const FOLLOWING = Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(stats.compareDocumentPosition(credits) & FOLLOWING).toBeTruthy();
+    expect(credits.compareDocumentPosition(range) & FOLLOWING).toBeTruthy();
+    expect(credits.tagName).toBe("DETAILS");
+    expect(credits).not.toHaveAttribute("open");
+  });
+
+  it("has no OpenSky Credits section without an OpenSky service", async () => {
+    mockInvokeResponse("get_storage_stats", sampleStats);
+    render(<DBHistoryContent {...baseProps} />);
+    await screen.findByTestId("dbhist-stats-section");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(screen.queryByTestId("dbhist-opensky-credits")).toBeNull();
+  });
+
   it("Rejected Positions sits between the analytics and Status Timeline", async () => {
     mockInvokeResponse("get_storage_stats", sampleStats);
     mockBrowseResponses();

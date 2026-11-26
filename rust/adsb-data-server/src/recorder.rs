@@ -138,6 +138,7 @@ impl Recorder {
         announcements: Option<tokio::sync::broadcast::Receiver<Announcement>>,
         weather: Option<tokio::sync::watch::Receiver<Option<Vec<u8>>>>,
         weather_grids: Option<tokio::sync::watch::Receiver<KeyedPayloads>>,
+        opensky: Option<crate::opensky::OpenSkyStreams>,
     ) -> anyhow::Result<()> {
         let mut tasks = vec![tokio::spawn(crate::receivers::demux(
             self.storage(),
@@ -157,6 +158,10 @@ impl Recorder {
                 self.storage(),
                 rx,
             )));
+        }
+        // What the OpenSky service publishes, kept beside -- never in -- positions.
+        if let Some(streams) = opensky {
+            tasks.extend(streams.spawn(self.storage()));
         }
         self.drive(source, tasks, weather).await
     }
@@ -434,6 +439,7 @@ mod tests {
             Some(ann_rx),
             None,
             None,
+            None,
         )
         .await
         .expect("run");
@@ -454,6 +460,49 @@ mod tests {
             .unwrap();
         assert_eq!(raw[0].source_id, "pi-garden");
         drop((lines_tx, ann_tx));
+    }
+
+    #[tokio::test]
+    async fn an_attributed_run_records_what_opensky_publishes() {
+        use crate::opensky::OpenSkyStreams;
+        use adsb_opensky_server::states::{OpenSkyTrack, TrackMessage};
+
+        let r = Recorder::open(in_memory()).expect("open");
+        let (_lines_tx, lines_rx) = broadcast::channel(16);
+        let (states_tx, states) = broadcast::channel(16);
+        let (tracks_tx, tracks) = broadcast::channel(16);
+        let track = TrackMessage::new(
+            20_000_000,
+            OpenSkyTrack {
+                icao24: "3c6444".into(),
+                callsign: None,
+                start_time: 1_000,
+                end_time: 9_000,
+                path: vec![],
+            },
+        );
+        tracks_tx.send(serde_json::to_vec(&track).unwrap()).unwrap();
+
+        r.run_attributed(
+            ScriptedSource::new(vec![]),
+            lines_rx,
+            None,
+            None,
+            None,
+            Some(OpenSkyStreams { states, tracks }),
+        )
+        .await
+        .expect("run");
+
+        let storage = r.storage();
+        let guard = storage.read().await;
+        let found = guard
+            .as_ref()
+            .unwrap()
+            .find_opensky_track_sync("3c6444", 5_000)
+            .unwrap();
+        assert_eq!(found.map(|t| t.end_time_s), Some(9_000));
+        drop((states_tx, tracks_tx));
     }
 
     #[tokio::test]

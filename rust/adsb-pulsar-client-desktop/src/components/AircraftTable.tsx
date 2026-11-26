@@ -18,6 +18,8 @@ interface Props {
   historyTracks?: AircraftTrack[];
   dbHistoryTracks?: AircraftTrack[];
   importedTracks?: AircraftTrack[];
+  /** OpenSky gap-filling aircraft, keyed `osky:<HEX>`. Shown, never recorded. */
+  openSkyTracks?: AircraftTrack[];
   sortKey: SortKey;
   sortAsc: boolean;
   onSort: (key: SortKey) => void;
@@ -29,6 +31,15 @@ interface Props {
   hiddenSections?: Map<TrackSection, Set<string>>;
   onToggleGroupVisibility?: (section: TrackSection, hexIdents: string[]) => void;
   liveSectionKey?: TrackSection;
+  /** Opens a track's context menu (right-click on its row), at client coordinates. */
+  onTrackContextMenu?: (key: string, x: number, y: number) => void;
+  /** OpenSky traces drawn for rows: a violet eye on each row that owns one. */
+  openSkyTraces?: {
+    /** The trace a row owns (opensky.ts openSkyTraceOwners), or null. */
+    ownerOf: (section: TrackSection, rowKey: string) => string | null;
+    hidden: Set<string>;
+    onToggle: (traceKey: string) => void;
+  };
 }
 
 // ── Flat virtual list item types ─────────────────────────────────────────────
@@ -81,11 +92,12 @@ function ColGroup({ hasVisibility, hasRemove }: { hasVisibility: boolean; hasRem
   );
 }
 
-export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = [], importedTracks = [], sortKey, sortAsc, onSort, selectedHexIdents, lastSelectedHexIdent, onSelectTrack, onRemoveTrack, onToggleMapVisibility, hiddenSections, onToggleGroupVisibility, liveSectionKey }: Props) {
+export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = [], importedTracks = [], openSkyTracks = [], sortKey, sortAsc, onSort, selectedHexIdents, lastSelectedHexIdent, onSelectTrack, onRemoveTrack, onToggleMapVisibility, hiddenSections, onToggleGroupVisibility, liveSectionKey, openSkyTraces, onTrackContextMenu }: Props) {
   const [liveCollapsed, setLiveCollapsed] = useState(false);
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
   const [dbHistoryCollapsed, setDbHistoryCollapsed] = useState(false);
   const [importedCollapsed, setImportedCollapsed] = useState(false);
+  const [openSkyCollapsed, setOpenSkyCollapsed] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -122,9 +134,10 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
     addSection("history", "History", "text-slate-500", "bg-slate-800/80", historyTracks, historyCollapsed);
     addSection("dbHistory", "DB History", "text-cyan-500", "bg-cyan-900/20", dbHistoryTracks, dbHistoryCollapsed);
     addSection("imported", "Imported", "text-indigo-400", "bg-indigo-900/30", importedTracks, importedCollapsed);
+    addSection("opensky", "OpenSky", "text-violet-400", "bg-violet-900/20", openSkyTracks, openSkyCollapsed);
 
     return rows;
-  }, [sectionKey, tracks, historyTracks, dbHistoryTracks, importedTracks, liveCollapsed, historyCollapsed, dbHistoryCollapsed, importedCollapsed]);
+  }, [sectionKey, tracks, historyTracks, dbHistoryTracks, importedTracks, openSkyTracks, liveCollapsed, historyCollapsed, dbHistoryCollapsed, importedCollapsed, openSkyCollapsed]);
 
   const virtualizer = useVirtualizer({
     count: flatRows.length,
@@ -148,6 +161,7 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
       case "history": setHistoryCollapsed(prev => !prev); break;
       case "dbHistory": setDbHistoryCollapsed(prev => !prev); break;
       case "imported": setImportedCollapsed(prev => !prev); break;
+      case "opensky": setOpenSkyCollapsed(prev => !prev); break;
     }
   }, []);
 
@@ -197,6 +211,7 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
       row.section === sectionKey ? liveCollapsed
       : row.section === "history" ? historyCollapsed
       : row.section === "dbHistory" ? dbHistoryCollapsed
+      : row.section === "opensky" ? openSkyCollapsed
       : importedCollapsed;
 
     return (
@@ -220,20 +235,25 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
     const isSelected = selectedHexIdents?.has(key) ?? false;
     const isHidden = isHiddenInSection(key, section);
     const sectionKeys = getSectionKeys(section);
+    const traceKey = openSkyTraces?.ownerOf(section, key) ?? null;
+    const traceHidden = traceKey !== null && (openSkyTraces?.hidden.has(traceKey) ?? false);
 
     // Section-specific styling
     const isHistory = section === "history";
     const isDbHistory = section === "dbHistory";
     const isImported = section === "imported";
+    const isOpenSky = section === "opensky";
 
     const selectedBg = isDbHistory ? "bg-cyan-900/40 hover:bg-cyan-900/50"
       : isImported ? "bg-indigo-900/40 hover:bg-indigo-900/50"
+      : isOpenSky ? "bg-violet-900/40 hover:bg-violet-900/50"
       : "bg-blue-900/40 hover:bg-blue-900/50";
     const unselectedClass = isHidden ? " opacity-40"
-      : (isHistory ? " opacity-40" : isDbHistory || isImported ? " opacity-60" : "");
+      : (isHistory ? " opacity-40" : isDbHistory || isImported || isOpenSky ? " opacity-60" : "");
 
     const callsignClass = isDbHistory ? "text-cyan-300"
       : isImported ? "text-indigo-300"
+      : isOpenSky ? "text-violet-300"
       : "";
     const hexClass = isDbHistory ? "text-cyan-400/60"
       : isImported ? "text-indigo-400/60"
@@ -242,16 +262,32 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
     return (
       <tr
         key={key}
-        data-testid={`row-${isHistory ? "hist-" : isDbHistory ? "dbhist-" : isImported ? "imported-" : ""}${key}`}
+        data-testid={`row-${isHistory ? "hist-" : isDbHistory ? "dbhist-" : isImported ? "imported-" : isOpenSky ? "opensky-" : ""}${key}`}
         data-hex={key}
         onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
         onClick={(e) => onSelectTrack?.(key, { shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey })}
+        onContextMenu={
+          onTrackContextMenu
+            ? (e) => {
+                e.preventDefault();
+                onTrackContextMenu(key, e.clientX, e.clientY);
+              }
+            : undefined
+        }
         className={`border-b border-slate-800 ${
           isSelected ? selectedBg : `hover:bg-slate-800/50${unselectedClass}`
         }${onSelectTrack ? " cursor-pointer" : ""}`}
       >
         <td className="px-3 py-1.5 font-mono font-semibold">
-          {!isHistory && !isDbHistory && !isImported && t.hex_ident.startsWith("SIM-") && (
+          {isOpenSky && (
+            <span
+              className="inline-block mr-1.5 px-1 py-0.5 text-[9px] font-bold rounded bg-violet-600/30 text-violet-300 leading-none"
+              title="From the OpenSky Network: shown, not recorded"
+            >
+              OSKY
+            </span>
+          )}
+          {!isHistory && !isDbHistory && !isImported && !isOpenSky && t.hex_ident.startsWith("SIM-") && (
             <span className="inline-block mr-1.5 px-1 py-0.5 text-[9px] font-bold rounded bg-emerald-600/30 text-emerald-400 leading-none">
               SIM
             </span>
@@ -297,6 +333,19 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
             >
               <EyeIcon open={!isHidden} />
             </button>
+            {traceKey && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openSkyTraces!.onToggle(traceKey);
+                }}
+                data-testid={`opensky-trace-${section}-${key}`}
+                className={`ml-1 transition text-xs leading-none ${traceHidden ? "text-violet-900 hover:text-violet-400" : "text-violet-400 hover:text-violet-200"}`}
+                title={traceHidden ? "Show OpenSky trajectory" : "Hide OpenSky trajectory"}
+              >
+                <EyeIcon open={!traceHidden} />
+              </button>
+            )}
           </td>
         )}
         {onRemoveTrack && (
@@ -315,7 +364,7 @@ export function AircraftTable({ tracks, historyTracks = [], dbHistoryTracks = []
     );
   };
 
-  const isEmpty = tracks.length === 0 && historyTracks.length === 0 && dbHistoryTracks.length === 0 && importedTracks.length === 0;
+  const isEmpty = tracks.length === 0 && historyTracks.length === 0 && dbHistoryTracks.length === 0 && importedTracks.length === 0 && openSkyTracks.length === 0;
 
   return (
     <div ref={containerRef} className="overflow-auto h-full">

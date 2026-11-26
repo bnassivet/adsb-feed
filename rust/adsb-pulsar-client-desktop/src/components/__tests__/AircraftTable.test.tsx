@@ -700,3 +700,97 @@ describe("AircraftTable onRemoveTrack", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 });
+
+describe("AircraftTable — OpenSky section", () => {
+  const osky = (hex: string) => makeTrack(hex, { track_id: `osky:${hex}` });
+
+  it("lists OpenSky aircraft in their own section, badged", () => {
+    render(<AircraftTable {...defaultSortProps} tracks={[]} openSkyTracks={[osky("3C6444")]} />);
+    expect(screen.getByTestId("opensky-section-header")).toHaveTextContent("OpenSky (1)");
+    const row = screen.getByTestId("row-opensky-osky:3C6444");
+    expect(row).toHaveTextContent("OSKY");
+  });
+
+  it("selects an OpenSky row by its own key, apart from the live row", async () => {
+    const onSelect = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AircraftTable {...defaultSortProps}
+        tracks={[makeTrack("3C6444")]}
+        openSkyTracks={[osky("3C6444")]}
+        selectedHexIdents={new Set()}
+        onSelectTrack={onSelect}
+      />,
+    );
+    await user.click(screen.getByTestId("row-opensky-osky:3C6444"));
+    expect(onSelect).toHaveBeenCalledWith("osky:3C6444", expect.anything());
+  });
+
+  it("collapses", async () => {
+    const user = userEvent.setup();
+    render(<AircraftTable {...defaultSortProps} tracks={[]} openSkyTracks={[osky("3C6444")]} />);
+    await user.click(screen.getByTestId("opensky-section-header"));
+    expect(screen.queryByTestId("row-opensky-osky:3C6444")).toBeNull();
+  });
+});
+
+describe("OpenSky trace switch", () => {
+  const ownerOf = (section: TrackSection, key: string) =>
+    section === "history" && key === "HIST01" ? "history:HIST01" : null;
+
+  it("appears only on the row that owns an OpenSky trace", () => {
+    render(
+      <AircraftTable {...defaultSortProps}
+        tracks={[makeTrack("HIST01")]}
+        historyTracks={[makeTrack("HIST01"), makeTrack("HIST02")]}
+        onToggleMapVisibility={vi.fn()}
+        hiddenSections={new Map()}
+        openSkyTraces={{ ownerOf, hidden: new Set(), onToggle: vi.fn() }}
+      />
+    );
+    expect(screen.getByTestId("opensky-trace-history-HIST01")).toHaveAttribute("title", "Hide OpenSky trajectory");
+    expect(screen.queryByTestId("opensky-trace-history-HIST02")).not.toBeInTheDocument();
+    // The live row of the same key is another aircraft's.
+    expect(screen.queryByTestId("opensky-trace-live-HIST01")).not.toBeInTheDocument();
+  });
+
+  it("toggles the trace, not the row's selection, and says when it is hidden", async () => {
+    const onToggle = vi.fn();
+    const onSelect = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AircraftTable {...defaultSortProps}
+        tracks={[]}
+        historyTracks={[makeTrack("HIST01")]}
+        onSelectTrack={onSelect}
+        onToggleMapVisibility={vi.fn()}
+        hiddenSections={new Map()}
+        openSkyTraces={{ ownerOf, hidden: new Set(["history:HIST01"]), onToggle }}
+      />
+    );
+    const eye = screen.getByTestId("opensky-trace-history-HIST01");
+    expect(eye).toHaveAttribute("title", "Show OpenSky trajectory");
+    await user.click(eye);
+    expect(onToggle).toHaveBeenCalledWith("history:HIST01");
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe("track context menu", () => {
+  it("opens the row's track menu on right-click, without selecting it", async () => {
+    const onMenu = vi.fn();
+    const onSelect = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AircraftTable {...defaultSortProps}
+        tracks={[]}
+        historyTracks={[makeTrack("HIST01", { track_id: "HIST01-3" })]}
+        onSelectTrack={onSelect}
+        onTrackContextMenu={onMenu}
+      />
+    );
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByTestId("row-hist-HIST01-3") });
+    expect(onMenu).toHaveBeenCalledWith("HIST01-3", expect.any(Number), expect.any(Number));
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+});

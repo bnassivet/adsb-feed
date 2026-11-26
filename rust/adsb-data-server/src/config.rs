@@ -73,6 +73,18 @@ pub struct ServerConfig {
     #[serde(default)]
     pub mqtt_weather_topic: String,
 
+    /// MQTT topic carrying OpenSky polls; its `tracks` sibling carries fetched
+    /// tracks. Empty derives it from `mqtt_topic` (`Config::opensky_topic`).
+    #[arg(long, env = "ADSB_MQTT_OPENSKY_TOPIC", default_value = "")]
+    #[serde(default)]
+    pub mqtt_opensky_topic: String,
+
+    /// Record what the OpenSky service publishes (`opensky_states`,
+    /// `opensky_tracks`), kept apart from the receiver's own positions.
+    #[arg(long, env = "ADSB_RECORD_OPENSKY", default_value_t = true, action = clap::ArgAction::Set)]
+    #[serde(default = "default_true")]
+    pub record_opensky: bool,
+
     /// Timezone of the dump1090 timestamps.
     #[arg(long, env = "ADSB_DUMP1090_TZ", default_value = "Local")]
     #[serde(default = "default_tz")]
@@ -161,6 +173,9 @@ fn default_mqtt_port() -> u16 {
 fn default_mqtt_topic() -> String {
     "adsb/sbs/raw".into()
 }
+fn default_true() -> bool {
+    true
+}
 fn default_tz() -> String {
     "Local".into()
 }
@@ -246,6 +261,13 @@ impl ServerConfig {
             mqtt_weather_topic,
             |v: &toml::Value| v.as_str().map(String::from)
         );
+        overlay!(
+            "mqtt_opensky_topic",
+            mqtt_opensky_topic,
+            |v: &toml::Value| v.as_str().map(String::from)
+        );
+        overlay!("record_opensky", record_opensky, |v: &toml::Value| v
+            .as_bool());
         overlay!("dump1090_tz", dump1090_tz, |v: &toml::Value| v
             .as_str()
             .map(String::from));
@@ -316,6 +338,7 @@ impl ServerConfig {
             mqtt_port: self.mqtt_port,
             mqtt_topic: self.mqtt_topic.clone(),
             mqtt_weather_topic: self.mqtt_weather_topic.clone(),
+            mqtt_opensky_topic: self.mqtt_opensky_topic.clone(),
             ..Default::default()
         }
     }
@@ -576,6 +599,23 @@ mod tests {
         cfg.mqtt_topic = "adsb/dev/sbs/raw".to_string();
         cfg.mqtt_weather_topic = "lab/wx".to_string();
         assert_eq!(cfg.feed_config().weather_topic(), "lab/wx");
+    }
+
+    #[test]
+    fn opensky_is_recorded_by_default_and_the_file_can_turn_it_off() {
+        let mut cfg = defaults();
+        assert!(cfg.record_opensky);
+        cfg.overlay_file(&file("record_opensky = false"), &all_defaulted);
+        assert!(!cfg.record_opensky);
+    }
+
+    #[test]
+    fn the_opensky_topic_is_derived_unless_the_file_names_one() {
+        let mut cfg = defaults();
+        cfg.mqtt_topic = "adsb/dev/sbs/raw".to_string();
+        assert_eq!(cfg.feed_config().opensky_topic(), "adsb/dev/opensky/states");
+        cfg.overlay_file(&file("mqtt_opensky_topic = 'lab/osky'"), &all_defaulted);
+        assert_eq!(cfg.feed_config().opensky_topic(), "lab/osky");
     }
 
     /// Stands in for clap: every field still holds its default.

@@ -17,6 +17,7 @@ use adsb_data_engine::{
     TimeDistributionQuery, TrajectoryQuery, UpdateEventOfInterest, UpdateScenario,
     UpdateScenarioTrack,
 };
+use adsb_opensky_server::api_client::ApiClient as OsClient;
 use adsb_pulsar_client::Config;
 use adsb_weather_server::WeatherSnapshot;
 use adsb_weather_server::api_client::ApiClient;
@@ -66,6 +67,7 @@ pub async fn start_feed(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
         Arc::clone(&state.weather),
         Arc::clone(&state.weather_service),
         Arc::clone(&state.receiver_weather),
+        state.opensky.clone(),
         // Cloned out of the mutex rather than held across the call: the mode is
         // a small value and start_feed does real work.
         state
@@ -251,6 +253,113 @@ pub async fn set_weather_service_enabled(
         .map_err(|e| e.to_string())?;
     info!("Weather service accepted enabled={enabled}");
     Ok(())
+}
+
+// --- OpenSky gap filler --------------------------------------------------
+//
+// The service holds the OpenSky credentials; the desktop only tells it what to
+// watch and reads what it publishes. Every call goes through Rust, so the
+// webview never needs the service in its CSP.
+
+fn opensky_client(state: &State<'_, AppState>) -> Result<(OsClient, String), String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+    let client =
+        OsClient::new(crate::opensky::opensky_api_url(&config)).map_err(|e| e.to_string())?;
+    Ok((client, crate::opensky::watch_client_id(&config)))
+}
+
+/// What the OpenSky service last reported over MQTT (status, availability).
+#[tauri::command]
+pub fn get_opensky_service(
+    state: State<'_, AppState>,
+) -> Result<crate::opensky::OpenSkyServiceView, String> {
+    Ok(state
+        .opensky
+        .service
+        .read()
+        .map_err(|e| e.to_string())?
+        .clone())
+}
+
+/// The last OpenSky poll, for a UI that mounts between two polls.
+#[tauri::command]
+pub fn get_opensky_states(
+    state: State<'_, AppState>,
+) -> Result<Option<adsb_opensky_server::states::StatesMessage>, String> {
+    Ok(state
+        .opensky
+        .states
+        .read()
+        .map_err(|e| e.to_string())?
+        .clone())
+}
+
+/// Sets and renews this desktop's watch list. The UI calls it on every change
+/// and every 20 s; the service drops a list not renewed within its lease.
+#[tauri::command]
+pub async fn set_opensky_watch(
+    icao24: Vec<String>,
+    areas: Vec<adsb_opensky_server::api::Area>,
+    state: State<'_, AppState>,
+) -> Result<adsb_opensky_server::api::WatchAccepted, String> {
+    let (client, id) = opensky_client(&state)?;
+    client
+        .put_watch(&id, &crate::opensky::watch_request(icao24, areas))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Drops this desktop's watch list at once (the layer switched off).
+#[tauri::command]
+pub async fn clear_opensky_watch(state: State<'_, AppState>) -> Result<(), String> {
+    let (client, id) = opensky_client(&state)?;
+    client.delete_watch(&id).await.map_err(|e| e.to_string())
+}
+
+/// Pauses or resumes the service's polling. The outcome shows on the status.
+#[tauri::command]
+pub async fn set_opensky_enabled(enabled: bool, state: State<'_, AppState>) -> Result<(), String> {
+    let (client, _) = opensky_client(&state)?;
+    client
+        .set_enabled(enabled)
+        .await
+        .map_err(|e| e.to_string())?;
+    info!("OpenSky service accepted enabled={enabled}");
+    Ok(())
+}
+
+/// Credits spent per hour over the last 24 h, for the Analytics panel.
+#[tauri::command]
+pub async fn get_opensky_credits(
+    state: State<'_, AppState>,
+) -> Result<adsb_opensky_server::api::CreditsReport, String> {
+    let (client, _) = opensky_client(&state)?;
+    client.credits().await.map_err(|e| e.to_string())
+}
+
+/// An aircraft's track from OpenSky: its live flight for `time = None`
+/// (4 credits), or the flight it was on at `time` (epoch seconds, last 30
+/// days). A past flight already stored -- by this desktop or the data server
+/// -- is served from storage at no cost. `track: None` when OpenSky has no
+/// such flight.
+#[tauri::command]
+pub async fn get_opensky_track(
+    icao24: String,
+    time: Option<i64>,
+    state: State<'_, AppState>,
+) -> Result<crate::opensky::TrackReply, String> {
+    let stored = match time {
+        Some(t) => adsb_data_server::opensky::find_stored_track(&state.storage, &icao24, t).await,
+        None => Ok(None),
+    };
+    if let Err(e) = &stored {
+        tracing::debug!("OpenSky track cache unavailable ({e}); asking OpenSky");
+    }
+    let (client, _) = opensky_client(&state)?;
+    crate::opensky::cache_first(time, stored, || async {
+        client.track(&icao24, time).await.map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// The stack this instance was launched for, or `None` for the unnamed one.

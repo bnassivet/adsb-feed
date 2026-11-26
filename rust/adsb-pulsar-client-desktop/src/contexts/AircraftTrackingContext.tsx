@@ -69,6 +69,7 @@ export function mergePositionInto(track: AircraftTrack, pos: AircraftPosition, n
 
   if (pos.latitude !== null && pos.longitude !== null) {
     appendPosition(track, pos.latitude, pos.longitude, pos.altitude ?? track.altitude);
+    track.last_position_ms = now;
   }
 }
 
@@ -167,6 +168,7 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
         };
         if (pos.latitude !== null && pos.longitude !== null) {
           (track.positions as [number, number, number | null][]).push([pos.latitude, pos.longitude, pos.altitude ?? null]);
+          track.last_position_ms = now;
         }
         map.set(pos.hex_ident, track);
       }

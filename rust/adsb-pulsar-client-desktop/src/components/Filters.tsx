@@ -3,6 +3,7 @@ import { clearFilters, hasActiveFilters } from "@/lib/types";
 import type { Filters, DensityMetric, DensityTooltipMode, AltitudeColorMode, EventFilterMode } from "@/lib/types";
 import { RangeSlider } from "@/components/RangeSlider";
 import { WeatherControls, type WeatherControlsProps } from "@/components/WeatherControls";
+import { OpenSkyControls, type OpenSkyControlsProps } from "@/components/OpenSkyControls";
 import { AirspaceControls, type AirspaceControlsProps } from "./AirspaceControls";
 import { MetarControls, type MetarControlsProps } from "./MetarControls";
 import { RadarControls, type RadarControlsProps } from "./RadarControls";
@@ -73,6 +74,8 @@ interface Props {
   onEventTimeRangeChange: (startMs: number, endMs: number) => void;
   /** Weather layer controls. Optional: without them there is no weather section. */
   weather?: WeatherControlsProps;
+  /** OpenSky gap filling; no section without it. */
+  openSky?: OpenSkyControlsProps;
   /** Airspace layer controls. Optional: without them there is no airspace section. */
   airspaces?: AirspaceControlsProps;
   /** METAR layer controls. Optional: without them there is no METAR section. */
@@ -119,7 +122,7 @@ function Section({ title, defaultOpen, nested, children }: { title: string; defa
   );
 }
 
-export function FiltersPanel({ filters, onChange, trackCount, totalCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, showPositions, onTogglePositions, showLabels, onToggleLabels, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange, showEvents, onToggleEvents, eventsCount, eventFilterMode, onEventFilterModeChange, eventUpcomingDays, onEventUpcomingDaysChange, eventTimeRangeStart, eventTimeRangeEnd, onEventTimeRangeChange, weather, airspaces, metar, radar, sea, relief, savedFilters }: Props) {
+export function FiltersPanel({ filters, onChange, trackCount, totalCount, showHistory, onToggleHistory, historyCount, showDensity, onToggleDensity, densityMetric, onDensityMetricChange, densityAltitudeMin, densityAltitudeMax, onDensityAltitudeChange, densityTooltipMode, onDensityTooltipModeChange, liveColorMode, onLiveColorModeChange, historyColorMode, onHistoryColorModeChange, importedCount, showImported, onToggleImported, onClearImported, includeImportedInDensity, onToggleIncludeImportedInDensity, showReceiver, onToggleReceiver, hasReceiverLocation, showPositions, onTogglePositions, showLabels, onToggleLabels, historySliderMin, historySliderMax, historySliderRange, onHistoryTimeChange, showEvents, onToggleEvents, eventsCount, eventFilterMode, onEventFilterModeChange, eventUpcomingDays, onEventUpcomingDaysChange, eventTimeRangeStart, eventTimeRangeEnd, onEventTimeRangeChange, weather, openSky, airspaces, metar, radar, sea, relief, savedFilters }: Props) {
   const callsignError = filters.callsignRegex
     ? compileCallsignQuery(filters.callsign, true).error
     : null;
@@ -456,6 +459,13 @@ export function FiltersPanel({ filters, onChange, trackCount, totalCount, showHi
           </div>
         </div>
       </Section>
+
+      {/* ── OpenSky Gap Filler: traffic, not a background layer ── */}
+      {openSky && (
+        <Section title="OpenSky Gap Filler">
+          <OpenSkyControls {...openSky} />
+        </Section>
+      )}
 
       {/* ── Map Layers: weather first, then what is drawn under the traffic ── */}
       {(weather || radar || metar || airspaces || sea || relief) && (

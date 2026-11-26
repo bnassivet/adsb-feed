@@ -214,3 +214,53 @@ describe("FiltersPanel map layers", () => {
   });
 });
 
+
+describe("FiltersPanel OpenSky Gap Filler", () => {
+  const openSky = {
+    show: false,
+    onToggle: vi.fn(),
+    mode: "gaps" as const,
+    onModeChange: vi.fn(),
+    areas: [],
+    onDrawArea: vi.fn(),
+    onRemoveArea: vi.fn(),
+    watched: [],
+    shownCount: 0,
+    service: { status: null, availability: null },
+    pendingEnabled: null,
+    serviceError: null,
+    watchError: null,
+    onServiceToggle: vi.fn(),
+    nowMs: 0,
+  };
+
+  const topLevel = (container: HTMLElement) =>
+    [...container.querySelectorAll(":scope > div > details > summary")].map((s) => s.textContent?.replace("▶", "").trim());
+
+  it("is a top-level section between Display Layers and Map Layers", () => {
+    const { container } = render(<FiltersPanel {...baseProps} openSky={openSky} relief={relief} />);
+    const titles = topLevel(container);
+    const i = titles.indexOf("OpenSky Gap Filler");
+    expect(i).toBeGreaterThan(-1);
+    expect(titles[i - 1]).toBe("Display Layers");
+    expect(titles[i + 1]).toBe("Map Layers");
+  });
+
+  it("is no longer nested under Map Layers", () => {
+    render(<FiltersPanel {...baseProps} openSky={openSky} relief={relief} />);
+    const parent = screen.getByText("Map Layers").closest("details")!;
+    const nested = [...parent.querySelectorAll("details > summary")].map((s) => s.textContent?.replace("▶", "").trim());
+    expect(nested).not.toContain("OpenSky");
+  });
+
+  it("does not create Map Layers on its own", () => {
+    render(<FiltersPanel {...baseProps} openSky={openSky} />);
+    expect(screen.getByText("OpenSky Gap Filler")).toBeInTheDocument();
+    expect(screen.queryByText("Map Layers")).toBeNull();
+  });
+
+  it("is absent without OpenSky", () => {
+    render(<FiltersPanel {...baseProps} />);
+    expect(screen.queryByText("OpenSky Gap Filler")).toBeNull();
+  });
+});

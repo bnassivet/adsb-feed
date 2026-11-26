@@ -18,6 +18,7 @@ export function aircraftIconHtml(
   heading: number,
   color: string,
   selected: boolean,
+  options: { hollow?: boolean } = {},
 ): AircraftIconHtml {
   const size = selected ? 36 : 24;
   const half = size / 2;
@@ -36,7 +37,12 @@ export function aircraftIconHtml(
 
   const svg = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">
     <g transform="rotate(${heading}, ${half}, ${half})">
-      <polygon points="${points}" fill="${color}" stroke="${stroke}" stroke-width="1" opacity="0.9"/>
+      ${
+        options.hollow
+          ? // OpenSky: an outline in the altitude colour, so it reads as "not ours".
+            `<polygon points="${points}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="3 2" opacity="0.95"/>`
+          : `<polygon points="${points}" fill="${color}" stroke="${stroke}" stroke-width="1" opacity="0.9"/>`
+      }
     </g>
   </svg>`;
 

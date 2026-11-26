@@ -19,6 +19,9 @@ adsb-pulsar-client = { path = "../adsb-pulsar-client", default-features = false,
 # reqwest and a TLS stack this recorder has no use for, and aws-lc-rs compiles
 # C, which is felt on an arm64 Pi build.
 adsb-weather-server = { path = "../adsb-weather-server", default-features = false }
+# The OpenSky payload contract only (states and track messages), for the same
+# reason: no reqwest, no TLS. The recorder never talks to OpenSky itself.
+adsb-opensky-server = { path = "../adsb-opensky-server", default-features = false }
 
 tokio = { workspace = true }
 serde = { workspace = true }
