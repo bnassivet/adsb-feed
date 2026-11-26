@@ -43,14 +43,28 @@ interface AircraftTrackingContextValue {
 
 const AircraftTrackingContext = createContext<AircraftTrackingContextValue | null>(null);
 
-/** Append a position to a live track's tuple positions array, capping at MAX_POSITIONS. Mutates in place. */
-export function appendPosition(track: AircraftTrack, lat: number, lng: number, altitude: number | null) {
+/**
+ * Append a position to a live track's tuple positions array, capping at MAX_POSITIONS. Mutates in place.
+ * `timeMs` goes into `position_times` only while that array is in step with `positions`.
+ */
+export function appendPosition(track: AircraftTrack, lat: number, lng: number, altitude: number | null, timeMs?: number) {
   const pos = track.positions as [number, number, number | null][];
+  const times = track.position_times;
+  const timed = timeMs !== undefined && Array.isArray(times) && times.length === pos.length;
   pos.push([lat, lng, altitude]);
+  if (timed) times.push(timeMs);
   if (pos.length > MAX_POSITIONS) {
     pos.shift();
+    if (timed) times.shift();
   }
 }
+
+/**
+ * When a position was transmitted, as near as the feed knows: its message's
+ * generated time. NaN when it came without one, rather than the flush time,
+ * which runs up to a flush interval late and would pass for the real thing.
+ */
+const positionTime = (pos: AircraftPosition) => pos.position_time_ms ?? NaN;
 
 /** Apply position fields from an incoming message onto an existing track. Mutates in place. */
 export function mergePositionInto(track: AircraftTrack, pos: AircraftPosition, now: number) {
@@ -68,7 +82,7 @@ export function mergePositionInto(track: AircraftTrack, pos: AircraftPosition, n
   track.message_count += pos.message_count;
 
   if (pos.latitude !== null && pos.longitude !== null) {
-    appendPosition(track, pos.latitude, pos.longitude, pos.altitude ?? track.altitude);
+    appendPosition(track, pos.latitude, pos.longitude, pos.altitude ?? track.altitude, positionTime(pos));
     track.last_position_ms = now;
   }
 }
@@ -162,12 +176,13 @@ export function AircraftTrackingProvider({ children }: { children: ReactNode }) 
           is_on_ground: pos.is_on_ground ?? null,
           timestamp: pos.timestamp,
           positions: [],
+          position_times: [],
           first_seen: now,
           last_seen: now,
           message_count: pos.message_count,
         };
         if (pos.latitude !== null && pos.longitude !== null) {
-          (track.positions as [number, number, number | null][]).push([pos.latitude, pos.longitude, pos.altitude ?? null]);
+          appendPosition(track, pos.latitude, pos.longitude, pos.altitude ?? null, positionTime(pos));
           track.last_position_ms = now;
         }
         map.set(pos.hex_ident, track);

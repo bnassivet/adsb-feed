@@ -49,6 +49,14 @@ describe("recordsToTrack", () => {
     ]);
   });
 
+  it("keeps each position's timestamp, in position order", () => {
+    const track = recordsToTrack([
+      makeRecord({ timestamp_ms: 2_000 }),
+      makeRecord({ timestamp_ms: 1_000 }),
+    ]);
+    expect(track.position_times).toEqual([1_000, 2_000]);
+  });
+
   it("uses last (latest) record for scalar fields", () => {
     const r1 = makeRecord({ timestamp_ms: 1_000, altitude: 5000, callsign: "OLD" });
     const r2 = makeRecord({ timestamp_ms: 2_000, altitude: 10000, callsign: "NEW" });

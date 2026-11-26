@@ -13,6 +13,12 @@ export interface AircraftPosition {
   is_on_ground: boolean | null;
   timestamp: string;
   message_count: number;
+  /**
+   * Epoch ms of the message that carried latitude/longitude: dump1090's
+   * "generated" time, the closest the feed gets to the transmission. Absent
+   * without a position. Mirrors Rust `position_time_ms`.
+   */
+  position_time_ms?: number;
 }
 
 /**
@@ -68,6 +74,13 @@ export interface AircraftTrack {
   timestamp: string;
   /** Position history: tuple arrays for live tracks, ColumnarPositions for batch-loaded. */
   positions: Positions;
+  /**
+   * When each position was received (ms since epoch), index-aligned with
+   * `positions`. Absent when the source has no per-point time (imported
+   * GeoJSON, simulated tracks); never start one on a track that already has
+   * positions, or every index after it is off by the backlog.
+   */
+  position_times?: number[] | Float64Array;
   /** Time of first detection (ms since epoch). Set once, never updated. */
   first_seen: number;
   /** Last update time for TTL expiry */

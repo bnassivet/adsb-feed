@@ -51,6 +51,8 @@ export function arrowToTracks(
   const allLat = latCol.toArray() as Float64Array;
   const allLng = lonCol.toArray() as Float64Array;
   const allAlt = altCol.toArray() as Float64Array;
+  // timestamp_ms is BIGINT: toArray() gives a BigInt64Array, converted once for the whole table.
+  const allTs = Float64Array.from(tsCol.toArray() as ArrayLike<number | bigint>, Number);
 
   // Patch null altitudes: .toArray() puts 0 for nulls; convert to NaN using validity bitmap
   patchNullsToNaN(altCol, allAlt);
@@ -89,6 +91,7 @@ export function arrowToTracks(
         is_on_ground: iogCol.get(lastIdx) as boolean | null,
         timestamp: new Date(Number(tsCol.get(lastIdx))).toISOString(),
         positions,
+        position_times: allTs.slice(segStart, i),
         first_seen: Number(tsCol.get(segStart)),
         last_seen: Number(tsCol.get(lastIdx)),
         message_count: i - segStart,

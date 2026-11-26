@@ -1125,7 +1125,17 @@ or zoom, and for 1.8 s at 1M points.
   and opacity 0.9 above that set. Selecting a track never touches the big buffers.
 - **Hover tooltips**: a rAF-throttled `pickObject` runs on the map's own `mousemove`, then
   `locateDot` binary-searches the per-track `starts` to find the track and position. The
-  content comes from `dotTooltipHtml` (`src/lib/dot-tooltip.ts`, which escapes callsigns). The deck
+  content comes from `dotTooltipHtml` (`src/lib/dot-tooltip.ts`, which escapes callsigns). When the
+  track has `position_times`, the tooltip adds the hovered point's **Time** under the altitude
+  (`formatPositionTime`: to the millisecond, the clock alone for today, with the date for an
+  earlier day). The time is dump1090's *date/time generated* (SBS-1 fields 7–8) of the message
+  that carried the position, stamped at reception and so the closest the feed gets to the
+  transponder's transmission; the *logged* time (9–10) is later. The ingest buffer merges a
+  window's subtypes per aircraft and moves `timestamp` with every message, so a MSG4 after the
+  MSG3 used to make the stored row up to a flush interval late. `AircraftPosition` therefore
+  carries `position_timestamp` (paired with lat/lon in `merge_into_buffer`) and
+  `position_time_ms` (resolved with `dump1090_tz` at flush), and `insert_batch` stores a fix at
+  that time. Rows without a position still use `timestamp`. The deck
   canvas has `pointer-events: none`, so drag, click-to-deselect and the context menu stay
   Leaflet's. Picking is skipped while the map is moving. It is also skipped when the pointer is over anything with its own hover (`isBareMapTarget`): aircraft icons, tooltips, popups and controls. The newest live dot sits under its icon, and without this rule hovering the icon opened two tooltips. A hovered dot also **outranks vector-path tooltips** (density hexes, range lines, polylines). On the old shared canvas the dots were added last, so Leaflet's hit-test gave them the hover. `DotTooltipArbiter` (`src/lib/tooltip-arbiter.ts`) recreates that: it closes path tooltips while a dot is hovered, then reopens them at the cursor if the pointer is still on the path (no `mouseout`).
 - There is **no subsampling**: the GPU draws every point every frame, so `subsamplePositions`
@@ -1611,7 +1621,8 @@ export async function queryBbox(query: BboxQuery): Promise<PositionRecord[]> {
   - `message_count: number` — cumulative SBS-1 messages, pre-throttle
   - `first_seen: number` — ms epoch of first detection; set **once** when the track is created in `AircraftTrackingContext`, never updated by `mergePositionInto`
   - `last_seen: number` — ms epoch of most recent update
-  - `positions: [lat, lng, altitude | null][]` — capped at 100 entries, no per-position timestamps
+  - `positions: [lat, lng, altitude | null][]` — capped at 100 entries; times live beside it, not in the tuple
+  - `position_times?: number[] | Float64Array` — ms epoch per position, index-aligned with `positions`: the SBS-1 *generated* time of the message that carried the fix (`AircraftPosition.position_time_ms`, NaN if absent — never the flush time) for live tracks, `timestamp_ms` for history and DB History; absent for imported GeoJSON and simulated tracks. `appendPosition` writes it only while it is in step, so it is never started on a track that already has positions
 - `MetricsSnapshot`: Performance metrics (flattened `DesktopMetrics` from Rust). Key fields:
   - `messages_received: number` — all TCP lines from socket (core library counter, includes heartbeats)
   - `lines_received: number` — every line delivered to the ingest pipeline, parsed or not (hits/s)

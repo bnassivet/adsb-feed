@@ -107,6 +107,8 @@ export interface LocatedDot {
   lat: number;
   lng: number;
   alt: number | null;
+  /** When the point was received (ms since epoch), or null if the track has no per-point times. */
+  time: number | null;
   isLast: boolean;
 }
 
@@ -124,5 +126,7 @@ export function locateDot(buf: DotBuffers, i: number): LocatedDot | null {
   const index = i - buf.starts[lo];
   const p = track.positions;
   const [lat, lng] = isColumnar(p) ? [p.lat[index], p.lng[index]] : [p[index][0], p[index][1]];
-  return { track, index, lat, lng, alt: altAt(track, index), isLast: index === p.length - 1 };
+  const t = track.position_times?.[index];
+  const time = t !== undefined && Number.isFinite(t) ? t : null;
+  return { track, index, lat, lng, alt: altAt(track, index), time, isLast: index === p.length - 1 };
 }

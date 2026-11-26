@@ -86,6 +86,19 @@ describe("locateDot", () => {
     expect(locateDot(buf, 4)).toMatchObject({ track: b, index: 1, alt: null, isLast: true });
   });
 
+  it("gives the point's time when the track has per-position times, null otherwise", () => {
+    const a = track("A", [[45, -73, 10_000], [45.1, -73.1, null]], { position_times: [1_000, 2_000] });
+    const b = track("B", col([[46, -74, 5_000], [46.1, -74.1, NaN]]), { position_times: new Float64Array([3_000, 4_000]) });
+    const c = track("C", [[47, -75, 1], [47.1, -75.1, 1]], { position_times: [5_000, NaN] });
+    const buf = buildDotBuffers([a, b, c], { colorMode: "plot", theme: "dark", alpha: 1 });
+    expect(locateDot(buf, 1)?.time).toBe(2_000);
+    expect(locateDot(buf, 2)?.time).toBe(3_000);
+    expect(locateDot(buf, 4)?.time).toBe(5_000);
+    expect(locateDot(buf, 5)?.time).toBeNull(); // NaN: the position came without a time
+    const d = track("D", [[47, -75, 1], [47.1, -75.1, 1]]);
+    expect(locateDot(buildDotBuffers([d], { colorMode: "plot", theme: "dark", alpha: 1 }), 0)?.time).toBeNull();
+  });
+
   it("returns null out of range", () => {
     const buf = buildDotBuffers([], { colorMode: "plot", theme: "dark", alpha: 1 });
     expect(locateDot(buf, 0)).toBeNull();

@@ -22,8 +22,20 @@ pub struct AircraftPosition {
     pub vertical_rate: Option<f64>,
     pub squawk: Option<String>,
     pub is_on_ground: Option<bool>,
+    /// Date/time generated (fields 6+7) of the most recent message: any subtype.
     pub timestamp: String,
     pub message_count: u64,
+    /// Date/time generated of the message that carried `latitude`/`longitude`.
+    /// dump1090 stamps it at reception, so it is the closest the SBS-1 feed
+    /// gets to the transponder's transmission. `timestamp` can be later: a
+    /// MSG4 merged after the MSG3 moves it. `None` without a position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_timestamp: Option<String>,
+    /// `position_timestamp` as epoch ms. The parser cannot fill it (SBS-1
+    /// times carry no zone); the ingest pipeline resolves it with
+    /// `dump1090_tz` before persisting and emitting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_time_ms: Option<i64>,
 }
 
 /// Parses a raw SBS-1 line into an `AircraftPosition`.
@@ -73,19 +85,25 @@ pub fn parse_sbs_message(line: &str) -> Option<AircraftPosition> {
     // Build timestamp from date_generated + time_generated
     let timestamp = format!("{} {}", fields[6].trim(), fields[7].trim());
 
+    let latitude = parse_f64(fields[14]);
+    let longitude = parse_f64(fields[15]);
+    let position_timestamp = (latitude.is_some() && longitude.is_some()).then(|| timestamp.clone());
+
     Some(AircraftPosition {
         hex_ident,
         callsign: non_empty(fields[10]),
         altitude: parse_f64(fields[11]),
         ground_speed: parse_f64(fields[12]),
         track: parse_f64(fields[13]),
-        latitude: parse_f64(fields[14]),
-        longitude: parse_f64(fields[15]),
+        latitude,
+        longitude,
         vertical_rate: parse_f64(fields[16]),
         squawk: non_empty(fields[17]),
         is_on_ground: parse_bool(fields[21]),
         timestamp,
         message_count: 0,
+        position_timestamp,
+        position_time_ms: None,
     })
 }
 
@@ -210,6 +228,30 @@ mod tests {
         assert_eq!(pos.latitude, Some(45.5017));
         assert_eq!(pos.longitude, Some(-73.5673));
         assert_eq!(pos.is_on_ground, Some(false));
+    }
+
+    #[test]
+    fn test_position_timestamp_is_the_generated_time_of_a_position_message() {
+        // Field 7/8 is dump1090's "generated" time, stamped at reception: the
+        // closest the SBS-1 feed gets to the transponder's transmission. The
+        // "logged" time (9/10) is when the line was written out, later.
+        let line = "MSG,3,1,1,A1B2C3,1,2024/01/15,10:30:00.123,2024/01/15,10:30:00.456,,35000,,,45.5,-73.5,,,,,,0";
+        let pos = parse_sbs_message(line).unwrap();
+        assert_eq!(
+            pos.position_timestamp.as_deref(),
+            Some("2024/01/15 10:30:00.123")
+        );
+        assert_eq!(
+            pos.position_time_ms, None,
+            "resolving needs dump1090's time zone"
+        );
+    }
+
+    #[test]
+    fn test_position_timestamp_absent_without_a_position() {
+        let line =
+            "MSG,1,1,1,A1B2C3,1,2024/01/15,10:30:00.000,2024/01/15,10:30:00.000,AIR123,,,,,,,,,,,";
+        assert_eq!(parse_sbs_message(line).unwrap().position_timestamp, None);
     }
 
     #[test]

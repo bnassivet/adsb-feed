@@ -847,7 +847,12 @@ impl StorageHandle {
             let mut appender = storage.conn.appender("positions")?;
 
             for pos in positions {
-                let timestamp_ms = parse_timestamp_to_ms(&pos.timestamp, tz);
+                // A fix is stored at the time its own message was received,
+                // not at whichever subtype was merged last.
+                let timestamp_ms = pos.position_time_ms.unwrap_or_else(|| {
+                    let ts = pos.position_timestamp.as_deref().unwrap_or(&pos.timestamp);
+                    parse_timestamp_to_ms(ts, tz)
+                });
 
                 appender.append_row(params![
                     pos.hex_ident,
@@ -4318,7 +4323,7 @@ fn check_dump1090_clock(newest_ms: i64) {
     }
 }
 
-fn parse_timestamp_to_ms(timestamp: &str, tz: &str) -> i64 {
+pub(crate) fn parse_timestamp_to_ms(timestamp: &str, tz: &str) -> i64 {
     use std::str::FromStr;
 
     let naive = chrono::NaiveDateTime::parse_from_str(timestamp, "%Y/%m/%d %H:%M:%S%.3f")
@@ -4451,6 +4456,8 @@ mod tests {
             is_on_ground: Some(false),
             timestamp: ts.to_string(),
             message_count: 0,
+            position_timestamp: None,
+            position_time_ms: None,
         }
     }
 
@@ -4917,6 +4924,38 @@ mod tests {
             })
             .unwrap();
         assert_eq!(stored_ms, expected_ms);
+    }
+
+    #[test]
+    fn test_insert_batch_stores_the_position_message_time_not_the_last_message() {
+        // A MSG4 merged after the MSG3 moves `timestamp`; the row is a fix, so
+        // it is stored at the time the fix was received.
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let pos = AircraftPosition {
+            position_timestamp: Some("2024/01/15 10:30:00.123".to_string()),
+            ..sample_position("A1B2C3", Some(45.5), Some(-73.5), "2024/01/15 10:30:00.423")
+        };
+        handle.insert_batch_sync(&[pos], "UTC").unwrap();
+        assert_eq!(
+            count_sql(&handle, "SELECT timestamp_ms FROM positions"),
+            parse_timestamp_to_ms("2024/01/15 10:30:00.123", "UTC")
+        );
+    }
+
+    #[test]
+    fn test_insert_batch_prefers_an_already_resolved_position_time() {
+        let handle = StorageHandle::open(test_config()).unwrap();
+        let pos = AircraftPosition {
+            position_timestamp: Some("2024/01/15 10:30:00.123".to_string()),
+            position_time_ms: Some(1_705_314_600_123),
+            ..sample_position("A1B2C3", Some(45.5), Some(-73.5), "2024/01/15 10:30:00.423")
+        };
+        // The zone given here would shift a re-parse by an hour; the resolved value wins.
+        handle.insert_batch_sync(&[pos], "Europe/Paris").unwrap();
+        assert_eq!(
+            count_sql(&handle, "SELECT timestamp_ms FROM positions"),
+            1_705_314_600_123
+        );
     }
 
     #[test]
@@ -8123,6 +8162,8 @@ mod tests {
                 is_on_ground: None,
                 timestamp: "2024/01/15 10:00:00.000".to_string(),
                 message_count: 0,
+                position_timestamp: None,
+                position_time_ms: None,
             },
             AircraftPosition {
                 hex_ident: "AAA111".to_string(),
@@ -8137,6 +8178,8 @@ mod tests {
                 is_on_ground: None,
                 timestamp: "2024/01/15 10:00:01.000".to_string(),
                 message_count: 0,
+                position_timestamp: None,
+                position_time_ms: None,
             },
             AircraftPosition {
                 hex_ident: "AAA111".to_string(),
@@ -8151,6 +8194,8 @@ mod tests {
                 is_on_ground: None,
                 timestamp: "2024/01/15 10:00:02.000".to_string(),
                 message_count: 0,
+                position_timestamp: None,
+                position_time_ms: None,
             },
             AircraftPosition {
                 hex_ident: "AAA111".to_string(),
@@ -8165,6 +8210,8 @@ mod tests {
                 is_on_ground: None,
                 timestamp: "2024/01/15 10:00:03.000".to_string(),
                 message_count: 0,
+                position_timestamp: None,
+                position_time_ms: None,
             },
             AircraftPosition {
                 hex_ident: "AAA111".to_string(),
@@ -8179,6 +8226,8 @@ mod tests {
                 is_on_ground: None,
                 timestamp: "2024/01/15 10:00:04.000".to_string(),
                 message_count: 0,
+                position_timestamp: None,
+                position_time_ms: None,
             },
         ];
 

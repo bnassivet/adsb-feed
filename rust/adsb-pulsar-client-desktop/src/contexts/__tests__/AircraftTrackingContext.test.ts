@@ -115,6 +115,43 @@ describe("trackKey", () => {
   });
 });
 
+describe("position_times (per-position timestamps)", () => {
+  it("appendPosition records the time beside the position", () => {
+    const track = makeTrack({ position_times: [] });
+    appendPosition(track, 45.5, -73.5, 35000, 1_000);
+    appendPosition(track, 45.6, -73.6, 35100, 2_000);
+    expect(track.position_times).toEqual([1_000, 2_000]);
+  });
+
+  it("drops the oldest time with the oldest position at the cap", () => {
+    const track = makeTrack({ position_times: [] });
+    const MAX = 100_000;
+    for (let i = 0; i < MAX + 3; i++) appendPosition(track, 45, -73, 30000, i);
+    expect(track.position_times).toHaveLength(MAX);
+    expect(track.position_times![0]).toBe(3);
+  });
+
+  it("does not start a times array a track never had (it would be out of step)", () => {
+    const track = makeTrack({ positions: [[45, -73, 30000]] });
+    appendPosition(track, 45.1, -73.1, 30000, 1_000);
+    expect(track.position_times).toBeUndefined();
+  });
+
+  it("mergePositionInto stamps the position with its message's generated time, not the flush", () => {
+    const track = makeTrack({ position_times: [] });
+    mergePositionInto(track, makePosition("A1B2C3", { latitude: 47, longitude: -2, position_time_ms: 6_123 }), 7_000);
+    mergePositionInto(track, makePosition("A1B2C3", { latitude: null, longitude: null }), 8_000);
+    expect(track.position_times).toEqual([6_123]);
+  });
+
+  it("records NaN, not the flush time, for a position that came without one", () => {
+    const track = makeTrack({ position_times: [] });
+    mergePositionInto(track, makePosition("A1B2C3", { latitude: 47, longitude: -2 }), 7_000);
+    expect(track.position_times).toHaveLength(1);
+    expect(Number.isNaN(track.position_times![0])).toBe(true);
+  });
+});
+
 describe("mergePositionInto — last_position_ms", () => {
   // The OpenSky gap rule measures how long a track has gone without a POSITION.
   // last_seen moves on every message (callsign, speed...), so it cannot.

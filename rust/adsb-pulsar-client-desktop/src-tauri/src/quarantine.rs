@@ -65,6 +65,8 @@ mod tests {
             is_on_ground: None,
             timestamp: ts.to_string(),
             message_count: 0,
+            position_timestamp: None,
+            position_time_ms: None,
         }
     }
 
