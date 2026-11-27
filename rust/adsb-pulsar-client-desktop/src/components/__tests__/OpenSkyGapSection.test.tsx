@@ -33,6 +33,59 @@ describe("OpenSkyGapSection", () => {
     expect(screen.getByText("Following through OpenSky…")).toBeInTheDocument();
   });
 
+  it("waits for OpenSky's answer, then says plainly that it has nothing to draw", () => {
+    const { rerender } = render(
+      <OpenSkyGapSection {...props({ followed: true, watched: true, status: "waiting-answer" })} />,
+    );
+    expect(screen.getByText("Asked OpenSky, waiting for its next poll…")).toBeInTheDocument();
+    rerender(
+      <OpenSkyGapSection
+        {...props({ followed: true, watched: true, status: "no-data", lastPollMs: NOW - 4_000 })}
+      />,
+    );
+    expect(
+      screen.getByText("OpenSky has no data on this aircraft (asked 4 s ago): nothing to draw"),
+    ).toBeInTheDocument();
+  });
+
+  it("says when it will ask again, and when it has stopped asking", () => {
+    const { rerender } = render(
+      <OpenSkyGapSection
+        {...props({ followed: true, status: "no-data", lastPollMs: NOW - 4_000, retryAtMs: NOW + 25_000 })}
+      />,
+    );
+    expect(
+      screen.getByText("OpenSky has no data on this aircraft (asked 4 s ago): nothing to draw. Asking again in 25 s"),
+    ).toBeInTheDocument();
+    rerender(<OpenSkyGapSection {...props({ followed: true, status: "gave-up" })} />);
+    expect(
+      screen.getByText("OpenSky had no data on this aircraft for 5 min: stopped asking. Follow it again to retry"),
+    ).toBeInTheDocument();
+  });
+
+  it("says when OpenSky knows the aircraft but cannot place it", () => {
+    render(
+      <OpenSkyGapSection
+        {...props({ followed: true, watched: true, status: "no-position", lastContactMs: NOW - 7_000 })}
+      />,
+    );
+    expect(
+      screen.getByText("OpenSky knows it but has no position (last contact 7 s ago): listed, not drawn"),
+    ).toBeInTheDocument();
+  });
+
+  it("says a fetched track with fewer than two waypoints has nothing to draw", () => {
+    const track = {
+      icao24: "3c6444",
+      start_time: 1_763_990_000,
+      end_time: 0,
+      path: [{ time: 1, latitude: 47, longitude: -1, on_ground: false }],
+    };
+    render(<OpenSkyGapSection {...props({ backfill: { kind: "done", track } })} />);
+    expect(screen.getByText("OpenSky's track has no positions to draw")).toBeInTheDocument();
+    expect(screen.queryByText(/waypoints since/)).toBeNull();
+  });
+
   it("follows only on request, and says when a followed aircraft is not asked for yet", async () => {
     const onToggleFollow = vi.fn();
     const { rerender } = render(<OpenSkyGapSection {...props({ onToggleFollow })} />);

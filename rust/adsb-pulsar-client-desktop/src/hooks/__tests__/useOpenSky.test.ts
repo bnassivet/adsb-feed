@@ -4,6 +4,7 @@ import { clearMockResponses, emitMockEvent, mockInvokeResponse as mockResponse }
 import { useOpenSky, PRUNE_EVERY_MS } from "../useOpenSky";
 import { useOpenSkyWatch, type OpenSkyWatchInputs } from "../useOpenSkyWatch";
 import { WATCH_RENEW_MS, type OpenSkyStatus, type StatesMessage } from "@/lib/opensky";
+import { NO_DATA_FIRST_RETRY_MS, NO_DATA_GIVE_UP_MS } from "@/lib/opensky-backoff";
 import type { AircraftTrack } from "@/lib/types";
 
 function poll(icao: string, fetched = Date.now()): StatesMessage {
@@ -64,6 +65,16 @@ describe("useOpenSky", () => {
     await waitFor(() => expect(calls.map(([c]) => c)).toContain("get_opensky_states"));
     act(() => emitMockEvent("adsb:opensky", poll("3c6444")));
     expect(result.current.external.get("3C6444")?.track_id).toBe("osky:3C6444");
+  });
+
+  it("remembers the last poll and whom it named, even a poll that named nobody", async () => {
+    const { result } = renderHook(() => useOpenSky(true));
+    expect(result.current.lastPoll).toBeNull();
+    await waitFor(() => expect(calls.map(([c]) => c)).toContain("get_opensky_states"));
+    act(() => emitMockEvent("adsb:opensky", { ...poll("3c6444", 1_000), states: [] }));
+    expect(result.current.lastPoll).toEqual({ fetchedMs: 1_000, named: new Set() });
+    act(() => emitMockEvent("adsb:opensky", poll("3c6444", 2_000)));
+    expect(result.current.lastPoll).toEqual({ fetchedMs: 2_000, named: new Set(["3C6444"]) });
   });
 
   it("ignores polls while the layer is off, and drops what it held when switched off", async () => {
@@ -233,6 +244,80 @@ describe("useOpenSkyWatch", () => {
     expect(invoked()).toEqual([]);
     rerender(inputs({ online: true }));
     expect(invoked().filter(([c]) => c === "set_opensky_watch")).toHaveLength(1);
+  });
+
+  describe("backing off an aircraft OpenSky has no data on", () => {
+    const emptyPoll = (fetched = Date.now()) => ({ fetchedMs: fetched, named: new Set<string>() });
+    const sent = () => invoked().filter(([c]) => c === "set_opensky_watch").map(([, a]) => a);
+
+    // A never-placed aircraft: no loss time, so only the backoff can end its watch.
+    const unplaced: AircraftTrack = { ...lost, latitude: null, longitude: null, last_position_ms: undefined };
+
+    async function settle() {
+      // Let set_opensky_watch resolve, so the service has accepted the list.
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+
+    it("drops it from the list after an empty answer, and asks again with growing delays", async () => {
+      const { result, rerender } = renderHook((p: OpenSkyWatchInputs) => useOpenSkyWatch(p), {
+        initialProps: inputs({ live: [unplaced] }),
+      });
+      await settle();
+      expect(result.current.watched).toEqual(["3c6444"]);
+
+      await act(async () => vi.advanceTimersByTime(1_000));
+      rerender(inputs({ live: [unplaced], lastPoll: emptyPoll() }));
+      expect(result.current.watched).toEqual([]);
+      expect(result.current.noData.get("3C6444")?.delayMs).toBe(NO_DATA_FIRST_RETRY_MS);
+      expect(invoked().map(([c]) => c)).toContain("clear_opensky_watch");
+
+      // Due again: back in the list, one probe.
+      await act(async () => vi.advanceTimersByTime(NO_DATA_FIRST_RETRY_MS));
+      await settle();
+      expect(result.current.watched).toEqual(["3c6444"]);
+
+      // The probe comes back empty too: out again, for twice as long.
+      await act(async () => vi.advanceTimersByTime(1_000));
+      rerender(inputs({ live: [unplaced], lastPoll: emptyPoll() }));
+      expect(result.current.watched).toEqual([]);
+      expect(result.current.noData.get("3C6444")?.delayMs).toBe(2 * NO_DATA_FIRST_RETRY_MS);
+    });
+
+    it("stops asking after five minutes without data, until followed afresh", async () => {
+      const { result, rerender } = renderHook((p: OpenSkyWatchInputs) => useOpenSkyWatch(p), {
+        initialProps: inputs({ live: [unplaced] }),
+      });
+      for (let i = 0; i < 12 && !result.current.noData.get("3C6444")?.stopped; i++) {
+        await settle();
+        await act(async () => vi.advanceTimersByTime(1_000));
+        rerender(inputs({ live: [unplaced], lastPoll: emptyPoll() }));
+        const due = result.current.noData.get("3C6444")!.nextProbeMs;
+        await act(async () => vi.advanceTimersByTime(Math.max(0, due - Date.now())));
+      }
+      expect(result.current.noData.get("3C6444")?.stopped).toBe(true);
+      const probes = sent().length;
+      await act(async () => vi.advanceTimersByTime(2 * NO_DATA_GIVE_UP_MS));
+      expect(result.current.watched).toEqual([]);
+      // Only renewals of an empty list would be sent, and an empty list sends nothing.
+      expect(sent()).toHaveLength(probes);
+
+      // Unfollow and follow again: asked for at once.
+      rerender(inputs({ live: [unplaced], followed: [] }));
+      rerender(inputs({ live: [unplaced] }));
+      expect(result.current.watched).toEqual(["3c6444"]);
+    });
+
+    it("does not count a poll made before the aircraft was accepted", () => {
+      const { result, rerender } = renderHook((p: OpenSkyWatchInputs) => useOpenSkyWatch(p), {
+        initialProps: inputs({ live: [unplaced] }),
+      });
+      // set_opensky_watch has not resolved yet.
+      rerender(inputs({ live: [unplaced], lastPoll: emptyPoll() }));
+      expect(result.current.noData.size).toBe(0);
+      expect(result.current.watched).toEqual(["3c6444"]);
+    });
   });
 
   it("sends areas on their own", () => {

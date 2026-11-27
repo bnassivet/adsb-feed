@@ -26,9 +26,18 @@ export const PRUNE_EVERY_MS = 10_000;
 
 export type BackfillState = BackfillEntry;
 
+export interface OpenSkyPoll {
+  fetchedMs: number;
+  named: ReadonlySet<string>;
+}
+
 export interface OpenSkyState {
   /** What the service last reported over MQTT. */
   service: OpenSkyServiceView;
+  /** The last poll received while the layer is on: when it was made, and the
+   *  aircraft it named (uppercase hex). A poll naming nobody still counts: it
+   *  is OpenSky's answer, and the no-data backoff reads it. */
+  lastPoll: OpenSkyPoll | null;
   /** OpenSky aircraft held, by uppercase hex. Never part of the live store. */
   external: Map<string, ExternalTrack>;
   /** Track backfills asked for, by uppercase hex. */
@@ -58,6 +67,7 @@ export function useOpenSky(active: boolean): OpenSkyState {
   // One state for both, so one update can drop a track and its backfill together.
   const [held, setHeld] = useState<OpenSkyHeld>(() => ({ external: new Map(), backfill: new Map() }));
   const { external, backfill } = held;
+  const [lastPoll, setLastPoll] = useState<OpenSkyPoll | null>(null);
   const [requested, setRequested] = useState<boolean | null>(null);
   const [serviceError, setServiceError] = useState<string | null>(null);
 
@@ -65,6 +75,7 @@ export function useOpenSky(active: boolean): OpenSkyState {
   if (!active && (external.size > 0 || backfill.size > 0)) {
     setHeld({ external: new Map(), backfill: new Map() });
   }
+  if (!active && lastPoll !== null) setLastPoll(null);
 
   useEffect(() => {
     getOpenSkyService()
@@ -99,6 +110,10 @@ export function useOpenSky(active: boolean): OpenSkyState {
     if (!activeRef.current) return;
     const now = Date.now();
     setHeld((current) => ({ ...current, external: mergeStates(current.external, message, now) }));
+    setLastPoll({
+      fetchedMs: message.fetched_ms,
+      named: new Set(message.states.map(({ state }) => state.icao24.trim().toUpperCase())),
+    });
   });
   useTauriEvent<OpenSkyServiceView>("adsb:opensky-service", setService);
 
@@ -169,6 +184,7 @@ export function useOpenSky(active: boolean): OpenSkyState {
 
   return {
     service,
+    lastPoll,
     external,
     backfill,
     requestBackfill,

@@ -5805,14 +5805,61 @@ desktop's localStorage: the service keeps no list. An aircraft is shown while a
 poll of its area names it, and dropped once polls stop doing so (2.5 × the
 interval, at least a minute) -- "until it leaves the area".
 
-A track is also dropped once its **position** is older than 2 minutes
-(`POSITION_MAX_AGE_MS`), even if polls still name it: OpenSky keeps reporting
-an aircraft it has lost, at its last position, and a followed aircraft is
-polled by name, so without this rule a frozen aircraft stayed on the map for as
-long as it was followed. `mergeStates` applies the same rule, so the next poll
-does not bring it back. A dropped track takes its traces with it: the trail,
-the gap connector and its **backfilled path** (`pruneOpenSky`). Only a backfill
-for an aircraft OpenSky never followed stays until hidden.
+A position older than 2 minutes (`POSITION_MAX_AGE_MS`) is never **drawn**, even
+if polls still name the aircraft. OpenSky keeps reporting an aircraft it has
+lost, at its last position, and a followed aircraft is polled by name. Without
+this rule a frozen aircraft stayed on the map for as long as it was followed.
+Listing and drawing follow different rules:
+
+| Named by | Without a fresh position |
+|---|---|
+| an **area** only | dropped: `mergeStates` does not take it in, and `pruneExternal` drops it. "Until it leaves the area" |
+| a **follow** (`matched` holds `aircraft`) | **listed, not drawn**: a table row with `—` for latitude/longitude, no marker. The user asked about it, and "OpenSky knows it but cannot place it" is an answer |
+
+`ExternalTrack.position_ms` is when OpenSky last placed the aircraft (null if it
+never did); `last_seen` is its last contact. `visibleExternal` feeds the table.
+The map gets `drawableExternal`, which re-checks freshness against the watch
+clock, so a position going stale between polls stops being drawn. A dropped
+track takes its traces with it: the trail, the gap connector and its
+**backfilled path** (`pruneOpenSky`). Only a backfill for an aircraft OpenSky
+never followed stays until hidden.
+
+**Why a followed aircraft can show nothing.** An aircraft the receiver hears but
+never places (Mode S without a position) is usually unplaced at OpenSky too.
+Often OpenSky does not know it at all: the poll comes back `"states": []`. The
+details panel says which case it is (`openSkyFollowStatus`):
+
+| Status | Line |
+|---|---|
+| `pending` | followed, not asked for yet (the receiver still has it) |
+| `waiting-answer` | asked; no poll has answered for it yet |
+| `no-data` | a poll came back without it: OpenSky has no data, nothing to draw; asked again in *n* s |
+| `gave-up` | no data for 5 min: no longer asked; following it again retries |
+| `no-position` | OpenSky names it without a fresh position: listed, not drawn |
+| `placed` | last OpenSky position *n* s ago |
+
+A backfill (*Fill gaps*) with fewer than two waypoints is not drawn either, and
+the panel says "OpenSky's track has no positions to draw".
+
+**No-data backoff** (`lib/opensky-backoff.ts`, driven by `useOpenSkyWatch`). A
+never-placed aircraft has no loss time, so the 5-minute loss cap never ended its
+watch: one OpenSky does not know was asked for on every poll for as long as it
+was followed. Now each poll that covered it and came back without it leaves it
+out of the watch list and schedules one probe: 15 s, 30 s, 60 s, 120 s later.
+Once the next probe would fall past 5 min of no data (`NO_DATA_GIVE_UP_MS`) it is
+not asked for again. That is about five polls instead of one every interval, and
+nothing at all between probes when it is the only aircraft watched.
+
+- **Only a poll made after the service accepted the aircraft answers for it.**
+  `useOpenSkyWatch` keeps when each hex was acknowledged (`set_opensky_watch`
+  resolved). `recordPoll` ignores older polls, so the empty poll that was already
+  in flight when you clicked Follow does not count.
+- **Being named resets it**, and so does unfollowing (following again starts
+  afresh) or the receiver placing it after the backoff began (`pruneBackoff`).
+- **Probes are on time.** The hook arms a timer for the next one, rather than
+  waiting up to 5 s for the gap tick.
+- **It is per desktop, not in the service.** The service polls whatever the
+  union of leases holds; the client knows what was followed and why.
 
 All aircraft share **one** `/states/all?icao24=…&icao24=…` call (1 credit
 however many); each area is one call costing 1 credit up to 25 sq°, 2 up to 100.

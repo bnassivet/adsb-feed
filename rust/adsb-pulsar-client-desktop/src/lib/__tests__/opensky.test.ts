@@ -22,6 +22,8 @@ import {
   selectionHex,
   staleAfterMs,
   visibleExternal,
+  drawableExternal,
+  openSkyFollowStatus,
   watchSignature,
   type ExternalTrack,
   type OpenSkyState,
@@ -140,6 +142,19 @@ describe("computeWatch", () => {
     expect(watch(many, [])).toHaveLength(MAX_WATCHED_AIRCRAFT);
   });
 
+  it("leaves out an aircraft held back by the no-data backoff", () => {
+    const out = computeWatch({
+      followed: ["3C6444", "39DE4F"],
+      live: new Map(),
+      external: new Map(),
+      receiver: RECEIVER,
+      mode: "gaps",
+      now: NOW,
+      heldBack: new Set(["3C6444"]),
+    });
+    expect(out).toEqual(["39de4f"]);
+  });
+
   it("is stable for the same inputs, whatever the order they were followed in", () => {
     expect(watch(["39DE4F", "3C6444"], [])).toEqual(watch(["3C6444", "39DE4F"], []));
   });
@@ -187,6 +202,49 @@ describe("visibleExternal", () => {
   it("shows both in always mode", () => {
     const shown = visibleExternal(held, new Map([["3C6444", live("3C6444", NOW - 1_000)]]), "always", NOW);
     expect(shown).toHaveLength(2);
+  });
+  it("lists an aircraft OpenSky has no position for: the table shows it, the map does not", () => {
+    const blind = mergeStates(
+      new Map(),
+      poll([state("3c6444", { time_position: null, latitude: null, longitude: null, last_contact: NOW / 1000 })]),
+      NOW,
+    );
+    const listed = visibleExternal(blind, new Map([["3C6444", live("3C6444", undefined)]]), "gaps", NOW);
+    expect(listed.map((t) => t.hex_ident)).toEqual(["3C6444"]);
+    expect(drawableExternal(listed, NOW)).toEqual([]);
+  });
+});
+
+describe("openSkyFollowStatus", () => {
+  const base = { followed: true, watched: true, external: undefined, noData: undefined, now: NOW };
+  const placed = mergeStates(new Map(), poll([state("3c6444")]), NOW).get("3C6444")!;
+  const blind = mergeStates(
+    new Map(),
+    poll([state("3c6444", { time_position: null, latitude: null, longitude: null, last_contact: NOW / 1000 })]),
+    NOW,
+  ).get("3C6444")!;
+  const noData = { sinceMs: NOW - 20_000, delayMs: 30_000, nextProbeMs: NOW + 10_000, stopped: false };
+
+  it("is not-followed until the user follows it", () => {
+    expect(openSkyFollowStatus({ ...base, followed: false })).toBe("not-followed");
+  });
+  it("is pending while followed but not asked for (the receiver still has it)", () => {
+    expect(openSkyFollowStatus({ ...base, watched: false })).toBe("pending");
+  });
+  it("waits for OpenSky's first answer while asked for", () => {
+    expect(openSkyFollowStatus(base)).toBe("waiting-answer");
+  });
+  it("says OpenSky has no data while backing off, and that it gave up once stopped", () => {
+    expect(openSkyFollowStatus({ ...base, watched: false, noData })).toBe("no-data");
+    expect(openSkyFollowStatus({ ...base, watched: true, noData })).toBe("no-data");
+    expect(openSkyFollowStatus({ ...base, watched: false, noData: { ...noData, stopped: true } })).toBe("gave-up");
+  });
+  it("tells a known but unplaced aircraft from a placed one", () => {
+    expect(openSkyFollowStatus({ ...base, external: blind })).toBe("no-position");
+    expect(openSkyFollowStatus({ ...base, external: placed })).toBe("placed");
+  });
+  it("reports a placed aircraft even while not watched (the receiver has it again)", () => {
+    expect(openSkyFollowStatus({ ...base, watched: false, external: placed })).toBe("placed");
   });
 });
 
@@ -343,13 +401,27 @@ describe("pruneOpenSky — a dropped track takes its traces with it", () => {
     expect([...out.backfill.keys()]).toEqual(["39DE4F"]);
   });
 
-  it("drops an aircraft OpenSky still names but no longer places (frozen position)", () => {
+  it("drops an area aircraft OpenSky still names but no longer places (frozen position)", () => {
     // Polled every few seconds, but its position never moves past NOW.
-    let external = mergeStates(new Map(), poll([state("3c6444")]), NOW);
-    external = mergeStates(external, poll([state("3c6444")], NOW + 200_000), NOW + 200_000);
+    const inArea = (fetched: number): StatesMessage => ({
+      ...poll([state("3c6444")], fetched),
+      states: [{ state: state("3c6444"), matched: [{ kind: "area", id: "w" }] }],
+    });
+    let external = mergeStates(new Map(), inArea(NOW), NOW);
+    external = mergeStates(external, inArea(NOW + 200_000), NOW + 200_000);
     const out = pruneOpenSky({ external, backfill: new Map() }, NOW + 200_000, 60_000);
     expect(out.external.size).toBe(0);
     expect(POSITION_MAX_AGE_MS).toBeLessThan(200_000);
+  });
+
+  it("keeps a followed aircraft OpenSky still names after its position froze, undrawn", () => {
+    let external = mergeStates(new Map(), poll([state("3c6444")]), NOW);
+    external = mergeStates(external, poll([state("3c6444", { last_contact: NOW / 1000 + 195 })], NOW + 200_000), NOW + 200_000);
+    const out = pruneOpenSky({ external, backfill: new Map() }, NOW + 200_000, 60_000);
+    const t = out.external.get("3C6444")!;
+    expect(t).toBeDefined();
+    expect(t.latitude).toBeNull();
+    expect(drawableExternal([t], NOW + 200_000)).toHaveLength(0);
   });
 
   it("keeps a backfill for an aircraft OpenSky never followed, and one still loading", () => {
@@ -369,9 +441,42 @@ describe("pruneOpenSky — a dropped track takes its traces with it", () => {
 });
 
 describe("mergeStates — a frozen position is not taken back in", () => {
-  it("ignores a state whose position is older than POSITION_MAX_AGE_MS", () => {
+  it("ignores an area state whose position is older than POSITION_MAX_AGE_MS", () => {
     const old = state("3c6444", { time_position: (NOW - POSITION_MAX_AGE_MS - 1_000) / 1000 });
-    expect(mergeStates(new Map(), poll([old]), NOW).size).toBe(0);
+    const msg: StatesMessage = { ...poll([]), states: [{ state: old, matched: [{ kind: "area", id: "w" }] }] };
+    expect(mergeStates(new Map(), msg, NOW).size).toBe(0);
+  });
+
+  it("lists a followed aircraft with a stale position, but draws nothing for it", () => {
+    const old = state("3c6444", {
+      time_position: (NOW - POSITION_MAX_AGE_MS - 1_000) / 1000,
+      last_contact: NOW / 1000 - 3,
+    });
+    const t = mergeStates(new Map(), poll([old]), NOW).get("3C6444")!;
+    expect(t.latitude).toBeNull();
+    expect(t.longitude).toBeNull();
+    expect(t.positions).toHaveLength(0);
+    expect(t.position_ms).toBeNull();
+    expect(t.last_seen).toBe(NOW - 3_000);
+  });
+
+  it("lists a followed aircraft OpenSky knows without any position", () => {
+    const blind = state("3c6444", { time_position: null, latitude: null, longitude: null, last_contact: NOW / 1000 - 2 });
+    const t = mergeStates(new Map(), poll([blind]), NOW).get("3C6444")!;
+    expect(t.latitude).toBeNull();
+    expect(t.positions).toHaveLength(0);
+    expect(t.position_ms).toBeNull();
+  });
+
+  it("does not move a placed aircraft back to its last position once OpenSky stops placing it", () => {
+    let m = mergeStates(new Map(), poll([state("3c6444")]), NOW);
+    m = mergeStates(m, poll([state("3c6444", { time_position: null, latitude: null, longitude: null })], NOW + 10_000), NOW + 10_000);
+    const t = m.get("3C6444")!;
+    // The trail stays, the current position goes: nothing frozen is drawn as live.
+    expect(t.positions).toHaveLength(1);
+    expect(t.position_ms).toBe(NOW - 5_000);
+    expect(drawableExternal([t], NOW + 10_000)).toHaveLength(1);
+    expect(drawableExternal([t], NOW + POSITION_MAX_AGE_MS)).toHaveLength(0);
   });
 
   it("keeps a state whose position is recent", () => {
