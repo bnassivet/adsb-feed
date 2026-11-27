@@ -126,6 +126,30 @@ export function trailUpTo(
 }
 
 /**
+ * Wall-clock time of each point of {@link trailUpTo}'s trail, index-aligned
+ * with it: a waypoint at `startMs + t_offset_s`, the current point at
+ * `startMs + elapsedS`. Same filter, same duplicate rule, same cap.
+ */
+export function trailTimesUpTo(
+  waypoints: DynamicWaypoint[],
+  elapsedS: number,
+  startMs: number,
+  max: number = MAX_POSITIONS,
+): number[] {
+  if (waypoints.length === 0) return [];
+
+  const flown = waypoints.filter((w) => w.t_offset_s <= elapsedS);
+  const times = flown.map((w) => startMs + w.t_offset_s * 1000);
+
+  const lastFlown = flown[flown.length - 1];
+  if (sampleTrajectory(waypoints, elapsedS) && (!lastFlown || lastFlown.t_offset_s !== elapsedS)) {
+    times.push(startMs + elapsedS * 1000);
+  }
+
+  return times.slice(-max);
+}
+
+/**
  * @param trajectories Agent-generated trajectories.
  * @param playback Per-trajectory transport state from `useTrajectoryPlayback`.
  * @returns Tracks for every non-stopped trajectory, ready to merge into the map.
@@ -158,6 +182,7 @@ export function useAgentSimulatedTracks(
         is_on_ground: sample.altFt <= 0,
         timestamp: new Date(now).toISOString(),
         positions: trailUpTo(traj.waypoints, entry.elapsedS),
+        position_times: trailTimesUpTo(traj.waypoints, entry.elapsedS, now - entry.elapsedS * 1000),
         // Wall-clock instant this aircraft's route began, derived from its clock.
         first_seen: now - entry.elapsedS * 1000,
         last_seen: now,
