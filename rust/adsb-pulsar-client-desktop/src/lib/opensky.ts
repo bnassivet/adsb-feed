@@ -12,6 +12,7 @@
 import { haversineDistanceNm } from "./geo";
 import { trackKey, type AircraftTrack, type TrackSection } from "./types";
 import type { HistoryMapItem } from "./opensky-history";
+import type { NoDataEntry } from "./opensky-backoff";
 
 // ── Wire types ──────────────────────────────────────────────────────────────
 
@@ -209,6 +210,8 @@ export interface WatchInputs {
   receiver: { lat: number; lng: number } | null;
   mode: OpenSkyMode;
   now: number;
+  /** Uppercase hexes the no-data backoff holds back (opensky-backoff.ts). */
+  heldBack?: ReadonlySet<string>;
 }
 
 /**
@@ -219,8 +222,9 @@ export interface WatchInputs {
  * - in "gaps" mode, while the receiver still has it (fresh position);
  * - once {@link LOSS_CAP_MS} has passed since its last local position;
  * - once OpenSky places it beyond {@link DISTANCE_CAP_NM} of the receiver.
- * An aircraft the receiver never placed (picked from an OpenSky area) has no
- * loss time, so only the distance cap applies.
+ * - while the no-data backoff holds it back (`heldBack`).
+ * An aircraft the receiver never placed has no loss time, so only the distance
+ * cap and the no-data backoff end its watch.
  */
 export function computeWatch(inputs: WatchInputs): string[] {
   const { live, external, receiver, mode, now } = inputs;
@@ -228,6 +232,7 @@ export function computeWatch(inputs: WatchInputs): string[] {
   for (const key of inputs.followed) {
     const hex = selectionHex(key);
     if (!isIcao24(hex)) continue;
+    if (inputs.heldBack?.has(hex)) continue;
     const local = live.get(hex);
     const lastLocal = lastLocalPositionMs(local);
     if (mode === "gaps" && lastLocal !== null && now - lastLocal < GAP_THRESHOLD_MS) continue;
@@ -263,13 +268,27 @@ export interface ExternalTrack extends AircraftTrack {
   times: number[];
   /** When the last poll mentioned it, epoch ms. */
   last_update_ms: number;
+  /** When OpenSky last placed it, epoch ms, or null if it never did. A track
+   *  is drawn only while this is fresh ({@link drawableExternal}); one OpenSky
+   *  names without a position is listed, not drawn. */
+  position_ms: number | null;
   origin_country: string | null;
+}
+
+/** Whether a poll named the aircraft because it is followed, not for an area. */
+function isFollowedMatch(matched: OpenSkyMatch[]): boolean {
+  return matched.some((m) => m.kind === "aircraft");
 }
 
 /**
  * Folds one poll into the held tracks. Returns a new map: every aircraft in
  * the poll is updated, every other one is kept until {@link pruneExternal}
  * drops it.
+ *
+ * A followed aircraft is kept even when OpenSky has no fresh position for it:
+ * it is listed (the user asked for it, and "OpenSky knows it, unplaced" is an
+ * answer), but its position is null so nothing frozen is drawn. An aircraft
+ * named only by an area needs a fresh position, or it is not taken in.
  */
 export function mergeStates(
   held: Map<string, ExternalTrack>,
@@ -282,14 +301,17 @@ export function mergeStates(
     const prev = next.get(hex);
     const positions = prev ? [...(prev.positions as [number, number, number | null][])] : [];
     const times = prev ? [...prev.times] : [];
-    const posTime = (state.time_position ?? state.last_contact ?? message.data_time) * 1000;
+    const contactMs = (state.last_contact ?? state.time_position ?? message.data_time) * 1000;
+    const placed = state.latitude != null && state.longitude != null;
+    const posTime = placed ? (state.time_position ?? state.last_contact ?? message.data_time) * 1000 : null;
     // A position OpenSky no longer updates is not drawn, and must not come
     // back with every poll after pruneExternal dropped it.
-    if (now - posTime > POSITION_MAX_AGE_MS) continue;
-    if (state.latitude != null && state.longitude != null) {
+    const fresh = posTime !== null && now - posTime <= POSITION_MAX_AGE_MS;
+    if (!fresh && !isFollowedMatch(matched)) continue;
+    if (fresh) {
       const lastTime = times.length > 0 ? times[times.length - 1] : -Infinity;
       if (posTime > lastTime) {
-        positions.push([state.latitude, state.longitude, state.altitude_ft ?? null]);
+        positions.push([state.latitude!, state.longitude!, state.altitude_ft ?? null]);
         times.push(posTime);
         while (positions.length > MAX_EXTERNAL_POINTS) {
           positions.shift();
@@ -297,6 +319,9 @@ export function mergeStates(
         }
       }
     }
+    // Without a fresh fix, the previous one stands only while it is fresh itself.
+    const keepPrev = !fresh && prev?.position_ms != null && now - prev.position_ms <= POSITION_MAX_AGE_MS;
+    const position_ms = fresh ? Math.max(posTime, prev?.position_ms ?? -Infinity) : keepPrev ? prev!.position_ms : null;
     next.set(hex, {
       hex_ident: hex,
       track_id: `${OPENSKY_KEY_PREFIX}${hex}`,
@@ -305,19 +330,20 @@ export function mergeStates(
       altitude: state.altitude_ft ?? null,
       ground_speed: state.ground_speed_kt ?? null,
       track: state.track_deg ?? null,
-      latitude: state.latitude ?? prev?.latitude ?? null,
-      longitude: state.longitude ?? prev?.longitude ?? null,
+      latitude: fresh ? state.latitude! : keepPrev ? prev!.latitude : null,
+      longitude: fresh ? state.longitude! : keepPrev ? prev!.longitude : null,
       vertical_rate: state.vertical_rate_fpm ?? null,
       squawk: state.squawk ?? null,
       is_on_ground: state.on_ground,
-      timestamp: new Date(posTime).toISOString(),
+      timestamp: new Date(contactMs).toISOString(),
       positions,
       times,
       first_seen: prev?.first_seen ?? now,
-      last_seen: posTime,
+      last_seen: contactMs,
       message_count: 0,
       matched,
       last_update_ms: now,
+      position_ms,
       origin_country: state.origin_country ?? null,
     });
   }
@@ -355,9 +381,14 @@ export function pruneExternal(
  */
 export const POSITION_MAX_AGE_MS = 120_000;
 
-/** A track is dropped when polls stop naming it, or name it without placing it. */
+/**
+ * A track is dropped when polls stop naming it. One named only for an area is
+ * also dropped once OpenSky stops placing it; a followed one stays listed.
+ */
 function isDropped(t: ExternalTrack, now: number, staleMs: number): boolean {
-  return now - t.last_update_ms > staleMs || now - t.last_seen > Math.max(staleMs, POSITION_MAX_AGE_MS);
+  if (now - t.last_update_ms > staleMs) return true;
+  if (isFollowedMatch(t.matched)) return false;
+  return t.position_ms === null || now - t.position_ms > Math.max(staleMs, POSITION_MAX_AGE_MS);
 }
 
 /** A track backfill asked for in the details panel. */
@@ -394,8 +425,10 @@ export function pruneOpenSky(held: OpenSkyHeld, now: number, staleMs: number): O
 }
 
 /**
- * The OpenSky tracks to draw. In "gaps" mode an aircraft the receiver has a
- * fresh position for is not drawn twice; in "always" mode both are.
+ * The OpenSky tracks to list. In "gaps" mode an aircraft the receiver has a
+ * fresh position for is not shown twice; in "always" mode both are. Tracks
+ * OpenSky has no position for are listed: {@link drawableExternal} keeps
+ * those off the map.
  */
 export function visibleExternal(
   held: Map<string, ExternalTrack>,
@@ -405,11 +438,56 @@ export function visibleExternal(
 ): ExternalTrack[] {
   const out: ExternalTrack[] = [];
   for (const [hex, t] of held) {
-    if (t.latitude == null || t.longitude == null) continue;
     if (mode === "gaps" && isLocallyFresh(live.get(hex), now)) continue;
     out.push(t);
   }
   return out.sort((a, b) => a.hex_ident.localeCompare(b.hex_ident));
+}
+
+/** The listed OpenSky tracks that can be drawn: placed, and placed recently. */
+export function drawableExternal(tracks: ExternalTrack[], now: number): ExternalTrack[] {
+  return tracks.filter(
+    (t) =>
+      t.latitude != null &&
+      t.longitude != null &&
+      t.position_ms != null &&
+      now - t.position_ms <= POSITION_MAX_AGE_MS,
+  );
+}
+
+/**
+ * What following an aircraft has produced so far, for the details panel:
+ * - `not-followed`: nothing asked;
+ * - `pending`: followed, not asked for yet (the receiver still has it);
+ * - `waiting-answer`: asked, no answer about it yet;
+ * - `no-data`: polls came back without it; asked again later (backoff);
+ * - `gave-up`: no data for 5 min (NO_DATA_GIVE_UP_MS): no longer asked;
+ * - `no-position`: OpenSky names it, without a fresh position;
+ * - `placed`: OpenSky has a fresh position.
+ */
+export type OpenSkyFollowStatus =
+  | "not-followed"
+  | "pending"
+  | "waiting-answer"
+  | "no-data"
+  | "gave-up"
+  | "no-position"
+  | "placed";
+
+export function openSkyFollowStatus(inputs: {
+  followed: boolean;
+  watched: boolean;
+  external: ExternalTrack | undefined;
+  /** Its no-data backoff entry, if any. */
+  noData: NoDataEntry | undefined;
+  now: number;
+}): OpenSkyFollowStatus {
+  const { followed, watched, external, noData, now } = inputs;
+  if (external && drawableExternal([external], now).length > 0) return "placed";
+  if (!followed) return "not-followed";
+  if (external) return "no-position";
+  if (noData) return noData.stopped ? "gave-up" : "no-data";
+  return watched ? "waiting-answer" : "pending";
 }
 
 // ── Credits ─────────────────────────────────────────────────────────────────

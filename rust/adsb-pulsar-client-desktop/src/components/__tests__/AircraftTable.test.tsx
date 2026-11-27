@@ -726,6 +726,14 @@ describe("AircraftTable — OpenSky section", () => {
     expect(onSelect).toHaveBeenCalledWith("osky:3C6444", expect.anything());
   });
 
+  it("lists an aircraft OpenSky knows without a position, with dashes for it", () => {
+    const blind = makeTrack("3C6444", { track_id: "osky:3C6444", latitude: null, longitude: null });
+    render(<AircraftTable {...defaultSortProps} tracks={[]} openSkyTracks={[blind]} />);
+    const row = screen.getByTestId("row-opensky-osky:3C6444");
+    expect(row).toHaveTextContent("OSKY");
+    expect(row.textContent).toContain("—");
+  });
+
   it("collapses", async () => {
     const user = userEvent.setup();
     render(<AircraftTable {...defaultSortProps} tracks={[]} openSkyTracks={[osky("3C6444")]} />);

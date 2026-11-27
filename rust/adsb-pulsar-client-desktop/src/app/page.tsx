@@ -18,15 +18,18 @@ import type { OpenSkyDetails } from "@/components/OpenSkyGapSection";
 import type { OpenSkyHistoryDetails } from "@/components/OpenSkyHistorySection";
 import { historyCost, openSkyHistoryScope, historyMapData, historyUnavailable } from "@/lib/opensky-history";
 import {
+  drawableExternal,
   EMPTY_OPENSKY_MAP,
   hexKey,
   isIcao24,
+  openSkyFollowStatus,
   openSkyMapData,
   openSkyTraceKey,
   openSkyTraceOwners,
   selectionHex,
   visibleExternal,
   withoutHiddenTraces,
+  type ExternalTrack,
   type OpenSkyArea,
   type OpenSkyMode,
   type OpenSkyTrack,
@@ -997,6 +1000,7 @@ export default function Dashboard() {
     mode: openSkyMode,
     areas: openSkyAreas,
     online: openSky.service.availability !== "offline",
+    lastPoll: openSky.lastPoll,
   });
   const openSkyTracks = useMemo(
     () =>
@@ -1027,8 +1031,10 @@ export default function Dashboard() {
     for (const [hex, b] of openSky.backfill) if (b.kind === "done") backfills.set(hex, b.track);
     const selected = new Set([...selectedHexIdents].map(selectionHex));
     return {
+      // Listed is not drawn: an aircraft OpenSky names without a fresh
+      // position has a table row and nothing on the map.
       ...openSkyMapData(
-        openSkyTracks as Parameters<typeof openSkyMapData>[0],
+        drawableExternal(openSkyTracks as ExternalTrack[], openSkyWatch.now),
         localByHex,
         selected,
         openSkyAreas,
@@ -1036,7 +1042,7 @@ export default function Dashboard() {
       ),
       history: openSkyHistoryMap,
     };
-  }, [openSkyActive, openSkyHistoryMap, openSky.backfill, selectedHexIdents, openSkyTracks, localByHex, openSkyAreas]);
+  }, [openSkyActive, openSkyHistoryMap, openSky.backfill, selectedHexIdents, openSkyTracks, openSkyWatch.now, localByHex, openSkyAreas]);
   const openSkyMap = useMemo(
     () => (drawnOpenSkyMap ? withoutHiddenTraces(drawnOpenSkyMap, hiddenOpenSkyTraces) : null),
     [drawnOpenSkyMap, hiddenOpenSkyTraces],
@@ -1211,10 +1217,18 @@ export default function Dashboard() {
     if (!track || !openSkyActive || !hex || !isIcao24(hex)) return undefined;
     const simulated = isSimulatedTrack(track.hex_ident, simulatedTracks, agentSimulatedTracks);
     const traceKey = openSkyTraceKey("backfill", hex);
+    const external = openSky.external.get(hex);
+    const watched = openSkyWatch.watched.includes(hex.toLowerCase());
+    const followed = openSkyFollow.isFollowed(hex);
+    const noData = openSkyWatch.noData.get(hex);
     return {
-      lastOpenSkyMs: openSky.external.get(hex)?.last_seen ?? null,
-      watched: openSkyWatch.watched.includes(hex.toLowerCase()),
-      followed: openSkyFollow.isFollowed(hex),
+      lastOpenSkyMs: external?.position_ms ?? null,
+      lastContactMs: external?.last_seen ?? null,
+      lastPollMs: openSky.lastPoll?.fetchedMs ?? null,
+      retryAtMs: noData && !noData.stopped ? noData.nextProbeMs : null,
+      status: openSkyFollowStatus({ followed, watched, external, noData, now: openSkyWatch.now }),
+      watched,
+      followed,
       onToggleFollow: () => openSkyFollow.toggle(hex),
       followUnavailable: simulated
         ? "Simulated aircraft: nothing is sent to OpenSky"

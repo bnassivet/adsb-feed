@@ -190,8 +190,8 @@
     "semantic_hash": "7be5aa3cf0104bf1d223624473c2fff8"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/app/page.tsx": {
-    "mtime": 1795731975.3568072,
-    "ast_hash": "49d90457a75833f167afa1923b92bab4",
+    "mtime": 1795784278.5339298,
+    "ast_hash": "0b061b695f460eb3072a5c72ab5bfd0c",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/app/settings/page.tsx": {
@@ -360,8 +360,8 @@
     "semantic_hash": "4f09769ee0d833b41f84cff29c484ce5"
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/__tests__/AircraftTable.test.tsx": {
-    "mtime": 1795731975.359444,
-    "ast_hash": "713dedfd3b3631ee52fdbd5bfd5153d7",
+    "mtime": 1795783707.24907,
+    "ast_hash": "6c3b0ae256b89b1dc508ccae24bc3fb3",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/__tests__/ConnectionStatus.test.tsx": {
@@ -410,7 +410,7 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/useSimulatedTracks.ts": {
-    "mtime": 1795763711.4738417,
+    "mtime": 1795781227.1534803,
     "ast_hash": "c316f4520debc1e8fb44385a7002e9b2",
     "semantic_hash": ""
   },
@@ -495,7 +495,7 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/__tests__/useSimulatedTracks.test.ts": {
-    "mtime": 1795763693.1077988,
+    "mtime": 1795781227.153005,
     "ast_hash": "1ddc98b1c94295935ad8e8b6a5997606",
     "semantic_hash": ""
   },
@@ -515,7 +515,7 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/geojson.ts": {
-    "mtime": 1795763711.4730353,
+    "mtime": 1795781227.1539984,
     "ast_hash": "5fbb6e41feb2fbf88b839058e261d7a5",
     "semantic_hash": ""
   },
@@ -660,7 +660,7 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/geojson.test.ts": {
-    "mtime": 1795763693.1070108,
+    "mtime": 1795781227.153762,
     "ast_hash": "54988c464dcce00196ac69174d110ba3",
     "semantic_hash": ""
   },
@@ -790,7 +790,7 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/CLAUDE.md": {
-    "mtime": 1795763762.352607,
+    "mtime": 1795781227.1486943,
     "ast_hash": "bf6441c1577b12276d5fa80ca2caa122",
     "semantic_hash": ""
   },
@@ -805,8 +805,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/DESIGN.md": {
-    "mtime": 1795763762.353725,
-    "ast_hash": "01f8f92a8392dcfd2f12b6bcacbf2fba",
+    "mtime": 1795784318.735662,
+    "ast_hash": "c3f906fce694717144c77519e3744ac6",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/2026-02-22-imported-tracks-selection-design.md": {
@@ -2070,7 +2070,7 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/useAgentSimulatedTracks.ts": {
-    "mtime": 1795763711.4734647,
+    "mtime": 1795781227.1532426,
     "ast_hash": "a4f58a5f99981b489450f1a3939d60c1",
     "semantic_hash": ""
   },
@@ -2105,7 +2105,7 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/__tests__/useAgentSimulatedTracks.test.ts": {
-    "mtime": 1795763693.1074708,
+    "mtime": 1795781227.152742,
     "ast_hash": "5f2038e1a3279ab5d665e367ae221bfb",
     "semantic_hash": ""
   },
@@ -7615,8 +7615,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/.run/weather-cache.json": {
-    "mtime": 1795736378.8105152,
-    "ast_hash": "2d7eaa0bf467472b0bcab1d9f435c070",
+    "mtime": 1795781904.7675495,
+    "ast_hash": "d316e7ad205a491fd42c0ee081d1d4f3",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/docs/plans/2026-09-14-weather-layer-design.md": {
@@ -11250,8 +11250,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/OpenSkyGapSection.tsx": {
-    "mtime": 1795731975.3587556,
-    "ast_hash": "3887f68e9e44c86015990784be623154",
+    "mtime": 1795784278.533643,
+    "ast_hash": "8d7d87e6b82d850be3614ce1391fbdec",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/OpenSkyLayer.tsx": {
@@ -11270,8 +11270,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/__tests__/OpenSkyGapSection.test.tsx": {
-    "mtime": 1795731975.3602948,
-    "ast_hash": "0d5199de844ac844b11c6a1e2551ad42",
+    "mtime": 1795784191.3264108,
+    "ast_hash": "556225c0fe1f8802d2227969834c5666",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/components/__tests__/OpenSkyControls.test.tsx": {
@@ -11280,28 +11280,28 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/useOpenSkyWatch.ts": {
-    "mtime": 1795731975.3616593,
-    "ast_hash": "ead9304c1c4d850a57dd067c3191c80a",
+    "mtime": 1795784262.3050425,
+    "ast_hash": "96b470336c4d47eb0ee7e046d8b29cf7",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/useOpenSky.ts": {
-    "mtime": 1795731975.3613834,
-    "ast_hash": "979cff2fe0eee45f5eca68b6df1ff368",
+    "mtime": 1795784217.093818,
+    "ast_hash": "d08d8a18640b355debd66a3b09b2b73a",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/__tests__/useOpenSky.test.ts": {
-    "mtime": 1795731975.3610346,
-    "ast_hash": "3a0ccae0d9d9a1938a0f2d6b0b849a84",
+    "mtime": 1795784191.3262017,
+    "ast_hash": "35dc51ff8499e90e42f8a0df8ee45604",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/opensky.ts": {
-    "mtime": 1795731975.3631907,
-    "ast_hash": "0c45cf4278ec276dfc5153053e743539",
+    "mtime": 1795784217.0761952,
+    "ast_hash": "cf5943def7a8d5e64ba18905ca72b438",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/opensky.test.ts": {
-    "mtime": 1795731975.3623161,
-    "ast_hash": "54e8798f07178d54f2ea080d12c56d01",
+    "mtime": 1795784191.3260338,
+    "ast_hash": "96920138fee8d654f70d6a47ff8cef2f",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/scripts/tests/test_stack_opensky.sh": {
@@ -11345,8 +11345,8 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/.run/opensky-state.json": {
-    "mtime": 1795736811.609795,
-    "ast_hash": "e5ad5fb233ccd416557fdd132f8a30b6",
+    "mtime": 1795783962.0784311,
+    "ast_hash": "be97ed7cfd1fd22e5695653176ea1c21",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-data-server/src/opensky.rs": {
@@ -11370,12 +11370,12 @@
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/useOpenSkyFollow.ts": {
-    "mtime": 1795731975.3614764,
+    "mtime": 1795784222.9643013,
     "ast_hash": "8e5c6acbd986c7bf82db7599b1458c1c",
     "semantic_hash": ""
   },
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/hooks/__tests__/useOpenSkyFollow.test.ts": {
-    "mtime": 1795731975.361124,
+    "mtime": 1795784191.3263044,
     "ast_hash": "518fa4c20c74ea487247399f432e791d",
     "semantic_hash": ""
   },
@@ -11397,6 +11397,16 @@
   "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/opensky-menu.test.ts": {
     "mtime": 1795731975.36218,
     "ast_hash": "5aee2041ffb6cb76d0b5c597ffcee10c",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/opensky-backoff.ts": {
+    "mtime": 1795784156.7307727,
+    "ast_hash": "0a2eb5fd7450f82818b2b07f9c9426d7",
+    "semantic_hash": ""
+  },
+  "/Users/brunonassivet/Dvpt/projects/ads-b-project/adsb-feed/rust/adsb-pulsar-client-desktop/src/lib/__tests__/opensky-backoff.test.ts": {
+    "mtime": 1795784156.6079013,
+    "ast_hash": "9c8e8066cdc0db7475b4e2e2dd16c52c",
     "semantic_hash": ""
   }
 }
