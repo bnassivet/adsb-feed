@@ -103,3 +103,29 @@ describe("useSimulatedTracks receiver-relative offset", () => {
     );
   });
 });
+
+describe("useSimulatedTracks per-position times", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000_000);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("stamps each trail point with the time it was produced, in step with positions", () => {
+    const { result } = renderHook(() => useSimulatedTracks(true));
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    for (const t of result.current) {
+      expect(t.position_times).toHaveLength(t.positions.length);
+    }
+    const times = result.current[0].position_times!;
+    expect(Array.from(times).slice(-2)).toEqual([10_002_000, 10_004_000]);
+  });
+});

@@ -25,6 +25,8 @@ interface FlightState {
   segmentIndex: number;
   segmentProgress: number;
   positions: [number, number, number | null][];
+  /** When each trail point was produced (ms since epoch), in step with `positions`. */
+  times: number[];
 }
 
 /** Compute heading in degrees (0-360) from point A to point B. */
@@ -75,6 +77,7 @@ function buildTrack(
     is_on_ground: flight.is_on_ground,
     timestamp: new Date().toISOString(),
     positions: state.positions,
+    position_times: state.times,
     first_seen: Date.now(),
     last_seen: Date.now(),
     message_count: 0,
@@ -126,6 +129,7 @@ export function useSimulatedTracks(
       segmentIndex: 0,
       segmentProgress: (i * 0.15) % 1, // slight offset per flight
       positions: [],
+      times: [],
     }));
 
     const interval = setInterval(() => {
@@ -152,6 +156,7 @@ export function useSimulatedTracks(
             state.segmentIndex = 0;
             state.segmentProgress = 0;
             state.positions = []; // clear trail to avoid teleport line
+            state.times = [];
           }
         }
 
@@ -169,6 +174,7 @@ export function useSimulatedTracks(
           ...state.positions.slice(-(MAX_POSITIONS - 1)),
           [lat, lng, flight.altitude],
         ];
+        state.times = [...state.times.slice(-(MAX_POSITIONS - 1)), Date.now()];
 
         newTracks.push(buildTrack(flight, state, offset));
       }

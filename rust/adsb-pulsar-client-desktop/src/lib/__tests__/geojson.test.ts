@@ -203,3 +203,63 @@ describe("geoJSONToTracks", () => {
     expect(pos[1][2]).toBe(10000);
   });
 });
+
+describe("per-coordinate times (coordTimes)", () => {
+  const T0 = Date.UTC(2026, 10, 27, 14, 2, 11, 123);
+
+  it("exports one ISO time per coordinate, to the millisecond", () => {
+    const fc = tracksToGeoJSON([makeTrack({ position_times: [T0, T0 + 1_000] })]);
+    expect(fc.features[0].properties.coordTimes).toEqual([
+      "2026-11-27T14:02:11.123Z",
+      "2026-11-27T14:02:12.123Z",
+    ]);
+  });
+
+  it("exports an unknown time as null, and Float64Array times like arrays", () => {
+    const fc = tracksToGeoJSON([makeTrack({ position_times: new Float64Array([T0, NaN]) })]);
+    expect(fc.features[0].properties.coordTimes).toEqual(["2026-11-27T14:02:11.123Z", null]);
+  });
+
+  it("exports a single-position Point with a one-element coordTimes", () => {
+    const fc = tracksToGeoJSON([makeTrack({ positions: [[48.85, 2.35, 34000]], position_times: [T0] })]);
+    expect(fc.features[0].geometry.type).toBe("Point");
+    expect(fc.features[0].properties.coordTimes).toEqual(["2026-11-27T14:02:11.123Z"]);
+  });
+
+  it("writes no coordTimes when the track has none or they are out of step", () => {
+    expect(tracksToGeoJSON([makeTrack()]).features[0].properties).not.toHaveProperty("coordTimes");
+    expect(
+      tracksToGeoJSON([makeTrack({ position_times: [T0] })]).features[0].properties,
+    ).not.toHaveProperty("coordTimes");
+    expect(
+      tracksToGeoJSON([makeTrack({ positions: [] })]).features[0].properties,
+    ).not.toHaveProperty("coordTimes");
+  });
+
+  it("round-trips the times through export and import", () => {
+    const [back] = geoJSONToTracks(tracksToGeoJSON([makeTrack({ position_times: [T0, NaN] })]));
+    expect(back.position_times).toHaveLength(2);
+    expect(back.position_times![0]).toBe(T0);
+    expect(Number.isNaN(back.position_times![1])).toBe(true);
+  });
+
+  it("imports epoch-ms numbers too, and ignores a coordTimes of the wrong length", () => {
+    const fc = tracksToGeoJSON([makeTrack()]);
+    fc.features[0].properties.coordTimes = [T0, T0 + 5];
+    expect(geoJSONToTracks(fc)[0].position_times).toEqual([T0, T0 + 5]);
+    fc.features[0].properties.coordTimes = ["2026-11-27T14:02:11.123Z"];
+    expect(geoJSONToTracks(fc)[0].position_times).toBeUndefined();
+  });
+
+  it("reads an unparseable time as unknown rather than rejecting the file", () => {
+    const fc = tracksToGeoJSON([makeTrack()]);
+    fc.features[0].properties.coordTimes = ["not a time", "2026-11-27T14:02:11.123Z"];
+    const times = geoJSONToTracks(fc)[0].position_times!;
+    expect(Number.isNaN(times[0])).toBe(true);
+    expect(times[1]).toBe(T0);
+  });
+
+  it("leaves position_times absent for a file without coordTimes (older exports)", () => {
+    expect(geoJSONToTracks(tracksToGeoJSON([makeTrack()]))[0].position_times).toBeUndefined();
+  });
+});

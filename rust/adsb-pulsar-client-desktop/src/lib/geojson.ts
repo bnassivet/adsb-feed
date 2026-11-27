@@ -31,6 +31,13 @@ export interface TrackProperties {
   last_seen: number;
   message_count: number;
   no_position?: boolean;
+  /**
+   * One time per coordinate, in order: ISO 8601 with milliseconds, null when
+   * unknown. The `coordTimes` convention of @tmcw/togeojson (GPX/KML), kept
+   * out of the coordinates themselves because RFC 7946 says positions SHOULD
+   * NOT carry a fourth element. Import also accepts epoch-ms numbers.
+   */
+  coordTimes?: (string | number | null)[];
 }
 
 /** A GeoJSON Feature representing a single aircraft track. */
@@ -104,6 +111,19 @@ export function tracksToGeoJSON(
   };
 }
 
+/** `position_times` as `coordTimes`, or undefined when there are none in step with the positions. */
+function exportTimes(t: AircraftTrack): (string | null)[] | undefined {
+  const times = t.position_times;
+  if (!times || t.positions.length === 0 || times.length !== t.positions.length) return undefined;
+  return Array.from(times, (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString() : null));
+}
+
+/** `coordTimes` back to epoch ms (NaN when unknown); undefined unless one per coordinate. */
+function importTimes(raw: unknown, count: number): number[] | undefined {
+  if (!Array.isArray(raw) || count === 0 || raw.length !== count) return undefined;
+  return raw.map((v) => (typeof v === "number" ? v : typeof v === "string" ? Date.parse(v) : NaN));
+}
+
 function trackToFeature(t: AircraftTrack): TrackFeature {
   const properties: TrackProperties = {
     hex_ident: t.hex_ident,
@@ -119,6 +139,8 @@ function trackToFeature(t: AircraftTrack): TrackFeature {
     last_seen: t.last_seen,
     message_count: t.message_count,
   };
+  const coordTimes = exportTimes(t);
+  if (coordTimes) properties.coordTimes = coordTimes;
 
   if (t.positions.length === 0) {
     return {
@@ -177,6 +199,7 @@ export function geoJSONToTracks(geojson: TrackFeatureCollection): AircraftTrack[
       positions = [coordinateToPosition(feature.geometry.coordinates)];
     }
     // Point with no_position: positions stays []
+    const position_times = importTimes(props.coordTimes, positions.length);
 
     tracks.push({
       hex_ident: props.hex_ident,
@@ -191,6 +214,7 @@ export function geoJSONToTracks(geojson: TrackFeatureCollection): AircraftTrack[
       is_on_ground: props.is_on_ground,
       timestamp: props.timestamp,
       positions,
+      ...(position_times ? { position_times } : {}),
       first_seen: props.first_seen ?? props.last_seen,
       last_seen: props.last_seen,
       message_count: props.message_count,

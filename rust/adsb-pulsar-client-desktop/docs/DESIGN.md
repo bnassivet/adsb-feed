@@ -1622,7 +1622,7 @@ export async function queryBbox(query: BboxQuery): Promise<PositionRecord[]> {
   - `first_seen: number` — ms epoch of first detection; set **once** when the track is created in `AircraftTrackingContext`, never updated by `mergePositionInto`
   - `last_seen: number` — ms epoch of most recent update
   - `positions: [lat, lng, altitude | null][]` — capped at 100 entries; times live beside it, not in the tuple
-  - `position_times?: number[] | Float64Array` — ms epoch per position, index-aligned with `positions`: the SBS-1 *generated* time of the message that carried the fix (`AircraftPosition.position_time_ms`, NaN if absent — never the flush time) for live tracks, `timestamp_ms` for history and DB History; absent for imported GeoJSON and simulated tracks. `appendPosition` writes it only while it is in step, so it is never started on a track that already has positions
+  - `position_times?: number[] | Float64Array` — ms epoch per position, index-aligned with `positions`: the SBS-1 *generated* time of the message that carried the fix (`AircraftPosition.position_time_ms`, NaN if absent — never the flush time) for live tracks, `timestamp_ms` for history and DB History, the file's `coordTimes` for imported GeoJSON, production time for demo flights, route start + `t_offset_s` for agent trajectories (`trailTimesUpTo`, aligned with `trailUpTo`); absent for a GeoJSON file without `coordTimes`. `appendPosition` writes it only while it is in step, so it is never started on a track that already has positions
 - `MetricsSnapshot`: Performance metrics (flattened `DesktopMetrics` from Rust). Key fields:
   - `messages_received: number` — all TCP lines from socket (core library counter, includes heartbeats)
   - `lines_received: number` — every line delivered to the ingest pipeline, parsed or not (hits/s)
@@ -3795,6 +3795,7 @@ Each exported file is a standard GeoJSON `FeatureCollection` with metadata:
         "first_seen": 1708617000000,
         "last_seen": 1708620600000,
         "message_count": 1234,
+        "coordTimes": ["2026-02-22T15:30:00.123Z", null, ...],
         ...
       }
     }
@@ -3808,6 +3809,19 @@ Each exported file is a standard GeoJSON `FeatureCollection` with metadata:
 - `Point` at `[0,0]` with `no_position: true` for tracks with no recorded positions
 
 **Coordinate axis swap**: Internal storage uses `[lat, lng, alt]` — GeoJSON uses `[lng, lat, alt]`. The conversion handles this transparently.
+
+**Per-coordinate times (`coordTimes`)**: one entry per coordinate, in order, from
+`AircraftTrack.position_times` — ISO 8601 with milliseconds, `null` for an unknown time.
+This is the `coordTimes` property `@tmcw/togeojson` writes for GPX and KML, so tracks
+converted from those formats import with their times. RFC 7946 says positions SHOULD NOT
+carry a fourth element, so the times stay out of the coordinates. Rules:
+- Written only when `position_times` has exactly one entry per position; otherwise omitted.
+- Import also accepts epoch-ms numbers. An unparseable entry becomes unknown (NaN), and a
+  `coordTimes` whose length differs from the coordinates is ignored. A bad time never
+  rejects the file.
+- Files without it (older exports) import as before, with no per-point time.
+- `version` stays 1: the property is optional and older readers ignore it.
+- Size: about 27 bytes per point, roughly 5 MB more for a 200k-point history export.
 
 ### Imported Tracks Lifecycle
 

@@ -1,8 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
 import {
   interpolateHeading,
   sampleTrajectory,
+  trailTimesUpTo,
   trailUpTo,
   useAgentSimulatedTracks,
 } from "@/hooks/useAgentSimulatedTracks";
@@ -172,7 +173,48 @@ describe("trailUpTo", () => {
   });
 });
 
+describe("trailTimesUpTo", () => {
+  const FOUR = [
+    wp({ t_offset_s: 0, lat: 45.0 }),
+    wp({ t_offset_s: 10, lat: 45.1 }),
+    wp({ t_offset_s: 20, lat: 45.2 }),
+    wp({ t_offset_s: 30, lat: 45.3 }),
+  ];
+  const START = 1_000_000;
+
+  it("is index-aligned with trailUpTo in every case", () => {
+    const many = Array.from({ length: 500 }, (_, i) => wp({ t_offset_s: i }));
+    for (const [w, e, max] of [[FOUR, 15], [FOUR, 10], [FOUR, 30], [FOUR, 0], [[], 5], [many, 499, 100]] as const) {
+      expect(trailTimesUpTo(w as DynamicWaypoint[], e, START, max)).toHaveLength(trailUpTo(w as DynamicWaypoint[], e, max).length);
+    }
+  });
+
+  it("times each waypoint at the route start plus its offset, and the current point at the clock", () => {
+    expect(trailTimesUpTo(FOUR, 15, START)).toEqual([START, START + 10_000, START + 15_000]);
+  });
+
+  it("keeps the newest times when capped", () => {
+    const many = Array.from({ length: 500 }, (_, i) => wp({ t_offset_s: i }));
+    const times = trailTimesUpTo(many, 499, START, 100);
+    expect(times[0]).toBe(START + 400_000);
+    expect(times[99]).toBe(START + 499_000);
+  });
+});
+
 describe("useAgentSimulatedTracks", () => {
+  it("gives every trail point a time, the current one at the wall clock", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(5_000_000);
+    try {
+      const { result } = renderHook(() => useAgentSimulatedTracks([trajectory()], playing(5)));
+      const t = result.current[0];
+      expect(t.position_times).toEqual([5_000_000 - 5_000, 5_000_000]);
+      expect(t.position_times).toHaveLength(t.positions.length);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("returns nothing without trajectories", () => {
     const { result } = renderHook(() => useAgentSimulatedTracks([], {}));
     expect(result.current).toEqual([]);
